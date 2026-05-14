@@ -421,7 +421,7 @@ bool EspAfe::build_instance_(AfeInstance *instance) {
   // esp-sr spawns an internal worker task for BSS/SE using these fields.
   // Inert for sr_low_cost 1-mic (no worker), active for 2-mic BSS and for
   // voip_high_perf / sr_high_perf modes.
-  cfg->afe_perferred_core = this->task_core_;
+  cfg->afe_perferred_core = this->resolve_worker_task_core_();
   cfg->afe_perferred_priority = this->task_priority_;
   cfg->afe_ringbuf_size = this->ringbuf_size_;
   cfg->memory_alloc_mode = static_cast<afe_memory_alloc_mode_t>(this->memory_alloc_mode_);
@@ -926,10 +926,25 @@ void EspAfe::dump_config() {
   ESP_LOGCONFIG(TAG, "  Input format override: %s",
                 this->input_format_override_[0] ? this->input_format_override_ : "auto");
   ESP_LOGCONFIG(TAG, "  Alloc: %s, linear_gain=%.2f", this->memory_alloc_mode_to_str_(), this->afe_linear_gain_);
-  ESP_LOGCONFIG(TAG, "  Task: core=%d, priority=%d, ringbuf=%d", this->task_core_, this->task_priority_, this->ringbuf_size_);
+  ESP_LOGCONFIG(TAG, "  Task: core=%d, worker=%d, feed=%d, fetch=%d, priority=%d, ringbuf=%d",
+                this->task_core_, this->resolve_worker_task_core_(),
+                this->resolve_feed_task_core_(), this->resolve_fetch_task_core_(),
+                this->task_priority_, this->ringbuf_size_);
   ESP_LOGCONFIG(TAG, "  Process: %d samples, Feed: %d samples, Fetch: %d samples, Channels: %d",
                 this->process_chunksize_, this->feed_chunksize_, this->fetch_chunksize_, this->total_channels_);
   ESP_LOGCONFIG(TAG, "  Initialized: %s", this->is_initialized() ? "YES" : "NO");
+}
+
+int EspAfe::resolve_worker_task_core_() const {
+  return this->worker_task_core_ == -2 ? this->task_core_ : this->worker_task_core_;
+}
+
+int EspAfe::resolve_feed_task_core_() const {
+  return this->feed_task_core_ == -2 ? this->task_core_ : this->feed_task_core_;
+}
+
+int EspAfe::resolve_fetch_task_core_() const {
+  return this->fetch_task_core_ == -2 ? this->task_core_ : this->fetch_task_core_;
 }
 
 FrameSpec EspAfe::frame_spec() const {
@@ -1373,10 +1388,11 @@ bool EspAfe::start_feed_task_() {
     xSemaphoreTake(this->feed_task_done_sem_, 0);
   }
   this->feed_task_running_.store(true, std::memory_order_release);
+  const int feed_core = this->resolve_feed_task_core_();
   BaseType_t rc = xTaskCreatePinnedToCore(
       &EspAfe::feed_task_trampoline, "afe_feed", stack_words, this,
       kFeedTaskPriority, &this->feed_task_handle_,
-      this->task_core_ >= 0 ? this->task_core_ : tskNO_AFFINITY);
+      feed_core >= 0 ? feed_core : tskNO_AFFINITY);
   if (rc != pdPASS || this->feed_task_handle_ == nullptr) {
     ESP_LOGE(TAG, "Failed to create AFE feed task");
     this->feed_task_running_.store(false, std::memory_order_release);
@@ -1384,7 +1400,7 @@ bool EspAfe::start_feed_task_() {
     return false;
   }
   ESP_LOGI(TAG, "AFE feed task started (core=%d, priority=%u, stack=%uB)",
-           this->task_core_, (unsigned) kFeedTaskPriority,
+           feed_core, (unsigned) kFeedTaskPriority,
            (unsigned) (stack_words * sizeof(StackType_t)));
   return true;
 }
@@ -1674,7 +1690,8 @@ bool EspAfe::start_fetch_task_() {
   }
 
   const int fetch_priority = this->task_priority_ > 1 ? this->task_priority_ - 1 : 1;
-  const int fetch_core = (this->task_core_ >= 0) ? this->task_core_ : tskNO_AFFINITY;
+  const int configured_fetch_core = this->resolve_fetch_task_core_();
+  const int fetch_core = (configured_fetch_core >= 0) ? configured_fetch_core : tskNO_AFFINITY;
 
   if (this->fetch_task_done_sem_ != nullptr) {
     xSemaphoreTake(this->fetch_task_done_sem_, 0);
@@ -1690,7 +1707,7 @@ bool EspAfe::start_fetch_task_() {
     return false;
   }
   ESP_LOGI(TAG, "AFE fetch task started (core=%d, priority=%d)",
-           fetch_core, fetch_priority);
+           configured_fetch_core, fetch_priority);
   return true;
 }
 

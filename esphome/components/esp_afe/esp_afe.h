@@ -114,6 +114,9 @@ class EspAfe : public Component, public AudioProcessor {
   void set_memory_alloc_mode(int mode) { this->memory_alloc_mode_ = mode; }
   void set_afe_linear_gain(float gain) { this->afe_linear_gain_ = gain; }
   void set_task_core(int core) { this->task_core_ = core; }
+  void set_worker_task_core(int core) { this->worker_task_core_ = core; }
+  void set_feed_task_core(int core) { this->feed_task_core_ = core; }
+  void set_fetch_task_core(int core) { this->fetch_task_core_ = core; }
   void set_task_priority(int prio) { this->task_priority_ = prio; }
   void set_ringbuf_size(int size) { this->ringbuf_size_ = size; }
   void set_input_format_override(const char *fmt);
@@ -196,6 +199,9 @@ class EspAfe : public Component, public AudioProcessor {
   bool install_instance_(AfeInstance *instance);
   AfeInstance detach_instance_();
   const char *memory_alloc_mode_to_str_() const;
+  int resolve_worker_task_core_() const;
+  int resolve_feed_task_core_() const;
+  int resolve_fetch_task_core_() const;
 
   // True when the user has every AFE feature turned off. In that state
   // running the pipeline is pointless, so recreate_instance_ and the runtime
@@ -331,6 +337,9 @@ class EspAfe : public Component, public AudioProcessor {
   int memory_alloc_mode_{AFE_MEMORY_ALLOC_MORE_PSRAM};
   float afe_linear_gain_{1.0f};
   int task_core_{1};
+  int worker_task_core_{-2};
+  int feed_task_core_{-2};
+  int fetch_task_core_{-2};
   int task_priority_{8};
   int ringbuf_size_{8};
   char input_format_override_[5]{};

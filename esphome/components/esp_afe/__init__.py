@@ -63,6 +63,9 @@ CONF_CONTINUOUS_VAD = "continuous_vad"
 CONF_MEMORY_ALLOC_MODE = "memory_alloc_mode"
 CONF_AFE_LINEAR_GAIN = "afe_linear_gain"
 CONF_TASK_CORE = "task_core"
+CONF_WORKER_TASK_CORE = "worker_task_core"
+CONF_FEED_TASK_CORE = "feed_task_core"
+CONF_FETCH_TASK_CORE = "fetch_task_core"
 CONF_TASK_PRIORITY = "task_priority"
 CONF_RINGBUF_SIZE = "ringbuf_size"
 CONF_FEED_BUF_IN_PSRAM = "feed_buf_in_psram"
@@ -125,6 +128,9 @@ CONFIG_SCHEMA = cv.All(
             ),
             cv.Optional(CONF_AFE_LINEAR_GAIN, default=1.0): cv.float_range(min=0.1, max=10.0),
             cv.Optional(CONF_TASK_CORE, default=1): cv.int_range(min=0, max=1),
+            cv.Optional(CONF_WORKER_TASK_CORE): cv.int_range(min=-1, max=1),
+            cv.Optional(CONF_FEED_TASK_CORE): cv.int_range(min=-1, max=1),
+            cv.Optional(CONF_FETCH_TASK_CORE): cv.int_range(min=-1, max=1),
             cv.Optional(CONF_TASK_PRIORITY, default=8): cv.int_range(min=1, max=24),
             cv.Optional(CONF_RINGBUF_SIZE, default=8): cv.int_range(min=2, max=32),
             # Optional esp-sr AFE input format override for diagnostics and
@@ -174,6 +180,12 @@ async def to_code(config):
     cg.add(var.set_memory_alloc_mode(config[CONF_MEMORY_ALLOC_MODE]))
     cg.add(var.set_afe_linear_gain(config[CONF_AFE_LINEAR_GAIN]))
     cg.add(var.set_task_core(config[CONF_TASK_CORE]))
+    if CONF_WORKER_TASK_CORE in config:
+        cg.add(var.set_worker_task_core(config[CONF_WORKER_TASK_CORE]))
+    if CONF_FEED_TASK_CORE in config:
+        cg.add(var.set_feed_task_core(config[CONF_FEED_TASK_CORE]))
+    if CONF_FETCH_TASK_CORE in config:
+        cg.add(var.set_fetch_task_core(config[CONF_FETCH_TASK_CORE]))
     cg.add(var.set_task_priority(config[CONF_TASK_PRIORITY]))
     cg.add(var.set_ringbuf_size(config[CONF_RINGBUF_SIZE]))
     cg.add(var.set_input_format_override(config[CONF_INPUT_FORMAT]))
