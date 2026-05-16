@@ -70,7 +70,7 @@ inline bool start_pinned_task(TaskFunction_t fn, const char *name, uint32_t stac
 /// Force-delete a task and free its PSRAM stack. Use ONLY from setup
 /// failure paths where the task was just spawned and has not yet entered
 /// any blocking upstream API call. Calling vTaskDelete on a task that
-/// is mid-recv / mid-fetch_with_delay / mid-i2s_channel_read leaves
+/// is mid-recv / mid-esp-sr fetch / mid-i2s_channel_read leaves
 /// internal locks corrupted; for the steady-state stop path use the
 /// run-flag + done-semaphore pattern and then call cleanup_pinned_task.
 inline void force_delete_pinned_task(TaskHandle_t *handle, StackType_t **stack, uint32_t stack_words) {
@@ -92,7 +92,7 @@ inline void force_delete_pinned_task(TaskHandle_t *handle, StackType_t **stack, 
 /// Contract: the caller MUST have already driven the task to exit
 /// (running flag + done semaphore / event group), and only then invoke
 /// this helper. The helper does NOT call vTaskDelete: forcing it on a
-/// task still inside an upstream library call (esp-sr fetch_with_delay,
+/// task still inside an upstream library call (esp-sr fetch,
 /// lwIP recv, ...) leaves internal locks corrupted and can race with
 /// the destruction of resources the task is using (use-after-free).
 ///
