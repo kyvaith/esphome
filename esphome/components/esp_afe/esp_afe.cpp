@@ -1179,9 +1179,12 @@ void EspAfe::manager_result_cb_(afe_fetch_result_t *result, void *user_ctx) {
 }
 
 int32_t EspAfe::manager_read_(void *buffer, int buf_sz, uint32_t ticks) {
-  if (buffer == nullptr || buf_sz <= 0 || this->feed_input_ring_ == nullptr ||
-      !this->processing_active_.load(std::memory_order_acquire)) {
+  if (buffer == nullptr || buf_sz <= 0 || this->feed_input_ring_ == nullptr) {
     return 0;
+  }
+  if (!this->processing_active_.load(std::memory_order_acquire)) {
+    memset(buffer, 0, static_cast<size_t>(buf_sz));
+    return buf_sz;
   }
 
   size_t item_size = 0;
@@ -1303,7 +1306,7 @@ void EspAfe::suspend_manager_() {
 void EspAfe::flush_manager_before_suspend_() {
   if (this->afe_manager_ == nullptr || this->feed_input_ring_ == nullptr ||
       this->feed_buf_ == nullptr || this->feed_chunksize_ <= 0 || this->total_channels_ <= 0 ||
-      !this->processing_active_.load(std::memory_order_acquire)) {
+      this->afe_stopped_.load(std::memory_order_acquire)) {
     return;
   }
 
