@@ -114,12 +114,12 @@ esp_afe:
 | `id` | ID | Required | Component ID |
 | `type` | string | `sr` | AFE type: `sr` (speech recognition), `vc` (voice communication) or `fd` (full-duplex AFE, esp-sr 2.4+) |
 | `mode` | string | `low_cost` | AFE mode: `low_cost` or `high_perf` |
-| `mic_num` | int | `1` | Number of microphones (1 or 2). Set to 2 for dual-mic Speech Enhancement with `se_enabled: true` |
+| `mic_num` | int | `1` | Number of microphones (1 or 2). Dual-mic configs must enable `se_enabled`; SE/BSS is structural for two-mic AFE |
 | `aec_enabled` | bool | **true** | Enable acoustic echo cancellation |
 | `aec_filter_length` | int | `4` | AEC filter length in frames (1-8). 4 = 64ms tail, sufficient for most setups |
 | `ns_enabled` | bool | **true** | Enable noise suppression (WebRTC engine) |
 | `agc_enabled` | bool | **true** | Enable automatic gain control (WebRTC engine) |
-| `se_enabled` | bool | **false** | Enable Speech Enhancement / spatial source separation. Required for `mic_num: 2`; dual-mic AFE treats SE/BSS as structural. Replaces NS and AGC with spatial source separation |
+| `se_enabled` | bool | **false** | Enable Speech Enhancement / spatial source separation. Required for `mic_num: 2`; dual-mic AFE treats SE/BSS as structural and does not expose a runtime SE switch |
 | `vad_enabled` | bool | **false** | Enable voice activity detection |
 | `vad_mode` | int | `3` | VAD aggressiveness (0-4). Higher = rejects more noise but may miss quiet speech |
 | `vad_min_speech_ms` | int | `128` | Minimum speech duration to trigger voice detection (32-60000 ms) |
@@ -151,7 +151,7 @@ esp_afe:
 
 > **Defaults are designed so that a minimal config already enables AEC + NS + AGC.** You only need to declare options that differ from the defaults. In particular:
 > - `aec_enabled`, `ns_enabled`, `agc_enabled` are **true** by default. Only set them if you want to **disable** a feature.
-> - `se_enabled` and `vad_enabled` are **false** by default. Set them to `true` to opt in.
+> - `se_enabled` and `vad_enabled` are **false** by default. Set `se_enabled: true` for every dual-mic AFE target; set `vad_enabled: true` only when the product explicitly needs VAD active at boot.
 > - `memory_alloc_mode` defaults to `more_psram`, `task_core` to `1`, `task_priority` to `5`. Override only if your hardware requires it.
 >
 > **Minimal single-mic** (AEC + NS + AGC out of the box):
@@ -187,7 +187,7 @@ The combination of `type` and `mode` determines the AEC engine and DSP pipeline:
 
 > **Important**: Use `sr` + `low_cost` for Voice Assistant + MWW setups. The `vc` modes add a residual echo suppressor (RES) that distorts spectral features, reducing MWW detection from 10/10 to 2/10.
 
-NS and AGC always use the WebRTC engine regardless of type/mode. They work at boot but cannot be toggled individually at runtime via the AFE vtable (see [Feature Toggle Behavior](#feature-toggle-behavior)).
+NS and AGC always use the WebRTC engine regardless of type/mode. They work at boot, but the stock GMF AFE manager does not publish NS/AGC feature toggles, so this component changes them through AFE reinit (see [Feature Toggle Behavior](#feature-toggle-behavior)).
 
 ## Platform Entities
 
