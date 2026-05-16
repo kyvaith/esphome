@@ -110,6 +110,12 @@ class AudioProcessor {
   /// keep working unchanged.
   virtual void set_processing_active(bool active) { (void) active; }
 
+  /// Reset processor-internal audio buffers without rebuilding the processor.
+  /// Consumers may call this at a full-duplex boundary, for example when a
+  /// speaker reference starts after a long mic-only period. Default no-op keeps
+  /// existing processors unchanged.
+  virtual bool reset_buffers() { return true; }
+
   /// True when the processor explicitly needs mic frames even without an
   /// external microphone consumer. Example: AFE VAD may be configured as
   /// continuous background input, but a VAD toggle alone must not imply boot

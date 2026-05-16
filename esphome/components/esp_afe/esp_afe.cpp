@@ -421,7 +421,7 @@ bool EspAfe::build_instance_(AfeInstance *instance) {
   // esp-sr spawns an internal worker task for BSS/SE using these fields.
   // Inert for sr_low_cost 1-mic (no worker), active for 2-mic BSS and for
   // voip_high_perf / sr_high_perf modes.
-  cfg->afe_perferred_core = this->resolve_worker_task_core_();
+  cfg->afe_perferred_core = this->task_core_;
   cfg->afe_perferred_priority = this->task_priority_;
   cfg->afe_ringbuf_size = this->ringbuf_size_;
   cfg->memory_alloc_mode = static_cast<afe_memory_alloc_mode_t>(this->memory_alloc_mode_);
@@ -819,6 +819,64 @@ bool EspAfe::set_aec_enabled_runtime_(bool enabled) {
   return true;
 }
 
+bool EspAfe::reset_buffers() {
+  if (this->config_mutex_ == nullptr || this->afe_handle_ == nullptr ||
+      this->afe_data_ == nullptr) {
+    ESP_LOGW(TAG, "AFE buffer reset requested before initialization");
+    return false;
+  }
+  if (!is_valid_func(reinterpret_cast<const void *>(this->afe_handle_->reset_buffer))) {
+    ESP_LOGW(TAG, "Cannot reset AFE buffers: reset_buffer unavailable (ptr=%p)",
+             reinterpret_cast<const void *>(this->afe_handle_->reset_buffer));
+    return false;
+  }
+
+  const bool was_active = this->processing_active_.load(std::memory_order_acquire);
+  if (was_active) {
+    this->set_processing_active(false);
+  }
+
+  audio_processor::ScopedLock lock(this->config_mutex_, CONFIG_MUTEX_TIMEOUT);
+  if (!lock) {
+    ESP_LOGW(TAG, "Timed out waiting to reset AFE buffers");
+    if (was_active) {
+      this->set_processing_active(true);
+    }
+    return false;
+  }
+
+  this->drain_request_.store(true, std::memory_order_release);
+  TickType_t drain_deadline = xTaskGetTickCount() + DRAIN_WAIT_TIMEOUT;
+  while (this->process_busy_.load(std::memory_order_acquire)) {
+    if (xTaskGetTickCount() >= drain_deadline) {
+      ESP_LOGW(TAG, "Drain timeout waiting for process() before AFE buffer reset");
+      break;
+    }
+    vTaskDelay(1);
+  }
+
+  int ret = this->afe_handle_->reset_buffer(this->afe_data_);
+  this->drain_feed_input_ring_();
+  if (this->fetch_output_ring_) {
+    this->fetch_output_ring_->reset();
+  }
+  this->staged_input_samples_ = 0;
+  this->warmup_remaining_ = 3;
+  this->feed_queue_frames_.store(0, std::memory_order_relaxed);
+  this->fetch_queue_frames_.store(0, std::memory_order_relaxed);
+  this->fetch_timeout_.store(0, std::memory_order_relaxed);
+  this->output_ring_drop_.store(0, std::memory_order_relaxed);
+  this->drain_request_.store(false, std::memory_order_release);
+
+  ESP_LOGI(TAG, "AFE buffers reset via esp-sr reset_buffer (ret=%d, was_active=%s)",
+           ret, was_active ? "yes" : "no");
+
+  if (was_active) {
+    this->set_processing_active(true);
+  }
+  return ret > 0;
+}
+
 bool EspAfe::set_reinit_flag_(std::atomic<bool> &flag, bool enabled, const char *name) {
   if (flag.load(std::memory_order_relaxed) == enabled) {
     return true;
@@ -926,25 +984,10 @@ void EspAfe::dump_config() {
   ESP_LOGCONFIG(TAG, "  Input format override: %s",
                 this->input_format_override_[0] ? this->input_format_override_ : "auto");
   ESP_LOGCONFIG(TAG, "  Alloc: %s, linear_gain=%.2f", this->memory_alloc_mode_to_str_(), this->afe_linear_gain_);
-  ESP_LOGCONFIG(TAG, "  Task: core=%d, worker=%d, feed=%d, fetch=%d, priority=%d, ringbuf=%d",
-                this->task_core_, this->resolve_worker_task_core_(),
-                this->resolve_feed_task_core_(), this->resolve_fetch_task_core_(),
-                this->task_priority_, this->ringbuf_size_);
+  ESP_LOGCONFIG(TAG, "  Task: core=%d, priority=%d, ringbuf=%d", this->task_core_, this->task_priority_, this->ringbuf_size_);
   ESP_LOGCONFIG(TAG, "  Process: %d samples, Feed: %d samples, Fetch: %d samples, Channels: %d",
                 this->process_chunksize_, this->feed_chunksize_, this->fetch_chunksize_, this->total_channels_);
   ESP_LOGCONFIG(TAG, "  Initialized: %s", this->is_initialized() ? "YES" : "NO");
-}
-
-int EspAfe::resolve_worker_task_core_() const {
-  return this->worker_task_core_ == -2 ? this->task_core_ : this->worker_task_core_;
-}
-
-int EspAfe::resolve_feed_task_core_() const {
-  return this->feed_task_core_ == -2 ? this->task_core_ : this->feed_task_core_;
-}
-
-int EspAfe::resolve_fetch_task_core_() const {
-  return this->fetch_task_core_ == -2 ? this->task_core_ : this->fetch_task_core_;
 }
 
 FrameSpec EspAfe::frame_spec() const {
@@ -1388,11 +1431,10 @@ bool EspAfe::start_feed_task_() {
     xSemaphoreTake(this->feed_task_done_sem_, 0);
   }
   this->feed_task_running_.store(true, std::memory_order_release);
-  const int feed_core = this->resolve_feed_task_core_();
   BaseType_t rc = xTaskCreatePinnedToCore(
       &EspAfe::feed_task_trampoline, "afe_feed", stack_words, this,
       kFeedTaskPriority, &this->feed_task_handle_,
-      feed_core >= 0 ? feed_core : tskNO_AFFINITY);
+      this->task_core_ >= 0 ? this->task_core_ : tskNO_AFFINITY);
   if (rc != pdPASS || this->feed_task_handle_ == nullptr) {
     ESP_LOGE(TAG, "Failed to create AFE feed task");
     this->feed_task_running_.store(false, std::memory_order_release);
@@ -1400,7 +1442,7 @@ bool EspAfe::start_feed_task_() {
     return false;
   }
   ESP_LOGI(TAG, "AFE feed task started (core=%d, priority=%u, stack=%uB)",
-           feed_core, (unsigned) kFeedTaskPriority,
+           this->task_core_, (unsigned) kFeedTaskPriority,
            (unsigned) (stack_words * sizeof(StackType_t)));
   return true;
 }
@@ -1690,8 +1732,7 @@ bool EspAfe::start_fetch_task_() {
   }
 
   const int fetch_priority = this->task_priority_ > 1 ? this->task_priority_ - 1 : 1;
-  const int configured_fetch_core = this->resolve_fetch_task_core_();
-  const int fetch_core = (configured_fetch_core >= 0) ? configured_fetch_core : tskNO_AFFINITY;
+  const int fetch_core = (this->task_core_ >= 0) ? this->task_core_ : tskNO_AFFINITY;
 
   if (this->fetch_task_done_sem_ != nullptr) {
     xSemaphoreTake(this->fetch_task_done_sem_, 0);
@@ -1707,7 +1748,7 @@ bool EspAfe::start_fetch_task_() {
     return false;
   }
   ESP_LOGI(TAG, "AFE fetch task started (core=%d, priority=%d)",
-           configured_fetch_core, fetch_priority);
+           fetch_core, fetch_priority);
   return true;
 }
 
