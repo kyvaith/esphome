@@ -63,7 +63,7 @@ class AudioProcessor {
   virtual FrameSpec frame_spec() const = 0;
 
   // Monotonic counter. Bumps whenever frame_spec() changes
-  // (e.g. SE on or off flips mic_channels between 2 and 1).
+  // (e.g. a rebuilt AFE publishes a different input/output frame size).
   virtual uint32_t frame_spec_revision() const = 0;
 
   // Process one frame. mic and ref are the input buffers, out is
@@ -110,7 +110,7 @@ struct FrameSpec {
 
 `frame_spec_revision()` is a `std::atomic<uint32_t>` bump every time any of those fields changes. Consumers cache the spec and re-read it only when the revision changes, avoiding atomic reads on the hot path.
 
-For `esp_aec` the revision is constant after `setup()`. For `esp_afe` it bumps when Speech Enhancement is toggled, because `mic_channels` flips between 1 and 2.
+For `esp_aec` the revision is constant after `setup()` unless the AEC mode changes frame size. For `esp_afe` it bumps when a rebuild changes the published frame shape. Dual-mic Speech Enhancement is structural, not a runtime toggle.
 
 ## Feature controls
 
@@ -127,7 +127,7 @@ enum class FeatureControl {
 
 `esp_aec` reports `AEC = RESTART_REQUIRED` and everything else `NOT_SUPPORTED`.
 
-`esp_afe` reports `AEC = LIVE_TOGGLE` (handle stays initialised, the engine is enabled or disabled via the esp-sr vtable in microseconds). `NS / VAD / AGC = RESTART_REQUIRED` (each toggle rebuilds the AFE handle, ~70 ms gap). `SE` is `RESTART_REQUIRED` only when the device has at least 2 mic channels, otherwise `NOT_SUPPORTED`.
+`esp_afe` reports `AEC = LIVE_TOGGLE` and `VAD = LIVE_TOGGLE` through Espressif's GMF AFE manager. `NS / AGC = RESTART_REQUIRED` because the stock GMF manager does not expose those feature toggles. `SE` is `BOOT_ONLY` on dual-mic devices and `NOT_SUPPORTED` on single-mic devices.
 
 ## Telemetry
 
@@ -140,7 +140,7 @@ struct ProcessorTelemetry {
   float ringbuf_free_pct;         // 0.0 to 1.0
   // Aggregate counters
   uint32_t frame_count;           // Frames processed since boot
-  uint32_t glitch_count;          // Passthrough fallbacks (fetch starvation)
+  uint32_t glitch_count;          // Missing/late processed frames, silenced
   // Feed/fetch ring statistics (esp_afe two-task pipeline)
   uint32_t feed_ok, feed_rejected;
   uint32_t fetch_ok, fetch_timeout;
@@ -199,7 +199,7 @@ If you want to ship your own processor (DSP frontend, alternative library), subc
 None directly: the component only defines interfaces. Each implementation owns its own task topology:
 
 - `esp_aec`: no background tasks; `process()` runs synchronously on the caller's audio task.
-- `esp_afe`: two tasks (`feed_task`, `fetch_task`) coordinating with `process()` via a lock-free drain handshake.
+- `esp_afe`: Espressif's GMF AFE manager owns feed/fetch tasks; `process()` bridges ESPHome audio frames through a bounded ring and a drain handshake.
 
 ## Logging
 

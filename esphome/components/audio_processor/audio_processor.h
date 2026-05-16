@@ -79,7 +79,8 @@ class AudioProcessor {
   /// @param in_ref  reference input (speaker loopback), input_samples. May be nullptr.
   /// @param out     output buffer, output_samples
   /// @param mic_channels_in  how many mic channels are interleaved in in_mic
-  /// @return true if processed by DSP, false if passthrough (unprocessed copy)
+  /// @return true if processed by DSP, false if not processed (implementation
+  ///         may emit silence rather than raw audio)
   virtual bool process(const int16_t *in_mic, const int16_t *in_ref, int16_t *out,
                        uint8_t mic_channels_in = 1) = 0;
 
@@ -109,12 +110,6 @@ class AudioProcessor {
   /// Default no-op: processors that always run regardless of consumers
   /// keep working unchanged.
   virtual void set_processing_active(bool active) { (void) active; }
-
-  /// Reset processor-internal audio buffers without rebuilding the processor.
-  /// Consumers may call this at a full-duplex boundary, for example when a
-  /// speaker reference starts after a long mic-only period. Default no-op keeps
-  /// existing processors unchanged.
-  virtual bool reset_buffers() { return true; }
 
   /// True when the processor explicitly needs mic frames even without an
   /// external microphone consumer. Example: AFE VAD may be configured as

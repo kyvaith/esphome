@@ -27,6 +27,8 @@ def _validate_esp32_variant(config):
 def _validate_feature_config(config):
     if config[CONF_SE_ENABLED] and config[CONF_MIC_NUM] < 2:
         raise cv.Invalid("se_enabled requires mic_num: 2")
+    if config[CONF_MIC_NUM] >= 2 and not config[CONF_SE_ENABLED]:
+        raise cv.Invalid("dual-mic esp_afe requires se_enabled: true (SE/BSS is structural)")
     if config.get(CONF_INPUT_FORMAT) in ("MMR", "MMNR") and config[CONF_MIC_NUM] < 2:
         raise cv.Invalid(f"input_format: {config[CONF_INPUT_FORMAT]} requires mic_num: 2")
     # AFE_TYPE_FD (esp-sr 2.4+) is the full-duplex pipeline with NLP baked in;
@@ -125,7 +127,7 @@ CONFIG_SCHEMA = cv.All(
             ),
             cv.Optional(CONF_AFE_LINEAR_GAIN, default=1.0): cv.float_range(min=0.1, max=10.0),
             cv.Optional(CONF_TASK_CORE, default=1): cv.int_range(min=0, max=1),
-            cv.Optional(CONF_TASK_PRIORITY, default=8): cv.int_range(min=1, max=24),
+            cv.Optional(CONF_TASK_PRIORITY, default=5): cv.int_range(min=1, max=24),
             cv.Optional(CONF_RINGBUF_SIZE, default=8): cv.int_range(min=2, max=32),
             # Optional esp-sr AFE input format override for diagnostics and
             # board-specific dual-mic layouts. Default auto preserves the
@@ -183,8 +185,9 @@ async def to_code(config):
 
     cg.add_define("USE_AUDIO_PROCESSOR")
 
-    # esp-sr 2.4.x adds AFE_TYPE_FD (full-duplex) on top of SR/VC.
-    add_idf_component(name="espressif/esp-sr", ref="~2.4.0")
+    # gmf_ai_audio provides Espressif's canonical AFE manager
+    # (feed/fetch/suspend/runtime feature toggles) and pins esp-sr 2.4.4.
+    add_idf_component(name="espressif/gmf_ai_audio", ref="0.8.2")
 
 
 @automation.register_action(
