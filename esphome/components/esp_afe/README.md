@@ -276,6 +276,8 @@ select:
       - sr_high_perf
       - voip_low_cost
       - voip_high_perf
+      - fd_low_cost
+      - fd_high_perf
     initial_option: "sr_low_cost"
     optimistic: false           # do NOT auto-publish; we publish the live mode below
     restore_value: true
@@ -286,7 +288,7 @@ select:
       - lambda: 'id(afe_mode_select).publish_state(id(afe_processor).get_mode_name());'
 ```
 
-Valid mode strings: `sr_low_cost`, `sr_high_perf`, `voip_low_cost`, `voip_high_perf`.
+Valid mode strings: `sr_low_cost`, `sr_high_perf`, `voip_low_cost`, `voip_high_perf`, `fd_low_cost`, `fd_high_perf`.
 
 `get_mode_name()` returns the live mode as a string after the reinit. The `optimistic: false` plus the explicit `publish_state()` at the end is the recommended pattern: it stops `template_select::control()` from auto-publishing the user-selected value over a rejected switch (e.g. when `sr_high_perf` cannot allocate the contiguous DMA-capable internal block).
 

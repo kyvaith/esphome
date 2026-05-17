@@ -296,8 +296,8 @@ bool EspAfe::build_instance_(AfeInstance *instance) {
   cfg->agc_target_level_dbfs = this->agc_target_level_;
 
   // esp-sr spawns an internal worker task for BSS/SE using these fields.
-  // Inert for sr_low_cost 1-mic (no worker), active for 2-mic BSS and for
-  // voip_high_perf / sr_high_perf modes.
+  // Inert for simple low-cost 1-mic modes without an ESP-SR worker, active for
+  // 2-mic BSS and higher-cost SR/VOIP/FD pipelines.
   cfg->afe_perferred_core = this->task_core_;
   cfg->afe_perferred_priority = this->task_priority_;
   cfg->afe_ringbuf_size = this->ringbuf_size_;
@@ -334,6 +334,16 @@ bool EspAfe::build_instance_(AfeInstance *instance) {
   esp_gmf_err_t manager_ret = esp_gmf_afe_manager_create(&manager_cfg, &manager);
   if (manager_ret != ESP_GMF_ERR_OK || manager == nullptr) {
     ESP_LOGE(TAG, "esp_gmf_afe_manager_create failed (ret=%d)", static_cast<int>(manager_ret));
+    afe_config_free(cfg);
+    return false;
+  }
+  // gmf_ai_audio 0.8.2 accepts result_cb in the config struct but does not
+  // copy it during create(); install it explicitly before the fetch task runs.
+  manager_ret = esp_gmf_afe_manager_set_result_cb(manager, &EspAfe::manager_result_cb_, this);
+  if (manager_ret != ESP_GMF_ERR_OK) {
+    ESP_LOGE(TAG, "esp_gmf_afe_manager_set_result_cb failed (ret=%d)",
+             static_cast<int>(manager_ret));
+    esp_gmf_afe_manager_destroy(manager);
     afe_config_free(cfg);
     return false;
   }
@@ -1222,7 +1232,9 @@ void EspAfe::manager_result_(afe_fetch_result_t *result) {
   if (!this->processing_active_.load(std::memory_order_acquire)) {
     return;
   }
-  if (result == nullptr || result->ret_value != ESP_OK || result->data == nullptr) {
+  // Match esp_gmf_afe_result_proc: data_size is the valid audio gate.
+  // ret_value is an AFE state (noise/speech/wake), not an esp_err_t.
+  if (result == nullptr || result->data == nullptr || result->data_size <= 0) {
     this->fetch_timeout_.fetch_add(1, std::memory_order_relaxed);
     return;
   }

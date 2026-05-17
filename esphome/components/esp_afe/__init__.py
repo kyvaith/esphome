@@ -31,11 +31,6 @@ def _validate_feature_config(config):
         raise cv.Invalid("dual-mic esp_afe requires se_enabled: true (SE/BSS is structural)")
     if config.get(CONF_INPUT_FORMAT) in ("MMR", "MMNR") and config[CONF_MIC_NUM] < 2:
         raise cv.Invalid(f"input_format: {config[CONF_INPUT_FORMAT]} requires mic_num: 2")
-    # AFE_TYPE_FD (esp-sr 2.4+) is the full-duplex pipeline with NLP baked in;
-    # it expects a dual-mic input feed. Reject the misconfiguration up-front
-    # rather than letting upstream silently downgrade.
-    if config.get("type") == "fd" and config[CONF_MIC_NUM] < 2:
-        raise cv.Invalid("type: fd requires mic_num: 2 (full-duplex pipeline expects dual-mic input)")
     return config
 
 
