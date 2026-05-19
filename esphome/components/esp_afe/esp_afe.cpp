@@ -51,6 +51,19 @@ static inline bool is_valid_func(const void *ptr) {
   return ptr != nullptr && esp_ptr_executable(ptr);
 }
 
+static const char *aec_nlp_level_name(int level) {
+  switch (level) {
+    case 0:
+      return "NORMAL";
+    case 1:
+      return "AGGRESSIVE";
+    case 2:
+      return "VERY_AGGRESSIVE";
+    default:
+      return "UNKNOWN";
+  }
+}
+
 void EspAfe::set_input_format_override(const char *fmt) {
   if (fmt == nullptr || fmt[0] == '\0') {
     this->input_format_override_[0] = '\0';
@@ -384,6 +397,7 @@ bool EspAfe::build_instance_(AfeInstance *instance) {
   cfg->aec_init = true;  // always init: AEC is LIVE_TOGGLE via vtable
   cfg->aec_filter_length = this->aec_filter_length_;
   cfg->aec_mode = this->derive_aec_mode_();
+  cfg->aec_nlp_level = static_cast<aec_nlp_level_t>(this->aec_nlp_level_);
 
   // On dual-mic AFE builds SE/BSS is structural. Espressif's AFE contract
   // downgrades to first-mic-only when SE is disabled, so dual-mic devices keep
@@ -986,9 +1000,9 @@ void EspAfe::dump_config() {
   ESP_LOGCONFIG(TAG, "  Type: %s", type_name);
   ESP_LOGCONFIG(TAG, "  Mode: %s", this->afe_mode_ == AFE_MODE_LOW_COST ? "LOW_COST" : "HIGH_PERF");
   ESP_LOGCONFIG(TAG, "  Microphones: transport=%d, afe=%d", this->mic_num_, this->afe_mic_channels_());
-  ESP_LOGCONFIG(TAG, "  AEC: %s (filter_length=%d)",
+  ESP_LOGCONFIG(TAG, "  AEC: %s (filter_length=%d, nlp=%s)",
                 this->aec_enabled_.load(std::memory_order_relaxed) ? "ON" : "OFF",
-                this->aec_filter_length_);
+                this->aec_filter_length_, aec_nlp_level_name(this->aec_nlp_level_));
   ESP_LOGCONFIG(TAG, "  AEC scratch: ~12 KB internal (always allocated, "
                 "live-toggle via esp-sr vtable; off-at-boot still pays the cost)");
   ESP_LOGCONFIG(TAG, "  NS: %s (WebRTC)",
@@ -1399,16 +1413,9 @@ void EspAfe::manager_result_(afe_fetch_result_t *result) {
 
   const size_t want = static_cast<size_t>(result->data_size);
   const int16_t *src = result->data;
-  BssOutputSource selected_source = this->bss_output_source_.load(std::memory_order_relaxed);
   if (this->is_se_enabled() && !this->aec_enabled_.load(std::memory_order_relaxed)) {
     const int out_samples = static_cast<int>(want / sizeof(int16_t));
-    this->log_bss_output_debug_(result, out_samples, selected_source);
-    int raw_channel = -1;
-    if (selected_source == BssOutputSource::BSS_OUTPUT_0) {
-      raw_channel = 0;
-    } else if (selected_source == BssOutputSource::AUTO || selected_source == BssOutputSource::BSS_OUTPUT_1) {
-      raw_channel = 1;
-    }
+    constexpr int raw_channel = 1;
     if (raw_channel >= 0 && result->raw_data != nullptr &&
         raw_channel < result->raw_data_channels && this->fetch_raw_select_scratch_ == nullptr) {
       this->fetch_raw_select_scratch_ = static_cast<int16_t *>(

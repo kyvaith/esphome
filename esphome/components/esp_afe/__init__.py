@@ -44,6 +44,7 @@ CONF_ESP_AFE_ID = "esp_afe_id"
 CONF_MIC_NUM = "mic_num"
 CONF_AEC_ENABLED = "aec_enabled"
 CONF_AEC_FILTER_LENGTH = "aec_filter_length"
+CONF_AEC_NLP_LEVEL = "aec_nlp_level"
 CONF_SE_ENABLED = "se_enabled"
 CONF_NS_ENABLED = "ns_enabled"
 CONF_VAD_ENABLED = "vad_enabled"
@@ -78,6 +79,12 @@ AFE_MODES = {
     "high_perf": 1,  # AFE_MODE_HIGH_PERF
 }
 
+AEC_NLP_LEVELS = {
+    "normal": 0,
+    "aggressive": 1,
+    "very_aggressive": 2,
+}
+
 MEMORY_ALLOC_MODES = {
     "more_internal": 1,
     "internal_psram_balance": 2,
@@ -101,6 +108,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_MIC_NUM, default=1): cv.int_range(min=1, max=2),
             cv.Optional(CONF_AEC_ENABLED, default=True): cv.boolean,
             cv.Optional(CONF_AEC_FILTER_LENGTH, default=4): cv.int_range(min=1, max=8),
+            cv.Optional(CONF_AEC_NLP_LEVEL, default="aggressive"): cv.enum(
+                AEC_NLP_LEVELS, lower=True
+            ),
             cv.Optional(CONF_SE_ENABLED, default=False): cv.boolean,
             cv.Optional(CONF_NS_ENABLED, default=True): cv.boolean,
             cv.Optional(CONF_VAD_ENABLED, default=False): cv.boolean,
@@ -155,6 +165,7 @@ async def to_code(config):
     cg.add(var.set_mic_num(config[CONF_MIC_NUM]))
     cg.add(var.set_aec_enabled(config[CONF_AEC_ENABLED]))
     cg.add(var.set_aec_filter_length(config[CONF_AEC_FILTER_LENGTH]))
+    cg.add(var.set_aec_nlp_level(config[CONF_AEC_NLP_LEVEL]))
     cg.add(var.set_se_enabled(config[CONF_SE_ENABLED]))
     cg.add(var.set_ns_enabled(config[CONF_NS_ENABLED]))
     cg.add(var.set_vad_enabled(config[CONF_VAD_ENABLED]))

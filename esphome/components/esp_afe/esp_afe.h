@@ -97,6 +97,7 @@ class EspAfe : public Component, public AudioProcessor {
   void set_mic_num(int num) { this->mic_num_ = num; }
   void set_aec_enabled(bool en) { this->aec_enabled_.store(en, std::memory_order_relaxed); }
   void set_aec_filter_length(int len) { this->aec_filter_length_ = len; }
+  void set_aec_nlp_level(int level) { this->aec_nlp_level_ = level; }
   void set_se_enabled(bool en) { this->se_enabled_.store(en, std::memory_order_relaxed); }
   void set_ns_enabled(bool en) { this->ns_enabled_.store(en, std::memory_order_relaxed); }
   void set_vad_enabled(bool en) { this->vad_enabled_.store(en, std::memory_order_relaxed); }
@@ -272,6 +273,7 @@ class EspAfe : public Component, public AudioProcessor {
   // spurious teardown if a future caller reads them off the main loop.
   std::atomic<bool> aec_enabled_{true};
   int aec_filter_length_{4};
+  int aec_nlp_level_{1};  // AEC_NLP_LEVEL_AGGR
   std::atomic<bool> se_enabled_{false};
   std::atomic<bool> ns_enabled_{true};
   std::atomic<bool> vad_enabled_{false};
