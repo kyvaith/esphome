@@ -60,6 +60,126 @@ void EspAfe::set_input_format_override(const char *fmt) {
   this->input_format_override_[sizeof(this->input_format_override_) - 1] = '\0';
 }
 
+const char *EspAfe::bss_output_source_name_() const {
+  switch (this->bss_output_source_.load(std::memory_order_relaxed)) {
+    case BssOutputSource::AUTO:
+      return "Auto (speaker leak check)";
+    case BssOutputSource::BSS_OUTPUT_0:
+      return "AFE multi-output 1";
+    case BssOutputSource::BSS_OUTPUT_1:
+      return "AFE multi-output 2";
+    default:
+      return "unknown";
+  }
+}
+
+bool EspAfe::set_bss_output_source_name(const char *name) {
+  if (name == nullptr) {
+    return false;
+  }
+  BssOutputSource source;
+  if (std::strcmp(name, "Auto (speaker leak check)") == 0 ||
+      std::strcmp(name, "Auto (AEC-off speaker leak check)") == 0 ||
+      std::strcmp(name, "Auto (AFE multi-output 1)") == 0 ||
+      std::strcmp(name, "Auto (AFE multi-output 2)") == 0 ||
+      std::strcmp(name, "Auto (BSS output 1)") == 0 ||
+      std::strcmp(name, "Auto (BSS output 2)") == 0 ||
+      std::strcmp(name, "ESP-SR target output") == 0 ||
+      std::strcmp(name, "result_data") == 0 ||
+      std::strcmp(name, "auto") == 0) {
+    source = BssOutputSource::AUTO;
+  } else if (std::strcmp(name, "AFE multi-output 1") == 0 ||
+             std::strcmp(name, "BSS output 1") == 0 ||
+             std::strcmp(name, "raw0") == 0) {
+    source = BssOutputSource::BSS_OUTPUT_0;
+  } else if (std::strcmp(name, "AFE multi-output 2") == 0 ||
+             std::strcmp(name, "BSS output 2") == 0 ||
+             std::strcmp(name, "raw1") == 0) {
+    source = BssOutputSource::BSS_OUTPUT_1;
+  } else {
+    ESP_LOGW(TAG, "Unknown AFE output source: %s", name);
+    return false;
+  }
+  this->bss_output_source_.store(source, std::memory_order_relaxed);
+  this->bss_output_debug_frames_.store(0, std::memory_order_relaxed);
+  ESP_LOGI(TAG, "AFE output source: %s", this->bss_output_source_name_());
+  return true;
+}
+
+uint16_t EspAfe::peak_i16_(const int16_t *data, int samples, int stride) {
+  if (data == nullptr || samples <= 0 || stride <= 0) {
+    return 0;
+  }
+  uint16_t peak = 0;
+  for (int i = 0; i < samples; i++) {
+    int32_t v = data[i * stride];
+    if (v < 0) {
+      v = -v;
+    }
+    if (v > 32768) {
+      v = 32768;
+    }
+    if (static_cast<uint16_t>(v) > peak) {
+      peak = static_cast<uint16_t>(v);
+    }
+  }
+  return peak;
+}
+
+void EspAfe::log_bss_output_debug_(const afe_fetch_result_t *result, int out_samples,
+                                   BssOutputSource selected) const {
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_DEBUG
+  if (result == nullptr || result->data == nullptr || out_samples <= 0) {
+    return;
+  }
+  uint32_t n = this->bss_output_debug_frames_.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (n > 5 && (n % 32) != 0) {
+    return;
+  }
+
+  float data_rms = compute_rms_dbfs_i16(result->data, static_cast<size_t>(out_samples));
+  uint16_t data_peak = peak_i16_(result->data, out_samples, 1);
+  float raw0_rms = -120.0f;
+  float raw1_rms = -120.0f;
+  uint16_t raw0_peak = 0;
+  uint16_t raw1_peak = 0;
+  if (result->raw_data != nullptr && result->raw_data_channels > 0) {
+    raw0_rms = compute_rms_dbfs_i16(result->raw_data, static_cast<size_t>(out_samples),
+                                    static_cast<size_t>(result->raw_data_channels));
+    raw0_peak = peak_i16_(result->raw_data, out_samples, result->raw_data_channels);
+    if (result->raw_data_channels > 1) {
+      raw1_rms = compute_rms_dbfs_i16(result->raw_data + 1, static_cast<size_t>(out_samples),
+                                      static_cast<size_t>(result->raw_data_channels));
+      raw1_peak = peak_i16_(result->raw_data + 1, out_samples, result->raw_data_channels);
+    }
+  }
+
+  const char *selected_name = "auto";
+  switch (selected) {
+    case BssOutputSource::BSS_OUTPUT_0:
+      selected_name = "afe_multi_output_1";
+      break;
+    case BssOutputSource::BSS_OUTPUT_1:
+      selected_name = "afe_multi_output_2";
+      break;
+    case BssOutputSource::AUTO:
+    default:
+      selected_name = "auto_afe_multi_output_2";
+      break;
+  }
+  ESP_LOGD(TAG,
+           "AFE output probe[%u]: selected=%s trigger=%d raw_ch=%d "
+           "data=%.1fdB/%u bss1=%.1fdB/%u bss2=%.1fdB/%u",
+           (unsigned) n, selected_name, result->trigger_channel_id, result->raw_data_channels,
+           data_rms, (unsigned) data_peak, raw0_rms, (unsigned) raw0_peak,
+           raw1_rms, (unsigned) raw1_peak);
+#else
+  (void) result;
+  (void) out_samples;
+  (void) selected;
+#endif
+}
+
 static inline void update_peak_atomic(std::atomic<uint32_t> &peak, uint32_t value) {
   uint32_t current = peak.load(std::memory_order_relaxed);
   while (value > current &&
@@ -786,10 +906,10 @@ bool EspAfe::set_reinit_flag_(std::atomic<bool> &flag, bool enabled, const char 
   if (flag.load(std::memory_order_relaxed) == enabled) {
     return true;
   }
-  // Graph reconfiguration can alter frame sizes. Dual-mic SE/BSS is
-  // structural, so runtime feature toggles normally keep the external spec
-  // stable; keep the old guard for any future boot-only graph change.
-  bool allow_frame_change = (&flag == &this->se_enabled_);
+  // ESP-SR can legitimately change the feed/fetch quantum when NS/AGC are
+  // rebuilt. Accept that public contract and let frame_spec_revision_ make the
+  // duplex task restart with the new shape.
+  constexpr bool allow_frame_change = true;
   // AFE torn down (all-off) and a feature is coming back: commit the flag and
   // rebuild via recreate_instance_.
   if (this->afe_stopped_.load(std::memory_order_acquire)) {
@@ -1279,6 +1399,36 @@ void EspAfe::manager_result_(afe_fetch_result_t *result) {
 
   const size_t want = static_cast<size_t>(result->data_size);
   const int16_t *src = result->data;
+  BssOutputSource selected_source = this->bss_output_source_.load(std::memory_order_relaxed);
+  if (this->is_se_enabled() && !this->aec_enabled_.load(std::memory_order_relaxed)) {
+    const int out_samples = static_cast<int>(want / sizeof(int16_t));
+    this->log_bss_output_debug_(result, out_samples, selected_source);
+    int raw_channel = -1;
+    if (selected_source == BssOutputSource::BSS_OUTPUT_0) {
+      raw_channel = 0;
+    } else if (selected_source == BssOutputSource::AUTO || selected_source == BssOutputSource::BSS_OUTPUT_1) {
+      raw_channel = 1;
+    }
+    if (raw_channel >= 0 && result->raw_data != nullptr &&
+        raw_channel < result->raw_data_channels && this->fetch_raw_select_scratch_ == nullptr) {
+      this->fetch_raw_select_scratch_ = static_cast<int16_t *>(
+          heap_caps_malloc(want, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+      if (this->fetch_raw_select_scratch_ == nullptr) {
+        ESP_LOGW(TAG, "AFE output source fallback: raw-select scratch alloc failed (%u bytes)",
+                 (unsigned) want);
+      }
+    }
+    if (raw_channel >= 0 && result->raw_data != nullptr &&
+        raw_channel < result->raw_data_channels && this->fetch_raw_select_scratch_ != nullptr) {
+      const int stride = result->raw_data_channels;
+      const int16_t *raw = result->raw_data + raw_channel;
+      int16_t *dst = this->fetch_raw_select_scratch_;
+      for (int i = 0; i < out_samples; i++) {
+        dst[i] = raw[i * stride];
+      }
+      src = dst;
+    }
+  }
   size_t wrote = this->fetch_output_ring_->write_without_replacement(src, want,
                                                                      pdMS_TO_TICKS(5), false);
   if (wrote != want) {
@@ -1479,6 +1629,10 @@ bool EspAfe::prepare_runtime_() {
 
 void EspAfe::release_runtime_buffers_() {
   this->fetch_output_ring_.reset();
+  if (this->fetch_raw_select_scratch_ != nullptr) {
+    heap_caps_free(this->fetch_raw_select_scratch_);
+    this->fetch_raw_select_scratch_ = nullptr;
+  }
   this->feed_input_ring_ = nullptr;
   if (this->feed_input_ring_storage_ != nullptr) {
     heap_caps_free(this->feed_input_ring_storage_);

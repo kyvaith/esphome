@@ -22,7 +22,11 @@ component, with runtime AEC control and diagnostic sensors. Supports single-mic
 [mic1 + mic2 + ref] -> |AEC| -> |Speech Enhancement| -> [clean output]
 ```
 
-> **Note**: When Speech Enhancement is active, esp-sr replaces NS and AGC with spatial source separation. The underlying BSS stage suppresses directional noise better than NS but does not normalize volume (no AGC). NS and AGC switches have no effect while Speech Enhancement is active.
+> **Note**: When Speech Enhancement is active, esp-sr prioritizes BSS over NS.
+> `afe_config_check()` may clear `ns_init` on dual-mic builds. AGC remains an
+> AFE stage when the checked runtime config reports `agc_init: true`, but the
+> stock GMF manager does not expose it as a live feature, so AGC changes require
+> AFE reinit.
 
 Unlike `esp_aec` (standalone echo cancellation only), `esp_afe` provides a full signal processing pipeline. Both components implement the `AudioProcessor` interface, but they are **only** drop-in replacements behind `i2s_audio_duplex`. With standalone `intercom_api` (no duplex driver), use `esp_aec`: the AFE feed/fetch task model needs the steady producer that `i2s_audio_duplex` provides and that the standalone intercom path does not.
 
@@ -34,8 +38,8 @@ Unlike `esp_aec` (standalone echo cancellation only), `esp_afe` provides a full 
 | Speech Enhancement | No | Yes (dual-mic) |
 | Noise Suppression | No | Yes (WebRTC, single-mic mode) |
 | Voice Activity Detection | No | Yes (WebRTC) |
-| Automatic Gain Control | No | Yes (WebRTC, single-mic mode) |
-| Runtime switches in HA | AEC only | AEC, NS, VAD, AGC. SE/BSS is structural on dual-mic builds |
+| Automatic Gain Control | No | Yes (WebRTC, when kept by `afe_config_check`) |
+| Runtime switches in HA | AEC only | AEC, VAD, AGC where exposed. NS is single-mic only; SE/BSS is structural on dual-mic builds |
 | Diagnostic sensors | No | Input volume, output RMS, voice presence |
 | CPU usage (SR LOW_COST) | ~22% Core 0 | ~23% Core 0 (8.4% feed + 15% fetch) |
 | Internal RAM overhead | ~80 KB | ~100 KB (MR), ~120 KB (MMR with Speech Enhancement) |
@@ -216,15 +220,62 @@ switch:
 | Switch | Icon | Description |
 |--------|------|-------------|
 | `aec` | `mdi:ear-hearing` | Echo cancellation toggle (live, no audio gap) |
-| `ns` | `mdi:volume-off` | Noise suppression toggle (requires AFE reinit, ~70ms gap). No effect when SE is active |
+| `ns` | `mdi:volume-off` | Noise suppression toggle (requires AFE reinit, ~70ms gap). Use only on single-mic AFE builds; esp-sr prioritizes SE/BSS over NS on dual-mic input |
 | `vad` | `mdi:account-voice` | Voice activity detection toggle (live via GMF AFE manager, no rebuild) |
-| `agc` | `mdi:tune-vertical` | Auto gain control toggle (requires AFE reinit). No effect when SE is active |
+| `agc` | `mdi:tune-vertical` | Auto gain control toggle (requires AFE reinit). Expose on builds whose checked runtime config keeps `agc_init: true` |
 
 Use `ALWAYS_OFF` for VAD restore on full-experience intercom targets unless the
 product explicitly wants always-listening VAD. VAD is useful at runtime, but a
 restored ON state must not make the parent duplex component register a
 background microphone consumer during boot. If a product really needs VAD to
 own the background mic path, set `continuous_vad: true` explicitly.
+
+Dual-mic packages may also expose a diagnostic `AFE Output Source (AEC Off)`
+template select. This select does not change the feed sent to ESP-SR. The
+dual-mic feed still contains both microphone channels plus the playback
+reference. The select only chooses which mono output is forwarded after
+`fetch()` when SE/BSS is active and AEC is off.
+
+The naming here follows the public ESP-SR contract exactly:
+`afe_fetch_result_t.data` is the target output, while
+`afe_fetch_result_t.raw_data` is multi-channel output data. Espressif does not
+document a stable semantic name for `raw_data` channel 0/1, so the user-facing
+labels intentionally say only "AFE multi-output channel". They are not physical
+microphone channels.
+
+```
+TDM / codec input
+  mic 1 slot --------------+
+  mic 2 slot --------------+--> i2s_audio_duplex --> ESP-SR feed frame
+  speaker reference slot --+                         M M [N] R
+                                                         |
+                                                         v
+                                                ESP-SR AFE pipeline
+                                                SE/BSS + AEC/AGC/VAD
+                                                         |
+                                                         v
+                                                afe_fetch_result_t
+                                                         |
+                    +------------------------------------+------------------------------------+
+                    |                                    |                                    |
+         data: ESP-SR target output          raw_data multi-output 1           raw_data multi-output 2
+                    |                                    |                                    |
+                    +-------------------------- selected mono output -------------------------+
+                                                         |
+                                                         v
+                                             MWW / Voice Assistant / intercom
+```
+
+| Option | Meaning |
+|--------|---------|
+| `Auto (speaker leak check)` | Default. With AEC on, use ESP-SR target output. With SE/BSS active and AEC off, use `raw_data` channel 1 so disabling AEC exposes speaker leakage for diagnostics |
+| `AFE multi-output 1` | With SE/BSS active and AEC off, use `afe_fetch_result_t.raw_data` channel 0 |
+| `AFE multi-output 2` | With SE/BSS active and AEC off, use `afe_fetch_result_t.raw_data` channel 1 |
+
+The select does not import private GMF helpers. It uses public ESP-SR
+`afe_fetch_result_t.raw_data` fields and is intended for AEC-off diagnostics on
+dual-mic hardware. Normal AEC-on operation keeps using `result->data`, no
+matter which option is selected.
 
 ### Binary Sensor Platform
 
@@ -301,8 +352,8 @@ manager exposes only part of the lower ESP-SR runtime control surface:
 |---------|-------------|-----------|-------|
 | AEC | Live GMF manager call | None | Immediate on/off via `ESP_AFE_FEATURE_AEC` |
 | SE | Boot-time graph choice | N/A | Structural on dual-mic builds; single-mic users should use a single-mic config or `esp_aec` |
-| NS | AFE reinit | ~70ms | ESP-SR exposes low-level vtable entries, but `esp_gmf_afe_manager` does not expose an NS feature enum. No effect when SE is active |
-| AGC | AFE reinit | ~70ms | Same manager limitation as NS. No effect when SE is active |
+| NS | AFE reinit | ~70ms plus possible audio-task restart | ESP-SR exposes low-level vtable entries, but `esp_gmf_afe_manager` does not expose an NS feature enum. Not exposed on dual-mic SE/BSS builds because `afe_config_check()` prioritizes BSS over NS |
+| AGC | AFE reinit | ~70ms plus possible audio-task restart | Same manager limitation as NS. ESP-SR may change the feed/fetch frame size when AGC is toggled; the duplex task follows `frame_spec_revision_` and restarts with the new shape |
 | VAD | Live GMF manager call | None | Immediate on/off via `ESP_AFE_FEATURE_VAD`; GMF resets VAD after each toggle |
 
 **Why reinit for NS/AGC?** ESP-SR's low-level AFE vtable includes
@@ -471,7 +522,7 @@ risk on the same network path that carries TTS/media, API and intercom traffic.
 
 ## Known Limitations
 
-1. **Speech Enhancement replaces NS and AGC**: When Speech Enhancement is active, esp-sr uses the pipeline `AEC -> Speech Enhancement -> output`, skipping NS and AGC internally. It provides spatial noise suppression but does not normalize volume. On dual-mic builds SE/BSS is structural and is not a runtime toggle.
+1. **Speech Enhancement replaces NS on dual-mic input**: With two microphone channels, `afe_config_check()` prioritizes SE/BSS over NS. SE/BSS is structural and is not a runtime toggle. AGC is independent in the public config and may remain active if the checked runtime config reports `agc_init: true`.
 
 2. **Runtime toggles**: AEC and VAD are toggled through the GMF manager without rebuilding. NS/AGC and type/mode changes still require a full AFE reinit.
 

@@ -22,6 +22,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 
 namespace esphome {
@@ -138,6 +139,8 @@ class EspAfe : public Component, public AudioProcessor {
   bool is_ns_enabled() const { return this->ns_enabled_.load(std::memory_order_relaxed); }
   bool is_vad_enabled() const { return this->vad_enabled_.load(std::memory_order_relaxed); }
   bool is_agc_enabled() const { return this->agc_enabled_.load(std::memory_order_relaxed); }
+  bool set_bss_output_source_name(const char *name);
+  const char *get_bss_output_source_name() const { return this->bss_output_source_name_(); }
   // Current mode string ("sr_low_cost", "sr_high_perf", "voip_low_cost",
   // "voip_high_perf", "fd_low_cost", "fd_high_perf"). Used by UI templates
   // to publish the actual live mode after a set_action so optimistic selects
@@ -242,6 +245,23 @@ class EspAfe : public Component, public AudioProcessor {
 
   // Fetch bridge: GMF result callback writes, process() reads non-blocking.
   audio_processor::RingBufferPtr fetch_output_ring_;
+
+  enum class BssOutputSource : uint8_t {
+    AUTO = 0,
+    BSS_OUTPUT_0,
+    BSS_OUTPUT_1,
+  };
+  const char *bss_output_source_name_() const;
+  static uint16_t peak_i16_(const int16_t *data, int samples, int stride);
+  void log_bss_output_debug_(const afe_fetch_result_t *result, int out_samples,
+                             BssOutputSource selected) const;
+
+  // Scratch for optional deinterleaving of raw_data[n] when SE/BSS is on and
+  // AEC is off. This is diagnostic only; normal AEC-on operation uses
+  // result->data from ESP-SR.
+  int16_t *fetch_raw_select_scratch_{nullptr};
+  std::atomic<BssOutputSource> bss_output_source_{BssOutputSource::AUTO};
+  mutable std::atomic<uint32_t> bss_output_debug_frames_{0};
 
   // Config (set from Python, used in setup())
   int afe_type_{0};         // AFE_TYPE_SR
