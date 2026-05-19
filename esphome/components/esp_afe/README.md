@@ -147,12 +147,14 @@ esp_afe:
 
 > **Buffer placement guidance**: defaults are tuned for the fastest Core 0
 > audio path. Total internal cost when all three flags are `false` is about
-> 19 KB. On S3 full-experience builds where AFE/MWW/TLS compete for internal
-> RAM, the public S3/Spotpear YAMLs place the feed scratch, feed ring and fetch
-> ring in PSRAM. P4 is intentionally different: the public P4 YAMLs keep those
-> AFE staging buffers internal because previous P4 runtime tests showed the
-> ESP-SR path is sensitive to that placement. Each flag remains independent for
-> board-specific tuning. Cumulative Core 0 cost when all are `true` is about
+> 19 KB. Current public dual-mic full-experience profiles use a hybrid
+> placement: `feed_buf_in_psram: false`, `feed_ring_in_psram: true`,
+> `fetch_ring_in_psram: false`. This keeps hot per-frame scratch/output
+> internal while moving the larger feed staging ring to PSRAM. The surrounding
+> `i2s_audio_duplex` and `intercom_api` frame buffers can still live in PSRAM
+> to preserve contiguous internal/DMA heap for HTTPS media, TTS and intercom.
+> Each flag remains independent for board-specific tuning. Cumulative Core 0
+> cost when all are `true` is about
 > 68 us/frame on Octal PSRAM 80 MHz, lower bound.
 
 > **Defaults are designed so that a minimal config already enables AEC + NS + AGC.** You only need to declare options that differ from the defaults. In particular:
@@ -236,17 +238,16 @@ restored ON state must not make the parent duplex component register a
 background microphone consumer during boot. If a product really needs VAD to
 own the background mic path, set `continuous_vad: true` explicitly.
 
-Dual-mic packages may also expose a diagnostic `AFE Output Source (AEC Off)`
-template select. This select does not change the feed sent to ESP-SR. The
-dual-mic feed still contains both microphone channels plus the playback
-reference. The select only chooses which mono output is forwarded after
-`fetch()` when SE/BSS is active and AEC is off.
+Dual-mic packages keep the feed sent to ESP-SR fixed: both microphone channels
+plus the playback reference are always present. The AEC-off diagnostic fallback
+only changes which mono output is forwarded after `fetch()` when SE/BSS is
+active and AEC is off.
 
 The naming here follows the public ESP-SR contract exactly:
 `afe_fetch_result_t.data` is the target output, while
 `afe_fetch_result_t.raw_data` is multi-channel output data. Espressif does not
-document a stable semantic name for `raw_data` channel 0/1, so the user-facing
-labels intentionally say only "AFE multi-output channel". They are not physical
+document a stable semantic name for `raw_data` channel 0/1, so debug naming
+intentionally says only "AFE multi-output channel". They are not physical
 microphone channels.
 
 ```
@@ -257,7 +258,7 @@ TDM / codec input
                                                          |
                                                          v
                                                 ESP-SR AFE pipeline
-                                                SE/BSS + AEC/AGC/VAD
+                                                SE/BSS + AEC/VAD
                                                          |
                                                          v
                                                 afe_fetch_result_t
@@ -274,14 +275,14 @@ TDM / codec input
 
 | Option | Meaning |
 |--------|---------|
-| `Auto (speaker leak check)` | Default. With AEC on, use ESP-SR target output. With SE/BSS active and AEC off, use `raw_data` channel 1 so disabling AEC exposes speaker leakage for diagnostics |
-| `AFE multi-output 1` | With SE/BSS active and AEC off, use `afe_fetch_result_t.raw_data` channel 0 |
-| `AFE multi-output 2` | With SE/BSS active and AEC off, use `afe_fetch_result_t.raw_data` channel 1 |
+| AEC on | Forward `afe_fetch_result_t.data`, the ESP-SR target output |
+| AEC off with dual-mic SE/BSS active | Forward `afe_fetch_result_t.raw_data` channel 1 so the user can hear speaker leakage during AEC diagnostics |
+| AEC off without dual-mic SE/BSS raw output | Fall back to `afe_fetch_result_t.data` |
 
-The select does not import private GMF helpers. It uses public ESP-SR
+The fallback does not import private GMF helpers. It uses public ESP-SR
 `afe_fetch_result_t.raw_data` fields and is intended for AEC-off diagnostics on
-dual-mic hardware. Normal AEC-on operation keeps using `result->data`, no
-matter which option is selected.
+dual-mic hardware. Public packages do not expose a user-facing output-source
+select.
 
 ### Binary Sensor Platform
 

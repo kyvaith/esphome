@@ -92,7 +92,7 @@ Invariants the processor promises:
 Invariants the caller must respect:
 1. Observe `frame_spec_revision()` before reading `frame_spec()` each cycle.
 2. Never call `process()` concurrently from multiple tasks.
-3. When `frame_spec` changes, internal buffers (decimator ratio, reference extraction, ring sizes) must be recomputed before the next call.
+3. When `frame_spec` changes, internal buffers (rate-conversion ratio, reference extraction, ring sizes) must be recomputed before the next call.
 
 `i2s_audio_duplex` implements this with a permanent audio task that detects revision bumps at the top of each iteration and reinitialises its local buffers in place, without recreating the FreeRTOS task.
 
