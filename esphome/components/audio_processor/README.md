@@ -1,6 +1,6 @@
 # audio_processor
 
-Shared C++ interface for audio-processor components. Not a user-facing component on its own: it only exposes the headers that `esp_aec`, `esp_afe`, `i2s_audio_duplex` and `intercom_api` consume.
+Shared C++ interface for audio-processor components. Not a user-facing component on its own: it only exposes the headers that `esp_aec`, `esp_afe`, `esp_audio_stack` and `intercom_api` consume.
 
 ## Contents
 - [Purpose](#purpose)
@@ -18,7 +18,7 @@ Shared C++ interface for audio-processor components. Not a user-facing component
 
 ## Purpose
 
-Defines the `AudioProcessor` virtual base class and the value types used to describe a processing frame (`FrameSpec`), feature toggles (`AudioFeature`, `FeatureControl`) and telemetry (`ProcessorTelemetry`). Consumers reference the interface, never the concrete implementation, so swapping `esp_aec` for `esp_afe` in a device YAML does not require code changes in `i2s_audio_duplex` or `intercom_api` (subject to the runtime compatibility caveats covered below).
+Defines the `AudioProcessor` virtual base class and the value types used to describe a processing frame (`FrameSpec`), feature toggles (`AudioFeature`, `FeatureControl`) and telemetry (`ProcessorTelemetry`). Consumers reference the interface, never the concrete implementation, so swapping `esp_aec` for `esp_afe` in a device YAML does not require code changes in `esp_audio_stack` or `intercom_api` (subject to the runtime compatibility caveats covered below).
 
 Also ships `ring_buffer_caps.h`, a small helper that creates ring buffers with an explicit memory-placement policy (internal RAM vs PSRAM). Audio hot-path buffers should always be allocated through the helper so placement is auditable at boot.
 
@@ -29,13 +29,13 @@ The audio stack supports four topologies:
 | Topology | Producer | Processor |
 |----------|----------|-----------|
 | Intercom only, dual-bus | ESPHome `microphone` + `intercom_api` mic capture | `esp_aec` |
-| Intercom only, single-bus | `i2s_audio_duplex` | `esp_aec` |
-| Full intercom + VA, single-bus AEC only | `i2s_audio_duplex` | `esp_aec` |
-| Full intercom + VA, single-bus full AFE | `i2s_audio_duplex` | `esp_afe` |
+| Intercom only, single-bus | `esp_audio_stack` | `esp_aec` |
+| Full intercom + VA, single-bus AEC only | `esp_audio_stack` | `esp_aec` |
+| Full intercom + VA, single-bus full AFE | `esp_audio_stack` | `esp_afe` |
 
-The `AudioProcessor` contract lets the same consumers (`i2s_audio_duplex`, `intercom_api`) work with any of these processors at YAML level, and lets future processors drop in without touching consumer code. It is also unit-testable: the contract can be mocked without bringing up DMA.
+The `AudioProcessor` contract lets the same consumers (`esp_audio_stack`, `intercom_api`) work with any of these processors at YAML level, and lets future processors drop in without touching consumer code. It is also unit-testable: the contract can be mocked without bringing up DMA.
 
-Note: `esp_afe` only works behind `i2s_audio_duplex`. Its feed/fetch task model needs a steady producer that pushes fixed 512-sample 16 kHz frames. The standalone `intercom_api` mic path does not provide that, so the `esp_aec` + `intercom_api` combination is the only supported one for dual-bus setups. The interface is wider than the supported configurations.
+Note: `esp_afe` only works behind `esp_audio_stack`. Its feed/fetch task model needs a steady producer that pushes fixed 512-sample 16 kHz frames. The standalone `intercom_api` mic path does not provide that, so the `esp_aec` + `intercom_api` combination is the only supported one for dual-bus setups. The interface is wider than the supported configurations.
 
 ## YAML usage
 
@@ -47,7 +47,7 @@ external_components:
       type: git
       url: https://github.com/n-IA-hane/esphome-intercom
       ref: main
-    components: [audio_processor, esp_aec, i2s_audio_duplex, intercom_api]
+    components: [audio_processor, esp_aec, esp_audio_stack, intercom_api]
 ```
 
 You never instantiate `audio_processor:` directly in a YAML. Listing it in `external_components` makes its headers available to the other components.
@@ -94,7 +94,7 @@ Invariants the caller must respect:
 2. Never call `process()` concurrently from multiple tasks.
 3. When `frame_spec` changes, internal buffers (rate-conversion ratio, reference extraction, ring sizes) must be recomputed before the next call.
 
-`i2s_audio_duplex` implements this with a permanent audio task that detects revision bumps at the top of each iteration and reinitialises its local buffers in place, without recreating the FreeRTOS task.
+`esp_audio_stack` implements this with a permanent audio task that detects revision bumps at the top of each iteration and reinitialises its local buffers in place, without recreating the FreeRTOS task.
 
 ## Frame spec and revision
 
@@ -203,7 +203,7 @@ None directly: the component only defines interfaces. Each implementation owns i
 
 ## Logging
 
-This base class does not own a TAG of its own - concrete implementations log under their own component tag (`esp_aec`, `esp_afe`). Telemetry consumers (e.g. `i2s_audio_duplex`) log telemetry strings under `i2s_duplex` and gate the entire compute block behind the YAML `telemetry: true` flag *and* compile-time `ESPHOME_LOG_LEVEL >= DEBUG`. See [`i2s_audio_duplex/README.md` → Logging](../i2s_audio_duplex/README.md#logging) for the gating contract.
+This base class does not own a TAG of its own - concrete implementations log under their own component tag (`esp_aec`, `esp_afe`). Telemetry consumers (e.g. `esp_audio_stack`) log telemetry strings under `audio_stack` and gate the entire compute block behind the YAML `telemetry: true` flag *and* compile-time `ESPHOME_LOG_LEVEL >= DEBUG`. See [`esp_audio_stack/README.md` → Logging](../esp_audio_stack/README.md#logging) for the gating contract.
 
 ## Dependencies
 
@@ -212,6 +212,6 @@ ESP32 only. `ring_buffer_caps.cpp` links against ESP-IDF heap capabilities and
 
 ## Known constraints
 
-- Frame sample counts must match between producer (the processor) and consumer (`i2s_audio_duplex` or `intercom_api`). Consumers read `frame_spec_revision()` at init and poll in their audio loop; on change they restart to re-read `frame_spec()`.
+- Frame sample counts must match between producer (the processor) and consumer (`esp_audio_stack` or `intercom_api`). Consumers read `frame_spec_revision()` at init and poll in their audio loop; on change they restart to re-read `frame_spec()`.
 - Placement policy is advisory: ESPHome's default `RingBuffer::create` falls back between pools silently. Prefer the `ring_buffer_caps.h` helpers whenever placement matters.
-- `esp_afe` is type-compatible with `intercom_api.processor_id` but not behaviourally compatible when `intercom_api` runs without `i2s_audio_duplex` in front. The AFE feed/fetch tasks need a steady producer at fixed-size frames.
+- `esp_afe` is type-compatible with `intercom_api.processor_id` but not behaviourally compatible when `intercom_api` runs without `esp_audio_stack` in front. The AFE feed/fetch tasks need a steady producer at fixed-size frames.

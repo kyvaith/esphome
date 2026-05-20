@@ -63,6 +63,12 @@ CONF_AFE_LINEAR_GAIN = "afe_linear_gain"
 CONF_TASK_CORE = "task_core"
 CONF_TASK_PRIORITY = "task_priority"
 CONF_RINGBUF_SIZE = "ringbuf_size"
+CONF_FEED_TASK_CORE = "feed_task_core"
+CONF_FEED_TASK_PRIORITY = "feed_task_priority"
+CONF_FEED_TASK_STACK_SIZE = "feed_task_stack_size"
+CONF_FETCH_TASK_CORE = "fetch_task_core"
+CONF_FETCH_TASK_PRIORITY = "fetch_task_priority"
+CONF_FETCH_TASK_STACK_SIZE = "fetch_task_stack_size"
 CONF_FEED_BUF_IN_PSRAM = "feed_buf_in_psram"
 CONF_FEED_RING_IN_PSRAM = "feed_ring_in_psram"
 CONF_FETCH_RING_IN_PSRAM = "fetch_ring_in_psram"
@@ -71,7 +77,7 @@ CONF_INPUT_FORMAT = "input_format"
 AFE_TYPES = {
     "sr": 0,  # AFE_TYPE_SR: speech recognition, linear AEC (preserves spectrum for MWW)
     "vc": 1,  # AFE_TYPE_VC: voice communication, nonlinear AEC (residual suppressor)
-    "fd": 3,  # AFE_TYPE_FD: full-duplex pipeline (esp-sr 2.4+), NLP baked in for two-way speech
+    "fd": 3,  # AFE_TYPE_FD: full-audio stack pipeline (esp-sr 2.4+), NLP baked in for two-way speech
 }
 
 AFE_MODES = {
@@ -98,6 +104,17 @@ INPUT_FORMATS = {
     "mmr": "MMR",
     "mmnr": "MMNR",
 }
+
+
+def _validate_task_layout(config):
+    if config[CONF_FEED_TASK_CORE] == config[CONF_FETCH_TASK_CORE]:
+        raise cv.Invalid(
+            "feed_task_core and fetch_task_core must be different; "
+            "Espressif GMF AFE troubleshooting recommends separate cores "
+            "to avoid AFE task watchdog timeouts"
+        )
+    return config
+
 
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
@@ -134,6 +151,15 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_TASK_CORE, default=1): cv.int_range(min=0, max=1),
             cv.Optional(CONF_TASK_PRIORITY, default=5): cv.int_range(min=1, max=24),
             cv.Optional(CONF_RINGBUF_SIZE, default=8): cv.int_range(min=2, max=32),
+            # Official esp_gmf_afe_manager task knobs. Espressif defaults put
+            # feed and fetch on different cores to avoid AFE task watchdog
+            # contention under load.
+            cv.Optional(CONF_FEED_TASK_CORE, default=0): cv.int_range(min=0, max=1),
+            cv.Optional(CONF_FEED_TASK_PRIORITY, default=5): cv.int_range(min=1, max=23),
+            cv.Optional(CONF_FEED_TASK_STACK_SIZE, default=3072): cv.int_range(min=1024, max=16384),
+            cv.Optional(CONF_FETCH_TASK_CORE, default=1): cv.int_range(min=0, max=1),
+            cv.Optional(CONF_FETCH_TASK_PRIORITY, default=5): cv.int_range(min=1, max=23),
+            cv.Optional(CONF_FETCH_TASK_STACK_SIZE, default=3072): cv.int_range(min=1024, max=16384),
             # Optional esp-sr AFE input format override for diagnostics and
             # board-specific dual-mic layouts. Default auto preserves the
             # historical MR/MMR behavior. On single-mic runtime shape the
@@ -153,6 +179,7 @@ CONFIG_SCHEMA = cv.All(
     ).extend(cv.COMPONENT_SCHEMA),
     _validate_esp32_variant,
     _validate_feature_config,
+    _validate_task_layout,
 )
 
 
@@ -184,6 +211,12 @@ async def to_code(config):
     cg.add(var.set_task_core(config[CONF_TASK_CORE]))
     cg.add(var.set_task_priority(config[CONF_TASK_PRIORITY]))
     cg.add(var.set_ringbuf_size(config[CONF_RINGBUF_SIZE]))
+    cg.add(var.set_feed_task_core(config[CONF_FEED_TASK_CORE]))
+    cg.add(var.set_feed_task_priority(config[CONF_FEED_TASK_PRIORITY]))
+    cg.add(var.set_feed_task_stack_size(config[CONF_FEED_TASK_STACK_SIZE]))
+    cg.add(var.set_fetch_task_core(config[CONF_FETCH_TASK_CORE]))
+    cg.add(var.set_fetch_task_priority(config[CONF_FETCH_TASK_PRIORITY]))
+    cg.add(var.set_fetch_task_stack_size(config[CONF_FETCH_TASK_STACK_SIZE]))
     cg.add(var.set_input_format_override(config[CONF_INPUT_FORMAT]))
     cg.add(var.set_feed_buf_in_psram(config[CONF_FEED_BUF_IN_PSRAM]))
     cg.add(var.set_feed_ring_in_psram(config[CONF_FEED_RING_IN_PSRAM]))
@@ -192,8 +225,9 @@ async def to_code(config):
     cg.add_define("USE_AUDIO_PROCESSOR")
 
     # gmf_ai_audio provides Espressif's canonical AFE manager
-    # (feed/fetch/suspend/runtime feature toggles) and pins esp-sr 2.4.4.
-    add_idf_component(name="espressif/gmf_ai_audio", ref="0.8.2")
+    # (feed/fetch/suspend/runtime feature toggles). Track registry latest on
+    # this experimental branch; "*" is ESPHome's unpinned registry constraint.
+    add_idf_component(name="espressif/gmf_ai_audio", ref="*")
 
 
 @automation.register_action(

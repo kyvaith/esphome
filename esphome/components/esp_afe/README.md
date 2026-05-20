@@ -1,6 +1,6 @@
 # ESP AFE - Full Audio Front-End Pipeline
 
-> ⚠ **Important: `esp_afe` requires `i2s_audio_duplex` in front of it.** It is **not** a drop-in alternative to `esp_aec` for `intercom_api` standalone setups (dual-bus MEMS + amp without a codec). The AFE pipeline expects fixed 512-sample 16 kHz frames at a steady cadence, which only `i2s_audio_duplex` produces. If you use `intercom_api` without `i2s_audio_duplex`, set `processor_id:` to an `esp_aec` component, not `esp_afe`. See [docs/reference.md](../../../docs/reference.md#audio-processing-components) for the full topology matrix.
+> ⚠ **Important: `esp_afe` requires `esp_audio_stack` in front of it.** It is **not** a drop-in alternative to `esp_aec` for `intercom_api` standalone setups (dual-bus MEMS + amp without a codec). The AFE pipeline expects fixed 512-sample 16 kHz frames at a steady cadence, which only `esp_audio_stack` produces. If you use `intercom_api` without `esp_audio_stack`, set `processor_id:` to an `esp_aec` component, not `esp_afe`. See [docs/reference.md](../../../docs/reference.md#audio-processing-components) for the full topology matrix.
 
 ESPHome component wrapping Espressif's **ESP-SR AFE** (Audio Front End)
 through `esp_gmf_afe_manager`. Provides a complete audio processing pipeline
@@ -28,7 +28,7 @@ Supports single-mic (MR) and dual-mic (MMR/MMNR) configurations.
 > feature, so AGC changes require AFE reinit. The public dual-mic packages keep
 > AGC disabled and do not expose an AGC switch.
 
-Unlike `esp_aec` (standalone echo cancellation only), `esp_afe` provides a full signal processing pipeline. Both components implement the `AudioProcessor` interface, but they are **only** drop-in replacements behind `i2s_audio_duplex`. With standalone `intercom_api` (no duplex driver), use `esp_aec`: the AFE feed/fetch task model needs the steady producer that `i2s_audio_duplex` provides and that the standalone intercom path does not.
+Unlike `esp_aec` (standalone echo cancellation only), `esp_afe` provides a full signal processing pipeline. Both components implement the `AudioProcessor` interface, but they are **only** drop-in replacements behind `esp_audio_stack`. With standalone `intercom_api` (no audio stack driver), use `esp_aec`: the AFE feed/fetch task model needs the steady producer that `esp_audio_stack` provides and that the standalone intercom path does not.
 
 ### When to use esp_afe vs esp_aec
 
@@ -52,8 +52,8 @@ Unlike `esp_aec` (standalone echo cancellation only), `esp_afe` provides a full 
 
 - **ESP32-S3** or **ESP32-P4** with PSRAM
 - ESP-IDF framework
-- `i2s_audio_duplex` in front of the processor. `intercom_api` can use the
-  processed mic only when it sits behind the duplex driver.
+- `esp_audio_stack` in front of the processor. `intercom_api` can use the
+  processed mic only when it sits behind the audio stack driver.
 
 ## Installation
 
@@ -63,7 +63,7 @@ external_components:
       type: git
       url: https://github.com/n-IA-hane/esphome-intercom
       ref: main
-    components: [audio_processor, i2s_audio_duplex, esp_afe]
+    components: [audio_processor, esp_audio_stack, esp_afe]
 ```
 
 > **Note**: `audio_processor` must be listed in `components:` because it provides the shared `AudioProcessor` interface header. It is also auto-loaded by `esp_afe`, but ESPHome's `external_components` loader requires it to be explicitly listed.
@@ -78,8 +78,8 @@ esp_afe:
   type: sr
   mode: low_cost
 
-i2s_audio_duplex:
-  id: i2s_duplex
+esp_audio_stack:
+  id: audio_stack
   # ... pins ...
   processor_id: afe_processor
 ```
@@ -107,9 +107,15 @@ esp_afe:
   agc_target_level: 3         # AGC target level (0-31, lower = louder)
   memory_alloc_mode: more_psram  # Memory allocation strategy
   afe_linear_gain: 1.0        # Linear gain applied to output (0.1-10.0)
-  task_core: 1                # FreeRTOS task core (0 or 1)
-  task_priority: 5            # esp-sr SE worker priority (default 5)
+  task_core: 1                # esp-sr SE/BSS worker core preference
+  task_priority: 5            # esp-sr SE/BSS worker priority
   ringbuf_size: 8             # Internal ring buffer size in frames (default 8)
+  feed_task_core: 0           # GMF AFE manager feed task core
+  feed_task_priority: 5       # GMF AFE manager feed task priority
+  feed_task_stack_size: 3072  # GMF AFE manager feed task stack
+  fetch_task_core: 1          # GMF AFE manager fetch task core
+  fetch_task_priority: 5      # GMF AFE manager fetch task priority
+  fetch_task_stack_size: 3072 # GMF AFE manager fetch task stack
 ```
 
 ### Configuration Options
@@ -138,9 +144,15 @@ esp_afe:
 | `agc_target_level` | int | `3` | AGC target level (0-31, lower value = louder output) |
 | `memory_alloc_mode` | string | `more_psram` | Memory allocation: `more_internal`, `internal_psram_balance`, `more_psram` |
 | `afe_linear_gain` | float | `1.0` | Linear gain multiplier applied to output (0.1-10.0) |
-| `task_core` | int | `1` | FreeRTOS task core affinity (0 or 1) |
-| `task_priority` | int | `5` | Priority for the esp-sr SE/BSS worker task. Default follows Espressif's GMF AFE manager profile. |
+| `task_core` | int | `1` | Core preference for the esp-sr SE/BSS worker task created by the AFE instance. |
+| `task_priority` | int | `5` | Priority for the esp-sr SE/BSS worker task. |
 | `ringbuf_size` | int | `8` | Internal ring buffer size in frames (2-32). Larger = more latency tolerance, more memory |
+| `feed_task_core` | int | `0` | Official `esp_gmf_afe_manager` feed task core. Espressif defaults this to Core 0. |
+| `feed_task_priority` | int | `5` | Official `esp_gmf_afe_manager` feed task priority. |
+| `feed_task_stack_size` | int | `3072` | Official `esp_gmf_afe_manager` feed task stack size in bytes. |
+| `fetch_task_core` | int | `1` | Official `esp_gmf_afe_manager` fetch task core. Espressif defaults feed/fetch to different cores. |
+| `fetch_task_priority` | int | `5` | Official `esp_gmf_afe_manager` fetch task priority. |
+| `fetch_task_stack_size` | int | `3072` | Official `esp_gmf_afe_manager` fetch task stack size in bytes. |
 | `feed_buf_in_psram` | bool | `false` | Place the ~3 KB sample-interleave scratch buffer in PSRAM. Default internal saves ~41 us/frame on Core 0 (the buffer is written and re-read every audio frame). Set `true` on memory-constrained builds to free internal RAM at the cost of Core 0 PSRAM traffic. |
 | `feed_ring_in_psram` | bool | `false` | Place the ~12 KB feed staging ring (I2S task to GMF feed task) in PSRAM. Default internal saves ~20 us/frame on Core 0 writes. Set `true` if internal RAM headroom is tight. |
 | `fetch_ring_in_psram` | bool | `false` | Place the ~4 KB fetch output ring (GMF fetch task to I2S task) in PSRAM. Default internal saves ~6.8 us/frame on Core 0 reads. Set `true` if internal RAM headroom is tight. |
@@ -151,7 +163,7 @@ esp_afe:
 > placement: `feed_buf_in_psram: false`, `feed_ring_in_psram: true`,
 > `fetch_ring_in_psram: false`. This keeps hot per-frame scratch/output
 > internal while moving the larger feed staging ring to PSRAM. The surrounding
-> `i2s_audio_duplex` and `intercom_api` frame buffers can still live in PSRAM
+> `esp_audio_stack` and `intercom_api` frame buffers can still live in PSRAM
 > to preserve contiguous internal/DMA heap for HTTPS media, TTS and intercom.
 > Each flag remains independent for board-specific tuning. Cumulative Core 0
 > cost when all are `true` is about
@@ -160,7 +172,7 @@ esp_afe:
 > **Defaults are designed so that a minimal config already enables AEC + NS + AGC.** You only need to declare options that differ from the defaults. In particular:
 > - `aec_enabled`, `ns_enabled`, `agc_enabled` are **true** by default. Only set them if you want to **disable** a feature.
 > - `se_enabled` and `vad_enabled` are **false** by default. Set `se_enabled: true` for every dual-mic AFE target; set `vad_enabled: true` only when the product explicitly needs VAD active at boot.
-> - `memory_alloc_mode` defaults to `more_psram`, `task_core` to `1`, `task_priority` to `5`. Override only if your hardware requires it.
+> - `memory_alloc_mode` defaults to `more_psram`, SE/BSS worker defaults to `task_core: 1` / `task_priority: 5`, and the GMF AFE manager defaults to `feed_task_core: 0` / `fetch_task_core: 1`. Override only if telemetry shows task starvation or a board-specific scheduling issue.
 >
 > **Minimal single-mic** (AEC + NS + AGC out of the box):
 > ```yaml
@@ -234,7 +246,7 @@ switch:
 
 Use `ALWAYS_OFF` for VAD restore on full-experience intercom targets unless the
 product explicitly wants always-listening VAD. VAD is useful at runtime, but a
-restored ON state must not make the parent duplex component register a
+restored ON state must not make the parent audio stack component register a
 background microphone consumer during boot. If a product really needs VAD to
 own the background mic path, set `continuous_vad: true` explicitly.
 
@@ -253,7 +265,7 @@ microphone channels.
 ```
 TDM / codec input
   mic 1 slot --------------+
-  mic 2 slot --------------+--> i2s_audio_duplex --> ESP-SR feed frame
+  mic 2 slot --------------+--> esp_audio_stack --> ESP-SR feed frame
   speaker reference slot --+                         M M [N] R
                                                          |
                                                          v
@@ -386,16 +398,16 @@ The reinit is safe: the previous AFE is destroyed first (ESP-SR's FFT resources 
                        |
             +----------+-----------+
             |                      |
-    i2s_audio_duplex         intercom_api
+    esp_audio_stack         intercom_api
     (processor_id)         (processor_id)
 ```
 
-Both `EspAec` and `EspAfe` implement `AudioProcessor`. The consumer components (`i2s_audio_duplex` and `intercom_api`) call `process(mic, ref, out)` without knowing which implementation is behind it. The supported pairings are:
+Both `EspAec` and `EspAfe` implement `AudioProcessor`. The consumer components (`esp_audio_stack` and `intercom_api`) call `process(mic, ref, out)` without knowing which implementation is behind it. The supported pairings are:
 
 | Consumer | esp_aec | esp_afe |
 |----------|---------|---------|
-| `i2s_audio_duplex` | yes | yes |
-| `intercom_api` standalone (no `i2s_audio_duplex`) | yes | **no** (the AFE feed/fetch tasks need the steady frames `i2s_audio_duplex` produces) |
+| `esp_audio_stack` | yes | yes |
+| `intercom_api` standalone (no `esp_audio_stack`) | yes | **no** (the AFE feed/fetch tasks need the steady frames `esp_audio_stack` produces) |
 
 ### Internal Pipeline
 
@@ -424,7 +436,7 @@ external_components:
       type: git
       url: https://github.com/n-IA-hane/esphome-intercom
       ref: main
-    components: [audio_processor, intercom_api, i2s_audio_duplex, esp_afe]
+    components: [audio_processor, intercom_api, esp_audio_stack, esp_afe]
 
 esp_afe:
   id: afe_processor
@@ -435,8 +447,8 @@ esp_afe:
   vad_enabled: true           # Voice activity detection (default: false)
   agc_enabled: false          # public dual-mic profiles keep AGC out of HA/runtime controls
 
-i2s_audio_duplex:
-  id: i2s_duplex
+esp_audio_stack:
+  id: audio_stack
   # ... I2S pins ...
   processor_id: afe_processor
   buffers_in_psram: true
@@ -569,7 +581,7 @@ The component logs under the tag `esp_afe`.
 
 - `WARN` - GMF manager resume/toggle failures, AFE setup returned NULL config, esp-sr allocation failures, mode-switch rebuild failure
 - `INFO` - `AFE active: GMF manager resumed`, `AFE idle: GMF manager suspended`, `AEC/VAD enabled/disabled via GMF AFE manager`, and rebuild lifecycle messages for runtime mode switches
-- `DEBUG` - bridge feed/fetch instrumentation (only when `i2s_audio_duplex.telemetry: true`), per-stage enable/disable acks
+- `DEBUG` - bridge feed/fetch instrumentation (only when `esp_audio_stack.telemetry: true`), per-stage enable/disable acks
 
 To mute AFE chatter without losing project-wide DEBUG: `logger.logs.esp_afe: INFO`.
 

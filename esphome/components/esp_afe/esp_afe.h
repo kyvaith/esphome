@@ -84,7 +84,7 @@ class EspAfe : public Component, public AudioProcessor {
   ProcessorTelemetry telemetry() const override;
   bool reconfigure(int type, int mode) override;
   // Pause the GMF AFE manager when no consumer is listening (called by
-  // i2s_audio_duplex when the last mic consumer leaves) and resume it when a
+  // esp_audio_stack when the last mic consumer leaves) and resume it when a
   // consumer re-attaches. Idempotent.
   void set_processing_active(bool active) override;
   bool wants_background_input() const override {
@@ -116,6 +116,12 @@ class EspAfe : public Component, public AudioProcessor {
   void set_task_core(int core) { this->task_core_ = core; }
   void set_task_priority(int prio) { this->task_priority_ = prio; }
   void set_ringbuf_size(int size) { this->ringbuf_size_ = size; }
+  void set_feed_task_core(int core) { this->feed_task_core_ = core; }
+  void set_feed_task_priority(int prio) { this->feed_task_priority_ = prio; }
+  void set_feed_task_stack_size(int size) { this->feed_task_stack_size_ = size; }
+  void set_fetch_task_core(int core) { this->fetch_task_core_ = core; }
+  void set_fetch_task_priority(int prio) { this->fetch_task_priority_ = prio; }
+  void set_fetch_task_stack_size(int size) { this->fetch_task_stack_size_ = size; }
   void set_input_format_override(const char *fmt);
   void set_feed_buf_in_psram(bool psram) { this->feed_buf_in_psram_ = psram; }
   void set_feed_ring_in_psram(bool psram) { this->feed_ring_in_psram_ = psram; }
@@ -225,7 +231,7 @@ class EspAfe : public Component, public AudioProcessor {
   // passing through recreate_instance_ first.
   int last_process_mic_channels_{0};
 
-  // i2s_audio_duplex stages full AFE feed frames into this NOSPLIT bridge.
+  // esp_audio_stack stages full AFE feed frames into this NOSPLIT bridge.
   // Espressif's GMF AFE manager owns the feed/fetch tasks and pulls from the
   // bridge through manager_read_().
   static constexpr size_t kBridgeRingFrames = 4;
@@ -292,6 +298,12 @@ class EspAfe : public Component, public AudioProcessor {
   int task_core_{1};
   int task_priority_{5};
   int ringbuf_size_{8};
+  int feed_task_core_{ESP_AFE_MANAGER_FEED_TASK_CORE};
+  int feed_task_priority_{ESP_AFE_MANAGER_FEED_TASK_PRIO};
+  int feed_task_stack_size_{ESP_AFE_MANAGER_FEED_TASK_STACK};
+  int fetch_task_core_{ESP_AFE_MANAGER_FETCH_TASK_CORE};
+  int fetch_task_priority_{ESP_AFE_MANAGER_FETCH_TASK_PRIO};
+  int fetch_task_stack_size_{ESP_AFE_MANAGER_FETCH_TASK_STACK};
   char input_format_override_[5]{};
   bool feed_buf_in_psram_{false};   // ~3 KB scratch (default internal, ~41 us/frame faster on Core 0)
   bool feed_ring_in_psram_{false};  // ~12 KB staging ring (default internal, ~20 us/frame faster on Core 0)

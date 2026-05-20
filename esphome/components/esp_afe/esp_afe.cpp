@@ -40,7 +40,7 @@ static constexpr AfeModePreset AFE_MODE_PRESETS[] = {
     {"fd_high_perf", 3 /* AFE_TYPE_FD */, AFE_MODE_HIGH_PERF},
 };
 
-#if defined(USE_DUPLEX_TELEMETRY) && ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_DEBUG
+#if defined(USE_ESP_AUDIO_STACK_TELEMETRY) && ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_DEBUG
 #define ESP_AFE_TIMING_TELEMETRY 1
 #else
 #define ESP_AFE_TIMING_TELEMETRY 0
@@ -453,12 +453,12 @@ bool EspAfe::build_instance_(AfeInstance *instance) {
 
   esp_gmf_afe_manager_cfg_t manager_cfg{};
   manager_cfg.afe_cfg = cfg;
-  manager_cfg.feed_task_setting.prio = ESP_AFE_MANAGER_FEED_TASK_PRIO;
-  manager_cfg.feed_task_setting.core = ESP_AFE_MANAGER_FEED_TASK_CORE;
-  manager_cfg.feed_task_setting.stack_size = ESP_AFE_MANAGER_FEED_TASK_STACK;
-  manager_cfg.fetch_task_setting.prio = ESP_AFE_MANAGER_FETCH_TASK_PRIO;
-  manager_cfg.fetch_task_setting.core = ESP_AFE_MANAGER_FETCH_TASK_CORE;
-  manager_cfg.fetch_task_setting.stack_size = ESP_AFE_MANAGER_FETCH_TASK_STACK;
+  manager_cfg.feed_task_setting.prio = this->feed_task_priority_;
+  manager_cfg.feed_task_setting.core = this->feed_task_core_;
+  manager_cfg.feed_task_setting.stack_size = this->feed_task_stack_size_;
+  manager_cfg.fetch_task_setting.prio = this->fetch_task_priority_;
+  manager_cfg.fetch_task_setting.core = this->fetch_task_core_;
+  manager_cfg.fetch_task_setting.stack_size = this->fetch_task_stack_size_;
   manager_cfg.read_cb = nullptr;
   manager_cfg.read_ctx = this;
   manager_cfg.result_cb = &EspAfe::manager_result_cb_;
@@ -721,7 +721,7 @@ bool EspAfe::recreate_instance_(bool require_same_frame_sizes) {
   // (already-detached) `this->*_chunksize_` fields which are zero at this
   // point. Using the last_spec_* members means a rollback to the previous
   // config does not spuriously bump frame_spec_revision_, which would make
-  // i2s_audio_duplex try to restart its audio task concurrently with our
+  // esp_audio_stack try to restart its audio task concurrently with our
   // fetch task recreation and race inside FreeRTOS.
   int new_mic_ch = this->afe_mic_channels_();
   bool spec_changed = (new_mic_ch != this->last_spec_mic_ch_ ||
@@ -1024,7 +1024,11 @@ void EspAfe::dump_config() {
   ESP_LOGCONFIG(TAG, "  Input format override: %s",
                 this->input_format_override_[0] ? this->input_format_override_ : "auto");
   ESP_LOGCONFIG(TAG, "  Alloc: %s, linear_gain=%.2f", this->memory_alloc_mode_to_str_(), this->afe_linear_gain_);
-  ESP_LOGCONFIG(TAG, "  Task: core=%d, priority=%d, ringbuf=%d", this->task_core_, this->task_priority_, this->ringbuf_size_);
+  ESP_LOGCONFIG(TAG, "  SE Task: core=%d, priority=%d, ringbuf=%d",
+                this->task_core_, this->task_priority_, this->ringbuf_size_);
+  ESP_LOGCONFIG(TAG, "  GMF Manager: feed core=%d prio=%d stack=%d, fetch core=%d prio=%d stack=%d",
+                this->feed_task_core_, this->feed_task_priority_, this->feed_task_stack_size_,
+                this->fetch_task_core_, this->fetch_task_priority_, this->fetch_task_stack_size_);
   ESP_LOGCONFIG(TAG, "  Process: %d samples, Feed: %d samples, Fetch: %d samples, Channels: %d",
                 this->process_chunksize_, this->feed_chunksize_, this->fetch_chunksize_, this->total_channels_);
   ESP_LOGCONFIG(TAG, "  Initialized: %s", this->is_initialized() ? "YES" : "NO");
