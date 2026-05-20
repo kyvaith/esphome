@@ -2,7 +2,7 @@
 
 #include "esphome/core/defines.h"
 
-#ifdef USE_ESP32
+#if defined(USE_ESP32) && defined(USE_ESP_AUDIO_STACK_HARDWARE_CODEC)
 
 #include <driver/i2s_types.h>
 #include <esp_codec_dev.h>
@@ -143,4 +143,4 @@ class CodecDevBackend {
 }  // namespace esp_audio_stack
 }  // namespace esphome
 
-#endif  // USE_ESP32
+#endif  // USE_ESP32 && USE_ESP_AUDIO_STACK_HARDWARE_CODEC

@@ -1,11 +1,16 @@
 #pragma once
 
+#include "esphome/core/defines.h"
+
 #ifdef USE_ESP32
 
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
-#include "codec_dev_backend.h"
 #include "../audio_processor/ring_buffer_caps.h"
+
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
+#include "codec_dev_backend.h"
+#endif
 
 #include <driver/i2s_std.h>
 #if SOC_I2S_SUPPORTS_TDM
@@ -69,6 +74,7 @@ static constexpr uint8_t MC_FIR_MAX_CH = 3;
 class FirDecimatorImpl;
 class MultiChannelFirDecimatorImpl;
 
+#if defined(USE_ESP_AUDIO_STACK_MONO_RX) || defined(USE_ESP_AUDIO_STACK_MONO_REF)
 // Sample-rate converter: consumes samples at high rate, produces at low rate.
 // Backed by Espressif esp_ae_rate_cvt from esp_audio_effects.
 class FirDecimator {
@@ -96,7 +102,9 @@ class FirDecimator {
  private:
   std::unique_ptr<FirDecimatorImpl> impl_;
 };
+#endif
 
+#ifdef USE_ESP_AUDIO_STACK_MULTI_RX
 // Multi-channel sample-rate converter: decimates N channels from TDM/stereo
 // rx_buffer in one pass. One esp_ae_rate_cvt handle processes all selected
 // channels so mic/ref latency stays coupled. Max 3 channels (MMR: mic1 + mic2 + ref).
@@ -134,6 +142,7 @@ class MultiChannelFirDecimator {
  private:
   std::unique_ptr<MultiChannelFirDecimatorImpl> impl_;
 };
+#endif
 
 /// Full-duplex I2S codec driver.
 ///
@@ -201,6 +210,7 @@ class ESPAudioStack : public Component {
   void set_mic_channel_right(bool right) { this->mic_channel_right_ = right; }
   void set_tx_slot_right(bool right) { this->tx_slot_right_ = right; }
   void set_slot_bit_width(uint8_t sbw) { this->slot_bit_width_ = sbw; }
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
   void set_codec_i2c_bus(i2c::I2CBus *bus) { this->codec_backend_.set_i2c_bus(bus); }
   void configure_es7210_codec(uint8_t address, uint8_t mic_selected, float input_gain_db,
                               bool has_ref_channel_gain, uint8_t ref_channel, float ref_channel_gain_db) {
@@ -231,6 +241,7 @@ class ESPAudioStack : public Component {
     cfg.no_dac_ref = no_dac_ref;
     this->codec_backend_.set_es8311_config(cfg);
   }
+#endif
 
   // AEC setter
   void set_processor(AudioProcessor *aec);
@@ -338,12 +349,18 @@ class ESPAudioStack : public Component {
   }
   void set_buffers_in_psram(bool psram) { this->buffers_in_psram_ = psram; }
   void set_audio_stack_in_psram(bool psram) { this->audio_stack_in_psram_ = psram; }
+#ifdef USE_ESP_AUDIO_STACK_MONO_REF
   void set_aec_reference_mode(bool use_ring_buffer) { this->aec_use_ring_buffer_ = use_ring_buffer; }
   void set_aec_ref_buffer_ms(uint32_t ms) { this->aec_ref_buffer_ms_ = ms; }
+#else
+  void set_aec_reference_mode(bool use_ring_buffer) { (void) use_ring_buffer; }
+  void set_aec_ref_buffer_ms(uint32_t ms) { (void) ms; }
+#endif
   void set_aec_ref_ring_in_psram(bool psram) { this->aec_ref_ring_in_psram_ = psram; }
   void set_telemetry_log_interval_frames(uint16_t frames) { this->telemetry_log_interval_frames_ = frames; }
   void set_rate_cvt_complexity(uint8_t complexity) { this->rate_cvt_complexity_ = complexity; }
   void set_rate_cvt_perf_type(uint8_t perf_type) { this->rate_cvt_perf_type_ = perf_type; }
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
   void configure_gmf_reader_io(uint32_t io_size, uint32_t buffer_size, uint32_t task_stack_size,
                                uint8_t task_priority, uint8_t task_core, bool task_stack_in_psram,
                                bool speed_monitor, int32_t task_timeout_ms) {
@@ -372,15 +389,18 @@ class ESPAudioStack : public Component {
     cfg.task_timeout_ms = task_timeout_ms;
     this->codec_backend_.set_gmf_writer_config(cfg);
   }
+#endif
  protected:
   bool init_audio_stack_();
   bool prepare_i2s_channels_();
   bool enable_i2s_channels_();
   void close_audio_io_();
   void deinit_i2s_();
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
   bool setup_codec_backend_(i2s_clock_src_t clk_src);
   CodecDevBackend::SampleConfig make_tx_sample_config_() const;
   CodecDevBackend::SampleConfig make_rx_sample_config_() const;
+#endif
 
   static void audio_task(void *param);
   // Top-level task entry: outer loop that spawns one audio_session_ per start()/stop()
@@ -400,6 +420,7 @@ class ESPAudioStack : public Component {
     uint8_t i2s_bps{2};       // 2 or 4 bytes per I2S sample
     uint8_t num_ch{1};        // TX channels
     bool use_stereo_aec_ref{false};
+    bool use_tdm_bus{false};
     bool use_tdm_ref{false};
     bool ref_channel_right{false};
     bool correct_dc_offset{false};
@@ -481,17 +502,23 @@ class ESPAudioStack : public Component {
   void process_rx_path_(AudioTaskCtx &ctx);
   void process_aec_and_callbacks_(AudioTaskCtx &ctx);
   void process_tx_path_(AudioTaskCtx &ctx);
+#ifdef USE_ESP_AUDIO_STACK_TDM_BUS
   void update_tdm_slot_levels_(const AudioTaskCtx &ctx);
+#endif
   bool format_tx_frame_(AudioTaskCtx &ctx, void **tx_data, size_t *tx_bytes);
+#ifdef USE_ESP_AUDIO_STACK_32BIT
   bool tx_bit_cvt_16_to_32_(uint8_t channels, const void *in, uint32_t sample_num, void *out);
+#endif
 #ifdef USE_AUDIO_PROCESSOR
   void run_processor_(AudioTaskCtx &ctx);
 #endif
 
+#ifdef USE_ESP_AUDIO_STACK_MONO_REF
   // Fill ctx.spk_ref_buffer for the mono AEC path (ring buffer or previous
   // frame, zero-filled only when no reference exists). TDM and stereo paths
   // pre-fill the buffer during RX deinterleave and must not call this.
   void fill_mono_aec_reference_(AudioTaskCtx &ctx);
+#endif
 
   // Pre-allocate audio task working buffers as soon as the processor frame
   // shape is known. Buffers persist across internal stop()+start() cycles so
@@ -528,14 +555,22 @@ class ESPAudioStack : public Component {
   uint8_t rate_cvt_perf_type_{1};      // esp_ae_rate_cvt perf type: 0=memory, 1=speed
 
   // Espressif rate converters for mic and software-reference paths.
+#ifdef USE_ESP_AUDIO_STACK_MULTI_RX
   MultiChannelFirDecimator rx_decimator_;  // Multi-channel: TDM/stereo RX path
+#endif
+#ifdef USE_ESP_AUDIO_STACK_MONO_RX
   FirDecimator mic_decimator_;             // Mono RX without TDM/stereo
+#endif
+#ifdef USE_ESP_AUDIO_STACK_MONO_REF
   FirDecimator play_ref_decimator_;        // Mono mode: bus-rate ref from play() converted in audio_task
+#endif
 
   // I2S handles managed as a coordinated RX/TX pair
   i2s_chan_handle_t tx_handle_{nullptr};
   i2s_chan_handle_t rx_handle_{nullptr};
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
   CodecDevBackend codec_backend_;
+#endif
 
 #ifdef USE_ESP_AUDIO_STACK_DUAL_BUS
   struct I2SBusConfig {
@@ -598,12 +633,10 @@ class ESPAudioStack : public Component {
   void log_memory_snapshot_(const char *label) const;
   void service_speaker_reset_();
 
-  // TDM AEC reference health: incremented every frame the reference
-  // slot reads "silent" (RMS < threshold) while the speaker is active.
-  // High values mean the hardware-mapped reference (e.g. P4 ES7210
-  // MIC3) isn't picking up the DAC loopback; user should switch
-  // use_tdm_reference: false and rely on the software ring instead.
+#ifdef USE_ESP_AUDIO_STACK_TDM_REF_DIAGNOSTIC
+  // TDM AEC reference health: debug-only counter for slot-map bring-up.
   std::atomic<uint32_t> tdm_ref_silent_frames_{0};
+#endif
 
   // DC-HPF state, persistent across audio_session_ restarts.
   int32_t dc_prev_input_persistent_{0};
@@ -627,6 +660,7 @@ class ESPAudioStack : public Component {
   std::atomic<bool> processor_enabled_{false};  // Runtime toggle (only enabled when processor_ is set)
   std::atomic<bool> processor_background_consumer_registered_{false};
   void sync_processor_background_consumer_();
+#ifdef USE_ESP_AUDIO_STACK_MONO_REF
   int16_t *direct_aec_ref_{nullptr};     // AEC reference from previous TX frame (processor rate, mono mode)
   bool direct_aec_ref_valid_{false};     // True after first TX frame has been saved
 
@@ -634,6 +668,7 @@ class ESPAudioStack : public Component {
   bool aec_use_ring_buffer_{false};      // Config: use ring buffer instead of previous frame
   uint32_t aec_ref_buffer_ms_{80};       // Config: ring buffer size in ms
   audio_processor::RingBufferPtr aec_ref_ring_buffer_;  // Ring buffer for AEC ref (processor rate, post-volume)
+#endif
 
   // Volume control (atomic: written from main loop, read from audio task via snapshot)
   std::atomic<float> mic_gain_{1.0f};         // 0.0 - 2.0 (1.0 = unity gain, applied AFTER AEC)
@@ -689,23 +724,37 @@ class ESPAudioStack : public Component {
   int16_t *prealloc_spk_buffer_{nullptr};
   int16_t *prealloc_spk_ref_buffer_{nullptr};
   int16_t *prealloc_aec_output_{nullptr};
+#ifdef USE_ESP_AUDIO_STACK_TDM_BUS
   int16_t *prealloc_tdm_tx_buffer_{nullptr};
-  int16_t *prealloc_tx_interleave_buffer_{nullptr};
   int16_t *prealloc_tx_silence_buffer_{nullptr};
+#endif
+#ifdef USE_ESP_AUDIO_STACK_STEREO_TX
+  int16_t *prealloc_tx_interleave_buffer_{nullptr};
+#endif
+#ifdef USE_ESP_AUDIO_STACK_32BIT
   int16_t *prealloc_tx_32_buffer_{nullptr};
+#endif
   size_t prealloc_rx_buffer_bytes_{0};
   size_t prealloc_mic_buffer_bytes_{0};
   size_t prealloc_processor_mic_buffer_bytes_{0};
   size_t prealloc_spk_buffer_bytes_{0};
   size_t prealloc_spk_ref_buffer_bytes_{0};
   size_t prealloc_aec_output_bytes_{0};
+#ifdef USE_ESP_AUDIO_STACK_TDM_BUS
   size_t prealloc_tdm_tx_buffer_bytes_{0};
-  size_t prealloc_tx_interleave_buffer_bytes_{0};
   size_t prealloc_tx_silence_buffer_bytes_{0};
+#endif
+#ifdef USE_ESP_AUDIO_STACK_STEREO_TX
+  size_t prealloc_tx_interleave_buffer_bytes_{0};
+#endif
+#ifdef USE_ESP_AUDIO_STACK_32BIT
   size_t prealloc_tx_32_buffer_bytes_{0};
+#endif
   bool audio_buffers_allocated_{false};
+#ifdef USE_ESP_AUDIO_STACK_32BIT
   void *tx_bit_cvt_handle_{nullptr};
   uint8_t tx_bit_cvt_channels_{0};
+#endif
 
 };
 

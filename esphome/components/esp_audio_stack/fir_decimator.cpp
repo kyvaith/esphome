@@ -245,6 +245,7 @@ class RateCvtHandle {
 };
 }  // namespace
 
+#if defined(USE_ESP_AUDIO_STACK_MONO_RX) || defined(USE_ESP_AUDIO_STACK_MONO_REF)
 class FirDecimatorImpl {
  public:
   ~FirDecimatorImpl() {
@@ -319,7 +320,9 @@ class FirDecimatorImpl {
   int16_t *scratch_{nullptr};
   size_t scratch_cap_{0};
 };
+#endif
 
+#ifdef USE_ESP_AUDIO_STACK_MULTI_RX
 class MultiChannelFirDecimatorImpl {
  public:
   ~MultiChannelFirDecimatorImpl() {
@@ -477,7 +480,9 @@ class MultiChannelFirDecimatorImpl {
   int16_t *bit_scratch_{nullptr};
   size_t bit_scratch_cap_{0};
 };
+#endif
 
+#if defined(USE_ESP_AUDIO_STACK_MONO_RX) || defined(USE_ESP_AUDIO_STACK_MONO_REF)
 FirDecimator::FirDecimator() : impl_(std::make_unique<FirDecimatorImpl>()) {}
 FirDecimator::~FirDecimator() = default;
 void FirDecimator::init(uint32_t ratio, uint32_t src_rate, uint32_t dest_rate,
@@ -499,7 +504,9 @@ bool FirDecimator::process_strided_32(const int32_t *in, int16_t *out, size_t ou
                                       size_t stride, size_t offset) {
   return this->impl_->process_strided_32(in, out, out_count, stride, offset);
 }
+#endif
 
+#ifdef USE_ESP_AUDIO_STACK_MULTI_RX
 MultiChannelFirDecimator::MultiChannelFirDecimator()
     : impl_(std::make_unique<MultiChannelFirDecimatorImpl>()) {}
 MultiChannelFirDecimator::~MultiChannelFirDecimator() = default;
@@ -525,6 +532,7 @@ bool MultiChannelFirDecimator::process_multi_32(const int32_t *in, size_t out_co
   return this->impl_->process_multi_32(in, out_count, in_stride, channel_offsets, mic_interleaved, mic_mono,
                                        ref_out, num_mic_ch);
 }
+#endif
 
 }  // namespace esp_audio_stack
 }  // namespace esphome

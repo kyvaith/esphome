@@ -1,8 +1,8 @@
-#include "codec_dev_backend.h"
-
 #include "esphome/core/defines.h"
 
-#ifdef USE_ESP32
+#if defined(USE_ESP32) && defined(USE_ESP_AUDIO_STACK_HARDWARE_CODEC)
+
+#include "codec_dev_backend.h"
 
 #include <audio_codec_ctrl_if.h>
 #include <audio_codec_data_if.h>
@@ -625,4 +625,4 @@ void CodecDevBackend::teardown() {
 }  // namespace esp_audio_stack
 }  // namespace esphome
 
-#endif  // USE_ESP32
+#endif  // USE_ESP32 && USE_ESP_AUDIO_STACK_HARDWARE_CODEC

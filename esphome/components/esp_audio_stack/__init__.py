@@ -471,6 +471,22 @@ def _final_validate(config):
                 f"gmf_io.{direction}.task_core={gmf_task_core} not available on {variant} "
                 "(single-core SoC)"
             )
+        if CONF_CODEC not in config:
+            active_gmf_io = any((
+                direction_conf.get(CONF_IO_SIZE, 0),
+                direction_conf.get(CONF_BUFFER_SIZE, 0),
+                direction_conf.get(CONF_TASK_STACK_SIZE, 0),
+                direction_conf.get(CONF_TASK_PRIORITY, 0),
+                direction_conf.get(CONF_TASK_STACK_IN_PSRAM, False),
+                direction_conf.get(CONF_SPEED_MONITOR, False),
+                direction_conf.get(CONF_TASK_TIMEOUT_MS, 0),
+            ))
+            if active_gmf_io:
+                raise cv.Invalid(
+                    f"gmf_io.{direction} requires codec:. No-codec profiles use "
+                    "esp_driver_i2s direct read/write, so GMF IO task/buffer knobs "
+                    "would not be applied."
+                )
 
     # APLL is only available on ESP32, ESP32-S2, and ESP32-P4
     APLL_VARIANTS = {VARIANT_ESP32, VARIANT_ESP32S2, VARIANT_ESP32P4}
@@ -521,14 +537,26 @@ def _add_config_setters(var, config, setters):
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
+    use_tdm_bus = config[CONF_USE_TDM_REFERENCE] or CONF_TDM_MIC_SLOTS in config
+    use_tdm_ref = config[CONF_USE_TDM_REFERENCE]
+    use_stereo_ref = config[CONF_USE_STEREO_AEC_REF]
+    has_processor = CONF_PROCESSOR_ID in config
+    output_rate = config.get(CONF_OUTPUT_SAMPLE_RATE, config[CONF_SAMPLE_RATE])
+    use_rate_cvt = output_rate != config[CONF_SAMPLE_RATE]
+    use_32bit = config[CONF_BITS_PER_SAMPLE] > 16
+    use_stereo_tx = config[CONF_NUM_CHANNELS] == 2 and not use_tdm_bus
+    use_multi_rx = use_tdm_bus or use_stereo_ref
+    use_mono_rx_effects = not use_multi_rx and (use_rate_cvt or use_32bit)
+    use_mono_ref = has_processor and not use_tdm_ref and not use_stereo_ref
 
     # esp_audio_stack refactor policy: track Espressif registry latest by default.
     # ESPHome requires `ref`; "*" maps to an unpinned/latest registry version.
     # Replace it only when a concrete upstream regression is documented.
+    has_hardware_codec = CONF_CODEC in config
     add_idf_component(name="espressif/esp_audio_effects", ref="*")
-    add_idf_component(name="espressif/esp_codec_dev", ref="*")
-    add_idf_component(name="espressif/gmf_audio", ref="*")
-    add_idf_component(name="espressif/gmf_io", ref="*")
+    if has_hardware_codec:
+        add_idf_component(name="espressif/esp_codec_dev", ref="*")
+        add_idf_component(name="espressif/gmf_io", ref="*")
     await cg.register_component(var, config)
 
     # Define USE_ESP_AUDIO_STACK so other components know it's available
@@ -536,6 +564,24 @@ async def to_code(config):
     cg.add_define("USE_ESP_AUDIO_STACK_GMF_BACKEND")
     if CONF_RX_BUS in config:
         cg.add_define("USE_ESP_AUDIO_STACK_DUAL_BUS")
+    if use_tdm_bus:
+        cg.add_define("USE_ESP_AUDIO_STACK_TDM_BUS")
+    if use_tdm_ref:
+        cg.add_define("USE_ESP_AUDIO_STACK_TDM_REF")
+    if use_stereo_ref:
+        cg.add_define("USE_ESP_AUDIO_STACK_STEREO_REF")
+    if use_multi_rx:
+        cg.add_define("USE_ESP_AUDIO_STACK_MULTI_RX")
+    if use_mono_rx_effects:
+        cg.add_define("USE_ESP_AUDIO_STACK_MONO_RX")
+    if use_mono_ref:
+        cg.add_define("USE_ESP_AUDIO_STACK_MONO_REF")
+    if use_stereo_tx:
+        cg.add_define("USE_ESP_AUDIO_STACK_STEREO_TX")
+    if use_32bit:
+        cg.add_define("USE_ESP_AUDIO_STACK_32BIT")
+    if has_hardware_codec:
+        cg.add_define("USE_ESP_AUDIO_STACK_HARDWARE_CODEC")
     include_builtin_idf_component("esp_driver_i2s")
     add_idf_sdkconfig_option("CONFIG_I2S_ISR_IRAM_SAFE", True)
     gmf_io = config[CONF_GMF_IO]
@@ -614,7 +660,6 @@ async def to_code(config):
     # TDM slot configuration. `use_tdm_reference` means the AEC reference comes
     # from a TDM slot; `tdm_mic_slots` alone keeps the TDM bus but lets AEC use
     # the software speaker reference path.
-    use_tdm_bus = config[CONF_USE_TDM_REFERENCE] or CONF_TDM_MIC_SLOTS in config
     if use_tdm_bus:
         cg.add(var.set_use_tdm_bus(True))
         cg.add(var.set_use_tdm_reference(config[CONF_USE_TDM_REFERENCE]))
@@ -625,7 +670,7 @@ async def to_code(config):
             cg.add(var.set_secondary_tdm_mic_slot(mic_slots[1]))
         cg.add(var.set_tdm_ref_slot(config[CONF_TDM_REF_SLOT]))
 
-    if CONF_CODEC in config:
+    if has_hardware_codec:
         codec_conf = config[CONF_CODEC]
         i2c_bus = await cg.get_variable(codec_conf[CONF_I2C_ID])
         cg.add(var.set_codec_i2c_bus(i2c_bus))
@@ -674,21 +719,22 @@ async def to_code(config):
     audio_effects = config[CONF_AUDIO_EFFECTS]
     cg.add(var.set_rate_cvt_complexity(audio_effects[CONF_RATE_CVT_COMPLEXITY]))
     cg.add(var.set_rate_cvt_perf_type(0 if audio_effects[CONF_RATE_CVT_PERF_TYPE] == "memory" else 1))
-    for direction, setter in (
-        (CONF_READER, var.configure_gmf_reader_io),
-        (CONF_WRITER, var.configure_gmf_writer_io),
-    ):
-        io_conf = gmf_io[direction]
-        cg.add(setter(
-            io_conf[CONF_IO_SIZE],
-            io_conf[CONF_BUFFER_SIZE],
-            io_conf[CONF_TASK_STACK_SIZE],
-            io_conf[CONF_TASK_PRIORITY],
-            io_conf[CONF_TASK_CORE],
-            io_conf[CONF_TASK_STACK_IN_PSRAM],
-            io_conf[CONF_SPEED_MONITOR],
-            io_conf[CONF_TASK_TIMEOUT_MS],
-        ))
+    if has_hardware_codec:
+        for direction, setter in (
+            (CONF_READER, var.configure_gmf_reader_io),
+            (CONF_WRITER, var.configure_gmf_writer_io),
+        ):
+            io_conf = gmf_io[direction]
+            cg.add(setter(
+                io_conf[CONF_IO_SIZE],
+                io_conf[CONF_BUFFER_SIZE],
+                io_conf[CONF_TASK_STACK_SIZE],
+                io_conf[CONF_TASK_PRIORITY],
+                io_conf[CONF_TASK_CORE],
+                io_conf[CONF_TASK_STACK_IN_PSRAM],
+                io_conf[CONF_SPEED_MONITOR],
+                io_conf[CONF_TASK_TIMEOUT_MS],
+            ))
 
     # AEC reference mode (only relevant for no-codec setups)
     cg.add(var.set_aec_reference_mode(config[CONF_AEC_REFERENCE_MODE] == "ring_buffer"))

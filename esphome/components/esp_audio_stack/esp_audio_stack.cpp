@@ -112,13 +112,19 @@ void ESPAudioStack::set_output_volume_q15(int16_t q15) {
 void ESPAudioStack::update_combined_speaker_volume_() {
   const int16_t output_q15 = this->output_volume_q15_.load(std::memory_order_relaxed);
   const int16_t master_q15 = this->master_volume_q15_.load(std::memory_order_relaxed);
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
   const bool hardware_master = this->codec_backend_.has_output_codec();
+#else
+  const bool hardware_master = false;
+#endif
   const int16_t combined_q15 = hardware_master ? output_q15 : multiply_q15(output_q15, master_q15);
   const float linear = static_cast<float>(combined_q15) / 32767.0f;
   this->speaker_volume_.store(static_cast<float>(master_q15) / 32767.0f, std::memory_order_relaxed);
   const int16_t previous = this->speaker_volume_q15_.exchange(combined_q15, std::memory_order_relaxed);
   if (hardware_master) {
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
     this->codec_backend_.set_output_volume(static_cast<float>(master_q15) / 32767.0f);
+#endif
   }
   if (previous != combined_q15) {
     ESP_LOGD(TAG, "Speaker volume: output_q15=%d master_q15=%d hot_q15=%d linear=%.3f hw_master=%s previous_q15=%d",
@@ -196,10 +202,12 @@ void ESPAudioStack::service_speaker_reset_() {
   if (this->speaker_buffer_) {
     this->speaker_buffer_->reset();
   }
+#ifdef USE_ESP_AUDIO_STACK_MONO_REF
   this->direct_aec_ref_valid_ = false;
   if (this->aec_ref_ring_buffer_) {
     this->aec_ref_ring_buffer_->reset();
   }
+#endif
 }
 
 void ESPAudioStack::log_memory_snapshot_(const char *label) const {
@@ -278,10 +286,14 @@ void ESPAudioStack::setup() {
              (unsigned)this->sample_rate_, (unsigned)this->output_sample_rate_,
              (unsigned)this->decimation_ratio_);
   }
+#ifdef USE_ESP_AUDIO_STACK_MONO_RX
   this->mic_decimator_.init(this->decimation_ratio_, this->sample_rate_, this->get_output_sample_rate(),
                             this->rate_cvt_complexity_, this->rate_cvt_perf_type_);
+#endif
+#ifdef USE_ESP_AUDIO_STACK_MONO_REF
   this->play_ref_decimator_.init(this->decimation_ratio_, this->sample_rate_, this->get_output_sample_rate(),
                                  this->rate_cvt_complexity_, this->rate_cvt_perf_type_);
+#endif
   // rx_decimator_ is initialized inside audio_session_ once the processor has
   // reported its frame_spec and we know how many channels the RX stream carries.
 
@@ -474,8 +486,12 @@ void ESPAudioStack::dump_config() {
   ESP_LOGCONFIG(TAG, "  Task: priority=%u, core=%d, stack=%u",
                 this->task_priority_, this->task_core_, (unsigned)this->task_stack_size_);
   ESP_LOGCONFIG(TAG, "  I2S Lifecycle: esp_driver_i2s create on start, delete on idle stop");
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
   ESP_LOGCONFIG(TAG, "  Codec Backend: esp_codec_dev + gmf_io/io_codec_dev (input=%s, output=%s)",
                 this->codec_backend_.input_codec_name(), this->codec_backend_.output_codec_name());
+#else
+  ESP_LOGCONFIG(TAG, "  IO Backend: esp_driver_i2s direct read/write (no hardware codec)");
+#endif
   ESP_LOGCONFIG(TAG, "  I2S Hardware State: %s",
                 i2s_hardware_state_to_string_(
                     static_cast<I2SHardwareState>(this->i2s_hardware_state_.load(std::memory_order_relaxed))));
@@ -804,12 +820,14 @@ bool ESPAudioStack::prepare_i2s_channels_() {
   }
 
   this->set_i2s_hardware_state_(I2SHardwareState::READY);
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
   if (!this->setup_codec_backend_(clk_src)) {
     ESP_LOGE(TAG, "Failed to prepare esp_codec_dev backend");
     this->deinit_i2s_();
     this->set_i2s_hardware_state_(I2SHardwareState::ERROR);
     return false;
   }
+#endif
   this->log_memory_snapshot_("after_i2s_prepare");
   ESP_LOGI(TAG, "ESP audio stack I2S prepared through esp_driver_i2s (%s, dma_desc=%u, dma_frames=%u)",
            this->use_tdm_bus_ ? "TDM" : "standard",
@@ -817,6 +835,7 @@ bool ESPAudioStack::prepare_i2s_channels_() {
   return true;
 }
 
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
 CodecDevBackend::SampleConfig ESPAudioStack::make_tx_sample_config_() const {
   CodecDevBackend::SampleConfig cfg;
   cfg.sample_rate = this->sample_rate_;
@@ -878,6 +897,7 @@ bool ESPAudioStack::setup_codec_backend_(i2s_clock_src_t clk_src) {
   return this->codec_backend_.setup(tx_i2s_num, rx_i2s_num, this->tx_handle_, this->rx_handle_,
                                     clk_src, this->mclk_multiple_);
 }
+#endif
 
 bool ESPAudioStack::enable_i2s_channels_() {
   auto state = static_cast<I2SHardwareState>(
@@ -893,6 +913,7 @@ bool ESPAudioStack::enable_i2s_channels_() {
     return false;
   }
 
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
   auto tx_cfg = this->make_tx_sample_config_();
   auto rx_cfg = this->make_rx_sample_config_();
   if (!this->codec_backend_.open(this->tx_handle_ ? &tx_cfg : nullptr,
@@ -904,6 +925,27 @@ bool ESPAudioStack::enable_i2s_channels_() {
   this->codec_backend_.set_output_volume(
       static_cast<float>(this->master_volume_q15_.load(std::memory_order_relaxed)) / 32767.0f);
   this->codec_backend_.set_output_mute(false);
+#else
+  if (this->tx_handle_) {
+    esp_err_t err = i2s_channel_enable(this->tx_handle_);
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to enable TX I2S channel: %s", esp_err_to_name(err));
+      this->deinit_i2s_();
+      return false;
+    }
+  }
+  if (this->rx_handle_) {
+    esp_err_t err = i2s_channel_enable(this->rx_handle_);
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "Failed to enable RX I2S channel: %s", esp_err_to_name(err));
+      if (this->tx_handle_) {
+        i2s_channel_disable(this->tx_handle_);
+      }
+      this->deinit_i2s_();
+      return false;
+    }
+  }
+#endif
   this->set_i2s_hardware_state_(I2SHardwareState::RUNNING);
   this->log_memory_snapshot_("after_i2s_enable");
   ESP_LOGI(TAG, "ESP audio stack running (%s)", this->use_tdm_bus_ ? "TDM" : "standard");
@@ -921,14 +963,31 @@ void ESPAudioStack::close_audio_io_() {
     return;
   }
   this->set_i2s_hardware_state_(I2SHardwareState::STOPPING);
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
   this->codec_backend_.close();
+#else
+  if (this->rx_handle_) {
+    esp_err_t err = i2s_channel_disable(this->rx_handle_);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+      ESP_LOGW(TAG, "Failed to disable RX I2S channel: %s", esp_err_to_name(err));
+    }
+  }
+  if (this->tx_handle_) {
+    esp_err_t err = i2s_channel_disable(this->tx_handle_);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+      ESP_LOGW(TAG, "Failed to disable TX I2S channel: %s", esp_err_to_name(err));
+    }
+  }
+#endif
   this->set_i2s_hardware_state_(I2SHardwareState::READY);
   this->log_memory_snapshot_("after_i2s_disable");
 }
 
 void ESPAudioStack::deinit_i2s_() {
   this->close_audio_io_();
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
   this->codec_backend_.teardown();
+#endif
   if (this->tx_handle_) {
     i2s_del_channel(this->tx_handle_);
     this->tx_handle_ = nullptr;
@@ -1128,8 +1187,12 @@ void ESPAudioStack::start_speaker() {
     return;
   }
   if (!this->speaker_running_.load(std::memory_order_relaxed)) {
+#ifdef USE_ESP_AUDIO_STACK_MONO_REF
     this->direct_aec_ref_valid_ = false;
+#endif
+#ifdef USE_ESP_AUDIO_STACK_TDM_REF_DIAGNOSTIC
     this->tdm_ref_silent_frames_.store(0, std::memory_order_relaxed);
+#endif
   }
   if (!this->speaker_running_.exchange(true, std::memory_order_relaxed)) {
     this->speaker_start_trigger_.trigger();
