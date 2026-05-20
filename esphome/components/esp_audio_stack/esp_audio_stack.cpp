@@ -204,6 +204,8 @@ void ESPAudioStack::service_speaker_reset_() {
   }
 #ifdef USE_ESP_AUDIO_STACK_MONO_REF
   this->direct_aec_ref_valid_ = false;
+#endif
+#ifdef USE_ESP_AUDIO_STACK_RING_REF
   if (this->aec_ref_ring_buffer_) {
     this->aec_ref_ring_buffer_->reset();
   }

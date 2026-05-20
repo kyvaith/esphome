@@ -358,9 +358,9 @@ CONFIG_SCHEMA = cv.All(
         # concurrent TLS streams). Requires CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y.
         cv.Optional(CONF_AUDIO_STACK_IN_PSRAM, default=False): cv.boolean,
         # AEC reference mode for no-codec setups (ignored if stereo/TDM ref is configured):
-        #   previous_frame: use the TX frame from the previous cycle (default, ~32ms delay)
-        #   ring_buffer: TYPE2-style ring buffer with configurable delay (better alignment)
-        cv.Optional(CONF_AEC_REFERENCE_MODE, default="previous_frame"): cv.one_of(
+        #   ring_buffer: Espressif ADF TYPE2-style software reference, default
+        #   previous_frame: light mode using the previous TX frame, no TYPE2 ring
+        cv.Optional(CONF_AEC_REFERENCE_MODE, default="ring_buffer"): cv.one_of(
             "previous_frame", "ring_buffer", lower=True,
         ),
         # Ring buffer capacity in ms (only used with aec_reference: ring_buffer)
@@ -548,6 +548,8 @@ async def to_code(config):
     use_multi_rx = use_tdm_bus or use_stereo_ref
     use_mono_rx_effects = not use_multi_rx and (use_rate_cvt or use_32bit)
     use_mono_ref = has_processor and not use_tdm_ref and not use_stereo_ref
+    use_ring_ref = use_mono_ref and config[CONF_AEC_REFERENCE_MODE] == "ring_buffer"
+    use_previous_frame_ref = use_mono_ref and config[CONF_AEC_REFERENCE_MODE] == "previous_frame"
 
     # esp_audio_stack refactor policy: track Espressif registry latest by default.
     # ESPHome requires `ref`; "*" maps to an unpinned/latest registry version.
@@ -576,6 +578,10 @@ async def to_code(config):
         cg.add_define("USE_ESP_AUDIO_STACK_MONO_RX")
     if use_mono_ref:
         cg.add_define("USE_ESP_AUDIO_STACK_MONO_REF")
+    if use_ring_ref:
+        cg.add_define("USE_ESP_AUDIO_STACK_RING_REF")
+    if use_previous_frame_ref:
+        cg.add_define("USE_ESP_AUDIO_STACK_PREVIOUS_FRAME_REF")
     if use_stereo_tx:
         cg.add_define("USE_ESP_AUDIO_STACK_STEREO_TX")
     if use_32bit:
@@ -736,16 +742,18 @@ async def to_code(config):
                 io_conf[CONF_TASK_TIMEOUT_MS],
             ))
 
-    # AEC reference mode (only relevant for no-codec setups)
-    cg.add(var.set_aec_reference_mode(config[CONF_AEC_REFERENCE_MODE] == "ring_buffer"))
-    _add_config_setters(
-        var,
-        config,
-        (
-            (CONF_AEC_REF_BUFFER_MS, var.set_aec_ref_buffer_ms),
-            (CONF_AEC_REF_RING_IN_PSRAM, var.set_aec_ref_ring_in_psram),
-        ),
-    )
+    # AEC reference mode is compile-time selected for no-codec setups:
+    # ring_buffer pulls in the Espressif/ADF TYPE2-style software reference,
+    # previous_frame keeps that path out of the build.
+    if use_ring_ref:
+        _add_config_setters(
+            var,
+            config,
+            (
+                (CONF_AEC_REF_BUFFER_MS, var.set_aec_ref_buffer_ms),
+                (CONF_AEC_REF_RING_IN_PSRAM, var.set_aec_ref_ring_in_psram),
+            ),
+        )
 
     # Telemetry: per-stage cycle counting and diagnostics
     if config[CONF_TELEMETRY]:

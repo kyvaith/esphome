@@ -22,7 +22,9 @@
 #include "../audio_processor/log_utils.h"
 #endif
 #include "../audio_processor/audio_utils.h"
+#ifdef USE_ESP_AUDIO_STACK_RING_REF
 #include "../audio_processor/ring_buffer_caps.h"
+#endif
 
 namespace esphome {
 namespace esp_audio_stack {
@@ -105,6 +107,8 @@ void ESPAudioStack::release_audio_buffers_() {
 #ifdef USE_ESP_AUDIO_STACK_MONO_REF
   free_i16_buffer(&this->direct_aec_ref_);
   this->direct_aec_ref_valid_ = false;
+#endif
+#ifdef USE_ESP_AUDIO_STACK_RING_REF
   this->aec_ref_ring_buffer_.reset();
 #endif
 
@@ -298,9 +302,9 @@ bool ESPAudioStack::allocate_audio_buffers_(AudioTaskCtx &ctx) {
       }
     }
 
-    // AEC reference ring buffer (TYPE2-style, no-codec setups). Also one-shot.
-    if (this->aec_use_ring_buffer_ && !ctx.use_stereo_aec_ref && !ctx.use_tdm_ref &&
-        !this->aec_ref_ring_buffer_) {
+    // AEC reference ring buffer (Espressif/ADF TYPE2-style, no-codec setups).
+#ifdef USE_ESP_AUDIO_STACK_RING_REF
+    if (!ctx.use_stereo_aec_ref && !ctx.use_tdm_ref && !this->aec_ref_ring_buffer_) {
       // Sized at the processor rate (post-decimation), not the bus rate, since
       // we now decimate on the TX side before storing. Items pushed are
       // input_frame_bytes (one AEC reference frame) each.
@@ -318,9 +322,13 @@ bool ESPAudioStack::allocate_audio_buffers_(AudioTaskCtx &ctx) {
       }
       ESP_LOGI(TAG, "AEC reference: ring_buffer (%zu bytes, %ums capacity)",
                rb_bytes, (unsigned)this->aec_ref_buffer_ms_);
-    } else if (!ctx.use_stereo_aec_ref && !ctx.use_tdm_ref && !this->aec_ref_ring_buffer_) {
+    }
+#endif
+#ifdef USE_ESP_AUDIO_STACK_PREVIOUS_FRAME_REF
+    if (!ctx.use_stereo_aec_ref && !ctx.use_tdm_ref) {
       ESP_LOGI(TAG, "AEC reference: previous_frame");
     }
+#endif
 #endif
   }
 #endif
@@ -1123,21 +1131,26 @@ void ESPAudioStack::process_aec_and_callbacks_(AudioTaskCtx &ctx) {
 
 #ifdef USE_ESP_AUDIO_STACK_MONO_REF
 void ESPAudioStack::fill_mono_aec_reference_(AudioTaskCtx &ctx) {
-  // direct_aec_ref_ and the ring buffer hold already-decimated samples at the
-  // processor rate (decimation happens once on the TX side in process_tx_path_).
+  // The reference source holds already-decimated samples at the processor rate
+  // (decimation happens once on the TX side in process_tx_path_).
   // The reference is the input side of the processor, so the unit is
   // input_frame_bytes (matches AudioProcessor::process expecting in_ref of
   // input_samples length).
   const size_t ref_bytes = ctx.input_frame_bytes;
+#ifdef USE_ESP_AUDIO_STACK_RING_REF
   if (this->aec_ref_ring_buffer_) {
     if (this->aec_ref_ring_buffer_->available() >= ref_bytes) {
       this->aec_ref_ring_buffer_->read(ctx.spk_ref_buffer, ref_bytes, 0);
       return;
     }
-  } else if (this->direct_aec_ref_ != nullptr && this->direct_aec_ref_valid_) {
+  }
+#endif
+#ifdef USE_ESP_AUDIO_STACK_PREVIOUS_FRAME_REF
+  if (this->direct_aec_ref_ != nullptr && this->direct_aec_ref_valid_) {
     memcpy(ctx.spk_ref_buffer, this->direct_aec_ref_, ref_bytes);
     return;
   }
+#endif
 
   // No reference available: zero-fill so the processor still owns the output
   // surface instead of switching to raw mic audio.
@@ -1308,6 +1321,7 @@ void ESPAudioStack::process_tx_path_(AudioTaskCtx &ctx) {
 #ifdef USE_ESP_AUDIO_STACK_MONO_REF
   const bool full_frame =
       ctx.speaker_running && !ctx.speaker_paused && ctx.speaker_got == ctx.bus_frame_bytes;
+#ifdef USE_ESP_AUDIO_STACK_RING_REF
   if (this->aec_ref_ring_buffer_ && ctx.processor_enabled) {
     if (full_frame && this->direct_aec_ref_ != nullptr) {
       // Decimate TX -> processor rate into direct_aec_ref_ scratch, then push
@@ -1326,7 +1340,10 @@ void ESPAudioStack::process_tx_path_(AudioTaskCtx &ctx) {
       // backpressure here: keep the most recent reference window for AEC.
       this->aec_ref_ring_buffer_->write((void *) this->direct_aec_ref_, ref_bytes);
     }
-  } else if (this->direct_aec_ref_ != nullptr && ctx.processor_enabled) {
+  }
+#endif
+#ifdef USE_ESP_AUDIO_STACK_PREVIOUS_FRAME_REF
+  if (this->direct_aec_ref_ != nullptr && ctx.processor_enabled) {
     // Previous frame mode: decimate TX once and keep the result for the next
     // AEC iteration. Only on a full frame, otherwise we keep the last good
     // direct_aec_ref_ to avoid feeding a zero-padded reference.
@@ -1340,6 +1357,7 @@ void ESPAudioStack::process_tx_path_(AudioTaskCtx &ctx) {
       this->direct_aec_ref_valid_ = true;
     }
   }
+#endif
 #endif
 #endif
 

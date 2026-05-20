@@ -349,14 +349,16 @@ class ESPAudioStack : public Component {
   }
   void set_buffers_in_psram(bool psram) { this->buffers_in_psram_ = psram; }
   void set_audio_stack_in_psram(bool psram) { this->audio_stack_in_psram_ = psram; }
-#ifdef USE_ESP_AUDIO_STACK_MONO_REF
-  void set_aec_reference_mode(bool use_ring_buffer) { this->aec_use_ring_buffer_ = use_ring_buffer; }
+#ifdef USE_ESP_AUDIO_STACK_RING_REF
   void set_aec_ref_buffer_ms(uint32_t ms) { this->aec_ref_buffer_ms_ = ms; }
 #else
-  void set_aec_reference_mode(bool use_ring_buffer) { (void) use_ring_buffer; }
   void set_aec_ref_buffer_ms(uint32_t ms) { (void) ms; }
 #endif
+#ifdef USE_ESP_AUDIO_STACK_RING_REF
   void set_aec_ref_ring_in_psram(bool psram) { this->aec_ref_ring_in_psram_ = psram; }
+#else
+  void set_aec_ref_ring_in_psram(bool psram) { (void) psram; }
+#endif
   void set_telemetry_log_interval_frames(uint16_t frames) { this->telemetry_log_interval_frames_ = frames; }
   void set_rate_cvt_complexity(uint8_t complexity) { this->rate_cvt_complexity_ = complexity; }
   void set_rate_cvt_perf_type(uint8_t perf_type) { this->rate_cvt_perf_type_ = perf_type; }
@@ -661,11 +663,12 @@ class ESPAudioStack : public Component {
   std::atomic<bool> processor_background_consumer_registered_{false};
   void sync_processor_background_consumer_();
 #ifdef USE_ESP_AUDIO_STACK_MONO_REF
-  int16_t *direct_aec_ref_{nullptr};     // AEC reference from previous TX frame (processor rate, mono mode)
-  bool direct_aec_ref_valid_{false};     // True after first TX frame has been saved
+  int16_t *direct_aec_ref_{nullptr};     // TX-side decimated reference storage/scratch (processor rate)
+  bool direct_aec_ref_valid_{false};     // True after first previous_frame reference has been saved
+#endif
 
+#ifdef USE_ESP_AUDIO_STACK_RING_REF
   // AEC ring buffer reference (TYPE2-style, for no-codec setups)
-  bool aec_use_ring_buffer_{false};      // Config: use ring buffer instead of previous frame
   uint32_t aec_ref_buffer_ms_{80};       // Config: ring buffer size in ms
   audio_processor::RingBufferPtr aec_ref_ring_buffer_;  // Ring buffer for AEC ref (processor rate, post-volume)
 #endif
@@ -704,7 +707,9 @@ class ESPAudioStack : public Component {
   bool dma_frame_num_configured_{false};
   bool buffers_in_psram_{false};  // Non-DMA buffers in PSRAM (saves ~15KB internal RAM)
   bool audio_stack_in_psram_{false};  // Audio task stack in PSRAM (saves ~8KB internal RAM)
+#ifdef USE_ESP_AUDIO_STACK_RING_REF
   bool aec_ref_ring_in_psram_{false};  // AEC reference ring in PSRAM (saves ~3-5 KB internal, costs ~13.6 us/frame Core 0)
+#endif
   StackType_t *audio_task_stack_{nullptr};  // Owned when audio_stack_in_psram_ is true
   StaticTask_t audio_task_tcb_{};            // Static TCB for the permanent audio task
   uint16_t telemetry_log_interval_frames_{128};
