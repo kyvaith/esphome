@@ -250,8 +250,8 @@ class ESPAudioStack : public Component {
   bool is_processor_enabled() const { return this->processor_enabled_.load(std::memory_order_relaxed); }
 
   // Mic gain control. Attenuation uses esp-audio-libs Q31 in the hot path;
-  // positive dB boost keeps the saturating scalar fallback because Q31 gain
-  // cannot represent amplification above unity.
+  // positive dB boost uses Espressif esp_ae_alc because Q31 gain cannot
+  // represent amplification above unity.
   void set_mic_gain(float gain);
   float get_mic_gain() const { return this->mic_gain_.load(std::memory_order_relaxed); }
 
