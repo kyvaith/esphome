@@ -41,11 +41,18 @@ static const size_t SPEAKER_BUFFER_MIN_BYTES = 2048;
 namespace {
 static constexpr float SOFTWARE_VOLUME_MIN_DB = -49.0f;
 
-int32_t volume_factor_to_q31(float volume) {
+float sanitize_volume_min_db(float db) {
+  if (!std::isfinite(db)) return SOFTWARE_VOLUME_MIN_DB;
+  if (db < -96.0f) return -96.0f;
+  if (db > 0.0f) return 0.0f;
+  return db;
+}
+
+int32_t volume_factor_to_q31(float volume, float min_db = SOFTWARE_VOLUME_MIN_DB) {
   if (!(volume > 0.0f)) return 0;
   if (volume >= 1.0f) return INT32_MAX;
-  return esp_audio_libs::gain::db_to_q31(
-      remap<float, float>(volume, 0.0f, 1.0f, SOFTWARE_VOLUME_MIN_DB, 0.0f));
+  return esp_audio_libs::gain::db_to_q31(remap<float, float>(volume, 0.0f, 1.0f,
+                                                            sanitize_volume_min_db(min_db), 0.0f));
 }
 
 int32_t attenuation_factor_to_q31(float gain) {
@@ -84,6 +91,16 @@ void ESPAudioStack::set_input_gain(float gain) {
   this->input_gain_boost_.store(gain > 1.0f ? gain : 1.0f, std::memory_order_relaxed);
 }
 
+void ESPAudioStack::set_master_volume_min_db(float db) {
+  db = sanitize_volume_min_db(db);
+  const float previous = this->master_volume_min_db_;
+  this->master_volume_min_db_ = db;
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
+  this->codec_backend_.set_output_volume_curve(db);
+#endif
+  if (previous != db) this->set_master_volume(this->master_volume_linear_.load(std::memory_order_relaxed));
+}
+
 void ESPAudioStack::set_master_volume(float volume) {
   if (!(volume > 0.0f)) {
     volume = 0.0f;
@@ -91,7 +108,7 @@ void ESPAudioStack::set_master_volume(float volume) {
     volume = 1.0f;
   }
   this->master_volume_linear_.store(volume, std::memory_order_relaxed);
-  const int32_t q31 = volume_factor_to_q31(volume);
+  const int32_t q31 = volume_factor_to_q31(volume, this->master_volume_min_db_);
   const int32_t previous = this->master_volume_q31_.exchange(q31, std::memory_order_relaxed);
   if (previous != q31) this->update_hot_output_volume_();
 }

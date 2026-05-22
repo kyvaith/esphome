@@ -89,6 +89,7 @@ class CodecDevBackend {
   bool write(void *data, size_t len);
 
   void set_output_volume(float volume);
+  void set_output_volume_curve(float min_db);
   void set_output_mute(bool mute);
   void set_input_gain(float gain_db);
   void set_input_channel_gain(uint8_t channel, float gain_db);
@@ -109,6 +110,7 @@ class CodecDevBackend {
                     const GmfIoConfig &gmf_config, esp_gmf_io_handle_t *io,
                     bool *io_open);
   void close_gmf_io_(esp_gmf_io_handle_t *io, bool *io_open);
+  void apply_output_volume_curve_();
   void destroy_codecs_();
 
   i2c::I2CBus *i2c_bus_{nullptr};
@@ -135,6 +137,8 @@ class CodecDevBackend {
   esp_gmf_io_handle_t tx_io_{nullptr};
   bool rx_io_open_{false};
   bool tx_io_open_{false};
+  bool output_volume_curve_configured_{false};
+  float output_volume_min_db_{-49.0f};
 
   bool prepared_{false};
   bool open_{false};

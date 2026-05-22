@@ -43,6 +43,7 @@ CONF_I2S_DOUT_PIN = "i2s_dout_pin"
 CONF_OUTPUT_SAMPLE_RATE = "output_sample_rate"
 CONF_PROCESSOR_ID = "processor_id"
 CONF_INPUT_GAIN = "input_gain"
+CONF_MASTER_VOLUME_MIN_DB = "master_volume_min_db"
 CONF_USE_STEREO_AEC_REF = "use_stereo_aec_reference"
 CONF_REFERENCE_CHANNEL = "reference_channel"
 CONF_BITS_PER_SAMPLE = "bits_per_sample"
@@ -327,6 +328,10 @@ CONFIG_SCHEMA = cv.All(
         # Input gain before the processor: <1.0 attenuates hot mics,
         # >1.0 amplifies weak mics. This is gain staging, not a separate mic output.
         cv.Optional(CONF_INPUT_GAIN, default=1.0): cv.float_range(min=0.01, max=32.0),
+        # 0% remains hard mute. This controls how loud mid-range percentages feel:
+        # -49 dB matches ESPHome's software curve, while codec-dev defaults near
+        # -50 dB if this option is omitted on hardware codec outputs.
+        cv.Optional(CONF_MASTER_VOLUME_MIN_DB): cv.float_range(min=-96.0, max=0.0),
         # ES8311 digital feedback: RX is stereo with L=ADC(mic), R=DAC(reference)
         # when no_dac_ref is false. Espressif's driver writes REG44=0x58,
         # documented in-source as "ADCL + DACR".
@@ -667,6 +672,8 @@ async def to_code(config):
 
     # Set input gain before the audio processor.
     cg.add(var.set_input_gain(config[CONF_INPUT_GAIN]))
+    if CONF_MASTER_VOLUME_MIN_DB in config:
+        cg.add(var.set_master_volume_min_db(config[CONF_MASTER_VOLUME_MIN_DB]))
 
     # ES8311 digital feedback mode: stereo RX with L=mic, R=ref
     cg.add(var.set_use_stereo_aec_reference(config[CONF_USE_STEREO_AEC_REF]))

@@ -25,7 +25,7 @@ With esp_audio_stack:
   - **TDM Hardware Reference** (for ES7210 + ES8311): ES7210 in TDM mode captures DAC analog output on a dedicated ADC channel (e.g. MIC3). Sample-aligned with mic data. Enable with `use_tdm_reference: true`.
 - **Post-Processor Mic Path**: the standard microphone platform always emits the processed stream from `esp_aec` or `esp_afe`, so MWW, VA and intercom share one stable post-processor source.
 - **PSRAM Buffers**: `buffers_in_psram` option moves the non-hot-path audio buffers (AEC mic/ref, processor interleave, multi-channel mic, spk_ref) to PSRAM. `rx_buffer` and `spk_buffer` stay in internal RAM regardless (I2S hot path, PSRAM bus contention would cause glitches). Typical saving: ~15-20KB internal heap. Required for `sr_low_cost` AEC on memory-constrained devices.
-- **Volume Controls**: Master volume (speaker-backed, persistent) and post-AEC/AFE mic gain (-20 to +30 dB, persistent). Board-level input gain staging remains a YAML option through `input_gain`, not a Home Assistant user control.
+- **Volume Controls**: Master volume (speaker-backed, persistent) and post-AEC/AFE mic gain (-20 to +30 dB, persistent). `master_volume_min_db` tunes the 1-100% perceived loudness curve while 0% stays a hard mute. Board-level input gain staging remains a YAML option through `input_gain`, not a Home Assistant user control.
 - **Codec-less Support**: `slot_bit_width: 32` for MEMS mics (INMP441, MSM261, SPH0645) + I2S amp on the same bus or on separate RX/TX buses. `correct_dc_offset: true` for mics without built-in HPF
 - **Dual I2S Bus Support**: optional `rx_bus` and `tx_bus` split mode for discrete I2S microphones and amplifiers on separate ESP-IDF I2S controllers. The feature is compile-time gated and does not enter single-bus builds.
 - **Number Platform**: Native `mic_gain` and `master_volume` entities with `ESPPreferenceObject` persistence. When both `esp_audio_stack` and `intercom_api` are present, `esp_audio_stack` owns the number entities and `intercom_api` defers to avoid conflicts.
@@ -246,6 +246,7 @@ First-version limits:
 | `gmf_io.writer.*` | same as reader | same | Same official `io_codec_dev` knobs for the TX writer side. |
 | `processor_id` | ID | - | Reference to audio processor component (`esp_aec` or `esp_afe`) for echo cancellation and audio processing |
 | `input_gain` | float | 1.0 | Input gain before the processor (0.01-32.0). <1.0 attenuates hot mics, >1.0 amplifies weak mics. Keep this as board-level tuning; normal user-facing volume should be handled by the post-AEC/AFE `mic_gain` number. |
+| `master_volume_min_db` | float | - | Optional 1% master-volume floor in dB (-96..0). Omit it to keep codec-dev's native curve on hardware codecs; set it to tune board UX. No-codec software volume defaults to ESPHome's -49 dB curve. |
 | `slot_bit_width` | int | auto | I2S slot width in bits (16 or 32). Set to 32 for MEMS mics without codec (INMP441, MSM261, SPH0645). |
 | `correct_dc_offset` | bool | false | Enable DC offset removal. Required for MEMS mics without built-in HPF (MSM261, SPH0645). |
 | `use_stereo_aec_reference` | bool | false | ES8311 digital feedback mode (see below) |

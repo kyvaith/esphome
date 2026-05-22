@@ -20,6 +20,7 @@
 #endif
 #include "esphome/core/log.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -421,6 +422,7 @@ bool CodecDevBackend::open(const SampleConfig *tx_config, const SampleConfig *rx
       ESP_LOGE(TAG, "Failed to open TX codec device: %d", ret);
       return false;
     }
+    this->apply_output_volume_curve_();
     if (!this->es8311_.enabled) {
       esp_codec_dev_set_out_vol(this->tx_dev_, 100);
     }
@@ -547,6 +549,35 @@ void CodecDevBackend::set_output_volume(float volume) {
     volume = 1.0f;
   }
   esp_codec_dev_set_out_vol(this->tx_dev_, static_cast<int>(volume * 100.0f + 0.5f));
+}
+
+void CodecDevBackend::set_output_volume_curve(float min_db) {
+  if (!std::isfinite(min_db)) {
+    return;
+  }
+  if (min_db < -96.0f) min_db = -96.0f;
+  if (min_db > 0.0f) min_db = 0.0f;
+  this->output_volume_min_db_ = min_db;
+  this->output_volume_curve_configured_ = true;
+  this->apply_output_volume_curve_();
+}
+
+void CodecDevBackend::apply_output_volume_curve_() {
+  if (!this->output_volume_curve_configured_ || this->tx_dev_ == nullptr || !this->es8311_.enabled) {
+    return;
+  }
+  esp_codec_dev_vol_map_t vol_map[2] = {
+      {.vol = 1, .db_value = this->output_volume_min_db_},
+      {.vol = 100, .db_value = 0.0f},
+  };
+  esp_codec_dev_vol_curve_t curve = {
+      .vol_map = vol_map,
+      .count = 2,
+  };
+  const int ret = esp_codec_dev_set_vol_curve(this->tx_dev_, &curve);
+  if (ret != ESP_CODEC_DEV_OK) {
+    ESP_LOGW(TAG, "Failed to set codec output volume curve: %d", ret);
+  }
 }
 
 void CodecDevBackend::set_output_mute(bool mute) {

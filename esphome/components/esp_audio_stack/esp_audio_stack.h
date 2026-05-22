@@ -261,6 +261,7 @@ class ESPAudioStack : public Component {
   // Master volume is independent from the speaker abstraction volume used by
   // ESPHome's media_player. The audio task applies media/speaker volume *
   // master volume, so HA media volume and the board master control cascade.
+  void set_master_volume_min_db(float db);
   void set_master_volume(float volume);
   void set_master_volume_q31(int32_t q31);
   void set_output_volume(float volume);
@@ -690,6 +691,7 @@ class ESPAudioStack : public Component {
   std::atomic<int32_t> output_volume_q31_{INT32_MAX};   // media_player/speaker abstraction volume
   std::atomic<int32_t> master_volume_q31_{INT32_MAX};   // board master volume
   std::atomic<float> master_volume_linear_{1.0f};    // unclipped user value for hardware codec volume APIs
+  float master_volume_min_db_{-49.0f};  // 0..100% master curve floor; 0% remains hard mute
   bool use_stereo_aec_ref_{false}; // ES8311 digital feedback: RX stereo with L=mic, R=ref
   bool ref_channel_right_{false};  // Which channel is AEC reference: false=L, true=R
 
