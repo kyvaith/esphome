@@ -33,7 +33,7 @@ from esphome.components.esp32.const import (
 
 CODEOWNERS = ["@n-IA-hane"]
 DEPENDENCIES = ["esp32"]
-AUTO_LOAD = ["audio_processor", "switch", "number", "sensor"]
+AUTO_LOAD = ["audio_processor"]
 
 CONF_I2S_LRCLK_PIN = "i2s_lrclk_pin"
 CONF_I2S_BCLK_PIN = "i2s_bclk_pin"
