@@ -227,6 +227,7 @@ class EspAfe : public Component, public AudioProcessor {
   esp_gmf_task_handle_t afe_task_{nullptr};
   afe_config_t *afe_config_{nullptr};
   bool afe_pipeline_running_{false};
+  bool afe_pipeline_paused_{false};
 
   // Feed buffer: interleaved [mic, ref, ...], [mic1, mic2, ref, ...] or
   // [mic1, mic2, N, ref, ...] depending on esp-sr input_format.
@@ -265,6 +266,7 @@ class EspAfe : public Component, public AudioProcessor {
   static void gmf_event_cb_(esp_gmf_element_handle_t el, esp_gmf_afe_evt_t *event,
                             void *user_data);
   bool start_pipeline_();
+  bool pause_pipeline_();
   void stop_pipeline_();
   void flush_pipeline_before_stop_();
   void drain_feed_input_ring_();

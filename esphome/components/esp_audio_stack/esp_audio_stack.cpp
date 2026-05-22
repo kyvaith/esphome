@@ -645,11 +645,13 @@ bool ESPAudioStack::prepare_i2s_channels_() {
   }
 #endif
   const uint32_t max_bytes_per_frame = std::max(tx_bytes_per_frame, rx_bytes_per_frame);
+  uint32_t dma_desc_num = this->dma_desc_num_;
   uint32_t dma_frame_num = this->dma_frame_num_configured_
       ? this->dma_frame_num_
       : std::max<uint32_t>(64, (this->sample_rate_ * DMA_BUFFER_DURATION_MS) / 1000);
+  uint32_t max_frames = 0;
   if (max_bytes_per_frame > 0) {
-    const uint32_t max_frames = 4092 / max_bytes_per_frame;
+    max_frames = 4092 / max_bytes_per_frame;
     if (dma_frame_num > max_frames) {
       if (this->dma_frame_num_configured_) {
         ESP_LOGE(TAG, "dma_frame_num %u exceeds IDF DMA descriptor limit (%u frames for %u bytes/frame)",
@@ -660,11 +662,50 @@ bool ESPAudioStack::prepare_i2s_channels_() {
       dma_frame_num = max_frames;
     }
   }
+#if SOC_I2S_SUPPORTS_TDM
+#ifdef USE_AUDIO_PROCESSOR
+  if (this->use_tdm_bus_ && this->processor_ != nullptr && max_frames > 0) {
+    const auto spec = this->processor_->frame_spec();
+    const uint32_t processor_bus_frames =
+        static_cast<uint32_t>(spec.input_samples) * this->rate_conversion_ratio_;
+    if (processor_bus_frames > 0) {
+      auto ceil_div_u32 = [](uint32_t num, uint32_t den) -> uint32_t {
+        return den == 0 ? 0 : (num + den - 1) / den;
+      };
+      // The audio task reads/writes one processor frame per loop. Keep enough
+      // DMA headroom for that full TDM frame plus margin; otherwise a 1024-sample
+      // AFE quantum can underflow a short DMA queue even though the YAML compiles.
+      const uint32_t target_total_frames = ceil_div_u32(processor_bus_frames * 5U, 4U);
+      if (target_total_frames > dma_desc_num * dma_frame_num) {
+        const uint32_t old_desc = dma_desc_num;
+        const uint32_t old_frames = dma_frame_num;
+        dma_frame_num = std::min(max_frames, std::max(dma_frame_num, ceil_div_u32(target_total_frames, dma_desc_num)));
+        dma_desc_num = std::max(dma_desc_num, ceil_div_u32(target_total_frames, dma_frame_num));
+        if (dma_desc_num > 16) {
+          ESP_LOGE(TAG,
+                   "TDM DMA queue too small for processor frame (%u bus frames, target %u); "
+                   "need %u descriptors of %u frames, max supported is 16",
+                   (unsigned) processor_bus_frames, (unsigned) target_total_frames,
+                   (unsigned) dma_desc_num, (unsigned) dma_frame_num);
+          this->set_i2s_hardware_state_(I2SHardwareState::ERROR);
+          return false;
+        }
+        ESP_LOGW(TAG,
+                 "Raised TDM DMA queue for processor frame: desc %u->%u, frames %u->%u "
+                 "(processor=%u bus frames, target=%u)",
+                 (unsigned) old_desc, (unsigned) dma_desc_num,
+                 (unsigned) old_frames, (unsigned) dma_frame_num,
+                 (unsigned) processor_bus_frames, (unsigned) target_total_frames);
+      }
+    }
+  }
+#endif
+#endif
 
   i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(
       static_cast<i2s_port_t>(dual_bus ? tx_i2s_num : this->i2s_num_),
       this->i2s_mode_secondary_ ? I2S_ROLE_SLAVE : I2S_ROLE_MASTER);
-  chan_cfg.dma_desc_num = this->dma_desc_num_;
+  chan_cfg.dma_desc_num = dma_desc_num;
   chan_cfg.dma_frame_num = dma_frame_num;
   chan_cfg.auto_clear = true;
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 2, 0)
@@ -869,7 +910,7 @@ bool ESPAudioStack::prepare_i2s_channels_() {
   this->log_memory_snapshot_("after_i2s_prepare");
   ESP_LOGI(TAG, "ESP audio stack I2S prepared through esp_driver_i2s (%s, dma_desc=%u, dma_frames=%u)",
            this->use_tdm_bus_ ? "TDM" : "standard",
-           static_cast<unsigned>(this->dma_desc_num_), static_cast<unsigned>(dma_frame_num));
+           static_cast<unsigned>(dma_desc_num), static_cast<unsigned>(dma_frame_num));
   return true;
 }
 
@@ -1083,6 +1124,10 @@ void ESPAudioStack::start() {
   if (this->use_tdm_ref_) {
     ESP_LOGD(TAG, "TDM hardware reference - slot %u is echo ref", this->tdm_ref_slot_);
   }
+  if (this->processor_ != nullptr &&
+      this->has_mic_consumers_.load(std::memory_order_relaxed)) {
+    this->processor_->set_processing_active(true);
+  }
 #endif
 
   // Wake the permanent audio task (created once in setup()).
@@ -1106,6 +1151,9 @@ void ESPAudioStack::stop() {
   if (this->speaker_running_.exchange(false, std::memory_order_relaxed)) {
     this->speaker_idle_trigger_.trigger();
     this->update_runtime_state_();
+  }
+  if (this->processor_ != nullptr) {
+    this->processor_->set_processing_active(false);
   }
   this->audio_stack_running_.store(false, std::memory_order_relaxed);
   this->idle_trigger_.trigger();
