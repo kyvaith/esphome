@@ -3,6 +3,7 @@
 #ifdef USE_ESP32
 
 #include <esp_err.h>
+#include <esp_ae_alc.h>
 #include <esp_timer.h>
 #include <esp_heap_caps.h>
 #include <gain.h>
@@ -90,6 +91,11 @@ void ESPAudioStack::release_audio_buffers_() {
   free_i16_buffer(&this->prealloc_spk_buffer_, &this->prealloc_spk_buffer_bytes_);
   free_i16_buffer(&this->prealloc_spk_ref_buffer_, &this->prealloc_spk_ref_buffer_bytes_);
   free_i16_buffer(&this->prealloc_aec_output_, &this->prealloc_aec_output_bytes_);
+  if (this->mic_alc_handle_ != nullptr) {
+    esp_ae_alc_close(static_cast<esp_ae_alc_handle_t>(this->mic_alc_handle_));
+    this->mic_alc_handle_ = nullptr;
+    this->mic_alc_gain_db_ = 0;
+  }
 #ifdef USE_ESP_AUDIO_STACK_TDM_BUS
   free_i16_buffer(&this->prealloc_tdm_tx_buffer_, &this->prealloc_tdm_tx_buffer_bytes_);
   free_i16_buffer(&this->prealloc_tx_silence_buffer_, &this->prealloc_tx_silence_buffer_bytes_);
@@ -641,7 +647,7 @@ void ESPAudioStack::audio_session_() {
     ctx.input_gain_q31 = this->input_gain_q31_.load(std::memory_order_relaxed);
     ctx.input_gain_boost = this->input_gain_boost_.load(std::memory_order_relaxed);
     ctx.mic_gain_q31 = this->mic_gain_q31_.load(std::memory_order_relaxed);
-    ctx.mic_gain_boost = this->mic_gain_boost_.load(std::memory_order_relaxed);
+    ctx.mic_gain_boost_db = this->mic_gain_boost_db_.load(std::memory_order_relaxed);
     ctx.hot_output_volume_q31 = this->hot_output_volume_q31_.load(std::memory_order_relaxed);
     ctx.speaker_running = this->speaker_running_.load(std::memory_order_relaxed);
     ctx.speaker_paused = this->speaker_paused_.load(std::memory_order_relaxed);
@@ -1151,9 +1157,9 @@ void ESPAudioStack::process_aec_and_callbacks_(AudioTaskCtx &ctx) {
                                   ctx.current_output_frame_size, sizeof(int16_t));
     }
   }
-  if (ctx.mic_gain_boost != 1.0f) {
-    scale_block_i16(ctx.output_buffer, ctx.output_buffer, ctx.current_output_frame_size,
-                    ctx.mic_gain_boost);
+  if (ctx.mic_gain_boost_db > 0) {
+    this->apply_mic_alc_gain_(ctx.output_buffer, ctx.current_output_frame_size,
+                              ctx.mic_gain_boost_db);
   }
 
   // Post-AEC callbacks (VA/STT)
@@ -1162,6 +1168,51 @@ void ESPAudioStack::process_aec_and_callbacks_(AudioTaskCtx &ctx) {
       callback((const uint8_t *) ctx.output_buffer, ctx.current_output_frame_bytes);
     }
   }
+}
+
+bool ESPAudioStack::apply_mic_alc_gain_(int16_t *samples, size_t sample_count, int8_t gain_db) {
+  if (samples == nullptr || sample_count == 0 || gain_db <= 0) {
+    return true;
+  }
+  if (this->mic_alc_handle_ == nullptr || this->mic_alc_gain_db_ != gain_db) {
+    if (this->mic_alc_handle_ != nullptr) {
+      esp_ae_alc_close(static_cast<esp_ae_alc_handle_t>(this->mic_alc_handle_));
+      this->mic_alc_handle_ = nullptr;
+      this->mic_alc_gain_db_ = 0;
+    }
+    esp_ae_alc_cfg_t cfg{};
+    cfg.sample_rate = this->get_output_sample_rate();
+    cfg.channel = 1;
+    cfg.bits_per_sample = 16;
+    esp_ae_alc_handle_t handle = nullptr;
+    const esp_ae_err_t open_err = esp_ae_alc_open(&cfg, &handle);
+    if (open_err != ESP_AE_ERR_OK || handle == nullptr) {
+      ESP_LOGE(TAG, "esp_ae_alc_open mic gain failed: err=%d rate=%u gain=%d",
+               static_cast<int>(open_err), static_cast<unsigned>(cfg.sample_rate),
+               static_cast<int>(gain_db));
+      return false;
+    }
+    const esp_ae_err_t gain_err = esp_ae_alc_set_gain(handle, 0, gain_db);
+    if (gain_err != ESP_AE_ERR_OK) {
+      ESP_LOGE(TAG, "esp_ae_alc_set_gain mic failed: err=%d gain=%d",
+               static_cast<int>(gain_err), static_cast<int>(gain_db));
+      esp_ae_alc_close(handle);
+      return false;
+    }
+    this->mic_alc_handle_ = handle;
+    this->mic_alc_gain_db_ = gain_db;
+  }
+
+  const esp_ae_err_t err = esp_ae_alc_process(static_cast<esp_ae_alc_handle_t>(this->mic_alc_handle_),
+                                              static_cast<uint32_t>(sample_count),
+                                              samples, samples);
+  if (err == ESP_AE_ERR_OK) {
+    return true;
+  }
+  ESP_LOGE(TAG, "esp_ae_alc_process mic failed: err=%d samples=%u gain=%d",
+           static_cast<int>(err), static_cast<unsigned>(sample_count),
+           static_cast<int>(gain_db));
+  return false;
 }
 
 #ifdef USE_ESP_AUDIO_STACK_MONO_REF
