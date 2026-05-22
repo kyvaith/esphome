@@ -356,9 +356,8 @@ void ESPAudioStack::setup() {
   // Wi-Fi/API/VA/MWW churn can fragment internal RAM, and removes xTaskCreate
   // from the first wake-word/audio activation path.
   const BaseType_t core = this->task_core_ >= 0 ? this->task_core_ : tskNO_AFFINITY;
-  const uint32_t stack_words = this->task_stack_size_ / sizeof(StackType_t);
   if (!audio_processor::start_pinned_task(
-          audio_task, "audio_stack", stack_words, this, this->task_priority_,
+          audio_task, "audio_stack", this->task_stack_size_, this, this->task_priority_,
           core, this->audio_task_stack_in_psram_, TAG,
           &this->audio_task_handle_, &this->audio_task_tcb_,
           &this->audio_task_stack_)) {
@@ -1045,9 +1044,8 @@ void ESPAudioStack::start() {
   // can still enter through start(), so create the task here if needed.
   if (this->audio_task_handle_ == nullptr) {
     const BaseType_t core = this->task_core_ >= 0 ? this->task_core_ : tskNO_AFFINITY;
-    const uint32_t stack_words = this->task_stack_size_ / sizeof(StackType_t);
     if (!audio_processor::start_pinned_task(
-            audio_task, "audio_stack", stack_words, this, this->task_priority_,
+            audio_task, "audio_stack", this->task_stack_size_, this, this->task_priority_,
             core, this->audio_task_stack_in_psram_, TAG,
             &this->audio_task_handle_, &this->audio_task_tcb_,
             &this->audio_task_stack_)) {

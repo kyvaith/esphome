@@ -17,8 +17,8 @@ namespace audio_processor {
 /// repeat the if/else. Both paths log the failure reason via the provided
 /// `log_tag` (uses ESP_LOGE).
 ///
-///  - `psram_stack=true`: allocate `stack_words` of StackType_t from PSRAM
-///    via the external RAMAllocator, then call xTaskCreateStaticPinnedToCore.
+///  - `psram_stack=true`: allocate `stack_bytes` worth of StackType_t storage
+///    from PSRAM, then call xTaskCreateStaticPinnedToCore.
 ///    On allocation failure, returns false without touching the task system.
 ///    On success, *stack_out holds the allocated stack pointer (caller must
 ///    pass it back to cleanup_pinned_task() when stopping).
@@ -32,12 +32,13 @@ namespace audio_processor {
 /// Returns true if the task is alive and pinned. Returns false if either the
 /// stack allocation or the task creation failed; in that case the caller
 /// stays responsible for any other resources it allocated for the task.
-inline bool start_pinned_task(TaskFunction_t fn, const char *name, uint32_t stack_words,
+inline bool start_pinned_task(TaskFunction_t fn, const char *name, uint32_t stack_bytes,
                               void *param, UBaseType_t prio, BaseType_t core,
                               bool psram_stack, const char *log_tag,
                               TaskHandle_t *handle_out, StaticTask_t *tcb_out,
                               StackType_t **stack_out) {
   *handle_out = nullptr;
+  const uint32_t stack_words = (stack_bytes + sizeof(StackType_t) - 1) / sizeof(StackType_t);
   if (psram_stack) {
     *stack_out = nullptr;
     RAMAllocator<StackType_t> alloc(RAMAllocator<StackType_t>::ALLOC_EXTERNAL);
@@ -46,10 +47,10 @@ inline bool start_pinned_task(TaskFunction_t fn, const char *name, uint32_t stac
       ESP_LOGE(log_tag, "Failed to allocate PSRAM stack for %s task", name);
       return false;
     }
-    *handle_out = xTaskCreateStaticPinnedToCore(fn, name, stack_words, param, prio,
+    *handle_out = xTaskCreateStaticPinnedToCore(fn, name, stack_bytes, param, prio,
                                                  *stack_out, tcb_out, core);
   } else {
-    BaseType_t ok = xTaskCreatePinnedToCore(fn, name, stack_words * sizeof(StackType_t),
+    BaseType_t ok = xTaskCreatePinnedToCore(fn, name, stack_bytes,
                                              param, prio, handle_out, core);
     if (ok != pdPASS) {
       *handle_out = nullptr;
@@ -73,7 +74,7 @@ inline bool start_pinned_task(TaskFunction_t fn, const char *name, uint32_t stac
 /// is mid-recv / mid-esp-sr fetch / mid-i2s_channel_read leaves
 /// internal locks corrupted; for the steady-state stop path use the
 /// run-flag + done-semaphore pattern and then call cleanup_pinned_task.
-inline void force_delete_pinned_task(TaskHandle_t *handle, StackType_t **stack, uint32_t stack_words) {
+inline void force_delete_pinned_task(TaskHandle_t *handle, StackType_t **stack, uint32_t stack_bytes) {
   if (handle != nullptr && *handle != nullptr) {
     if (eTaskGetState(*handle) != eDeleted) {
       vTaskDelete(*handle);
@@ -81,6 +82,7 @@ inline void force_delete_pinned_task(TaskHandle_t *handle, StackType_t **stack, 
     *handle = nullptr;
   }
   if (stack != nullptr && *stack != nullptr) {
+    const uint32_t stack_words = (stack_bytes + sizeof(StackType_t) - 1) / sizeof(StackType_t);
     RAMAllocator<StackType_t> alloc(RAMAllocator<StackType_t>::ALLOC_EXTERNAL);
     alloc.deallocate(*stack, stack_words);
     *stack = nullptr;
@@ -99,7 +101,7 @@ inline void force_delete_pinned_task(TaskHandle_t *handle, StackType_t **stack, 
 /// On `eDeleted` the static stack is freed and `*handle`/`*stack` are
 /// nulled. Otherwise the helper logs an error and leaks the stack so we
 /// fail safe instead of free-while-in-use.
-inline void cleanup_pinned_task(TaskHandle_t *handle, StackType_t **stack, uint32_t stack_words) {
+inline void cleanup_pinned_task(TaskHandle_t *handle, StackType_t **stack, uint32_t stack_bytes) {
   if (handle != nullptr && *handle != nullptr) {
     if (eTaskGetState(*handle) != eDeleted) {
       ESP_LOGE("task_utils",
@@ -111,6 +113,7 @@ inline void cleanup_pinned_task(TaskHandle_t *handle, StackType_t **stack, uint3
     *handle = nullptr;
   }
   if (stack != nullptr && *stack != nullptr) {
+    const uint32_t stack_words = (stack_bytes + sizeof(StackType_t) - 1) / sizeof(StackType_t);
     RAMAllocator<StackType_t> alloc(RAMAllocator<StackType_t>::ALLOC_EXTERNAL);
     alloc.deallocate(*stack, stack_words);
     *stack = nullptr;
