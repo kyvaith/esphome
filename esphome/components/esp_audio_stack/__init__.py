@@ -42,7 +42,7 @@ CONF_I2S_DIN_PIN = "i2s_din_pin"
 CONF_I2S_DOUT_PIN = "i2s_dout_pin"
 CONF_OUTPUT_SAMPLE_RATE = "output_sample_rate"
 CONF_PROCESSOR_ID = "processor_id"
-CONF_MIC_ATTENUATION = "mic_attenuation"
+CONF_INPUT_GAIN = "input_gain"
 CONF_USE_STEREO_AEC_REF = "use_stereo_aec_reference"
 CONF_REFERENCE_CHANNEL = "reference_channel"
 CONF_BITS_PER_SAMPLE = "bits_per_sample"
@@ -70,7 +70,7 @@ CONF_DMA_FRAME_NUM = "dma_frame_num"
 CONF_TX_CHANNEL = "tx_channel"
 CONF_BUFFERS_IN_PSRAM = "buffers_in_psram"
 CONF_AEC_REF_RING_IN_PSRAM = "aec_ref_ring_in_psram"
-CONF_AUDIO_STACK_IN_PSRAM = "audio_stack_in_psram"
+CONF_AUDIO_TASK_STACK_IN_PSRAM = "audio_task_stack_in_psram"
 CONF_AEC_REFERENCE_MODE = "aec_reference"
 CONF_AEC_REF_BUFFER_MS = "aec_reference_buffer_ms"
 CONF_TELEMETRY = "telemetry"
@@ -324,9 +324,9 @@ CONFIG_SCHEMA = cv.All(
         # If omitted, equals sample_rate (no decimation)
         cv.Optional(CONF_OUTPUT_SAMPLE_RATE): cv.int_range(min=8000, max=48000),
         cv.Optional(CONF_PROCESSOR_ID): cv.use_id(AudioProcessor),
-        # Input gain/attenuation before the processor: <1.0 attenuates hot mics,
+        # Input gain before the processor: <1.0 attenuates hot mics,
         # >1.0 amplifies weak mics. This is gain staging, not a separate mic output.
-        cv.Optional(CONF_MIC_ATTENUATION, default=1.0): cv.float_range(min=0.01, max=32.0),
+        cv.Optional(CONF_INPUT_GAIN, default=1.0): cv.float_range(min=0.01, max=32.0),
         # ES8311 digital feedback: RX is stereo with L=ADC(mic), R=DAC(reference)
         # when no_dac_ref is false. Espressif's driver writes REG44=0x58,
         # documented in-source as "ADCL + DACR".
@@ -358,7 +358,7 @@ CONFIG_SCHEMA = cv.All(
         # to traverse PSRAM. Only enable on boards that need the internal
         # headroom (e.g. waveshare-s3 running 2-mic Speech Enhancement plus
         # concurrent TLS streams). Requires CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y.
-        cv.Optional(CONF_AUDIO_STACK_IN_PSRAM, default=False): cv.boolean,
+        cv.Optional(CONF_AUDIO_TASK_STACK_IN_PSRAM, default=False): cv.boolean,
         # AEC reference mode for no-codec setups (ignored if stereo/TDM ref is configured):
         #   ring_buffer: Espressif ADF TYPE2-style software reference, default
         #   previous_frame: light mode using the previous TX frame, no TYPE2 ring
@@ -562,6 +562,7 @@ async def to_code(config):
     # ESPHome requires `ref`; "*" maps to an unpinned/latest registry version.
     # Replace it only when a concrete upstream regression is documented.
     has_hardware_codec = CONF_CODEC in config
+    has_output_codec = has_hardware_codec and CONF_OUTPUT in config[CONF_CODEC]
     add_idf_component(name="esphome/esp-audio-libs", ref="*")
     add_idf_component(name="espressif/esp_audio_effects", ref="*")
     if has_hardware_codec:
@@ -596,11 +597,13 @@ async def to_code(config):
         cg.add_define("USE_ESP_AUDIO_STACK_32BIT")
     if has_hardware_codec:
         cg.add_define("USE_ESP_AUDIO_STACK_HARDWARE_CODEC")
+    if has_output_codec:
+        cg.add_define("USE_ESP_AUDIO_STACK_HARDWARE_OUTPUT_CODEC")
     include_builtin_idf_component("esp_driver_i2s")
     add_idf_sdkconfig_option("CONFIG_I2S_ISR_IRAM_SAFE", True)
     gmf_io = config[CONF_GMF_IO]
     if (
-        config[CONF_AUDIO_STACK_IN_PSRAM]
+        config[CONF_AUDIO_TASK_STACK_IN_PSRAM]
         or gmf_io[CONF_READER][CONF_TASK_STACK_IN_PSRAM]
         or gmf_io[CONF_WRITER][CONF_TASK_STACK_IN_PSRAM]
     ):
@@ -662,8 +665,8 @@ async def to_code(config):
     if CONF_OUTPUT_SAMPLE_RATE in config:
         cg.add(var.set_output_sample_rate(config[CONF_OUTPUT_SAMPLE_RATE]))
 
-    # Set input gain/attenuation before the audio processor.
-    cg.add(var.set_mic_attenuation(config[CONF_MIC_ATTENUATION]))
+    # Set input gain before the audio processor.
+    cg.add(var.set_input_gain(config[CONF_INPUT_GAIN]))
 
     # ES8311 digital feedback mode: stereo RX with L=mic, R=ref
     cg.add(var.set_use_stereo_aec_reference(config[CONF_USE_STEREO_AEC_REF]))
@@ -725,7 +728,7 @@ async def to_code(config):
             (CONF_TASK_STACK_SIZE, var.set_task_stack_size),
             (CONF_DMA_DESC_NUM, var.set_dma_desc_num),
             (CONF_BUFFERS_IN_PSRAM, var.set_buffers_in_psram),
-            (CONF_AUDIO_STACK_IN_PSRAM, var.set_audio_stack_in_psram),
+            (CONF_AUDIO_TASK_STACK_IN_PSRAM, var.set_audio_task_stack_in_psram),
         ),
     )
     if CONF_DMA_FRAME_NUM in config:

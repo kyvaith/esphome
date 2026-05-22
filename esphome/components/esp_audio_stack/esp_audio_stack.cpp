@@ -48,6 +48,12 @@ int32_t volume_factor_to_q31(float volume) {
       remap<float, float>(volume, 0.0f, 1.0f, SOFTWARE_VOLUME_MIN_DB, 0.0f));
 }
 
+int32_t attenuation_factor_to_q31(float gain) {
+  if (!(gain > 0.0f)) return 0;
+  if (gain >= 1.0f) return INT32_MAX;
+  return esp_audio_libs::gain::db_to_q31(20.0f * std::log10(gain));
+}
+
 int32_t multiply_q31(int32_t a, int32_t b) {
   if (a <= 0 || b <= 0) return 0;
   const int64_t value = (static_cast<int64_t>(a) * static_cast<int64_t>(b) + (1LL << 30)) >> 31;
@@ -58,21 +64,27 @@ float sanitize_gain_factor(float gain) {
   if (!std::isfinite(gain) || gain <= 0.0f) {
     return 0.0f;
   }
-  // YAML exposes mic attenuation up to 32x and mic_gain_db +30 dB maps to
+  // YAML exposes input gain up to 32x and mic_gain_db +30 dB maps to
   // ~31.6x. Clamp direct C++ callers to the same practical envelope.
   return gain > 32.0f ? 32.0f : gain;
 }
 }  // namespace
 
 void ESPAudioStack::set_mic_gain(float gain) {
-  this->mic_gain_.store(sanitize_gain_factor(gain), std::memory_order_relaxed);
+  gain = sanitize_gain_factor(gain);
+  this->mic_gain_.store(gain, std::memory_order_relaxed);
+  this->mic_gain_q31_.store(attenuation_factor_to_q31(gain), std::memory_order_relaxed);
+  this->mic_gain_boost_.store(gain > 1.0f ? gain : 1.0f, std::memory_order_relaxed);
 }
 
-void ESPAudioStack::set_mic_attenuation(float atten) {
-  this->mic_attenuation_.store(sanitize_gain_factor(atten), std::memory_order_relaxed);
+void ESPAudioStack::set_input_gain(float gain) {
+  gain = sanitize_gain_factor(gain);
+  this->input_gain_.store(gain, std::memory_order_relaxed);
+  this->input_gain_q31_.store(attenuation_factor_to_q31(gain), std::memory_order_relaxed);
+  this->input_gain_boost_.store(gain > 1.0f ? gain : 1.0f, std::memory_order_relaxed);
 }
 
-void ESPAudioStack::set_speaker_volume(float volume) {
+void ESPAudioStack::set_master_volume(float volume) {
   if (!(volume > 0.0f)) {
     volume = 0.0f;
   } else if (volume > 1.0f) {
@@ -81,15 +93,15 @@ void ESPAudioStack::set_speaker_volume(float volume) {
   this->master_volume_linear_.store(volume, std::memory_order_relaxed);
   const int32_t q31 = volume_factor_to_q31(volume);
   const int32_t previous = this->master_volume_q31_.exchange(q31, std::memory_order_relaxed);
-  if (previous != q31) this->update_combined_speaker_volume_();
+  if (previous != q31) this->update_hot_output_volume_();
 }
 
-void ESPAudioStack::set_speaker_volume_q31(int32_t q31) {
+void ESPAudioStack::set_master_volume_q31(int32_t q31) {
   if (q31 < 0) q31 = 0;
   this->master_volume_linear_.store(static_cast<float>(q31) / static_cast<float>(INT32_MAX),
                                     std::memory_order_relaxed);
   const int32_t previous = this->master_volume_q31_.exchange(q31, std::memory_order_relaxed);
-  if (previous != q31) this->update_combined_speaker_volume_();
+  if (previous != q31) this->update_hot_output_volume_();
 }
 
 void ESPAudioStack::set_output_volume(float volume) {
@@ -104,30 +116,30 @@ void ESPAudioStack::set_output_volume(float volume) {
 void ESPAudioStack::set_output_volume_q31(int32_t q31) {
   if (q31 < 0) q31 = 0;
   const int32_t previous = this->output_volume_q31_.exchange(q31, std::memory_order_relaxed);
-  if (previous != q31) this->update_combined_speaker_volume_();
+  if (previous != q31) this->update_hot_output_volume_();
 }
 
-void ESPAudioStack::update_combined_speaker_volume_() {
+void ESPAudioStack::update_hot_output_volume_() {
   const int32_t output_q31 = this->output_volume_q31_.load(std::memory_order_relaxed);
   const int32_t master_q31 = this->master_volume_q31_.load(std::memory_order_relaxed);
   const float master_linear = this->master_volume_linear_.load(std::memory_order_relaxed);
-#ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
-  const bool hardware_master = this->codec_backend_.has_output_codec();
+#ifdef USE_ESP_AUDIO_STACK_HARDWARE_OUTPUT_CODEC
+  static constexpr bool hardware_master = true;
 #else
-  const bool hardware_master = false;
+  static constexpr bool hardware_master = false;
 #endif
   const int32_t combined_q31 = hardware_master ? output_q31 : multiply_q31(output_q31, master_q31);
   const float linear = static_cast<float>(combined_q31) / static_cast<float>(INT32_MAX);
-  this->speaker_volume_.store(hardware_master ? master_linear : static_cast<float>(master_q31) / static_cast<float>(INT32_MAX),
-                              std::memory_order_relaxed);
-  const int32_t previous = this->speaker_volume_q31_.exchange(combined_q31, std::memory_order_relaxed);
+  this->master_volume_public_.store(hardware_master ? master_linear : static_cast<float>(master_q31) / static_cast<float>(INT32_MAX),
+                                    std::memory_order_relaxed);
+  const int32_t previous = this->hot_output_volume_q31_.exchange(combined_q31, std::memory_order_relaxed);
   if (hardware_master) {
 #ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
     this->codec_backend_.set_output_volume(master_linear);
 #endif
   }
   if (previous != combined_q31) {
-    ESP_LOGD(TAG, "Speaker volume: output_q31=%d master_q31=%d hot_q31=%d linear=%.3f hw_master=%s previous_q31=%d",
+    ESP_LOGD(TAG, "Master volume: output_q31=%d master_q31=%d hot_q31=%d linear=%.3f hw_master=%s previous_q31=%d",
              output_q31, master_q31, combined_q31, linear, hardware_master ? "yes" : "no", previous);
   }
 }
@@ -330,7 +342,7 @@ void ESPAudioStack::setup() {
   const uint32_t stack_words = this->task_stack_size_ / sizeof(StackType_t);
   if (!audio_processor::start_pinned_task(
           audio_task, "audio_stack", stack_words, this, this->task_priority_,
-          core, this->audio_stack_in_psram_, TAG,
+          core, this->audio_task_stack_in_psram_, TAG,
           &this->audio_task_handle_, &this->audio_task_tcb_,
           &this->audio_task_stack_)) {
     ESP_LOGE(TAG, "Failed to create permanent audio task");
@@ -1019,7 +1031,7 @@ void ESPAudioStack::start() {
     const uint32_t stack_words = this->task_stack_size_ / sizeof(StackType_t);
     if (!audio_processor::start_pinned_task(
             audio_task, "audio_stack", stack_words, this, this->task_priority_,
-            core, this->audio_stack_in_psram_, TAG,
+            core, this->audio_task_stack_in_psram_, TAG,
             &this->audio_task_handle_, &this->audio_task_tcb_,
             &this->audio_task_stack_)) {
       this->has_i2s_error_.store(true, std::memory_order_relaxed);

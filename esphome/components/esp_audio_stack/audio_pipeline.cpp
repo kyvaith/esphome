@@ -638,9 +638,11 @@ void ESPAudioStack::audio_session_() {
     ctx.speaker_got = 0;
 
     // Snapshot atomic state for this frame (avoids repeated .load() in sample loops)
-    ctx.mic_attenuation = this->mic_attenuation_.load(std::memory_order_relaxed);
-    ctx.mic_gain = this->mic_gain_.load(std::memory_order_relaxed);
-    ctx.speaker_volume_q31 = this->speaker_volume_q31_.load(std::memory_order_relaxed);
+    ctx.input_gain_q31 = this->input_gain_q31_.load(std::memory_order_relaxed);
+    ctx.input_gain_boost = this->input_gain_boost_.load(std::memory_order_relaxed);
+    ctx.mic_gain_q31 = this->mic_gain_q31_.load(std::memory_order_relaxed);
+    ctx.mic_gain_boost = this->mic_gain_boost_.load(std::memory_order_relaxed);
+    ctx.hot_output_volume_q31 = this->hot_output_volume_q31_.load(std::memory_order_relaxed);
     ctx.speaker_running = this->speaker_running_.load(std::memory_order_relaxed);
     ctx.speaker_paused = this->speaker_paused_.load(std::memory_order_relaxed);
     ctx.mic_running = this->has_mic_consumers_.load(std::memory_order_relaxed);
@@ -911,17 +913,19 @@ void ESPAudioStack::process_rx_path_(AudioTaskCtx &ctx) {
 #endif
   // else: Mono without decimation: mic_buffer == rx_buffer (aliased), nothing to do
 
-  // Fused loop: DC offset + mic attenuation in one pass.
+  // Fused loop: DC offset + input gain staging in one pass when DC or positive
+  // boost is needed. Pure input attenuation uses esp-audio-libs Q31 below.
   // For dual-mic: mic1 is in mic_buffer, mic2 is in processor_mic_buffer[i*2+1]
-  // (both filled by the multi-channel rate converter). Apply DC+atten on both, update in-place.
-  // When neither DC nor attenuation is needed, processor_mic_buffer (dual_mic case)
+  // (both filled by the multi-channel rate converter). Apply DC+input gain on both, update in-place.
+  // When neither DC nor input gain is needed, processor_mic_buffer (dual_mic case)
   // is left as-is: the multi-channel rate converter has already produced correct values for both mics.
   const bool do_dc = ctx.correct_dc_offset;
-  const bool do_atten = ctx.mic_attenuation != 1.0f;
+  const bool do_input_gain_q31 = ctx.input_gain_q31 != INT32_MAX;
+  const bool do_input_gain_boost = ctx.input_gain_boost != 1.0f;
   const bool dual_mic = ctx.processor_mic_channels > 1 && ctx.processor_mic_buffer != nullptr;
 
-  if (do_dc || do_atten) {
-    const float atten = ctx.mic_attenuation;
+  if (do_dc || do_input_gain_boost) {
+    const float boost = ctx.input_gain_boost;
     for (size_t i = 0; i < ctx.input_frame_size; i++) {
       int16_t s1 = ctx.mic_buffer[i];
 
@@ -933,8 +937,8 @@ void ESPAudioStack::process_rx_path_(AudioTaskCtx &ctx) {
         this->dc_prev_output_persistent_ = out;
         s1 = static_cast<int16_t>(out >> 16);
       }
-      if (do_atten) {
-        s1 = scale_sample(s1, atten);
+      if (do_input_gain_boost) {
+        s1 = scale_sample(s1, boost);
       }
       ctx.mic_buffer[i] = s1;
 
@@ -950,8 +954,8 @@ void ESPAudioStack::process_rx_path_(AudioTaskCtx &ctx) {
           this->dc_prev_output_secondary_persistent_ = out2;
           s2 = static_cast<int16_t>(out2 >> 16);
         }
-        if (do_atten) {
-          s2 = scale_sample(s2, atten);
+        if (do_input_gain_boost) {
+          s2 = scale_sample(s2, boost);
         }
         // Update both mic1 and mic2 in the interleaved buffer
         ctx.processor_mic_buffer[i * 2] = s1;
@@ -959,7 +963,27 @@ void ESPAudioStack::process_rx_path_(AudioTaskCtx &ctx) {
       }
     }
   }
-  // dual_mic with no DC/atten: processor_mic_buffer already correct from the rate converter.
+
+  if (do_input_gain_q31) {
+    auto *mic_bytes = reinterpret_cast<uint8_t *>(ctx.mic_buffer);
+    if (ctx.input_gain_q31 == 0) {
+      memset(mic_bytes, 0, ctx.input_frame_size * sizeof(int16_t));
+    } else {
+      esp_audio_libs::gain::apply(mic_bytes, mic_bytes, ctx.input_gain_q31,
+                                  ctx.input_frame_size, sizeof(int16_t));
+    }
+    if (dual_mic) {
+      auto *processor_bytes = reinterpret_cast<uint8_t *>(ctx.processor_mic_buffer);
+      const size_t processor_bytes_len = ctx.input_frame_size * ctx.processor_mic_channels * sizeof(int16_t);
+      if (ctx.input_gain_q31 == 0) {
+        memset(processor_bytes, 0, processor_bytes_len);
+      } else {
+        esp_audio_libs::gain::apply(processor_bytes, processor_bytes, ctx.input_gain_q31,
+                                    ctx.input_frame_size * ctx.processor_mic_channels, sizeof(int16_t));
+      }
+    }
+  }
+  // dual_mic with no DC/input gain: processor_mic_buffer already correct from the rate converter.
 }
 
 #ifdef USE_ESP_AUDIO_STACK_TDM_BUS
@@ -1115,10 +1139,22 @@ void ESPAudioStack::process_aec_and_callbacks_(AudioTaskCtx &ctx) {
   }
 #endif
 
-  // Apply mic gain (snapshot value). scale_block_i16 picks SIMD when gain
-  // is in [0, 1] and falls back to scalar saturating loop above 1.0 (mic
-  // gain can amplify up to ~10x via mic_gain_db: +20).
-  scale_block_i16(ctx.output_buffer, ctx.output_buffer, ctx.current_output_frame_size, ctx.mic_gain);
+  // Apply post-processor mic gain. Attenuation follows ESPHome/esp-audio-libs
+  // Q31; positive dB boost needs the local saturating path because Q31 gain
+  // intentionally clamps at unity.
+  if (ctx.mic_gain_q31 != INT32_MAX) {
+    auto *output_bytes = reinterpret_cast<uint8_t *>(ctx.output_buffer);
+    if (ctx.mic_gain_q31 == 0) {
+      memset(output_bytes, 0, ctx.current_output_frame_bytes);
+    } else {
+      esp_audio_libs::gain::apply(output_bytes, output_bytes, ctx.mic_gain_q31,
+                                  ctx.current_output_frame_size, sizeof(int16_t));
+    }
+  }
+  if (ctx.mic_gain_boost != 1.0f) {
+    scale_block_i16(ctx.output_buffer, ctx.output_buffer, ctx.current_output_frame_size,
+                    ctx.mic_gain_boost);
+  }
 
   // Post-AEC callbacks (VA/STT)
   if (ctx.mic_running) {
@@ -1280,12 +1316,16 @@ void ESPAudioStack::process_tx_path_(AudioTaskCtx &ctx) {
     ctx.speaker_underrun = got < ctx.bus_frame_bytes;
 
     if (got > 0) {
-      // Speaker software volume is cached as Q31 when the volume changes, so
+      // Hot-path output volume is cached as Q31 when the volume changes, so
       // the audio task does not spend every frame converting float -> fixed.
-      const size_t got_samples = got / sizeof(int16_t);
       auto *spk_bytes = reinterpret_cast<uint8_t *>(ctx.spk_buffer);
-      esp_audio_libs::gain::apply(spk_bytes, spk_bytes, ctx.speaker_volume_q31, got_samples,
-                                  sizeof(int16_t));
+      if (ctx.hot_output_volume_q31 == 0) {
+        memset(spk_bytes, 0, got);
+      } else if (ctx.hot_output_volume_q31 != INT32_MAX) {
+        const size_t got_samples = got / sizeof(int16_t);
+        esp_audio_libs::gain::apply(spk_bytes, spk_bytes, ctx.hot_output_volume_q31, got_samples,
+                                    sizeof(int16_t));
+      }
       if (got < ctx.bus_frame_bytes) {
         memset(((uint8_t *) ctx.spk_buffer) + got, 0, ctx.bus_frame_bytes - got);
       }

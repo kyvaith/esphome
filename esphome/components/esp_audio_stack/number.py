@@ -6,12 +6,12 @@ from esphome.const import CONF_MAX_VALUE, CONF_MIN_VALUE, ENTITY_CATEGORY_CONFIG
 
 from . import esp_audio_stack_ns, ESPAudioStack, CONF_ESP_AUDIO_STACK_ID
 CONF_MIC_GAIN = "mic_gain"
-CONF_SPEAKER_VOLUME = "speaker_volume"
+CONF_MASTER_VOLUME = "master_volume"
 CONF_SPEAKER_ID = "speaker_id"
 
 # Number classes
 MicGainNumber = esp_audio_stack_ns.class_("MicGainNumber", number.Number, cg.Component)
-SpeakerVolumeNumber = esp_audio_stack_ns.class_("SpeakerVolumeNumber", number.Number, cg.Component)
+MasterVolumeNumber = esp_audio_stack_ns.class_("MasterVolumeNumber", number.Number, cg.Component)
 
 MIC_GAIN_SCHEMA = number.number_schema(
     MicGainNumber,
@@ -34,8 +34,8 @@ MIC_GAIN_SCHEMA = cv.All(MIC_GAIN_SCHEMA, _validate_mic_gain_range)
 CONFIG_SCHEMA = cv.Schema({
     cv.GenerateID(CONF_ESP_AUDIO_STACK_ID): cv.use_id(ESPAudioStack),
     cv.Optional(CONF_MIC_GAIN): MIC_GAIN_SCHEMA,
-    cv.Optional(CONF_SPEAKER_VOLUME): number.number_schema(
-        SpeakerVolumeNumber,
+    cv.Optional(CONF_MASTER_VOLUME): number.number_schema(
+        MasterVolumeNumber,
         entity_category=ENTITY_CATEGORY_CONFIG,
         icon="mdi:volume-high",
         unit_of_measurement=UNIT_PERCENT,
@@ -65,8 +65,8 @@ async def to_code(config):
 
     await _setup_mic_gain(config, CONF_MIC_GAIN, parent)
 
-    if CONF_SPEAKER_VOLUME in config:
-        conf = config[CONF_SPEAKER_VOLUME]
+    if CONF_MASTER_VOLUME in config:
+        conf = config[CONF_MASTER_VOLUME]
         var = await number.new_number(
             conf,
             min_value=0.0,

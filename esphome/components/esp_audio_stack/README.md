@@ -25,10 +25,10 @@ With esp_audio_stack:
   - **TDM Hardware Reference** (for ES7210 + ES8311): ES7210 in TDM mode captures DAC analog output on a dedicated ADC channel (e.g. MIC3). Sample-aligned with mic data. Enable with `use_tdm_reference: true`.
 - **Post-Processor Mic Path**: the standard microphone platform always emits the processed stream from `esp_aec` or `esp_afe`, so MWW, VA and intercom share one stable post-processor source.
 - **PSRAM Buffers**: `buffers_in_psram` option moves the non-hot-path audio buffers (AEC mic/ref, processor interleave, multi-channel mic, spk_ref) to PSRAM. `rx_buffer` and `spk_buffer` stay in internal RAM regardless (I2S hot path, PSRAM bus contention would cause glitches). Typical saving: ~15-20KB internal heap. Required for `sr_low_cost` AEC on memory-constrained devices.
-- **Volume Controls**: Master volume (speaker-backed, persistent) and post-AEC/AFE mic gain (-20 to +30 dB, persistent). Board-level input gain staging remains a YAML option through `mic_attenuation`, not a Home Assistant user control.
+- **Volume Controls**: Master volume (speaker-backed, persistent) and post-AEC/AFE mic gain (-20 to +30 dB, persistent). Board-level input gain staging remains a YAML option through `input_gain`, not a Home Assistant user control.
 - **Codec-less Support**: `slot_bit_width: 32` for MEMS mics (INMP441, MSM261, SPH0645) + I2S amp on the same bus or on separate RX/TX buses. `correct_dc_offset: true` for mics without built-in HPF
 - **Dual I2S Bus Support**: optional `rx_bus` and `tx_bus` split mode for discrete I2S microphones and amplifiers on separate ESP-IDF I2S controllers. The feature is compile-time gated and does not enter single-bus builds.
-- **Number Platform**: Native `mic_gain` and Master Volume entities with `ESPPreferenceObject` persistence. The YAML option is still `speaker_volume`, but the standard packages expose the user-facing number as `master_volume`. When both `esp_audio_stack` and `intercom_api` are present, `esp_audio_stack` owns the number entities and `intercom_api` defers to avoid conflicts.
+- **Number Platform**: Native `mic_gain` and `master_volume` entities with `ESPPreferenceObject` persistence. When both `esp_audio_stack` and `intercom_api` are present, `esp_audio_stack` owns the number entities and `intercom_api` defers to avoid conflicts.
 - **Cross-Component Validation**: `FINAL_VALIDATE_SCHEMA` prevents dual audio processors (both `esp_audio_stack` and `intercom_api` with a processor configured) and dual DC offset removal, catching configuration errors at compile time
 - **Processor Surface**: When `processor_id` is configured, microphone callbacks receive processed audio or silence. They never receive an implicit raw mic shortcut while the processor is stopped, rebuilding, or waiting for reference.
 - **Consumer Registry**: Multiple mic consumers share the I2S bus safely (MWW + VA + intercom). Each consumer registers once at setup via `register_mic_consumer()` and stays registered across internal stop/start cycles.
@@ -50,7 +50,7 @@ flowchart TD
     TDM --> Ref
     Mono --> Mic
 
-    Mic --> Atten["🎚️ mic attenuation<br/>optional"]
+    Mic --> Atten["🎚️ input gain<br/>optional"]
     Atten --> Raw["🧪 raw callbacks<br/>pre-processing diagnostics"]
     Atten --> Processor["🧠 audio_processor.process<br/>esp_aec or esp_afe"]
 
@@ -245,7 +245,7 @@ First-version limits:
 | `gmf_io.reader.task_timeout_ms` | int | 0 | Optional GMF IO task close/control timeout override in milliseconds. |
 | `gmf_io.writer.*` | same as reader | same | Same official `io_codec_dev` knobs for the TX writer side. |
 | `processor_id` | ID | - | Reference to audio processor component (`esp_aec` or `esp_afe`) for echo cancellation and audio processing |
-| `mic_attenuation` | float | 1.0 | Input gain/attenuation before the processor (0.01-32.0). <1.0 attenuates hot mics, >1.0 amplifies weak mics. Keep this as board-level tuning; normal user-facing volume should be handled by the post-AEC/AFE `mic_gain` number. |
+| `input_gain` | float | 1.0 | Input gain before the processor (0.01-32.0). <1.0 attenuates hot mics, >1.0 amplifies weak mics. Keep this as board-level tuning; normal user-facing volume should be handled by the post-AEC/AFE `mic_gain` number. |
 | `slot_bit_width` | int | auto | I2S slot width in bits (16 or 32). Set to 32 for MEMS mics without codec (INMP441, MSM261, SPH0645). |
 | `correct_dc_offset` | bool | false | Enable DC offset removal. Required for MEMS mics without built-in HPF (MSM261, SPH0645). |
 | `use_stereo_aec_reference` | bool | false | ES8311 digital feedback mode (see below) |
@@ -259,7 +259,7 @@ First-version limits:
 | `task_core` | int | 0 | Core affinity: 0 or 1 for pinned, -1 for unpinned. Default 0 keeps the non-network realtime I2S bridge below Wi-Fi and above lwIP on the ESP-IDF protocol core. |
 | `task_stack_size` | int | 8192 | Audio task stack size in bytes (4096-32768). Increase if you see stack overflow warnings. |
 | `buffers_in_psram` | bool | false | Move component-owned frame buffers (RX scratch, speaker frame scratch, processor interleave, mic/ref/output buffers) to PSRAM where possible. DMA descriptors and I2S driver buffers remain internal. Saves internal heap on full builds at the cost of PSRAM traffic. |
-| `audio_stack_in_psram` | bool | false | Place the audio task's own stack in PSRAM. Saves ~8KB of DMA-capable internal RAM at the cost of slower function return paths. Only enable on boards that need the internal headroom. With GMF-backed `esp_afe`, heavy esp-sr work runs in Espressif manager tasks, so PSRAM stack latency is acceptable here. Requires `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y` (already default on our YAMLs). Leave it `false` on any board that does not hit the "not enough internal RAM" boundary; normal lifecycle is identical to the non-opt-in path. |
+| `audio_task_stack_in_psram` | bool | false | Place the audio task's own stack in PSRAM. Saves ~8KB of DMA-capable internal RAM at the cost of slower function return paths. Only enable on boards that need the internal headroom. With GMF-backed `esp_afe`, heavy esp-sr work runs in Espressif manager tasks, so PSRAM stack latency is acceptable here. Requires `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y` (already default on our YAMLs). Leave it `false` on any board that does not hit the "not enough internal RAM" boundary; normal lifecycle is identical to the non-opt-in path. |
 | `aec_reference` | string | `ring_buffer` | Mono-mode AEC reference source for no-codec setups. `ring_buffer` is the Espressif/ADF TYPE2-style software reference: speaker TX is staged in a delay-tunable ring before being fed to the processor. `previous_frame` is a lighter custom mode that reuses the prior TX frame, with no ring buffer and no delay tuning. Ignored when `use_stereo_aec_reference` or `use_tdm_reference` is true. |
 | `aec_reference_buffer_ms` | int | 80 | Capacity of the AEC reference ring buffer in milliseconds (32 to 500). Only used with `aec_reference: ring_buffer`. Larger values absorb more producer/consumer jitter at the cost of latency. |
 | `aec_ref_ring_in_psram` | bool | false | Place the AEC reference ring buffer storage (~3-5 KB) in PSRAM. Default `false` keeps it in internal RAM, saving ~13.6 us/frame on Core 0 (the audio task reads and writes the ring every frame). Set `true` to save internal RAM at the cost of Core 0 PSRAM traffic. Has no effect when `aec_reference: previous_frame` or when `use_stereo_aec_reference` / `use_tdm_reference` is set, since the ring path is not compiled for those modes. |
@@ -725,7 +725,7 @@ binary_sensor:
 - **Task Priority**: 19 (above lwIP at 18, below WiFi at 23). Configurable via `task_priority` YAML option.
 - **Core Affinity**: Pinned to Core 0 for the non-network realtime I2S bridge. Espressif's GMF AFE path keeps manager feed on Core 0 and manager fetch plus the GMF pipeline task on Core 1 via `esp_afe`; Core 1 remains available for GMF output, MWW inference and LVGL. Configurable via `task_core` YAML option.
 - **Processor Surface**: Mono, stereo and TDM processor modes all keep callbacks on the processed surface. Mono software-reference mode zero-fills the reference when playback is idle instead of switching around the processor.
-- **Thread Safety**: All cross-thread variables use `std::atomic` with `memory_order_relaxed`, including `float` mic gains and cached speaker volume. The software speaker/media volume is converted to the ESPHome 2026.5 `esp-audio-libs` Q31 gain value when it changes, then the audio task snapshots that fixed-point value once per frame and applies it through `esp_audio_libs::gain::apply()`. Ring buffer resets use atomic request flags (`request_speaker_reset_`) to avoid concurrent access between main thread and audio task.
+- **Thread Safety**: All cross-thread variables use `std::atomic` with `memory_order_relaxed`. Speaker/media volume and input gain are converted to ESPHome 2026.5 `esp-audio-libs` Q31 gain values when they change, then the audio task snapshots those fixed-point values once per frame and applies them through `esp_audio_libs::gain::apply()`. Positive mic boost remains a saturating scalar path because Q31 gain intentionally cannot amplify above unity. Ring buffer resets use atomic request flags (`request_speaker_reset_`) to avoid concurrent access between main thread and audio task.
 - **Task Structure**: `audio_task_()` is split into `process_rx_path_()`, `process_aec_and_callbacks_()`, and `process_tx_path_()`, sharing state via `AudioTaskCtx` struct. AEC buffers use 16-byte aligned allocation for ESP-SR SIMD safety.
 - **I2S hardware lifecycle**: the component creates and initializes official
   IDF `esp_driver_i2s` TX/RX channels on demand. `esp_codec_dev_open()` then
@@ -741,7 +741,7 @@ binary_sensor:
   the right hooks for amplifier power gating; do not use the generic audio-stack
   `on_start`/`on_idle` for speaker power if wake word or VA can keep the mic
   path active.
-- **Mic Gain**: -20 to +30 dB range (applied post-AEC in audio_task). Stored via `ESPPreferenceObject` and restored on boot. Mic gain is applied to post-AEC output (affects VA/intercom/MWW equally). **Clipping warning**: positive gain saturates to int16 with a hard clip. On loud speech with gain > +6 dB, peak samples can clip and produce harmonic distortion that degrades STT and intercom audio. If you need gain > +6 dB to bring a weak MEMS mic up to working levels, pair this component with `esp_afe` and `agc_enabled: true` (the AGC caps the post-AFE level before the gain stage); with standalone `esp_aec` there is no automatic ceiling.
+- **Mic Gain**: -20 to +30 dB range (applied post-AEC in audio_task). Stored via `ESPPreferenceObject` and restored on boot. Mic gain is applied to post-AEC output (affects VA/intercom/MWW equally). Values at or below 0 dB use ESPHome's Q31 `esp-audio-libs` gain path, including zero as a `memset()` fast path. **Clipping warning**: positive gain saturates to int16 with a hard clip. On loud speech with gain > +6 dB, peak samples can clip and produce harmonic distortion that degrades STT and intercom audio. If you need gain > +6 dB to bring a weak MEMS mic up to working levels, pair this component with `esp_afe` and `agc_enabled: true` (the AGC caps the post-AFE level before the gain stage); with standalone `esp_aec` there is no automatic ceiling.
 - **Cross-Component Validation**: `FINAL_VALIDATE_SCHEMA` checks at compile time that `esp_audio_stack` and `intercom_api` don't both configure an audio processor (`processor_id`) or DC offset removal. If both components are present, `esp_audio_stack` takes ownership of audio processing and DC offset; `intercom_api` should NOT set `processor_id` or `dc_offset_removal`.
 
 ### Audio task lifecycle
@@ -822,7 +822,7 @@ The driver and its helper entities log under namespaced tags so callers can mute
 |---|---|---|
 | `audio_stack` | `esp_audio_stack.cpp`, `audio_pipeline.cpp` | Driver init/teardown, channel start/stop, mic consumer registry, AEC reference selection, throttled I2S read/write WARNs |
 | `audio_stack.mic_gain` | `number.h` | `dump_config` for the mic gain helper number |
-| `audio_stack.speaker_volume` | `number.h` | `dump_config` for the Master Volume helper number |
+| `audio_stack.master_volume` | `number.h` | `dump_config` for the Master Volume helper number |
 | `audio_stack.tdm_slot_sensor` | `sensor.h` | `dump_config` for the TDM slot level sensor |
 | `audio_stack.aec_switch` | `switch.h` | `dump_config` for the AEC enable switch |
 
@@ -845,7 +845,7 @@ logger:
   level: DEBUG
   logs:
     audio_stack.mic_gain: INFO
-    audio_stack.speaker_volume: INFO
+    audio_stack.master_volume: INFO
     audio_stack.aec_switch: INFO
     audio_stack.tdm_slot_sensor: INFO
 ```
@@ -897,7 +897,7 @@ With `audio_stack` on **Core 0**, AEC no longer competes with LVGL/display on Co
 - **loopTask long-operation warnings during 48kHz streaming**: ESPHome reports `[W] mixer.speaker took a long time (110ms)` and similar warnings for `resampler.speaker`, `api`, `wifi` during audio playback. This is **expected and harmless**. These components run in loopTask (Core 1, prio 1) and process audio/network chunks that take >30ms. All real-time audio runs in dedicated tasks on Core 0 and is unaffected.
 - **AEC is ESP-SR closed-source**: Cannot reset the adaptive filter without recreating the handle. When a processor is configured, this component no longer switches to raw mic audio during idle or reinit windows; unavailable processed output is silenced.
 - **TDM analog reference vs ES8311 digital feedback**: The digital feedback path (ES8311 stereo loopback) provides a cleaner reference signal for AEC than the TDM analog path (ES7210 MIC3 capturing speaker output). Analog loopback introduces non-linear distortion from the DAC/amplifier chain that the AEC linear adaptive filter cannot fully model. Expect ~95-98% echo cancellation with analog reference vs ~99% with digital feedback. Both are adequate for voice assistant and intercom use.
-- **AEC reference**: The reference signal is always the exact post-volume PCM sent to the speaker, with no additional scaling. For hardware codec setups (ES8311, TDM), the reference naturally includes hardware volume. For software reference (no codec), the reference includes software volume. Pre-AEC mic attenuation/gain affects only the mic signal, not the reference; use it sparingly because it changes what the AEC/AFE sees.
+- **AEC reference**: The reference signal is always the exact post-volume PCM sent to the speaker, with no additional scaling. For hardware codec setups (ES8311, TDM), the reference naturally includes hardware volume. For software reference (no codec), the reference includes software volume. Pre-AEC input gain/gain affects only the mic signal, not the reference; use it sparingly because it changes what the AEC/AFE sees.
 
 ## License
 

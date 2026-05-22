@@ -249,21 +249,23 @@ class ESPAudioStack : public Component {
   void set_processor_enabled(bool enabled) { this->processor_enabled_.store(enabled, std::memory_order_relaxed); }
   bool is_processor_enabled() const { return this->processor_enabled_.load(std::memory_order_relaxed); }
 
-  // Volume control (0.0 - 1.0). Atomic: written from main loop, read from audio task.
+  // Mic gain control. Attenuation uses esp-audio-libs Q31 in the hot path;
+  // positive dB boost keeps the saturating scalar fallback because Q31 gain
+  // cannot represent amplification above unity.
   void set_mic_gain(float gain);
   float get_mic_gain() const { return this->mic_gain_.load(std::memory_order_relaxed); }
 
-  // Input gain/attenuation before the audio processor, for hot or weak mics.
-  void set_mic_attenuation(float atten);
-  float get_mic_attenuation() const { return this->mic_attenuation_.load(std::memory_order_relaxed); }
+  // Input gain before the audio processor, for hot or weak mics.
+  void set_input_gain(float gain);
+  float get_input_gain() const { return this->input_gain_.load(std::memory_order_relaxed); }
   // Master volume is independent from the speaker abstraction volume used by
   // ESPHome's media_player. The audio task applies media/speaker volume *
   // master volume, so HA media volume and the board master control cascade.
-  void set_speaker_volume(float volume);
-  void set_speaker_volume_q31(int32_t q31);
+  void set_master_volume(float volume);
+  void set_master_volume_q31(int32_t q31);
   void set_output_volume(float volume);
   void set_output_volume_q31(int32_t q31);
-  float get_speaker_volume() const { return this->speaker_volume_.load(std::memory_order_relaxed); }
+  float get_master_volume() const { return this->master_volume_public_.load(std::memory_order_relaxed); }
 
   // ES8311 Digital Feedback mode: RX is stereo with L=ADC(mic), R=DAC(ref)
   void set_use_stereo_aec_reference(bool use) { this->use_stereo_aec_ref_ = use; }
@@ -349,7 +351,7 @@ class ESPAudioStack : public Component {
     this->dma_frame_num_configured_ = true;
   }
   void set_buffers_in_psram(bool psram) { this->buffers_in_psram_ = psram; }
-  void set_audio_stack_in_psram(bool psram) { this->audio_stack_in_psram_ = psram; }
+  void set_audio_task_stack_in_psram(bool psram) { this->audio_task_stack_in_psram_ = psram; }
 #ifdef USE_ESP_AUDIO_STACK_RING_REF
   void set_aec_ref_buffer_ms(uint32_t ms) { this->aec_ref_buffer_ms_ = ms; }
 #else
@@ -413,7 +415,7 @@ class ESPAudioStack : public Component {
   // One audio session: populate ctx, enter the processing loop, and return when
   // stop() flips audio_stack_running_ off or the processor's frame_spec changes.
   void audio_session_();
-  void update_combined_speaker_volume_();
+  void update_hot_output_volume_();
 
   // Audio task context: groups all buffers, sizes, and per-frame snapshots
   // to avoid long parameter lists in the refactored processing functions.
@@ -482,9 +484,11 @@ class ESPAudioStack : public Component {
     bool mic_separate{false};         // true if mic_buffer != rx_buffer
 
     // ── Per-iteration snapshots from atomics ──
-    float mic_gain{1.0f};
-    float mic_attenuation{1.0f};
-    int32_t speaker_volume_q31{INT32_MAX};
+    float mic_gain_boost{1.0f};
+    int32_t mic_gain_q31{INT32_MAX};
+    float input_gain_boost{1.0f};
+    int32_t input_gain_q31{INT32_MAX};
+    int32_t hot_output_volume_q31{INT32_MAX};
     bool processor_enabled{false};
     bool processor_ready{false};  // cached: enabled && initialized (avoids virtual call per frame)
     bool speaker_running{false};
@@ -674,11 +678,15 @@ class ESPAudioStack : public Component {
   audio_processor::RingBufferPtr aec_ref_ring_buffer_;  // Ring buffer for AEC ref (processor rate, post-volume)
 #endif
 
-  // Volume control (atomic: written from main loop, read from audio task via snapshot)
-  std::atomic<float> mic_gain_{1.0f};         // 0.0 - 2.0 (1.0 = unity gain, applied AFTER AEC)
-  std::atomic<float> mic_attenuation_{1.0f};  // Input gain staging before the processor.
-  std::atomic<float> speaker_volume_{1.0f};  // combined output*master public/debug value
-  std::atomic<int32_t> speaker_volume_q31_{INT32_MAX};  // combined hot-path fixed-point volume
+  // Gain controls (atomic: written from main loop, read from audio task via snapshot)
+  std::atomic<float> mic_gain_{1.0f};         // Public/debug value, applied AFTER AEC.
+  std::atomic<int32_t> mic_gain_q31_{INT32_MAX};  // Official esp-audio-libs attenuation path.
+  std::atomic<float> mic_gain_boost_{1.0f};   // >1.0 positive dB fallback.
+  std::atomic<float> input_gain_{1.0f};  // Public/debug value before the processor.
+  std::atomic<int32_t> input_gain_q31_{INT32_MAX};
+  std::atomic<float> input_gain_boost_{1.0f};
+  std::atomic<float> master_volume_public_{1.0f};  // public/debug master value
+  std::atomic<int32_t> hot_output_volume_q31_{INT32_MAX};  // combined hot-path fixed-point output volume
   std::atomic<int32_t> output_volume_q31_{INT32_MAX};   // media_player/speaker abstraction volume
   std::atomic<int32_t> master_volume_q31_{INT32_MAX};   // board master volume
   std::atomic<float> master_volume_linear_{1.0f};    // unclipped user value for hardware codec volume APIs
@@ -708,11 +716,11 @@ class ESPAudioStack : public Component {
   uint32_t dma_frame_num_{0};
   bool dma_frame_num_configured_{false};
   bool buffers_in_psram_{false};  // Non-DMA buffers in PSRAM (saves ~15KB internal RAM)
-  bool audio_stack_in_psram_{false};  // Audio task stack in PSRAM (saves ~8KB internal RAM)
+  bool audio_task_stack_in_psram_{false};  // Audio task stack in PSRAM (saves ~8KB internal RAM)
 #ifdef USE_ESP_AUDIO_STACK_RING_REF
   bool aec_ref_ring_in_psram_{false};  // AEC reference ring in PSRAM (saves ~3-5 KB internal, costs ~13.6 us/frame Core 0)
 #endif
-  StackType_t *audio_task_stack_{nullptr};  // Owned when audio_stack_in_psram_ is true
+  StackType_t *audio_task_stack_{nullptr};  // Owned when audio_task_stack_in_psram_ is true
   StaticTask_t audio_task_tcb_{};            // Static TCB for the permanent audio task
   uint16_t telemetry_log_interval_frames_{128};
 

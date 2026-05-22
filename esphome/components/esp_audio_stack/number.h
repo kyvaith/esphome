@@ -65,7 +65,7 @@ class MicGainNumber : public number::Number, public Component {
   float max_db_{30.0f};
 };
 
-class SpeakerVolumeNumber : public number::Number, public Component {
+class MasterVolumeNumber : public number::Number, public Component {
  public:
   void set_parent(ESPAudioStack *parent) { this->parent_ = parent; }
   void set_speaker(speaker::Speaker *speaker) { this->speaker_ = speaker; }
@@ -78,14 +78,14 @@ class SpeakerVolumeNumber : public number::Number, public Component {
       this->apply_(value);
       this->publish_state(value);
     } else if (this->parent_ != nullptr) {
-      this->publish_state(this->parent_->get_speaker_volume() * 100.0f);
+      this->publish_state(this->parent_->get_master_volume() * 100.0f);
     } else if (this->speaker_ != nullptr) {
       this->publish_state(this->speaker_->get_volume() * 100.0f);
     }
   }
 
   void dump_config() override {
-    ESP_LOGCONFIG("audio_stack.speaker_volume", "Master Volume Number%s",
+    ESP_LOGCONFIG("audio_stack.master_volume", "Master Volume Number%s",
                   this->speaker_ != nullptr ? " (speaker-backed)" : "");
   }
 
@@ -100,7 +100,7 @@ class SpeakerVolumeNumber : public number::Number, public Component {
   void apply_(float value) {
     float volume = value / 100.0f;
     if (this->parent_ != nullptr) {
-      this->parent_->set_speaker_volume(volume);
+      this->parent_->set_master_volume(volume);
     } else if (this->speaker_ != nullptr) {
       this->speaker_->set_volume(volume);
     }
