@@ -234,6 +234,7 @@ void ESPAudioStackSpeaker::loop() {
       break;
 
     case speaker::STATE_STOPPED:
+      this->disable_loop();
       break;
   }
 }

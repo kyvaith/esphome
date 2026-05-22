@@ -158,6 +158,7 @@ void ESPAudioStackMicrophone::loop() {
       break;
 
     case microphone::STATE_STOPPED:
+      this->disable_loop();
       break;
   }
 }
