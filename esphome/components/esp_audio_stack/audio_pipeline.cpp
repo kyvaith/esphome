@@ -163,8 +163,8 @@ bool ESPAudioStack::allocate_audio_buffers_(AudioTaskCtx &ctx) {
     bool rx_prepared = false;
 #ifdef USE_ESP_AUDIO_STACK_MULTI_RX
     if (ctx.use_tdm_bus || ctx.use_stereo_aec_ref) {
-      ready = this->rx_decimator_.prepare(
-          ctx.bus_frame_size, ctx.input_frame_size, ctx.rx_decimator_channels,
+      ready = this->rx_rate_converter_.prepare(
+          ctx.bus_frame_size, ctx.input_frame_size, ctx.rx_rate_converter_channels,
           ctx.use_tdm_bus ? ctx.tdm_total_slots : 2, ctx.i2s_bps == 4);
       rx_prepared = true;
     }
@@ -172,16 +172,16 @@ bool ESPAudioStack::allocate_audio_buffers_(AudioTaskCtx &ctx) {
 #ifdef USE_ESP_AUDIO_STACK_MONO_RX
     if (!rx_prepared && (ctx.ratio > 1 || ctx.i2s_bps == 4)) {
       // Mono RX uses esp_audio_effects for both rate and bit-depth conversion.
-      ready = this->mic_decimator_.prepare(ctx.bus_frame_size, ctx.i2s_bps == 4);
+      ready = this->mic_rate_converter_.prepare(ctx.bus_frame_size, ctx.i2s_bps == 4);
       rx_prepared = true;
     }
 #endif
 #ifdef USE_ESP_AUDIO_STACK_MONO_REF
     (void) rx_prepared;
     if (ready && processor_buffers_needed && !ctx.use_stereo_aec_ref && !ctx.use_tdm_ref) {
-      // No-codec / software-reference AEC decimates the TX speaker frame into
+      // No-codec / software-reference AEC converts the TX speaker frame into
       // direct_aec_ref_. Keep that converter hot before speaker playback starts.
-      ready = this->play_ref_decimator_.prepare(ctx.bus_frame_size);
+      ready = this->play_ref_rate_converter_.prepare(ctx.bus_frame_size);
     }
 #else
     (void) rx_prepared;
@@ -290,7 +290,7 @@ bool ESPAudioStack::allocate_audio_buffers_(AudioTaskCtx &ctx) {
                      aec_output_bytes, buf_caps, true);
 
 #ifdef USE_ESP_AUDIO_STACK_MONO_REF
-    // direct_aec_ref_ stores the decimated TX reference at the processor rate.
+    // direct_aec_ref_ stores the converted TX reference at the processor rate.
     // Sized to ctx.input_frame_bytes: the AEC reference is the signal that
     // enters the DSP alongside the mic, so it lives on the input side of the
     // processor (AudioProcessor::process expects in_ref of input_samples len).
@@ -306,8 +306,8 @@ bool ESPAudioStack::allocate_audio_buffers_(AudioTaskCtx &ctx) {
     // AEC reference ring buffer (Espressif/ADF TYPE2-style, no-codec setups).
 #ifdef USE_ESP_AUDIO_STACK_RING_REF
     if (!ctx.use_stereo_aec_ref && !ctx.use_tdm_ref && !this->aec_ref_ring_buffer_) {
-      // Sized at the processor rate (post-decimation), not the bus rate, since
-      // we now decimate on the TX side before storing. Items pushed are
+      // Sized at the processor rate (post-rate-conversion), not the bus rate, since
+      // we now convert on the TX side before storing. Items pushed are
       // input_frame_bytes (one AEC reference frame) each.
       const uint32_t output_rate = this->sample_rate_ / ctx.ratio;
       size_t rb_bytes = (output_rate * this->aec_ref_buffer_ms_ / 1000) * sizeof(int16_t);
@@ -380,7 +380,7 @@ bool ESPAudioStack::allocate_audio_buffers_(AudioTaskCtx &ctx) {
       return false;
     }
 #ifdef USE_ESP_AUDIO_STACK_MONO_REF
-    // Mono AEC depends on direct_aec_ref_ as both the TX-side decimation scratch
+    // Mono AEC depends on direct_aec_ref_ as both the TX-side rate-conversion scratch
     // and the previous-frame store. If it failed to allocate, the AEC would
     // silently run with a zero reference (TX writer is null-gated, ring writer
     // too, fill_mono falls through to zero-fill) and stay degraded until reboot,
@@ -434,7 +434,7 @@ void ESPAudioStack::audio_task_() {
 
 bool ESPAudioStack::prepare_audio_context_(AudioTaskCtx &ctx, bool require_processor_spec,
                                             bool log_context) {
-  ctx.ratio = this->decimation_ratio_;
+  ctx.ratio = this->rate_conversion_ratio_;
   ctx.i2s_bps = (this->bits_per_sample_ > 16) ? 4 : 2;
   ctx.num_ch = this->num_channels_;
   ctx.use_stereo_aec_ref = this->use_stereo_aec_ref_;
@@ -448,7 +448,7 @@ bool ESPAudioStack::prepare_audio_context_(AudioTaskCtx &ctx, bool require_proce
   ctx.tdm_ref_slot = this->tdm_ref_slot_;
 
   if (log_context) {
-    ESP_LOGI(TAG, "Audio task started (stereo=%s, tdm=%s, decimation=%ux)",
+    ESP_LOGI(TAG, "Audio task started (stereo=%s, tdm=%s, rate_conversion=%ux)",
              ctx.use_stereo_aec_ref ? "YES" : "no",
              ctx.use_tdm_bus ? (ctx.use_tdm_ref ? "YES/ref" : "YES/mic") : "no",
              (unsigned)ctx.ratio);
@@ -481,12 +481,12 @@ bool ESPAudioStack::prepare_audio_context_(AudioTaskCtx &ctx, bool require_proce
 #endif
 
 #ifdef USE_ESP_AUDIO_STACK_MULTI_RX
-  // Init multi-channel RX decimator now that we know channel count
+  // Init multi-channel RX rate converter now that we know channel count
   if (ctx.use_tdm_bus || ctx.use_stereo_aec_ref) {
-    ctx.rx_decimator_channels = ctx.use_tdm_bus
+    ctx.rx_rate_converter_channels = ctx.use_tdm_bus
         ? (ctx.processor_mic_channels > 1 ? 2 : 1) + (ctx.use_tdm_ref ? 1 : 0)
         : 2;  // stereo: mic + ref
-    this->rx_decimator_.init(ctx.ratio, ctx.rx_decimator_channels,
+    this->rx_rate_converter_.init(ctx.ratio, ctx.rx_rate_converter_channels,
                              this->sample_rate_, this->get_output_sample_rate(),
                              this->rate_cvt_complexity_, this->rate_cvt_perf_type_);
   }
@@ -759,7 +759,7 @@ cleanup:
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// RX PATH: I2S read → deinterleave/decimate → mic_buffer + spk_ref_buffer
+// RX PATH: I2S read -> deinterleave/rate-convert -> mic_buffer + spk_ref_buffer
 // ════════════════════════════════════════════════════════════════════════════
 void ESPAudioStack::process_rx_path_(AudioTaskCtx &ctx) {
   if (!this->rx_handle_)
@@ -828,7 +828,7 @@ void ESPAudioStack::process_rx_path_(AudioTaskCtx &ctx) {
   if (ctx.use_tdm_bus) {
     const uint8_t ts = ctx.tdm_total_slots;
     const bool dual_mic = ctx.processor_mic_channels > 1 && ctx.tdm_second_mic_slot >= 0;
-    uint8_t ch_offsets[MC_FIR_MAX_CH];
+    uint8_t ch_offsets[MAX_RATE_CVT_CHANNELS];
     uint8_t num_mic_ch = dual_mic ? 2 : 1;
     uint8_t selected_channels = 0;
     if (dual_mic) {
@@ -840,21 +840,21 @@ void ESPAudioStack::process_rx_path_(AudioTaskCtx &ctx) {
     if (ctx.use_tdm_ref) {
       ch_offsets[selected_channels++] = ctx.tdm_ref_slot;
     }
-    if (selected_channels != ctx.rx_decimator_channels) {
+    if (selected_channels != ctx.rx_rate_converter_channels) {
       conversion_fail("TDM RX channel map");
       return;
     }
     int16_t *ref_out = ctx.use_tdm_ref ? ctx.spk_ref_buffer : nullptr;
     if (ctx.i2s_bps == 4) {
       auto *src32 = reinterpret_cast<const int32_t *>(ctx.rx_buffer);
-      if (!this->rx_decimator_.process_multi_32(src32, ctx.input_frame_size, ts, ch_offsets,
+      if (!this->rx_rate_converter_.process_multi_32(src32, ctx.input_frame_size, ts, ch_offsets,
               dual_mic ? ctx.processor_mic_buffer : nullptr, ctx.mic_buffer,
               ref_out, num_mic_ch)) {
         conversion_fail("TDM RX audio-effects conversion");
         return;
       }
     } else {
-      if (!this->rx_decimator_.process_multi(ctx.rx_buffer, ctx.input_frame_size, ts, ch_offsets,
+      if (!this->rx_rate_converter_.process_multi(ctx.rx_buffer, ctx.input_frame_size, ts, ch_offsets,
               dual_mic ? ctx.processor_mic_buffer : nullptr, ctx.mic_buffer,
               ref_out, num_mic_ch)) {
         conversion_fail("TDM RX audio-effects conversion");
@@ -875,13 +875,13 @@ void ESPAudioStack::process_rx_path_(AudioTaskCtx &ctx) {
     uint8_t ch_offsets[2] = {mi, ri};
     if (ctx.i2s_bps == 4) {
       auto *src32 = reinterpret_cast<const int32_t *>(ctx.rx_buffer);
-      if (!this->rx_decimator_.process_multi_32(src32, ctx.input_frame_size, 2, ch_offsets,
+      if (!this->rx_rate_converter_.process_multi_32(src32, ctx.input_frame_size, 2, ch_offsets,
               nullptr, ctx.mic_buffer, ctx.spk_ref_buffer, 1)) {
         conversion_fail("stereo RX audio-effects conversion");
         return;
       }
     } else {
-      if (!this->rx_decimator_.process_multi(ctx.rx_buffer, ctx.input_frame_size, 2, ch_offsets,
+      if (!this->rx_rate_converter_.process_multi(ctx.rx_buffer, ctx.input_frame_size, 2, ch_offsets,
               nullptr, ctx.mic_buffer, ctx.spk_ref_buffer, 1)) {
         conversion_fail("stereo RX audio-effects conversion");
         return;
@@ -896,12 +896,12 @@ void ESPAudioStack::process_rx_path_(AudioTaskCtx &ctx) {
     // esp_audio_effects. No manual top-16 extraction path remains.
     if (ctx.i2s_bps == 4) {
       auto *src32 = reinterpret_cast<const int32_t *>(ctx.rx_buffer);
-      if (!this->mic_decimator_.process_strided_32(src32, ctx.mic_buffer, ctx.input_frame_size, 1, 0)) {
+      if (!this->mic_rate_converter_.process_strided_32(src32, ctx.mic_buffer, ctx.input_frame_size, 1, 0)) {
         conversion_fail("mono RX 32-bit audio-effects conversion");
         return;
       }
     } else if (ctx.ratio > 1) {
-      if (!this->mic_decimator_.process(ctx.rx_buffer, ctx.mic_buffer, ctx.bus_frame_size)) {
+      if (!this->mic_rate_converter_.process(ctx.rx_buffer, ctx.mic_buffer, ctx.bus_frame_size)) {
         conversion_fail("mono RX rate conversion");
         return;
       }
@@ -911,7 +911,7 @@ void ESPAudioStack::process_rx_path_(AudioTaskCtx &ctx) {
 #else
   (void) rx_path_converted;
 #endif
-  // else: Mono without decimation: mic_buffer == rx_buffer (aliased), nothing to do
+  // else: mono without rate conversion: mic_buffer == rx_buffer (aliased), nothing to do.
 
   // Fused loop: DC offset + input gain staging in one pass when DC or positive
   // boost is needed. Pure input attenuation uses esp-audio-libs Q31 below.
@@ -1166,8 +1166,8 @@ void ESPAudioStack::process_aec_and_callbacks_(AudioTaskCtx &ctx) {
 
 #ifdef USE_ESP_AUDIO_STACK_MONO_REF
 void ESPAudioStack::fill_mono_aec_reference_(AudioTaskCtx &ctx) {
-  // The reference source holds already-decimated samples at the processor rate
-  // (decimation happens once on the TX side in process_tx_path_).
+  // The reference source holds already converted samples at the processor rate
+  // (rate conversion happens once on the TX side in process_tx_path_).
   // The reference is the input side of the processor, so the unit is
   // input_frame_bytes (matches AudioProcessor::process expecting in_ref of
   // input_samples length).
@@ -1350,7 +1350,7 @@ void ESPAudioStack::process_tx_path_(AudioTaskCtx &ctx) {
   }
 
   // Save post-volume TX data as AEC reference (skip if processor is off).
-  // The reference is decimated to the processor rate HERE, on the TX side, so
+  // The reference is converted to the processor rate HERE, on the TX side, so
   // downstream storage and consumer reads happen at the smaller output size.
   // Two safety properties of this gating:
   //   1) Decimation only runs on a complete frame (speaker_got == bus_frame_bytes),
@@ -1366,10 +1366,10 @@ void ESPAudioStack::process_tx_path_(AudioTaskCtx &ctx) {
   if (this->aec_ref_ring_buffer_ && ctx.processor_enabled) {
     if (full_frame && this->direct_aec_ref_ != nullptr) {
       // Decimate TX -> processor rate into direct_aec_ref_ scratch, then push
-      // the decimated frame into the ring. direct_aec_ref_ is sized for
+      // the converted frame into the ring. direct_aec_ref_ is sized for
       // input_frame_bytes by allocate_audio_buffers_() (the converter writes
       // bus_frame_size / ratio = input_frame_size samples).
-      if (!this->play_ref_decimator_.process(ctx.spk_buffer, this->direct_aec_ref_, ctx.bus_frame_size)) {
+      if (!this->play_ref_rate_converter_.process(ctx.spk_buffer, this->direct_aec_ref_, ctx.bus_frame_size)) {
         ESP_LOGE(TAG, "TX AEC reference rate conversion failed; stopping audio session");
         this->has_i2s_error_.store(true, std::memory_order_relaxed);
         this->audio_stack_running_.store(false, std::memory_order_relaxed);
@@ -1385,11 +1385,11 @@ void ESPAudioStack::process_tx_path_(AudioTaskCtx &ctx) {
 #endif
 #ifdef USE_ESP_AUDIO_STACK_PREVIOUS_FRAME_REF
   if (this->direct_aec_ref_ != nullptr && ctx.processor_enabled) {
-    // Previous frame mode: decimate TX once and keep the result for the next
+    // Previous frame mode: convert TX once and keep the result for the next
     // AEC iteration. Only on a full frame, otherwise we keep the last good
     // direct_aec_ref_ to avoid feeding a zero-padded reference.
     if (full_frame) {
-      if (!this->play_ref_decimator_.process(ctx.spk_buffer, this->direct_aec_ref_, ctx.bus_frame_size)) {
+      if (!this->play_ref_rate_converter_.process(ctx.spk_buffer, this->direct_aec_ref_, ctx.bus_frame_size)) {
         ESP_LOGE(TAG, "TX AEC reference rate conversion failed; stopping audio session");
         this->has_i2s_error_.store(true, std::memory_order_relaxed);
         this->audio_stack_running_.store(false, std::memory_order_relaxed);

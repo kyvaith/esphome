@@ -21,7 +21,7 @@ ESPAudioStackMicrophone = esp_audio_stack_ns.class_(
 
 
 def _set_stream_limits(config):
-    # Mic output is at output_sample_rate (e.g. 16kHz after decimation).
+    # Mic output is at output_sample_rate (e.g. 16 kHz after rate conversion).
     # Allow range to cover the standard 16 kHz VA path and supported output rates.
     audio.set_stream_limits(
         min_bits_per_sample=16,

@@ -69,21 +69,21 @@ enum class I2SHardwareState : uint8_t {
   ERROR = 5,
 };
 
-static constexpr uint8_t MC_FIR_MAX_CH = 3;
+static constexpr uint8_t MAX_RATE_CVT_CHANNELS = 3;
 
 // Forward declarations for Pimpl.
-class FirDecimatorImpl;
-class MultiChannelFirDecimatorImpl;
+class AudioEffectsRateConverterImpl;
+class MultiChannelAudioEffectsRateConverterImpl;
 
 #if defined(USE_ESP_AUDIO_STACK_MONO_RX) || defined(USE_ESP_AUDIO_STACK_MONO_REF)
 // Sample-rate converter: consumes samples at high rate, produces at low rate.
 // Backed by Espressif esp_ae_rate_cvt from esp_audio_effects.
-class FirDecimator {
+class AudioEffectsRateConverter {
  public:
-  FirDecimator();
-  ~FirDecimator();
-  FirDecimator(const FirDecimator &) = delete;
-  FirDecimator &operator=(const FirDecimator &) = delete;
+  AudioEffectsRateConverter();
+  ~AudioEffectsRateConverter();
+  AudioEffectsRateConverter(const AudioEffectsRateConverter &) = delete;
+  AudioEffectsRateConverter &operator=(const AudioEffectsRateConverter &) = delete;
 
   void init(uint32_t ratio, uint32_t src_rate = 0, uint32_t dest_rate = 0,
             uint8_t complexity = 3, uint8_t perf_type = 1);
@@ -101,30 +101,30 @@ class FirDecimator {
                           size_t stride, size_t offset);
 
  private:
-  std::unique_ptr<FirDecimatorImpl> impl_;
+  std::unique_ptr<AudioEffectsRateConverterImpl> impl_;
 };
 #endif
 
 #ifdef USE_ESP_AUDIO_STACK_MULTI_RX
-// Multi-channel sample-rate converter: decimates N channels from TDM/stereo
+// Multi-channel sample-rate converter: converts N channels from TDM/stereo
 // rx_buffer in one pass. One esp_ae_rate_cvt handle processes all selected
 // channels so mic/ref latency stays coupled. Max 3 channels (MMR: mic1 + mic2 + ref).
-class MultiChannelFirDecimator {
+class MultiChannelAudioEffectsRateConverter {
  public:
-  MultiChannelFirDecimator();
-  ~MultiChannelFirDecimator();
-  MultiChannelFirDecimator(const MultiChannelFirDecimator &) = delete;
-  MultiChannelFirDecimator &operator=(const MultiChannelFirDecimator &) = delete;
+  MultiChannelAudioEffectsRateConverter();
+  ~MultiChannelAudioEffectsRateConverter();
+  MultiChannelAudioEffectsRateConverter(const MultiChannelAudioEffectsRateConverter &) = delete;
+  MultiChannelAudioEffectsRateConverter &operator=(const MultiChannelAudioEffectsRateConverter &) = delete;
 
   void init(uint32_t ratio, uint8_t num_channels, uint32_t src_rate = 0, uint32_t dest_rate = 0,
             uint8_t complexity = 3, uint8_t perf_type = 1);
   void reset();
   // Preallocate scratch and per-channel output buffers before the first
-  // realtime TDM/stereo decimation frame.
+  // realtime TDM/stereo conversion frame.
   bool prepare(size_t in_count, size_t out_count, uint8_t num_channels,
                uint8_t source_channels, bool source_32bit);
 
-  // Decimate N channels from strided int16 TDM input, producing:
+  // Convert N channels from strided int16 TDM input, producing:
   //   - mic_interleaved: [mic1, mic2, mic1, mic2, ...] (num_mic_ch interleaved, for AFE)
   //   - mic_mono: mic1 contiguous (for callbacks/MWW/intercom)
   //   - ref_out: ref contiguous (for AEC, may be nullptr if no ref channel)
@@ -141,7 +141,7 @@ class MultiChannelFirDecimator {
                         int16_t *ref_out, uint8_t num_mic_ch);
 
  private:
-  std::unique_ptr<MultiChannelFirDecimatorImpl> impl_;
+  std::unique_ptr<MultiChannelAudioEffectsRateConverterImpl> impl_;
 };
 #endif
 
@@ -155,7 +155,7 @@ class MultiChannelFirDecimator {
 /// AudioProcessor implementations.
 ///
 /// Runs a single audio task that pulls I2S RX frames, optionally
-/// decimates with FirDecimator, invokes the processor, and distributes
+/// converts sample rate with AudioEffectsRateConverter, invokes the processor, and distributes
 /// the result to registered MicDataCallback listeners. Speaker frames
 /// come in via SpeakerOutputCallback and are written to I2S TX.
 class ESPAudioStack : public Component {
@@ -333,7 +333,7 @@ class ESPAudioStack : public Component {
   // Getters for platform wrappers
   // get_sample_rate() returns the I2S bus rate (used by speaker for audio_stream_info)
   uint32_t get_sample_rate() const { return this->sample_rate_; }
-  // get_output_sample_rate() returns the decimated rate for mic consumers (MWW/AEC/VA/intercom)
+  // get_output_sample_rate() returns the converted rate for mic consumers (MWW/AEC/VA/intercom)
   uint32_t get_output_sample_rate() const {
     return this->output_sample_rate_ > 0 ? this->output_sample_rate_ : this->sample_rate_;
   }
@@ -436,7 +436,7 @@ class ESPAudioStack : public Component {
     uint8_t processor_mic_channels{1};
     uint32_t processor_spec_revision{0};
     bool processor_spec_loaded{false};
-    uint8_t rx_decimator_channels{0};
+    uint8_t rx_rate_converter_channels{0};
     bool tdm_ref_active_probe_logged{false};
 
     // ── Frame sizing ──
@@ -556,20 +556,20 @@ class ESPAudioStack : public Component {
   bool mic_channel_right_{false};      // RX mono slot: false=LEFT, true=RIGHT
   bool tx_slot_right_{false};          // TX mono slot: false=LEFT (default), true=RIGHT
   uint8_t slot_bit_width_{0};          // 0 = auto (match bits_per_sample), or 16/24/32
-  uint32_t output_sample_rate_{0};     // 0 = use sample_rate_ (no decimation)
-  uint32_t decimation_ratio_{1};       // sample_rate_ / output_sample_rate_ (computed in setup)
+  uint32_t output_sample_rate_{0};     // 0 = use sample_rate_ (no rate conversion)
+  uint32_t rate_conversion_ratio_{1};       // sample_rate_ / output_sample_rate_ (computed in setup)
   uint8_t rate_cvt_complexity_{3};     // esp_ae_rate_cvt complexity, 1..3
   uint8_t rate_cvt_perf_type_{1};      // esp_ae_rate_cvt perf type: 0=memory, 1=speed
 
   // Espressif rate converters for mic and software-reference paths.
 #ifdef USE_ESP_AUDIO_STACK_MULTI_RX
-  MultiChannelFirDecimator rx_decimator_;  // Multi-channel: TDM/stereo RX path
+  MultiChannelAudioEffectsRateConverter rx_rate_converter_;  // Multi-channel: TDM/stereo RX path
 #endif
 #ifdef USE_ESP_AUDIO_STACK_MONO_RX
-  FirDecimator mic_decimator_;             // Mono RX without TDM/stereo
+  AudioEffectsRateConverter mic_rate_converter_;             // Mono RX without TDM/stereo
 #endif
 #ifdef USE_ESP_AUDIO_STACK_MONO_REF
-  FirDecimator play_ref_decimator_;        // Mono mode: bus-rate ref from play() converted in audio_task
+  AudioEffectsRateConverter play_ref_rate_converter_;        // Mono mode: bus-rate ref from play() converted in audio_task
 #endif
 
   // I2S handles managed as a coordinated RX/TX pair
@@ -659,7 +659,7 @@ class ESPAudioStack : public Component {
 
   // Speaker ring buffer: stores data at bus rate (sample_rate_)
   audio_processor::RingBufferPtr speaker_buffer_;
-  size_t speaker_buffer_size_{0};  // Actual allocated size (scales with decimation_ratio_)
+  size_t speaker_buffer_size_{0};  // Actual allocated size (scales with rate_conversion_ratio_)
   uint32_t speaker_buffer_duration_ms_{500};
 
   // AEC support
@@ -668,7 +668,7 @@ class ESPAudioStack : public Component {
   std::atomic<bool> processor_background_consumer_registered_{false};
   void sync_processor_background_consumer_();
 #ifdef USE_ESP_AUDIO_STACK_MONO_REF
-  int16_t *direct_aec_ref_{nullptr};     // TX-side decimated reference storage/scratch (processor rate)
+  int16_t *direct_aec_ref_{nullptr};     // TX-side converted reference storage/scratch (processor rate)
   bool direct_aec_ref_valid_{false};     // True after first previous_frame reference has been saved
 #endif
 

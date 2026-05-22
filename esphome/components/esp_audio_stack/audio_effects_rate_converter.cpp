@@ -205,8 +205,8 @@ class RateCvtHandle {
   bool process_deintlv(int16_t **in, size_t in_count, int16_t **out, size_t expected_out, const char *scope) {
     if (!this->ready())
       return false;
-    esp_ae_sample_t in_args[MC_FIR_MAX_CH]{};
-    esp_ae_sample_t out_args[MC_FIR_MAX_CH]{};
+    esp_ae_sample_t in_args[MAX_RATE_CVT_CHANNELS]{};
+    esp_ae_sample_t out_args[MAX_RATE_CVT_CHANNELS]{};
     for (uint8_t i = 0; i < this->channels_; i++) {
       in_args[i] = in[i];
       out_args[i] = out[i];
@@ -246,9 +246,9 @@ class RateCvtHandle {
 }  // namespace
 
 #if defined(USE_ESP_AUDIO_STACK_MONO_RX) || defined(USE_ESP_AUDIO_STACK_MONO_REF)
-class FirDecimatorImpl {
+class AudioEffectsRateConverterImpl {
  public:
-  ~FirDecimatorImpl() {
+  ~AudioEffectsRateConverterImpl() {
     if (this->scratch_ != nullptr)
       heap_caps_free(this->scratch_);
   }
@@ -323,10 +323,10 @@ class FirDecimatorImpl {
 #endif
 
 #ifdef USE_ESP_AUDIO_STACK_MULTI_RX
-class MultiChannelFirDecimatorImpl {
+class MultiChannelAudioEffectsRateConverterImpl {
  public:
-  ~MultiChannelFirDecimatorImpl() {
-    for (uint8_t i = 0; i < MC_FIR_MAX_CH; i++) {
+  ~MultiChannelAudioEffectsRateConverterImpl() {
+    for (uint8_t i = 0; i < MAX_RATE_CVT_CHANNELS; i++) {
       if (this->out_ch_[i] != nullptr)
         heap_caps_free(this->out_ch_[i]);
     }
@@ -343,7 +343,7 @@ class MultiChannelFirDecimatorImpl {
     this->ratio_ = ratio;
     this->src_rate_ = src_rate;
     this->dest_rate_ = dest_rate;
-    this->channels_ = std::min<uint8_t>(num_channels, MC_FIR_MAX_CH);
+    this->channels_ = std::min<uint8_t>(num_channels, MAX_RATE_CVT_CHANNELS);
     this->rate_cvt_.init(ratio, src_rate, dest_rate, this->channels_, complexity, perf_type);
   }
 
@@ -351,7 +351,7 @@ class MultiChannelFirDecimatorImpl {
 
   bool prepare(size_t in_count, size_t out_count, uint8_t num_channels,
                uint8_t source_channels, bool source_32bit) {
-    const uint8_t nch = std::min<uint8_t>(num_channels, MC_FIR_MAX_CH);
+    const uint8_t nch = std::min<uint8_t>(num_channels, MAX_RATE_CVT_CHANNELS);
     if (!this->ensure_deintlv_buffers_(source_channels, in_count))
       return false;
     if (source_32bit && !this->ensure_bit_conversion_(source_channels, in_count))
@@ -382,7 +382,7 @@ class MultiChannelFirDecimatorImpl {
     if (!this->deinterleave_selected_(in, in_count, stride, offsets, source_32bit))
       return false;
 
-    int16_t *selected[MC_FIR_MAX_CH]{};
+    int16_t *selected[MAX_RATE_CVT_CHANNELS]{};
     for (uint8_t c = 0; c < this->channels_; c++) {
       selected[c] = this->deintlv_ch_[offsets[c]];
     }
@@ -475,58 +475,58 @@ class MultiChannelFirDecimatorImpl {
   BitCvtHandle bit_cvt_;
   int16_t *deintlv_ch_[MAX_DEINTLV_CH]{};
   size_t deintlv_cap_[MAX_DEINTLV_CH]{};
-  int16_t *out_ch_[MC_FIR_MAX_CH]{};
-  size_t out_cap_[MC_FIR_MAX_CH]{};
+  int16_t *out_ch_[MAX_RATE_CVT_CHANNELS]{};
+  size_t out_cap_[MAX_RATE_CVT_CHANNELS]{};
   int16_t *bit_scratch_{nullptr};
   size_t bit_scratch_cap_{0};
 };
 #endif
 
 #if defined(USE_ESP_AUDIO_STACK_MONO_RX) || defined(USE_ESP_AUDIO_STACK_MONO_REF)
-FirDecimator::FirDecimator() : impl_(std::make_unique<FirDecimatorImpl>()) {}
-FirDecimator::~FirDecimator() = default;
-void FirDecimator::init(uint32_t ratio, uint32_t src_rate, uint32_t dest_rate,
+AudioEffectsRateConverter::AudioEffectsRateConverter() : impl_(std::make_unique<AudioEffectsRateConverterImpl>()) {}
+AudioEffectsRateConverter::~AudioEffectsRateConverter() = default;
+void AudioEffectsRateConverter::init(uint32_t ratio, uint32_t src_rate, uint32_t dest_rate,
                         uint8_t complexity, uint8_t perf_type) {
   this->impl_->init(ratio, src_rate, dest_rate, complexity, perf_type);
 }
-void FirDecimator::reset() { this->impl_->reset(); }
-bool FirDecimator::prepare(size_t in_count, bool source_32bit) {
+void AudioEffectsRateConverter::reset() { this->impl_->reset(); }
+bool AudioEffectsRateConverter::prepare(size_t in_count, bool source_32bit) {
   return this->impl_->prepare(in_count, source_32bit);
 }
-bool FirDecimator::process(const int16_t *in, int16_t *out, size_t in_count) {
+bool AudioEffectsRateConverter::process(const int16_t *in, int16_t *out, size_t in_count) {
   return this->impl_->process(in, out, in_count);
 }
-bool FirDecimator::process_strided(const int16_t *in, int16_t *out, size_t out_count,
+bool AudioEffectsRateConverter::process_strided(const int16_t *in, int16_t *out, size_t out_count,
                                    size_t stride, size_t offset) {
   return this->impl_->process_strided(in, out, out_count, stride, offset);
 }
-bool FirDecimator::process_strided_32(const int32_t *in, int16_t *out, size_t out_count,
+bool AudioEffectsRateConverter::process_strided_32(const int32_t *in, int16_t *out, size_t out_count,
                                       size_t stride, size_t offset) {
   return this->impl_->process_strided_32(in, out, out_count, stride, offset);
 }
 #endif
 
 #ifdef USE_ESP_AUDIO_STACK_MULTI_RX
-MultiChannelFirDecimator::MultiChannelFirDecimator()
-    : impl_(std::make_unique<MultiChannelFirDecimatorImpl>()) {}
-MultiChannelFirDecimator::~MultiChannelFirDecimator() = default;
-void MultiChannelFirDecimator::init(uint32_t ratio, uint8_t num_channels,
+MultiChannelAudioEffectsRateConverter::MultiChannelAudioEffectsRateConverter()
+    : impl_(std::make_unique<MultiChannelAudioEffectsRateConverterImpl>()) {}
+MultiChannelAudioEffectsRateConverter::~MultiChannelAudioEffectsRateConverter() = default;
+void MultiChannelAudioEffectsRateConverter::init(uint32_t ratio, uint8_t num_channels,
                                     uint32_t src_rate, uint32_t dest_rate,
                                     uint8_t complexity, uint8_t perf_type) {
   this->impl_->init(ratio, num_channels, src_rate, dest_rate, complexity, perf_type);
 }
-void MultiChannelFirDecimator::reset() { this->impl_->reset(); }
-bool MultiChannelFirDecimator::prepare(size_t in_count, size_t out_count, uint8_t num_channels,
+void MultiChannelAudioEffectsRateConverter::reset() { this->impl_->reset(); }
+bool MultiChannelAudioEffectsRateConverter::prepare(size_t in_count, size_t out_count, uint8_t num_channels,
                                        uint8_t source_channels, bool source_32bit) {
   return this->impl_->prepare(in_count, out_count, num_channels, source_channels, source_32bit);
 }
-bool MultiChannelFirDecimator::process_multi(const int16_t *in, size_t out_count, size_t in_stride,
+bool MultiChannelAudioEffectsRateConverter::process_multi(const int16_t *in, size_t out_count, size_t in_stride,
                                              const uint8_t *channel_offsets, int16_t *mic_interleaved,
                                              int16_t *mic_mono, int16_t *ref_out, uint8_t num_mic_ch) {
   return this->impl_->process_multi(in, out_count, in_stride, channel_offsets, mic_interleaved, mic_mono,
                                     ref_out, num_mic_ch);
 }
-bool MultiChannelFirDecimator::process_multi_32(const int32_t *in, size_t out_count, size_t in_stride,
+bool MultiChannelAudioEffectsRateConverter::process_multi_32(const int32_t *in, size_t out_count, size_t in_stride,
                                                 const uint8_t *channel_offsets, int16_t *mic_interleaved,
                                                 int16_t *mic_mono, int16_t *ref_out, uint8_t num_mic_ch) {
   return this->impl_->process_multi_32(in, out_count, in_stride, channel_offsets, mic_interleaved, mic_mono,

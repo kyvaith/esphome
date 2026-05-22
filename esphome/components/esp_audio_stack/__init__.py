@@ -3,10 +3,10 @@
 Exposes standard ESPHome microphone and speaker platforms for compatibility with
 Voice Assistant and intercom_api components.
 
-Multi-rate support: set output_sample_rate to decimate mic audio internally.
+Multi-rate support: set output_sample_rate to convert mic audio internally.
   sample_rate: I2S bus rate (e.g. 48000 for high-quality DAC output)
   output_sample_rate: mic/AEC/MWW/VA rate (e.g. 16000, must divide sample_rate evenly)
-If output_sample_rate is omitted, no decimation occurs (backward compatible).
+If output_sample_rate is omitted, no rate conversion occurs (backward compatible).
 """
 import esphome.codegen as cg
 import esphome.config_validation as cv
@@ -320,8 +320,8 @@ CONFIG_SCHEMA = cv.All(
         cv.Optional(CONF_I2S_COMM_FMT, default="philips"): cv.one_of(
             "philips", "msb", "pcm_short", "pcm_long", lower=True,
         ),
-        # Output sample rate for mic/AEC/MWW/VA (decimated from bus rate)
-        # If omitted, equals sample_rate (no decimation)
+        # Output sample rate for mic/AEC/MWW/VA (converted from bus rate).
+        # If omitted, equals sample_rate (no rate conversion).
         cv.Optional(CONF_OUTPUT_SAMPLE_RATE): cv.int_range(min=8000, max=48000),
         cv.Optional(CONF_PROCESSOR_ID): cv.use_id(AudioProcessor),
         # Input gain before the processor: <1.0 attenuates hot mics,
@@ -661,7 +661,7 @@ async def to_code(config):
     sbw = config[CONF_SLOT_BIT_WIDTH]
     cg.add(var.set_slot_bit_width(0 if sbw == "auto" else sbw))
 
-    # Set output sample rate if specified (enables decimation)
+    # Set output sample rate if specified (enables rate conversion).
     if CONF_OUTPUT_SAMPLE_RATE in config:
         cg.add(var.set_output_sample_rate(config[CONF_OUTPUT_SAMPLE_RATE]))
 

@@ -25,7 +25,7 @@ void ESPAudioStackMicrophone::setup() {
   }
 
   // Configure audio stream info for 16-bit mono PCM at output rate
-  // When decimation is active, mic delivers data at output_sample_rate (e.g. 16kHz)
+  // When rate conversion is active, mic delivers data at output_sample_rate (e.g. 16 kHz).
   // AudioStreamInfo constructor: (bits_per_sample, channels, sample_rate)
   this->audio_stream_info_ = audio::AudioStreamInfo(16, 1, this->parent_->get_output_sample_rate());
 
@@ -61,6 +61,7 @@ void ESPAudioStackMicrophone::start() {
 
   // Native ESPHome microphone semantics are asynchronous: start() only
   // registers interest; loop() performs the state transition.
+  this->enable_loop_soon_any_context();
 }
 
 void ESPAudioStackMicrophone::stop() {
@@ -83,6 +84,7 @@ void ESPAudioStackMicrophone::stop() {
   }
 
   // loop() will process the stop edge; do not block the ESPHome main loop.
+  this->enable_loop_soon_any_context();
 }
 
 void ESPAudioStackMicrophone::on_audio_data_(const uint8_t *data, size_t len) {

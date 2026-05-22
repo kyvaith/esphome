@@ -66,6 +66,7 @@ void ESPAudioStackSpeaker::start() {
     ESP_LOGW(TAG, "No free semaphore slots");
     return;
   }
+  this->enable_loop_soon_any_context();
 }
 
 void ESPAudioStackSpeaker::stop() {
@@ -80,6 +81,7 @@ void ESPAudioStackSpeaker::stop() {
     return;
 
   xSemaphoreGive(this->active_listeners_semaphore_);
+  this->enable_loop_soon_any_context();
 }
 
 void ESPAudioStackSpeaker::finish() {
@@ -88,6 +90,7 @@ void ESPAudioStackSpeaker::finish() {
     this->set_pause_state(false);
   }
   this->finishing_ = true;
+  this->enable_loop_soon_any_context();
 }
 
 size_t ESPAudioStackSpeaker::play(const uint8_t *data, size_t length) {

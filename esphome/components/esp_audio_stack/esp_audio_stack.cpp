@@ -280,35 +280,35 @@ void ESPAudioStack::setup() {
     return;
   }
 
-  // Compute decimation ratio. The Espressif audio-effects wrappers are also
+  // Compute rate-conversion ratio. The Espressif audio-effects wrappers are also
   // used at ratio 1 for 32-bit -> 16-bit conversion, so initialise them
   // unconditionally.
   if (this->output_sample_rate_ > 0 && this->output_sample_rate_ != this->sample_rate_) {
-    this->decimation_ratio_ = this->sample_rate_ / this->output_sample_rate_;
-    if (this->decimation_ratio_ * this->output_sample_rate_ != this->sample_rate_) {
+    this->rate_conversion_ratio_ = this->sample_rate_ / this->output_sample_rate_;
+    if (this->rate_conversion_ratio_ * this->output_sample_rate_ != this->sample_rate_) {
       ESP_LOGE(TAG, "sample_rate (%u) must be an exact multiple of output_sample_rate (%u)",
                (unsigned)this->sample_rate_, (unsigned)this->output_sample_rate_);
       this->mark_failed();
       return;
     }
-    if (this->decimation_ratio_ > 6) {
-      ESP_LOGE(TAG, "Decimation ratio %u exceeds maximum of 6", (unsigned)this->decimation_ratio_);
+    if (this->rate_conversion_ratio_ > 6) {
+      ESP_LOGE(TAG, "Rate conversion ratio %u exceeds maximum of 6", (unsigned)this->rate_conversion_ratio_);
       this->mark_failed();
       return;
     }
     ESP_LOGI(TAG, "Multi-rate: bus=%uHz, output=%uHz, ratio=%u",
              (unsigned)this->sample_rate_, (unsigned)this->output_sample_rate_,
-             (unsigned)this->decimation_ratio_);
+             (unsigned)this->rate_conversion_ratio_);
   }
 #ifdef USE_ESP_AUDIO_STACK_MONO_RX
-  this->mic_decimator_.init(this->decimation_ratio_, this->sample_rate_, this->get_output_sample_rate(),
+  this->mic_rate_converter_.init(this->rate_conversion_ratio_, this->sample_rate_, this->get_output_sample_rate(),
                             this->rate_cvt_complexity_, this->rate_cvt_perf_type_);
 #endif
 #ifdef USE_ESP_AUDIO_STACK_MONO_REF
-  this->play_ref_decimator_.init(this->decimation_ratio_, this->sample_rate_, this->get_output_sample_rate(),
+  this->play_ref_rate_converter_.init(this->rate_conversion_ratio_, this->sample_rate_, this->get_output_sample_rate(),
                                  this->rate_cvt_complexity_, this->rate_cvt_perf_type_);
 #endif
-  // rx_decimator_ is initialized inside audio_session_ once the processor has
+  // rx_rate_converter_ is initialized inside audio_session_ once the processor has
   // reported its frame_spec and we know how many channels the RX stream carries.
 
   // Speaker ring buffer: stores mono PCM at bus rate (e.g. 48kHz).
@@ -331,7 +331,7 @@ void ESPAudioStack::setup() {
   // direct_aec_ref_ is allocated by allocate_audio_buffers_() once the
   // processor frame spec is known. Storage matches input_frame_bytes because
   // AudioProcessor::process consumes in_ref at input_samples length; the TX-side
-  // decimator writes one input-side reference frame here at the processor rate,
+  // rate converter writes one input-side reference frame here at the processor rate,
   // not at the bus rate.
 
   // Create the permanent audio task during component setup, then park it
@@ -474,9 +474,9 @@ void ESPAudioStack::dump_config() {
   if (this->correct_dc_offset_) {
     ESP_LOGCONFIG(TAG, "  DC Offset Correction: enabled");
   }
-  if (this->decimation_ratio_ > 1) {
-    ESP_LOGCONFIG(TAG, "  Output Rate: %u Hz (decimation x%u)",
-                  (unsigned)this->get_output_sample_rate(), (unsigned)this->decimation_ratio_);
+  if (this->rate_conversion_ratio_ > 1) {
+    ESP_LOGCONFIG(TAG, "  Output Rate: %u Hz (rate conversion x%u)",
+                  (unsigned)this->get_output_sample_rate(), (unsigned)this->rate_conversion_ratio_);
     ESP_LOGCONFIG(TAG, "  Rate Converter: esp_ae_rate_cvt");
     ESP_LOGCONFIG(TAG, "  Rate Converter Complexity: %u", (unsigned)this->rate_cvt_complexity_);
     ESP_LOGCONFIG(TAG, "  Rate Converter Perf: %s", this->rate_cvt_perf_type_ == 0 ? "memory" : "speed");
