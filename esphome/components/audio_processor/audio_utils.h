@@ -6,10 +6,6 @@
 #include <algorithm>
 #include <cmath>
 
-#ifdef USE_ESP32
-#include <dsps_mulc.h>
-#endif
-
 namespace esphome {
 
 #ifndef ESPHOME_SCALE_SAMPLE_DEFINED
@@ -39,13 +35,9 @@ static inline void scale_block_i16_q15(const int16_t *in, int16_t *out, size_t l
     if (in != out) std::memcpy(out, in, len * sizeof(int16_t));
     return;
   }
-#ifdef USE_ESP32
-  dsps_mulc_s16(in, out, static_cast<int>(len), q15, 1, 1);
-#else
   for (size_t i = 0; i < len; i++) {
     out[i] = static_cast<int16_t>((static_cast<int32_t>(in[i]) * q15) >> 15);
   }
-#endif
 }
 
 // Block volume / gain scale for an int16 PCM buffer.
@@ -54,10 +46,9 @@ static inline void scale_block_i16_q15(const int16_t *in, int16_t *out, size_t l
 // option that produces correct samples:
 //
 //   gain == 1.0  -> memcpy (or noop when in == out). Skips the multiply entirely.
-//   0 <= gain <= 1.0 -> esp-dsp dsps_mulc_s16 (Q15 SIMD on S3, ANSI elsewhere).
+//   0 <= gain <= 1.0 -> scalar Q15 fixed-point attenuation for legacy paths.
 //                       The Q15 fixed-point form is `(input * C_q15) >> 15`,
-//                       which never overflows int16 for C in [0, 32767]. Saves
-//                       ~12-22 us/frame on Core 0 vs the scalar saturating loop.
+//                       which never overflows int16 for C in [0, 32767].
 //   gain > 1.0 (or negative) -> scalar `scale_sample` with saturation, since
 //                       Q15 cannot represent amplification factors. In
 //                       esp_audio_stack, only positive mic boost uses this path;

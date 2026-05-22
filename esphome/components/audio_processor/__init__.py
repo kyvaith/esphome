@@ -1,5 +1,4 @@
 import esphome.codegen as cg
-from esphome.components.esp32 import add_idf_component
 
 # Shared audio processor interface header.
 # No config schema: this component only provides the C++ interface.
@@ -14,4 +13,3 @@ AudioProcessor = audio_processor_ns.class_("AudioProcessor")
 
 async def to_code(config):
     cg.add_define("USE_AUDIO_PROCESSOR")
-    add_idf_component(name="espressif/esp-dsp", ref="*")
