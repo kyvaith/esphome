@@ -98,8 +98,18 @@ void ESPAudioStackMicrophone::on_audio_data_(const uint8_t *data, size_t len) {
     return;
   }
   this->audio_buffer_.resize(len);
-  std::memcpy(this->audio_buffer_.data(), data, len);
+  const bool muted = this->mute_state_;
+  if (muted) {
+    std::memset(this->audio_buffer_.data(), 0, len);
+  } else {
+    std::memcpy(this->audio_buffer_.data(), data, len);
+  }
+  // ESPHome's base Microphone wrapper allocates a temporary zero vector when
+  // mute_state_ is true. We have already zero-filled the preallocated callback
+  // buffer, so clear the flag only while dispatching to avoid RT-task heap churn.
+  if (muted) this->mute_state_ = false;
   this->data_callbacks_.call(this->audio_buffer_);
+  if (muted) this->mute_state_ = true;
 }
 
 void ESPAudioStackMicrophone::loop() {
