@@ -12,4 +12,4 @@ AudioProcessor = audio_processor_ns.class_("AudioProcessor")
 
 
 async def to_code(config):
-    cg.add_define("USE_AUDIO_PROCESSOR")
+    pass
