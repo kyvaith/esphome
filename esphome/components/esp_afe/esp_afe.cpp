@@ -237,21 +237,26 @@ bool EspAfe::build_instance_(AfeInstance *instance) {
   }
 
   const int afe_mic_channels = this->afe_mic_channels_();
+  const bool aec_enabled = this->aec_enabled_.load(std::memory_order_relaxed);
   if (afe_mic_channels >= 2) {
     this->se_enabled_.store(true, std::memory_order_relaxed);
   }
   // Stack-allocated input format string. Default preserves the historical
-  // "MR" / "MMR" shape; an optional override allows board probes to exercise
-  // Espressif's documented "MMNR" dual-mic layout without changing the
-  // transport-facing mic channel count.
+  // "MR" / "MMR" shape while AEC is enabled. Without AEC there is no reference
+  // channel in the official AFE graph, so rebuild as "M" / "MM" instead of
+  // feeding a stale R channel into an AEC-disabled dual-mic pipeline.
   char fmt[5];
-  if (afe_mic_channels >= 2 && this->input_format_override_[0] != '\0') {
+  if (aec_enabled && afe_mic_channels >= 2 && this->input_format_override_[0] != '\0') {
     std::strncpy(fmt, this->input_format_override_, sizeof(fmt) - 1);
     fmt[sizeof(fmt) - 1] = '\0';
   } else {
     for (int i = 0; i < afe_mic_channels && i < 2; i++) fmt[i] = 'M';
-    fmt[afe_mic_channels] = 'R';
-    fmt[afe_mic_channels + 1] = '\0';
+    if (aec_enabled) {
+      fmt[afe_mic_channels] = 'R';
+      fmt[afe_mic_channels + 1] = '\0';
+    } else {
+      fmt[afe_mic_channels] = '\0';
+    }
   }
 
   afe_config_t *cfg = afe_config_init(fmt, nullptr,
@@ -264,7 +269,7 @@ bool EspAfe::build_instance_(AfeInstance *instance) {
     return false;
   }
 
-  cfg->aec_init = true;  // always init: AEC is LIVE_TOGGLE via vtable
+  cfg->aec_init = aec_enabled;
   cfg->aec_filter_length = this->aec_filter_length_;
   cfg->aec_mode = this->derive_aec_mode_();
   cfg->aec_nlp_level = static_cast<aec_nlp_level_t>(this->aec_nlp_level_);
@@ -600,10 +605,6 @@ bool EspAfe::install_instance_(AfeInstance *instance) {
     return cleanup_failed_install();
   }
 
-  // AEC is always initialized (LIVE_TOGGLE). Disable via vtable if config says off.
-  if (!this->aec_enabled_.load(std::memory_order_relaxed)) {
-    esp_gmf_afe_manager_enable_features(this->afe_manager_, ESP_AFE_FEATURE_AEC, false);
-  }
   // VAD is structural in ESP-SR. If initialized but currently disabled, apply
   // the runtime gate before feed/fetch start.
   if (this->afe_config_ != nullptr && this->afe_config_->vad_init &&
@@ -847,40 +848,20 @@ bool EspAfe::set_aec_enabled_runtime_(bool enabled) {
     return false;
   }
 
-  // Hold the config mutex only across the enable/disable call. The
-  // potential teardown via recreate_instance_ takes the same mutex
-  // itself; calling it inside the lock would recurse on a non-recursive
-  // mutex and time out.
-  bool needs_rebuild = false;
-  {
-    audio_processor::ScopedLock lock(this->config_mutex_, CONFIG_MUTEX_TIMEOUT);
-    if (!lock) {
-      ESP_LOGW(TAG, "Timed out waiting to toggle AEC");
-      return false;
-    }
-
-    int ret = static_cast<int>(esp_gmf_afe_manager_enable_features(
-        this->afe_manager_, ESP_AFE_FEATURE_AEC, enabled));
-    if (ret < 0) {
-      ESP_LOGW(TAG, "GMF AFE manager %s AEC failed (ret=%d)",
-               enabled ? "enable" : "disable", ret);
-      return false;
-    }
-
-    ESP_LOGI(TAG, "AEC %s via GMF AFE manager", enabled ? "enabled" : "disabled");
-    this->aec_enabled_.store(enabled, std::memory_order_relaxed);
-
-    // Live toggle left AFE running. If the user just turned AEC off and
-    // every other feature was already off, we should stop the whole
-    // pipeline. Compute the decision while holding the lock so the
-    // feature flags don't tear under a concurrent toggle.
-    needs_rebuild = (!enabled && this->all_features_disabled_());
+  // AEC changes the official AFE input graph ("M/MR" or "MM/MMR") and channel
+  // count. Rebuild instead of live-disabling inside an existing graph; on
+  // dual-mic SE/BSS that avoids the metallic AEC-off state seen when the R
+  // channel keeps flowing through an AEC-disabled pipeline.
+  this->aec_enabled_.store(enabled, std::memory_order_relaxed);
+  if (this->recreate_instance_(false)) {
+    ESP_LOGI(TAG, "AEC %s via AFE rebuild", enabled ? "enabled" : "disabled");
+    return true;
   }
-
-  if (needs_rebuild) {
-    this->recreate_instance_(false);  // no-features path tears down inside
+  this->aec_enabled_.store(!enabled, std::memory_order_relaxed);
+  if (!this->recreate_instance_(false)) {
+    ESP_LOGE(TAG, "AEC %s rollback rebuild failed", enabled ? "enable" : "disable");
   }
-  return true;
+  return false;
 }
 
 bool EspAfe::set_vad_enabled_runtime_(bool enabled) {
@@ -1084,7 +1065,7 @@ FrameSpec EspAfe::frame_spec() const {
 FeatureControl EspAfe::feature_control(AudioFeature feature) const {
   switch (feature) {
     case AudioFeature::AEC:
-      return FeatureControl::LIVE_TOGGLE;
+      return FeatureControl::RESTART_REQUIRED;
     case AudioFeature::VAD:
       return FeatureControl::RESTART_REQUIRED;
     case AudioFeature::NS:
