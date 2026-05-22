@@ -2,7 +2,7 @@
 
 #ifdef USE_ESP32
 
-#include "esphome/core/ring_buffer.h"
+#include "esphome/components/ring_buffer/ring_buffer.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -13,11 +13,10 @@ namespace audio_processor {
 
 /// Ring buffer allocation policy.
 ///
-/// The stock esphome::RingBuffer::create() uses the default RAMAllocator which
-/// tries PSRAM first, falling back to internal RAM. For audio hot-path buffers
-/// this is dangerous: the placement is implicit and can silently move a buffer
-/// that is read every audio frame to PSRAM, causing glitches under bus contention
-/// with LVGL/flash cache.
+/// ESPHome's stock RingBuffer::create() now supports EXTERNAL_FIRST and
+/// INTERNAL_FIRST preferences. It still does not offer strict placement or
+/// boot-time placement logging, so latency-sensitive audio code cannot prove
+/// whether a hot ring landed in internal RAM.
 ///
 /// This helper provides explicit, verifiable placement:
 ///   - INTERNAL: always internal RAM. Use for anything in the audio hot path.
@@ -33,13 +32,13 @@ enum class RingBufferPolicy {
   PSRAM_ONLY,
 };
 
-/// ESPHome RingBuffer with caller-controlled storage capabilities.
+/// ESPHome ring_buffer::RingBuffer with caller-controlled storage capabilities.
 ///
 /// Keep the concrete type in our ownership model: ESPHome's RingBuffer
 /// destructor is not virtual, so deleting a derived buffer through
 /// std::unique_ptr<RingBuffer> would be undefined behaviour even though the
 /// derived object has no additional fields.
-class CapsRingBuffer : public RingBuffer {
+class CapsRingBuffer : public ring_buffer::RingBuffer {
  public:
   bool install(size_t len, uint32_t caps);
   const void *probe_storage() const { return this->storage_; }

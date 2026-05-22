@@ -142,7 +142,7 @@ void ESPAudioStackSpeaker::set_volume(float volume) {
   {
     ESP_LOGD(TAG, "Speaker set_volume: %.3f -> output volume layer", volume);
     if (this->mute_state_) {
-      this->parent_->set_output_volume_q15(0);
+      this->parent_->set_output_volume_q31(0);
     } else {
       this->parent_->set_output_volume(volume);
     }
@@ -163,9 +163,9 @@ void ESPAudioStackSpeaker::set_mute_state(bool mute_state) {
   } else
 #endif
   {
-    ESP_LOGD(TAG, "Speaker mute: %s -> software_q15", mute_state ? "on" : "off");
+    ESP_LOGD(TAG, "Speaker mute: %s -> software_q31", mute_state ? "on" : "off");
     if (mute_state) {
-      this->parent_->set_output_volume_q15(0);
+      this->parent_->set_output_volume_q31(0);
     } else {
       this->parent_->set_output_volume(this->volume_);
     }

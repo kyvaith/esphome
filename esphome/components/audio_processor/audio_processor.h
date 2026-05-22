@@ -55,8 +55,6 @@ struct ProcessorTelemetry {
   uint32_t feed_us_max{0};
   uint32_t fetch_us_last{0};
   uint32_t fetch_us_max{0};
-  uint32_t feed_stack_high_water{0};
-  uint32_t fetch_stack_high_water{0};
 };
 
 /// Abstract audio processor interface.

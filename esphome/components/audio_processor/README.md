@@ -127,7 +127,7 @@ enum class FeatureControl {
 
 `esp_aec` reports `AEC = RESTART_REQUIRED` and everything else `NOT_SUPPORTED`.
 
-`esp_afe` reports `AEC = LIVE_TOGGLE` and `VAD = LIVE_TOGGLE` through Espressif's GMF AFE manager. `NS / AGC = RESTART_REQUIRED` because the stock GMF manager does not expose those feature toggles. `SE` is `BOOT_ONLY` on dual-mic devices and `NOT_SUPPORTED` on single-mic devices.
+`esp_afe` reports `AEC = LIVE_TOGGLE` through Espressif's GMF AFE manager. `VAD / NS / AGC = RESTART_REQUIRED` because those options change the ESP-SR graph or are not exposed as stock GMF manager live toggles. `SE` is `BOOT_ONLY` on dual-mic devices and `NOT_SUPPORTED` on single-mic devices.
 
 ## Telemetry
 
@@ -151,8 +151,6 @@ struct ProcessorTelemetry {
   uint32_t process_us_last, process_us_max;
   uint32_t feed_us_last,    feed_us_max;
   uint32_t fetch_us_last,   fetch_us_max;
-  // Stack pressure
-  uint32_t feed_stack_high_water, fetch_stack_high_water;
 };
 ```
 
@@ -161,9 +159,10 @@ Read with `processor->telemetry()` from any thread. Implementations write each f
 ## Ring-buffer helpers
 
 `ring_buffer_caps.h` keeps ESPHome's `RingBuffer` API but installs the
-underlying FreeRTOS BYTEBUF storage with explicit heap capabilities. This is
-needed because the stock `RingBuffer::create()` uses the default allocator and
-does not let realtime audio code choose internal RAM vs PSRAM deliberately.
+underlying FreeRTOS BYTEBUF storage with explicit heap capabilities. ESPHome
+2026.5 adds `INTERNAL_FIRST` / `EXTERNAL_FIRST` preferences, but those are still
+preferences, not strict placement guarantees, and they do not log actual
+placement. The helper remains only where placement must be auditable.
 
 | Helper | When to use |
 |--------|-------------|
@@ -199,7 +198,7 @@ If you want to ship your own processor (DSP frontend, alternative library), subc
 None directly: the component only defines interfaces. Each implementation owns its own task topology:
 
 - `esp_aec`: no background tasks; `process()` runs synchronously on the caller's audio task.
-- `esp_afe`: Espressif's GMF AFE manager owns feed/fetch tasks; `process()` bridges ESPHome audio frames through a bounded ring and a drain handshake.
+- `esp_afe`: Espressif's `esp_gmf_afe` element runs inside a GMF pipeline/task; `process()` is the ESPHome-facing bridge that enqueues mic/ref frames and drains processed output through bounded rings and a drain handshake.
 
 ## Logging
 
@@ -213,5 +212,5 @@ ESP32 only. `ring_buffer_caps.cpp` links against ESP-IDF heap capabilities and
 ## Known constraints
 
 - Frame sample counts must match between producer (the processor) and consumer (`esp_audio_stack` or `intercom_api`). Consumers read `frame_spec_revision()` at init and poll in their audio loop; on change they restart to re-read `frame_spec()`.
-- Placement policy is advisory: ESPHome's default `RingBuffer::create` falls back between pools silently. Prefer the `ring_buffer_caps.h` helpers whenever placement matters.
-- `esp_afe` is type-compatible with `intercom_api.processor_id` but not behaviourally compatible when `intercom_api` runs without `esp_audio_stack` in front. The AFE feed/fetch tasks need a steady producer at fixed-size frames.
+- ESPHome's default `RingBuffer::create` falls back between pools according to preference. Prefer the `ring_buffer_caps.h` helpers only where strict placement or boot-time placement logs matter.
+- `esp_afe` is type-compatible with `intercom_api.processor_id` but not behaviourally compatible when `intercom_api` runs without `esp_audio_stack` in front. The GMF pipeline needs a steady producer at fixed-size frames.

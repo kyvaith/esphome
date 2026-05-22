@@ -12,12 +12,17 @@
 #include <esp_afe_sr_iface.h>
 #include <esp_afe_sr_models.h>
 #include <esp_afe_config.h>
+#include <esp_gmf_afe.h>
+#include <esp_gmf_element.h>
 #include <esp_gmf_afe_manager.h>
+#include <esp_gmf_pipeline.h>
+#include <esp_gmf_payload.h>
+#include <esp_gmf_port.h>
+#include <esp_gmf_task.h>
 #include <freertos/ringbuf.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
-#include "esphome/core/ring_buffer.h"
 #include "../audio_processor/ring_buffer_caps.h"
 
 #include <atomic>
@@ -36,15 +41,15 @@ using audio_processor::ProcessorTelemetry;
 
 /// Full Espressif AFE pipeline wrapper.
 ///
-/// Implements AudioProcessor on top of Espressif's GMF AFE manager
-/// (AEC + NS + VAD + AGC + structural dual-mic Speech Enhancement). The
-/// manager owns esp-sr feed/fetch tasks; this component only bridges ESPHome's
-/// realtime I2S loop into the manager callbacks.
+/// Implements AudioProcessor on top of Espressif's `esp_gmf_afe` element in a
+/// GMF pipeline/task (AEC + NS + VAD + AGC + structural dual-mic Speech
+/// Enhancement). This component keeps the ESPHome-facing `process()` contract
+/// as a bounded enqueue/dequeue bridge; the AFE work itself runs through GMF.
 ///
 /// Runtime reconfiguration that changes the AFE graph (NS/AGC or switching
-/// SR/VC/FD mode) must tear the esp-sr instance down and rebuild it. AEC and
-/// VAD are live-toggled through the GMF manager; SE/BSS is structural on
-/// dual-mic builds. Because
+/// SR/VC/FD mode) must tear the esp-sr instance down and rebuild it. AEC is
+/// live-toggled through the GMF manager; VAD and SE/BSS are structural on
+/// current builds. Because
 /// process() is called from the consumer audio task (prio 19) while
 /// config mutations come from the main thread, the two ends coordinate
 /// through a lock-free drain handshake:
@@ -83,8 +88,8 @@ class EspAfe : public Component, public AudioProcessor {
   bool set_feature(AudioFeature feature, bool enabled) override;
   ProcessorTelemetry telemetry() const override;
   bool reconfigure(int type, int mode) override;
-  // Pause the GMF AFE manager when no consumer is listening (called by
-  // esp_audio_stack when the last mic consumer leaves) and resume it when a
+  // Stop the GMF AFE pipeline when no consumer is listening (called by
+  // esp_audio_stack when the last mic consumer leaves) and run it when a
   // consumer re-attaches. Idempotent.
   void set_processing_active(bool active) override;
   bool wants_background_input() const override {
@@ -146,8 +151,6 @@ class EspAfe : public Component, public AudioProcessor {
   bool is_ns_enabled() const { return this->ns_enabled_.load(std::memory_order_relaxed); }
   bool is_vad_enabled() const { return this->vad_enabled_.load(std::memory_order_relaxed); }
   bool is_agc_enabled() const { return this->agc_enabled_.load(std::memory_order_relaxed); }
-  bool set_bss_output_source_name(const char *name);
-  const char *get_bss_output_source_name() const { return this->bss_output_source_name_(); }
   // Current mode string ("sr_low_cost", "sr_high_perf", "voip_low_cost",
   // "voip_high_perf", "fd_low_cost", "fd_high_perf"). Used by UI templates
   // to publish the actual live mode after a set_action so optimistic selects
@@ -179,6 +182,9 @@ class EspAfe : public Component, public AudioProcessor {
 
   struct AfeInstance {
     esp_gmf_afe_manager_handle_t manager{nullptr};
+    esp_gmf_obj_handle_t element{nullptr};
+    esp_gmf_pipeline_handle_t pipeline{nullptr};
+    esp_gmf_task_handle_t task{nullptr};
     afe_config_t *config{nullptr};
     int16_t *feed_buf{nullptr};
     int feed_chunksize{0};
@@ -216,7 +222,11 @@ class EspAfe : public Component, public AudioProcessor {
   // GMF AFE manager and config. The config must outlive the manager because
   // esp-sr stores pointers into it.
   esp_gmf_afe_manager_handle_t afe_manager_{nullptr};
+  esp_gmf_obj_handle_t afe_element_{nullptr};
+  esp_gmf_pipeline_handle_t afe_pipeline_{nullptr};
+  esp_gmf_task_handle_t afe_task_{nullptr};
   afe_config_t *afe_config_{nullptr};
+  bool afe_pipeline_running_{false};
 
   // Feed buffer: interleaved [mic, ref, ...], [mic1, mic2, ref, ...] or
   // [mic1, mic2, N, ref, ...] depending on esp-sr input_format.
@@ -232,8 +242,8 @@ class EspAfe : public Component, public AudioProcessor {
   int last_process_mic_channels_{0};
 
   // esp_audio_stack stages full AFE feed frames into this NOSPLIT bridge.
-  // Espressif's GMF AFE manager owns the feed/fetch tasks and pulls from the
-  // bridge through manager_read_().
+  // The official esp_gmf_afe element reads them through a GMF input port and
+  // writes processed mono frames through a GMF output port.
   static constexpr size_t kBridgeRingFrames = 4;
   static constexpr size_t kRingbufferItemHeaderBytes = 8;
 
@@ -241,34 +251,27 @@ class EspAfe : public Component, public AudioProcessor {
   uint8_t *feed_input_ring_storage_{nullptr};
   StaticRingbuffer_t *feed_input_ring_struct_{nullptr};
 
-  static int32_t manager_read_cb_(void *buffer, int buf_sz, void *user_ctx, uint32_t ticks);
-  static void manager_result_cb_(afe_fetch_result_t *result, void *user_ctx);
-  int32_t manager_read_(void *buffer, int buf_sz, uint32_t ticks);
-  void manager_result_(afe_fetch_result_t *result);
-  bool activate_manager_();
-  void suspend_manager_();
-  void flush_manager_before_suspend_();
+  static esp_gmf_err_io_t gmf_input_acquire_cb_(void *ctx, esp_gmf_payload_t *load,
+                                                uint32_t wanted_size, int wait_ticks);
+  static esp_gmf_err_io_t gmf_input_release_cb_(void *ctx, esp_gmf_payload_t *load,
+                                                int wait_ticks);
+  static esp_gmf_err_io_t gmf_output_acquire_cb_(void *ctx, esp_gmf_payload_t *load,
+                                                 uint32_t wanted_size, int wait_ticks);
+  static esp_gmf_err_io_t gmf_output_release_cb_(void *ctx, esp_gmf_payload_t *load,
+                                                 int wait_ticks);
+  esp_gmf_err_io_t gmf_input_acquire_(esp_gmf_payload_t *load, uint32_t wanted_size,
+                                      int wait_ticks);
+  esp_gmf_err_io_t gmf_output_release_(esp_gmf_payload_t *load, int wait_ticks);
+  static void gmf_event_cb_(esp_gmf_element_handle_t el, esp_gmf_afe_evt_t *event,
+                            void *user_data);
+  bool start_pipeline_();
+  void stop_pipeline_();
+  void flush_pipeline_before_stop_();
   void drain_feed_input_ring_();
+  void update_fetch_ring_free_pct_();
 
-  // Fetch bridge: GMF result callback writes, process() reads non-blocking.
+  // Fetch bridge: GMF output port writes, process() reads non-blocking.
   audio_processor::RingBufferPtr fetch_output_ring_;
-
-  enum class BssOutputSource : uint8_t {
-    AUTO = 0,
-    BSS_OUTPUT_0,
-    BSS_OUTPUT_1,
-  };
-  const char *bss_output_source_name_() const;
-  static uint16_t peak_i16_(const int16_t *data, int samples, int stride);
-  void log_bss_output_debug_(const afe_fetch_result_t *result, int out_samples,
-                             BssOutputSource selected) const;
-
-  // Scratch for optional deinterleaving of raw_data[n] when SE/BSS is on and
-  // AEC is off. This is diagnostic only; normal AEC-on operation uses
-  // result->data from ESP-SR.
-  int16_t *fetch_raw_select_scratch_{nullptr};
-  std::atomic<BssOutputSource> bss_output_source_{BssOutputSource::AUTO};
-  mutable std::atomic<uint32_t> bss_output_debug_frames_{0};
 
   // Config (set from Python, used in setup())
   int afe_type_{0};         // AFE_TYPE_SR
@@ -324,9 +327,9 @@ class EspAfe : public Component, public AudioProcessor {
   std::atomic<bool> drain_request_{false};
   std::atomic<bool> process_busy_{false};
 
-  // afe_stopped_ == true means the GMF manager is torn down for a single-mic
-  // all-features-off configuration. Dual-mic builds keep SE/BSS structural, so
-  // this path should not be entered there.
+  // afe_stopped_ == true means the GMF pipeline/manager is torn down for a
+  // single-mic all-features-off configuration. Dual-mic builds keep SE/BSS
+  // structural, so this path should not be entered there.
   std::atomic<bool> afe_stopped_{false};
 
   std::atomic<bool> voice_present_{false};
@@ -339,9 +342,9 @@ class EspAfe : public Component, public AudioProcessor {
   std::atomic<uint32_t> glitch_count_{0};
   // Feed/fetch diagnostics.
   std::atomic<uint32_t> input_ring_drop_{0}; // process() could not enqueue (NOSPLIT full)
-  std::atomic<uint32_t> feed_ok_{0};         // GMF manager read_cb accepted a frame
-  std::atomic<uint32_t> feed_rejected_{0};   // GMF read_cb timed out or saw a bad frame
-  std::atomic<uint32_t> fetch_ok_{0};        // fetch task drained a frame
+  std::atomic<uint32_t> feed_ok_{0};         // GMF input port accepted a frame
+  std::atomic<uint32_t> feed_rejected_{0};   // GMF input port timed out or saw a bad frame
+  std::atomic<uint32_t> fetch_ok_{0};        // GMF output port drained a frame
   std::atomic<uint32_t> fetch_timeout_{0};   // GMF fetch returned no usable frame
   std::atomic<uint32_t> output_ring_drop_{0};// fetch_output_ring_ full
   std::atomic<uint32_t> feed_queue_frames_{0};
@@ -354,13 +357,11 @@ class EspAfe : public Component, public AudioProcessor {
   std::atomic<uint32_t> feed_us_max_{0};
   std::atomic<uint32_t> fetch_us_last_{0};
   std::atomic<uint32_t> fetch_us_max_{0};
-  mutable std::atomic<uint32_t> feed_stack_high_water_last_{0};
-  mutable std::atomic<uint32_t> fetch_stack_high_water_last_{0};
   std::atomic<float> ringbuf_free_pct_{1.0f};
   std::atomic<uint32_t> frame_spec_revision_{0};
   // Tracks whether a microphone consumer wants the AFE path active. When the
-  // manager is live, this also means GMF feed/fetch tasks are resumed; when an
-  // all-off single-mic config has torn the manager down, the flag is preserved
+  // pipeline is live, this also means GMF jobs are running; when an all-off
+  // single-mic config has torn the pipeline down, the flag is preserved
   // so a later feature-enable rebuild can resume immediately.
   std::atomic<bool> processing_active_{false};
   int last_spec_mic_ch_{1};  // last published mic_channels for revision tracking (1 = default mono)

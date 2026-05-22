@@ -24,6 +24,7 @@
 #include <freertos/semphr.h>
 
 #include <atomic>
+#include <climits>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -259,9 +260,9 @@ class ESPAudioStack : public Component {
   // ESPHome's media_player. The audio task applies media/speaker volume *
   // master volume, so HA media volume and the board master control cascade.
   void set_speaker_volume(float volume);
-  void set_speaker_volume_q15(int16_t q15);
+  void set_speaker_volume_q31(int32_t q31);
   void set_output_volume(float volume);
-  void set_output_volume_q15(int16_t q15);
+  void set_output_volume_q31(int32_t q31);
   float get_speaker_volume() const { return this->speaker_volume_.load(std::memory_order_relaxed); }
 
   // ES8311 Digital Feedback mode: RX is stereo with L=ADC(mic), R=DAC(ref)
@@ -483,7 +484,7 @@ class ESPAudioStack : public Component {
     // ── Per-iteration snapshots from atomics ──
     float mic_gain{1.0f};
     float mic_attenuation{1.0f};
-    int16_t speaker_volume_q15{32767};
+    int32_t speaker_volume_q31{INT32_MAX};
     bool processor_enabled{false};
     bool processor_ready{false};  // cached: enabled && initialized (avoids virtual call per frame)
     bool speaker_running{false};
@@ -677,9 +678,10 @@ class ESPAudioStack : public Component {
   std::atomic<float> mic_gain_{1.0f};         // 0.0 - 2.0 (1.0 = unity gain, applied AFTER AEC)
   std::atomic<float> mic_attenuation_{1.0f};  // Input gain staging before the processor.
   std::atomic<float> speaker_volume_{1.0f};  // combined output*master public/debug value
-  std::atomic<int16_t> speaker_volume_q15_{32767};  // combined hot-path fixed-point volume
-  std::atomic<int16_t> output_volume_q15_{32767};   // media_player/speaker abstraction volume
-  std::atomic<int16_t> master_volume_q15_{32767};   // board master volume
+  std::atomic<int32_t> speaker_volume_q31_{INT32_MAX};  // combined hot-path fixed-point volume
+  std::atomic<int32_t> output_volume_q31_{INT32_MAX};   // media_player/speaker abstraction volume
+  std::atomic<int32_t> master_volume_q31_{INT32_MAX};   // board master volume
+  std::atomic<float> master_volume_linear_{1.0f};    // unclipped user value for hardware codec volume APIs
   bool use_stereo_aec_ref_{false}; // ES8311 digital feedback: RX stereo with L=mic, R=ref
   bool ref_channel_right_{false};  // Which channel is AEC reference: false=L, true=R
 

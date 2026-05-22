@@ -5,7 +5,9 @@
 #include <driver/i2s_common.h>
 #include <esp_heap_caps.h>
 #include <esp_idf_version.h>
+#include <gain.h>
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstring>
 
@@ -37,28 +39,19 @@ static const uint32_t DMA_BUFFER_DURATION_MS = 10;
 static const size_t SPEAKER_BUFFER_MIN_BYTES = 2048;
 
 namespace {
-static const int16_t Q15_VOLUME_FACTORS[] = {
-    0,     116,   122,   130,   137,   146,   154,   163,   173,   183,   194,   206,   218,   231,   244,
-    259,   274,   291,   308,   326,   345,   366,   388,   411,   435,   461,   488,   517,   548,   580,
-    615,   651,   690,   731,   774,   820,   868,   920,   974,   1032,  1094,  1158,  1227,  1300,  1377,
-    1459,  1545,  1637,  1734,  1837,  1946,  2061,  2184,  2313,  2450,  2596,  2750,  2913,  3085,  3269,
-    3462,  3668,  3885,  4116,  4360,  4619,  4893,  5183,  5490,  5816,  6161,  6527,  6914,  7324,  7758,
-    8218,  8706,  9222,  9770,  10349, 10963, 11613, 12302, 13032, 13805, 14624, 15491, 16410, 17384, 18415,
-    19508, 20665, 21891, 23189, 24565, 26022, 27566, 29201, 30933, 32767};
-static constexpr size_t Q15_VOLUME_FACTORS_COUNT = sizeof(Q15_VOLUME_FACTORS) / sizeof(Q15_VOLUME_FACTORS[0]);
+static constexpr float SOFTWARE_VOLUME_MIN_DB = -49.0f;
 
-int16_t volume_factor_to_q15(float volume) {
+int32_t volume_factor_to_q31(float volume) {
   if (!(volume > 0.0f)) return 0;
-  if (volume >= 1.0f) return 32767;
-  size_t idx = static_cast<size_t>(volume * (Q15_VOLUME_FACTORS_COUNT - 1));
-  if (idx >= Q15_VOLUME_FACTORS_COUNT) idx = Q15_VOLUME_FACTORS_COUNT - 1;
-  return Q15_VOLUME_FACTORS[idx];
+  if (volume >= 1.0f) return INT32_MAX;
+  return esp_audio_libs::gain::db_to_q31(
+      remap<float, float>(volume, 0.0f, 1.0f, SOFTWARE_VOLUME_MIN_DB, 0.0f));
 }
 
-int16_t multiply_q15(int16_t a, int16_t b) {
+int32_t multiply_q31(int32_t a, int32_t b) {
   if (a <= 0 || b <= 0) return 0;
-  const int32_t value = (static_cast<int32_t>(a) * static_cast<int32_t>(b) + 16384) >> 15;
-  return value >= 32767 ? 32767 : static_cast<int16_t>(value);
+  const int64_t value = (static_cast<int64_t>(a) * static_cast<int64_t>(b) + (1LL << 30)) >> 31;
+  return value >= INT32_MAX ? INT32_MAX : static_cast<int32_t>(value);
 }
 
 float sanitize_gain_factor(float gain) {
@@ -85,13 +78,18 @@ void ESPAudioStack::set_speaker_volume(float volume) {
   } else if (volume > 1.0f) {
     volume = 1.0f;
   }
-  this->set_speaker_volume_q15(volume_factor_to_q15(volume));
+  this->master_volume_linear_.store(volume, std::memory_order_relaxed);
+  const int32_t q31 = volume_factor_to_q31(volume);
+  const int32_t previous = this->master_volume_q31_.exchange(q31, std::memory_order_relaxed);
+  if (previous != q31) this->update_combined_speaker_volume_();
 }
 
-void ESPAudioStack::set_speaker_volume_q15(int16_t q15) {
-  if (q15 < 0) q15 = 0;
-  const int16_t previous = this->master_volume_q15_.exchange(q15, std::memory_order_relaxed);
-  if (previous != q15) this->update_combined_speaker_volume_();
+void ESPAudioStack::set_speaker_volume_q31(int32_t q31) {
+  if (q31 < 0) q31 = 0;
+  this->master_volume_linear_.store(static_cast<float>(q31) / static_cast<float>(INT32_MAX),
+                                    std::memory_order_relaxed);
+  const int32_t previous = this->master_volume_q31_.exchange(q31, std::memory_order_relaxed);
+  if (previous != q31) this->update_combined_speaker_volume_();
 }
 
 void ESPAudioStack::set_output_volume(float volume) {
@@ -100,35 +98,37 @@ void ESPAudioStack::set_output_volume(float volume) {
   } else if (volume > 1.0f) {
     volume = 1.0f;
   }
-  this->set_output_volume_q15(volume_factor_to_q15(volume));
+  this->set_output_volume_q31(volume_factor_to_q31(volume));
 }
 
-void ESPAudioStack::set_output_volume_q15(int16_t q15) {
-  if (q15 < 0) q15 = 0;
-  const int16_t previous = this->output_volume_q15_.exchange(q15, std::memory_order_relaxed);
-  if (previous != q15) this->update_combined_speaker_volume_();
+void ESPAudioStack::set_output_volume_q31(int32_t q31) {
+  if (q31 < 0) q31 = 0;
+  const int32_t previous = this->output_volume_q31_.exchange(q31, std::memory_order_relaxed);
+  if (previous != q31) this->update_combined_speaker_volume_();
 }
 
 void ESPAudioStack::update_combined_speaker_volume_() {
-  const int16_t output_q15 = this->output_volume_q15_.load(std::memory_order_relaxed);
-  const int16_t master_q15 = this->master_volume_q15_.load(std::memory_order_relaxed);
+  const int32_t output_q31 = this->output_volume_q31_.load(std::memory_order_relaxed);
+  const int32_t master_q31 = this->master_volume_q31_.load(std::memory_order_relaxed);
+  const float master_linear = this->master_volume_linear_.load(std::memory_order_relaxed);
 #ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
   const bool hardware_master = this->codec_backend_.has_output_codec();
 #else
   const bool hardware_master = false;
 #endif
-  const int16_t combined_q15 = hardware_master ? output_q15 : multiply_q15(output_q15, master_q15);
-  const float linear = static_cast<float>(combined_q15) / 32767.0f;
-  this->speaker_volume_.store(static_cast<float>(master_q15) / 32767.0f, std::memory_order_relaxed);
-  const int16_t previous = this->speaker_volume_q15_.exchange(combined_q15, std::memory_order_relaxed);
+  const int32_t combined_q31 = hardware_master ? output_q31 : multiply_q31(output_q31, master_q31);
+  const float linear = static_cast<float>(combined_q31) / static_cast<float>(INT32_MAX);
+  this->speaker_volume_.store(hardware_master ? master_linear : static_cast<float>(master_q31) / static_cast<float>(INT32_MAX),
+                              std::memory_order_relaxed);
+  const int32_t previous = this->speaker_volume_q31_.exchange(combined_q31, std::memory_order_relaxed);
   if (hardware_master) {
 #ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
-    this->codec_backend_.set_output_volume(static_cast<float>(master_q15) / 32767.0f);
+    this->codec_backend_.set_output_volume(master_linear);
 #endif
   }
-  if (previous != combined_q15) {
-    ESP_LOGD(TAG, "Speaker volume: output_q15=%d master_q15=%d hot_q15=%d linear=%.3f hw_master=%s previous_q15=%d",
-             output_q15, master_q15, combined_q15, linear, hardware_master ? "yes" : "no", previous);
+  if (previous != combined_q31) {
+    ESP_LOGD(TAG, "Speaker volume: output_q31=%d master_q31=%d hot_q31=%d linear=%.3f hw_master=%s previous_q31=%d",
+             output_q31, master_q31, combined_q31, linear, hardware_master ? "yes" : "no", previous);
   }
 }
 
@@ -924,8 +924,7 @@ bool ESPAudioStack::enable_i2s_channels_() {
     this->deinit_i2s_();
     return false;
   }
-  this->codec_backend_.set_output_volume(
-      static_cast<float>(this->master_volume_q15_.load(std::memory_order_relaxed)) / 32767.0f);
+  this->codec_backend_.set_output_volume(this->master_volume_linear_.load(std::memory_order_relaxed));
   this->codec_backend_.set_output_mute(false);
 #else
   if (this->tx_handle_) {
@@ -1114,7 +1113,7 @@ bool ESPAudioStack::register_mic_consumer(void *token) {
     ESP_LOGI(TAG, "Mic consumer registered (token=%p), mic path active (consumers=%zu)",
              token, count_after);
     this->mic_start_trigger_.trigger();
-    // Wake the audio processor (e.g. esp_afe feed/fetch tasks) before any
+    // Wake the audio processor (e.g. esp_afe GMF pipeline/task) before any
     // consumer expects processed frames; the processor must already be
     // pumping by the time audio_task starts pushing into it.
     if (this->processor_ != nullptr) {
@@ -1161,7 +1160,7 @@ void ESPAudioStack::unregister_mic_consumer(void *token) {
     ESP_LOGI(TAG, "Last mic consumer removed (token=%p), mic path idle", token);
     this->mic_idle_trigger_.trigger();
     // Tell the audio processor it can suspend background work until a new
-    // consumer arrives. Without this hint esp_afe's feed/fetch tasks (and
+    // consumer arrives. Without this hint esp_afe's GMF pipeline/task (and
     // the esp-sr internal worker on Core 1) keep cycling on every frame
     // even when nobody is listening, which on spotpear-ball-v2 was monopolising
     // CPU1 long enough to trip the loopTask 30s watchdog on HA restart.

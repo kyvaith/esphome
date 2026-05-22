@@ -103,6 +103,8 @@ CONF_ON_MIC_START = "on_mic_start"
 CONF_ON_MIC_IDLE = "on_mic_idle"
 CONF_ON_SPEAKER_START = "on_speaker_start"
 CONF_ON_SPEAKER_IDLE = "on_speaker_idle"
+CONF_ON_AMPLIFIER_REQUIRED = "on_amplifier_required"
+CONF_ON_AMPLIFIER_IDLE = "on_amplifier_idle"
 
 CODEC_INPUT_TYPES = ("es7210", "es8311")
 CODEC_OUTPUT_TYPES = ("es8311",)
@@ -413,6 +415,11 @@ CONFIG_SCHEMA = cv.All(
         cv.Optional(CONF_ON_MIC_IDLE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_SPEAKER_START): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_SPEAKER_IDLE): automation.validate_automation(single=True),
+        # Semantic aliases for board amplifier/power-enable control. They fire
+        # on the same edges as speaker playback, but keep YAML intent separate
+        # from the ESPHome speaker abstraction.
+        cv.Optional(CONF_ON_AMPLIFIER_REQUIRED): automation.validate_automation(single=True),
+        cv.Optional(CONF_ON_AMPLIFIER_IDLE): automation.validate_automation(single=True),
     }).extend(cv.COMPONENT_SCHEMA),
     _validate_sample_rates,
     _validate_tdm_config,
@@ -555,6 +562,7 @@ async def to_code(config):
     # ESPHome requires `ref`; "*" maps to an unpinned/latest registry version.
     # Replace it only when a concrete upstream regression is documented.
     has_hardware_codec = CONF_CODEC in config
+    add_idf_component(name="esphome/esp-audio-libs", ref="*")
     add_idf_component(name="espressif/esp_audio_effects", ref="*")
     if has_hardware_codec:
         add_idf_component(name="espressif/esp_codec_dev", ref="*")
@@ -768,6 +776,8 @@ async def to_code(config):
         (CONF_ON_MIC_IDLE, var.get_mic_idle_trigger, []),
         (CONF_ON_SPEAKER_START, var.get_speaker_start_trigger, []),
         (CONF_ON_SPEAKER_IDLE, var.get_speaker_idle_trigger, []),
+        (CONF_ON_AMPLIFIER_REQUIRED, var.get_speaker_start_trigger, []),
+        (CONF_ON_AMPLIFIER_IDLE, var.get_speaker_idle_trigger, []),
     ):
         if key in config:
             await automation.build_automation(trigger_getter(), args, config[key])

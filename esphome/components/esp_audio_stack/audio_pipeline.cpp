@@ -5,6 +5,7 @@
 #include <esp_err.h>
 #include <esp_timer.h>
 #include <esp_heap_caps.h>
+#include <gain.h>
 #ifdef USE_ESP_AUDIO_STACK_32BIT
 #include <esp_ae_bit_cvt.h>
 #endif
@@ -639,7 +640,7 @@ void ESPAudioStack::audio_session_() {
     // Snapshot atomic state for this frame (avoids repeated .load() in sample loops)
     ctx.mic_attenuation = this->mic_attenuation_.load(std::memory_order_relaxed);
     ctx.mic_gain = this->mic_gain_.load(std::memory_order_relaxed);
-    ctx.speaker_volume_q15 = this->speaker_volume_q15_.load(std::memory_order_relaxed);
+    ctx.speaker_volume_q31 = this->speaker_volume_q31_.load(std::memory_order_relaxed);
     ctx.speaker_running = this->speaker_running_.load(std::memory_order_relaxed);
     ctx.speaker_paused = this->speaker_paused_.load(std::memory_order_relaxed);
     ctx.mic_running = this->has_mic_consumers_.load(std::memory_order_relaxed);
@@ -720,16 +721,14 @@ void ESPAudioStack::audio_session_() {
                    (unsigned) telem.fetch_queue_peak);
           ESP_LOGD(TAG,
                    "AFE timing: proc last/max=%u/%uus feed last/max=%u/%uus "
-                   "fetch last/max=%u/%uus stackB audio/feed/fetch=%u/%u/%u",
+                   "fetch last/max=%u/%uus stackB audio=%u",
                    (unsigned) telem.process_us_last,
                    (unsigned) telem.process_us_max,
                    (unsigned) telem.feed_us_last,
                    (unsigned) telem.feed_us_max,
                    (unsigned) telem.fetch_us_last,
                    (unsigned) telem.fetch_us_max,
-                   (unsigned) audio_stack_high_water,
-                   (unsigned) telem.feed_stack_high_water,
-                   (unsigned) telem.fetch_stack_high_water);
+                   (unsigned) audio_stack_high_water);
           prev_processor_telem = telem;
         }
 #endif
@@ -1281,10 +1280,12 @@ void ESPAudioStack::process_tx_path_(AudioTaskCtx &ctx) {
     ctx.speaker_underrun = got < ctx.bus_frame_bytes;
 
     if (got > 0) {
-      // Speaker software volume is cached as Q15 when the volume changes, so
+      // Speaker software volume is cached as Q31 when the volume changes, so
       // the audio task does not spend every frame converting float -> fixed.
       const size_t got_samples = got / sizeof(int16_t);
-      scale_block_i16_q15(ctx.spk_buffer, ctx.spk_buffer, got_samples, ctx.speaker_volume_q15);
+      auto *spk_bytes = reinterpret_cast<uint8_t *>(ctx.spk_buffer);
+      esp_audio_libs::gain::apply(spk_bytes, spk_bytes, ctx.speaker_volume_q31, got_samples,
+                                  sizeof(int16_t));
       if (got < ctx.bus_frame_bytes) {
         memset(((uint8_t *) ctx.spk_buffer) + got, 0, ctx.bus_frame_bytes - got);
       }

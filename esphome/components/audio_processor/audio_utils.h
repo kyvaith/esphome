@@ -27,9 +27,9 @@ static inline int16_t scale_sample(int16_t sample, float gain) {
 
 #ifndef ESPHOME_SCALE_BLOCK_I16_DEFINED
 #define ESPHOME_SCALE_BLOCK_I16_DEFINED
-// Q15 speaker/volume scale for int16 PCM. This is the hot-path form for
-// software speaker volume: callers compute the Q15 factor when volume changes,
-// not once per audio frame.
+// Q15 scale for legacy float gain paths. ESPHome-facing speaker/media volume
+// uses esp-audio-libs Q31 in esp_audio_stack; this helper remains for mic gain
+// and intercom standalone paths that may need amplification.
 static inline void scale_block_i16_q15(const int16_t *in, int16_t *out, size_t len, int16_t q15) {
   if (q15 <= 0) {
     std::memset(out, 0, len * sizeof(int16_t));
