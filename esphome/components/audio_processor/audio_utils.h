@@ -24,8 +24,9 @@ static inline int16_t scale_sample(int16_t sample, float gain) {
 #ifndef ESPHOME_SCALE_BLOCK_I16_DEFINED
 #define ESPHOME_SCALE_BLOCK_I16_DEFINED
 // Q15 scale for legacy float gain paths. ESPHome-facing attenuation/volume
-// uses esp-audio-libs Q31 in esp_audio_stack; this helper remains for positive
-// gain boost and intercom standalone paths that need amplification.
+// uses esp-audio-libs Q31 in esp_audio_stack; user-facing positive mic gain
+// uses esp_ae_alc. This helper remains for board-level input boost and
+// intercom standalone paths that need amplification.
 static inline void scale_block_i16_q15(const int16_t *in, int16_t *out, size_t len, int16_t q15) {
   if (q15 <= 0) {
     std::memset(out, 0, len * sizeof(int16_t));
@@ -51,8 +52,8 @@ static inline void scale_block_i16_q15(const int16_t *in, int16_t *out, size_t l
 //                       which never overflows int16 for C in [0, 32767].
 //   gain > 1.0 (or negative) -> scalar `scale_sample` with saturation, since
 //                       Q15 cannot represent amplification factors. In
-//                       esp_audio_stack, only positive mic boost uses this path;
-//                       attenuation goes through esp-audio-libs Q31.
+//                       esp_audio_stack, user-facing mic boost goes through
+//                       esp_ae_alc; attenuation goes through esp-audio-libs Q31.
 //
 // `out` may alias `in`. `len` is sample count, not bytes.
 static inline void scale_block_i16(const int16_t *in, int16_t *out, size_t len, float gain) {
