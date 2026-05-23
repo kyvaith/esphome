@@ -317,6 +317,11 @@ class ESPAudioStack : public Component {
   void stop();   // Stop both
 
   bool is_running() const { return this->audio_stack_running_.load(std::memory_order_relaxed); }
+  bool is_idle() const {
+    return !this->audio_stack_running_.load(std::memory_order_relaxed) &&
+           this->audio_task_idle_.load(std::memory_order_relaxed) &&
+           !this->teardown_pending_.load(std::memory_order_relaxed);
+  }
   bool has_i2s_error() const { return this->has_i2s_error_.load(std::memory_order_relaxed); }
   Trigger<> *get_start_trigger() { return &this->start_trigger_; }
   Trigger<> *get_idle_trigger() { return &this->idle_trigger_; }
@@ -787,6 +792,11 @@ template<typename... Ts> class StartAction : public Action<Ts...>, public Parent
 template<typename... Ts> class StopAction : public Action<Ts...>, public Parented<ESPAudioStack> {
  public:
   void play(const Ts &...x) override { this->parent_->stop(); }
+};
+
+template<typename... Ts> class IsIdleCondition : public Condition<Ts...>, public Parented<ESPAudioStack> {
+ public:
+  bool check(const Ts &...x) override { return this->parent_->is_idle(); }
 };
 
 }  // namespace esp_audio_stack

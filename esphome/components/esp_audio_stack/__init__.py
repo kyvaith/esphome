@@ -166,6 +166,7 @@ esp_audio_stack_ns = cg.esphome_ns.namespace("esp_audio_stack")
 ESPAudioStack = esp_audio_stack_ns.class_("ESPAudioStack", cg.Component)
 StartAction = esp_audio_stack_ns.class_("StartAction", automation.Action)
 StopAction = esp_audio_stack_ns.class_("StopAction", automation.Action)
+IsIdleCondition = esp_audio_stack_ns.class_("IsIdleCondition", automation.Condition)
 
 # AudioProcessor abstract interface (defined in audio_processor/audio_processor.h)
 # Both esp_aec::EspAec and esp_afe::EspAfe inherit from this adapter.
@@ -813,5 +814,14 @@ ESP_AUDIO_STACK_ACTION_SCHEMA = automation.maybe_simple_id(
 )
 async def esp_audio_stack_action_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    return var
+
+
+@automation.register_condition(
+    "esp_audio_stack.is_idle", IsIdleCondition, ESP_AUDIO_STACK_ACTION_SCHEMA
+)
+async def esp_audio_stack_is_idle_to_code(config, condition_id, template_arg, args):
+    var = cg.new_Pvariable(condition_id, template_arg)
     await cg.register_parented(var, config[CONF_ID])
     return var
