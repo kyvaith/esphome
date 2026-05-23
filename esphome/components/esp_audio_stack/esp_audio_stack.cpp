@@ -1083,9 +1083,24 @@ void ESPAudioStack::start() {
     return;
   }
 
-  // Cancel any in-flight deferred teardown: a rapid stop()-then-start()
-  // cycle (e.g. consumer toggle) should keep the I2S channels enabled.
-  this->teardown_pending_.store(false, std::memory_order_relaxed);
+  // Complete any deferred close from the previous session before reopening.
+  // Reusing a GMF codec IO that the audio task has already parked during a
+  // stop/start call cycle can leave TX in a half-closed state on the next
+  // intercom call.
+  if (this->teardown_pending_.load(std::memory_order_relaxed)) {
+    const uint32_t start_ms = millis();
+    while (!this->audio_task_idle_.load(std::memory_order_relaxed) && millis() - start_ms < 250) {
+      delay(1);
+    }
+    if (this->audio_task_idle_.load(std::memory_order_relaxed)) {
+      this->deinit_i2s_();
+      this->teardown_pending_.store(false, std::memory_order_relaxed);
+      ESP_LOGI(TAG, "Completed pending audio stack teardown before restart");
+    } else {
+      ESP_LOGW(TAG, "Audio stack restart refused while teardown is still pending");
+      return;
+    }
+  }
 
   ESP_LOGI(TAG, "Starting audio stack...");
 
