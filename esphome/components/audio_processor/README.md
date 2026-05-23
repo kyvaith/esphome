@@ -18,24 +18,24 @@ Shared C++ interface for audio-processor components. Not a user-facing component
 
 ## Purpose
 
-Defines the `AudioProcessor` virtual base class and the value types used to describe a processing frame (`FrameSpec`), feature toggles (`AudioFeature`, `FeatureControl`) and telemetry (`ProcessorTelemetry`). Consumers reference the interface, never the concrete implementation, so swapping `esp_aec` for `esp_afe` in a device YAML does not require code changes in `esp_audio_stack` or `intercom_api` (subject to the runtime compatibility caveats covered below).
+Defines the `AudioProcessor` virtual base class and the value types used to describe a processing frame (`FrameSpec`), feature toggles (`AudioFeature`, `FeatureControl`) and telemetry (`ProcessorTelemetry`). Consumers reference the interface, never the concrete implementation, so swapping `esp_aec` for `esp_afe` in a device YAML does not require code changes in `esp_audio_stack` (subject to the runtime compatibility caveats covered below).
 
-Also ships `ring_buffer_caps.h`, a small helper that creates ring buffers with an explicit memory-placement policy (internal RAM vs PSRAM). Audio hot-path buffers should always be allocated through the helper so placement is auditable at boot.
+Also ships `ring_buffer_caps.h`, a small helper that creates ring buffers with an explicit memory-placement policy (internal RAM vs PSRAM). Audio buffers should go through the helper so placement is auditable at boot: latency-critical/DMA-facing buffers can stay internal, while large bridge/staging buffers can move to PSRAM on memory-constrained profiles.
 
 ## Why an interface
 
-The audio stack supports four topologies:
+The maintained audio stack supports four topologies:
 
 | Topology | Producer | Processor |
 |----------|----------|-----------|
-| Intercom only, dual-bus | ESPHome `microphone` + `intercom_api` mic capture | `esp_aec` |
+| Intercom only, dual-bus | `esp_audio_stack` | `esp_aec` |
 | Intercom only, single-bus | `esp_audio_stack` | `esp_aec` |
 | Full intercom + VA, single-bus AEC only | `esp_audio_stack` | `esp_aec` |
 | Full intercom + VA, single-bus full AFE | `esp_audio_stack` | `esp_afe` |
 
-The `AudioProcessor` contract lets the same consumers (`esp_audio_stack`, `intercom_api`) work with any of these processors at YAML level, and lets future processors drop in without touching consumer code. It is also unit-testable: the contract can be mocked without bringing up DMA.
+The `AudioProcessor` contract lets `esp_audio_stack` work with any maintained processor at YAML level, and lets future processors drop in without touching the I2S owner. It is also unit-testable: the contract can be mocked without bringing up DMA.
 
-Note: `esp_afe` only works behind `esp_audio_stack`. Its feed/fetch task model needs a steady producer that pushes fixed 512-sample 16 kHz frames. The standalone `intercom_api` mic path does not provide that, so the `esp_aec` + `intercom_api` combination is the only supported one for dual-bus setups. The interface is wider than the supported configurations.
+Note: maintained intercom profiles route audio through `esp_audio_stack`; `intercom_api` is transport/FSM glue in that mode. Its legacy standalone `processor_id` path is compile-time gated and kept only for users that build `intercom_api` without `esp_audio_stack`.
 
 ## YAML usage
 
