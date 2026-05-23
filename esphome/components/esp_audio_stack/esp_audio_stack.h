@@ -315,6 +315,7 @@ class ESPAudioStack : public Component {
   // Audio stack lifecycle control
   void start();  // Start both mic and speaker
   void stop();   // Stop both
+  bool stop_and_wait(uint32_t timeout_ms = 2000);
 
   bool is_running() const { return this->audio_stack_running_.load(std::memory_order_relaxed); }
   bool is_idle() const {
@@ -792,6 +793,11 @@ template<typename... Ts> class StartAction : public Action<Ts...>, public Parent
 template<typename... Ts> class StopAction : public Action<Ts...>, public Parented<ESPAudioStack> {
  public:
   void play(const Ts &...x) override { this->parent_->stop(); }
+};
+
+template<typename... Ts> class StopAndWaitAction : public Action<Ts...>, public Parented<ESPAudioStack> {
+ public:
+  void play(const Ts &...x) override { this->parent_->stop_and_wait(); }
 };
 
 template<typename... Ts> class IsIdleCondition : public Condition<Ts...>, public Parented<ESPAudioStack> {

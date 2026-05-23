@@ -1179,6 +1179,28 @@ void ESPAudioStack::stop() {
   this->teardown_pending_.store(true, std::memory_order_relaxed);
 }
 
+bool ESPAudioStack::stop_and_wait(uint32_t timeout_ms) {
+  this->stop();
+
+  const uint32_t start_ms = millis();
+  while (!this->audio_task_idle_.load(std::memory_order_relaxed) &&
+         (millis() - start_ms) < timeout_ms) {
+    delay(1);
+  }
+
+  if (!this->audio_task_idle_.load(std::memory_order_relaxed)) {
+    ESP_LOGW(TAG, "Timed out waiting for audio task to stop before maintenance");
+    return false;
+  }
+
+  if (this->teardown_pending_.load(std::memory_order_relaxed)) {
+    this->deinit_i2s_();
+    this->teardown_pending_.store(false, std::memory_order_relaxed);
+    ESP_LOGI(TAG, "Audio stack stopped synchronously");
+  }
+  return true;
+}
+
 bool ESPAudioStack::register_mic_consumer(void *token) {
   bool needs_start = false;
   size_t count_after = 0;

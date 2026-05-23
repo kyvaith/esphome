@@ -1588,6 +1588,9 @@ bool EspAfe::start_pipeline_() {
   if (this->afe_pipeline_ == nullptr) {
     return false;
   }
+  if (this->afe_manager_ != nullptr) {
+    esp_gmf_afe_manager_suspend(this->afe_manager_, false);
+  }
   if (this->afe_pipeline_running_) {
     return true;
   }
@@ -1595,6 +1598,9 @@ bool EspAfe::start_pipeline_() {
     esp_gmf_err_t ret = esp_gmf_pipeline_resume(this->afe_pipeline_);
     if (ret != ESP_GMF_ERR_OK) {
       ESP_LOGW(TAG, "GMF AFE pipeline resume failed (ret=%d)", static_cast<int>(ret));
+      if (this->afe_manager_ != nullptr) {
+        esp_gmf_afe_manager_suspend(this->afe_manager_, true);
+      }
       return false;
     }
     this->install_manager_result_cb_();
@@ -1605,6 +1611,9 @@ bool EspAfe::start_pipeline_() {
   esp_gmf_err_t ret = esp_gmf_pipeline_run(this->afe_pipeline_);
   if (ret != ESP_GMF_ERR_OK) {
     ESP_LOGW(TAG, "GMF AFE pipeline run failed (ret=%d)", static_cast<int>(ret));
+    if (this->afe_manager_ != nullptr) {
+      esp_gmf_afe_manager_suspend(this->afe_manager_, true);
+    }
     return false;
   }
   this->install_manager_result_cb_();
@@ -1615,12 +1624,21 @@ bool EspAfe::start_pipeline_() {
 
 bool EspAfe::pause_pipeline_() {
   if (this->afe_pipeline_ == nullptr) {
+    if (this->afe_manager_ != nullptr) {
+      esp_gmf_afe_manager_suspend(this->afe_manager_, true);
+    }
     return true;
   }
   if (this->afe_pipeline_paused_) {
+    if (this->afe_manager_ != nullptr) {
+      esp_gmf_afe_manager_suspend(this->afe_manager_, true);
+    }
     return true;
   }
   if (!this->afe_pipeline_running_) {
+    if (this->afe_manager_ != nullptr) {
+      esp_gmf_afe_manager_suspend(this->afe_manager_, true);
+    }
     return true;
   }
   esp_gmf_err_t ret = esp_gmf_pipeline_pause(this->afe_pipeline_);
@@ -1630,6 +1648,9 @@ bool EspAfe::pause_pipeline_() {
   }
   this->afe_pipeline_running_ = false;
   this->afe_pipeline_paused_ = true;
+  if (this->afe_manager_ != nullptr) {
+    esp_gmf_afe_manager_suspend(this->afe_manager_, true);
+  }
   return true;
 }
 
@@ -1741,7 +1762,12 @@ void EspAfe::set_processing_active(bool active) {
     if (!this->processing_active_.exchange(false, std::memory_order_acq_rel)) return;
     if (!this->afe_stopped_.load(std::memory_order_acquire)) {
       if (this->pause_pipeline_()) {
-        ESP_LOGI(TAG, "AFE idle: GMF pipeline paused (no mic consumers)");
+        this->drain_feed_input_ring_();
+        if (this->fetch_output_ring_) {
+          this->fetch_output_ring_->reset();
+        }
+        this->fetch_queue_frames_.store(0, std::memory_order_relaxed);
+        ESP_LOGI(TAG, "AFE idle: GMF pipeline and manager suspended (no mic consumers)");
       } else {
         this->flush_pipeline_before_stop_();
         this->stop_pipeline_();
