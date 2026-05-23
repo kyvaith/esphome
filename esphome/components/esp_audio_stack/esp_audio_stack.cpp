@@ -5,6 +5,7 @@
 #include <driver/i2s_common.h>
 #include <esp_heap_caps.h>
 #include <esp_idf_version.h>
+#include <esp_task_wdt.h>
 #include <gain.h>
 #include <algorithm>
 #include <climits>
@@ -1199,6 +1200,41 @@ bool ESPAudioStack::stop_and_wait(uint32_t timeout_ms) {
     ESP_LOGI(TAG, "Audio stack stopped synchronously");
   }
   return true;
+}
+
+void ESPAudioStack::suspend_ota_watchdog() {
+  if (this->ota_watchdog_suspended_) {
+    return;
+  }
+  esp_err_t err = esp_task_wdt_status(nullptr);
+  if (err == ESP_ERR_NOT_FOUND) {
+    ESP_LOGI(TAG, "OTA watchdog: loopTask is not subscribed to TWDT");
+    return;
+  }
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "OTA watchdog: status failed (%s)", esp_err_to_name(err));
+    return;
+  }
+  err = esp_task_wdt_delete(nullptr);
+  if (err == ESP_OK) {
+    this->ota_watchdog_suspended_ = true;
+    ESP_LOGI(TAG, "OTA watchdog: loopTask unsubscribed from TWDT");
+  } else {
+    ESP_LOGW(TAG, "OTA watchdog: unsubscribe failed (%s)", esp_err_to_name(err));
+  }
+}
+
+void ESPAudioStack::restore_ota_watchdog() {
+  if (!this->ota_watchdog_suspended_) {
+    return;
+  }
+  esp_err_t err = esp_task_wdt_add(nullptr);
+  if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+    this->ota_watchdog_suspended_ = false;
+    ESP_LOGI(TAG, "OTA watchdog: loopTask subscribed to TWDT");
+  } else {
+    ESP_LOGW(TAG, "OTA watchdog: restore failed (%s)", esp_err_to_name(err));
+  }
 }
 
 bool ESPAudioStack::register_mic_consumer(void *token) {

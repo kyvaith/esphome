@@ -167,6 +167,8 @@ ESPAudioStack = esp_audio_stack_ns.class_("ESPAudioStack", cg.Component)
 StartAction = esp_audio_stack_ns.class_("StartAction", automation.Action)
 StopAction = esp_audio_stack_ns.class_("StopAction", automation.Action)
 StopAndWaitAction = esp_audio_stack_ns.class_("StopAndWaitAction", automation.Action)
+SuspendOtaWatchdogAction = esp_audio_stack_ns.class_("SuspendOtaWatchdogAction", automation.Action)
+RestoreOtaWatchdogAction = esp_audio_stack_ns.class_("RestoreOtaWatchdogAction", automation.Action)
 IsIdleCondition = esp_audio_stack_ns.class_("IsIdleCondition", automation.Condition)
 
 # AudioProcessor abstract interface (defined in audio_processor/audio_processor.h)
@@ -815,6 +817,18 @@ ESP_AUDIO_STACK_ACTION_SCHEMA = automation.maybe_simple_id(
 )
 @automation.register_action(
     "esp_audio_stack.stop_and_wait", StopAndWaitAction, ESP_AUDIO_STACK_ACTION_SCHEMA, synchronous=True
+)
+@automation.register_action(
+    "esp_audio_stack.suspend_ota_watchdog",
+    SuspendOtaWatchdogAction,
+    ESP_AUDIO_STACK_ACTION_SCHEMA,
+    synchronous=True,
+)
+@automation.register_action(
+    "esp_audio_stack.restore_ota_watchdog",
+    RestoreOtaWatchdogAction,
+    ESP_AUDIO_STACK_ACTION_SCHEMA,
+    synchronous=True,
 )
 async def esp_audio_stack_action_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)

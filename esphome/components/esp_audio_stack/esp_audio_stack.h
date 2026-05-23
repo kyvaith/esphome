@@ -316,6 +316,8 @@ class ESPAudioStack : public Component {
   void start();  // Start both mic and speaker
   void stop();   // Stop both
   bool stop_and_wait(uint32_t timeout_ms = 2000);
+  void suspend_ota_watchdog();
+  void restore_ota_watchdog();
 
   bool is_running() const { return this->audio_stack_running_.load(std::memory_order_relaxed); }
   bool is_idle() const {
@@ -737,6 +739,7 @@ class ESPAudioStack : public Component {
 
   // Error propagation: set by audio_task_ on persistent I2S failures
   std::atomic<bool> has_i2s_error_{false};
+  bool ota_watchdog_suspended_{false};
 
   // Pre-allocated audio task buffers (owned by component, not by ctx).
   // Allocated on audio_task_ entry and reused while the current frame shape
@@ -798,6 +801,16 @@ template<typename... Ts> class StopAction : public Action<Ts...>, public Parente
 template<typename... Ts> class StopAndWaitAction : public Action<Ts...>, public Parented<ESPAudioStack> {
  public:
   void play(const Ts &...x) override { this->parent_->stop_and_wait(); }
+};
+
+template<typename... Ts> class SuspendOtaWatchdogAction : public Action<Ts...>, public Parented<ESPAudioStack> {
+ public:
+  void play(const Ts &...x) override { this->parent_->suspend_ota_watchdog(); }
+};
+
+template<typename... Ts> class RestoreOtaWatchdogAction : public Action<Ts...>, public Parented<ESPAudioStack> {
+ public:
+  void play(const Ts &...x) override { this->parent_->restore_ota_watchdog(); }
 };
 
 template<typename... Ts> class IsIdleCondition : public Condition<Ts...>, public Parented<ESPAudioStack> {
