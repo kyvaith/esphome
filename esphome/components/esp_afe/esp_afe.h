@@ -128,6 +128,8 @@ class EspAfe : public Component, public AudioProcessor {
   void set_fetch_task_priority(int prio) { this->fetch_task_priority_ = prio; }
   void set_fetch_task_stack_size(int size) { this->fetch_task_stack_size_ = size; }
   void set_input_format_override(const char *fmt);
+  void set_aec_off_output(int output) { this->aec_off_output_.store(output, std::memory_order_relaxed); }
+  void set_aec_off_output_name(const char *name);
   void set_feed_buf_in_psram(bool psram) { this->feed_buf_in_psram_ = psram; }
   void set_feed_ring_in_psram(bool psram) { this->feed_ring_in_psram_ = psram; }
   void set_fetch_ring_in_psram(bool psram) { this->fetch_ring_in_psram_ = psram; }
@@ -167,6 +169,7 @@ class EspAfe : public Component, public AudioProcessor {
   bool is_voice_present() const { return this->voice_present_.load(std::memory_order_relaxed); }
   float get_input_volume_dbfs() const { return this->input_volume_dbfs_.load(std::memory_order_relaxed); }
   float get_output_rms_dbfs() const { return this->output_rms_dbfs_.load(std::memory_order_relaxed); }
+  std::string get_aec_off_output_name() const;
 
   // Reinit with a new mode string (e.g. "sr_low_cost", "voip_high_perf").
   // Caller must stop audio processing before calling this.
@@ -260,9 +263,12 @@ class EspAfe : public Component, public AudioProcessor {
                                                  uint32_t wanted_size, int wait_ticks);
   static esp_gmf_err_io_t gmf_output_release_cb_(void *ctx, esp_gmf_payload_t *load,
                                                  int wait_ticks);
+  static void manager_result_cb_(afe_fetch_result_t *result, void *user_ctx);
   esp_gmf_err_io_t gmf_input_acquire_(esp_gmf_payload_t *load, uint32_t wanted_size,
                                       int wait_ticks);
   esp_gmf_err_io_t gmf_output_release_(esp_gmf_payload_t *load, int wait_ticks);
+  void handle_manager_result_(afe_fetch_result_t *result);
+  bool install_manager_result_cb_();
   static void gmf_event_cb_(esp_gmf_element_handle_t el, esp_gmf_afe_evt_t *event,
                             void *user_data);
   bool start_pipeline_();
@@ -274,6 +280,7 @@ class EspAfe : public Component, public AudioProcessor {
 
   // Fetch bridge: GMF output port writes, process() reads non-blocking.
   audio_processor::RingBufferPtr fetch_output_ring_;
+  int16_t *fetch_select_buf_{nullptr};
 
   // Config (set from Python, used in setup())
   int afe_type_{0};         // AFE_TYPE_SR
@@ -310,6 +317,9 @@ class EspAfe : public Component, public AudioProcessor {
   int fetch_task_priority_{ESP_AFE_MANAGER_FETCH_TASK_PRIO};
   int fetch_task_stack_size_{ESP_AFE_MANAGER_FETCH_TASK_STACK};
   char input_format_override_[5]{};
+  // Dual-mic AEC-off output selector:
+  //   -1 = official result->data, 0/1 = result->raw_data[channel].
+  std::atomic<int> aec_off_output_{-1};
   bool feed_buf_in_psram_{false};   // ~3 KB scratch (default internal, ~41 us/frame faster on Core 0)
   bool feed_ring_in_psram_{false};  // ~12 KB staging ring (default internal, ~20 us/frame faster on Core 0)
   bool fetch_ring_in_psram_{false}; // ~4 KB output ring (default internal, ~6.8 us/frame faster on Core 0)

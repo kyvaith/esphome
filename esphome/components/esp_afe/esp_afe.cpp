@@ -74,6 +74,29 @@ void EspAfe::set_input_format_override(const char *fmt) {
   this->input_format_override_[sizeof(this->input_format_override_) - 1] = '\0';
 }
 
+void EspAfe::set_aec_off_output_name(const char *name) {
+  if (name == nullptr || std::strcmp(name, "official") == 0 || std::strcmp(name, "data") == 0) {
+    this->set_aec_off_output(-1);
+  } else if (std::strcmp(name, "raw_0") == 0 || std::strcmp(name, "0") == 0) {
+    this->set_aec_off_output(0);
+  } else if (std::strcmp(name, "raw_1") == 0 || std::strcmp(name, "1") == 0) {
+    this->set_aec_off_output(1);
+  } else {
+    ESP_LOGW(TAG, "Unknown AEC-off output '%s', keeping %s", name, this->get_aec_off_output_name().c_str());
+  }
+}
+
+std::string EspAfe::get_aec_off_output_name() const {
+  switch (this->aec_off_output_.load(std::memory_order_relaxed)) {
+    case 0:
+      return "raw_0";
+    case 1:
+      return "raw_1";
+    default:
+      return "official";
+  }
+}
+
 static inline void update_peak_atomic(std::atomic<uint32_t> &peak, uint32_t value) {
   uint32_t current = peak.load(std::memory_order_relaxed);
   while (value > current &&
@@ -1055,6 +1078,7 @@ void EspAfe::dump_config() {
   }
   ESP_LOGCONFIG(TAG, "  Input format override: %s",
                 this->input_format_override_[0] ? this->input_format_override_ : "auto");
+  ESP_LOGCONFIG(TAG, "  AEC-off output: %s", this->get_aec_off_output_name().c_str());
   ESP_LOGCONFIG(TAG, "  Alloc: %s, linear_gain=%.2f", this->memory_alloc_mode_to_str_(), this->afe_linear_gain_);
   ESP_LOGCONFIG(TAG, "  SE Task: core=%d, priority=%d, ringbuf=%d",
                 this->task_core_, this->task_priority_, this->ringbuf_size_);
@@ -1442,6 +1466,82 @@ esp_gmf_err_io_t EspAfe::gmf_output_release_(esp_gmf_payload_t *load, int wait_t
   return ESP_GMF_IO_OK;
 }
 
+void EspAfe::manager_result_cb_(afe_fetch_result_t *result, void *user_ctx) {
+  auto *self = static_cast<EspAfe *>(user_ctx);
+  if (self != nullptr) {
+    self->handle_manager_result_(result);
+  }
+}
+
+void EspAfe::handle_manager_result_(afe_fetch_result_t *result) {
+  if (!this->processing_active_.load(std::memory_order_acquire)) {
+    return;
+  }
+  if (result == nullptr || result->data == nullptr || result->data_size <= 0) {
+    this->fetch_timeout_.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  if (!this->fetch_output_ring_) {
+    return;
+  }
+
+  const bool aec_off = !this->aec_enabled_.load(std::memory_order_relaxed);
+  const int raw_channel = this->aec_off_output_.load(std::memory_order_relaxed);
+  const int afe_mic_channels = this->afe_mic_channels_();
+  const size_t want = static_cast<size_t>(result->data_size);
+  const uint8_t *src_bytes = reinterpret_cast<const uint8_t *>(result->data);
+
+  if (aec_off && afe_mic_channels >= 2 && raw_channel >= 0) {
+    if (result->raw_data != nullptr && result->raw_data_channels > raw_channel &&
+        this->fetch_select_buf_ != nullptr) {
+      const int out_samples = static_cast<int>(want / sizeof(int16_t));
+      const int stride = result->raw_data_channels;
+      const int16_t *raw = result->raw_data + raw_channel;
+      for (int i = 0; i < out_samples; i++) {
+        this->fetch_select_buf_[i] = raw[i * stride];
+      }
+      src_bytes = reinterpret_cast<const uint8_t *>(this->fetch_select_buf_);
+    } else {
+      ESP_LOGD(TAG, "AEC-off raw output %d unavailable (raw=%p channels=%d), using official data",
+               raw_channel, result->raw_data, result->raw_data_channels);
+    }
+  }
+
+  size_t wrote = this->fetch_output_ring_->write_without_replacement(src_bytes, want,
+                                                                     pdMS_TO_TICKS(5), false);
+  if (wrote != want) {
+    this->output_ring_drop_.fetch_add(1, std::memory_order_relaxed);
+  } else {
+    this->fetch_ok_.fetch_add(1, std::memory_order_relaxed);
+    uint32_t queued = this->fetch_queue_frames_.fetch_add(1, std::memory_order_relaxed) + 1;
+    update_peak_atomic(this->fetch_queue_peak_, queued);
+  }
+
+  if (this->vad_enabled_.load(std::memory_order_relaxed)) {
+    const bool new_voice = result->vad_state == VAD_SPEECH;
+    const bool prev_voice = this->voice_present_.exchange(new_voice, std::memory_order_relaxed);
+    if (new_voice != prev_voice) {
+      ESP_LOGD(TAG, "AFE VAD transition: %s -> %s",
+               prev_voice ? "speech" : "silence", new_voice ? "speech" : "silence");
+    }
+  }
+
+  this->update_fetch_ring_free_pct_();
+}
+
+bool EspAfe::install_manager_result_cb_() {
+  if (this->afe_manager_ == nullptr) {
+    return false;
+  }
+  esp_gmf_err_t ret = esp_gmf_afe_manager_set_result_cb(this->afe_manager_,
+                                                        &EspAfe::manager_result_cb_, this);
+  if (ret != ESP_GMF_ERR_OK) {
+    ESP_LOGW(TAG, "Failed to install AFE manager result callback (ret=%d)", static_cast<int>(ret));
+    return false;
+  }
+  return true;
+}
+
 void EspAfe::update_fetch_ring_free_pct_() {
   if (!this->fetch_output_ring_) {
     this->ringbuf_free_pct_.store(1.0f, std::memory_order_relaxed);
@@ -1497,6 +1597,7 @@ bool EspAfe::start_pipeline_() {
       ESP_LOGW(TAG, "GMF AFE pipeline resume failed (ret=%d)", static_cast<int>(ret));
       return false;
     }
+    this->install_manager_result_cb_();
     this->afe_pipeline_paused_ = false;
     this->afe_pipeline_running_ = true;
     return true;
@@ -1506,6 +1607,7 @@ bool EspAfe::start_pipeline_() {
     ESP_LOGW(TAG, "GMF AFE pipeline run failed (ret=%d)", static_cast<int>(ret));
     return false;
   }
+  this->install_manager_result_cb_();
   this->afe_pipeline_running_ = true;
   this->afe_pipeline_paused_ = false;
   return true;
@@ -1694,6 +1796,24 @@ bool EspAfe::prepare_fetch_output_ring_() {
     }
   }
 
+  if (this->fetch_select_buf_ == nullptr) {
+    const size_t frame_bytes = static_cast<size_t>(this->fetch_chunksize_) * sizeof(int16_t);
+    const uint32_t caps = this->fetch_ring_in_psram_
+        ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+        : (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    this->fetch_select_buf_ = static_cast<int16_t *>(heap_caps_aligned_alloc(16, frame_bytes, caps));
+    if (this->fetch_select_buf_ == nullptr && this->fetch_ring_in_psram_) {
+      ESP_LOGW(TAG, "AFE output select scratch (%u bytes) fell back to internal RAM",
+               static_cast<unsigned>(frame_bytes));
+      this->fetch_select_buf_ = static_cast<int16_t *>(
+          heap_caps_aligned_alloc(16, frame_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    }
+    if (this->fetch_select_buf_ == nullptr) {
+      ESP_LOGE(TAG, "Failed to allocate AFE output select scratch");
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -1715,6 +1835,10 @@ bool EspAfe::prepare_runtime_() {
 
 void EspAfe::release_runtime_buffers_() {
   this->fetch_output_ring_.reset();
+  if (this->fetch_select_buf_ != nullptr) {
+    heap_caps_free(this->fetch_select_buf_);
+    this->fetch_select_buf_ = nullptr;
+  }
   this->feed_input_ring_ = nullptr;
   if (this->feed_input_ring_storage_ != nullptr) {
     heap_caps_free(this->feed_input_ring_storage_);

@@ -73,6 +73,7 @@ CONF_FEED_BUF_IN_PSRAM = "feed_buf_in_psram"
 CONF_FEED_RING_IN_PSRAM = "feed_ring_in_psram"
 CONF_FETCH_RING_IN_PSRAM = "fetch_ring_in_psram"
 CONF_INPUT_FORMAT = "input_format"
+CONF_AEC_OFF_OUTPUT = "aec_off_output"
 
 AFE_TYPES = {
     "sr": 0,  # AFE_TYPE_SR: speech recognition, linear AEC (preserves spectrum for MWW)
@@ -103,6 +104,12 @@ INPUT_FORMATS = {
     "mnr": "MNR",
     "mmr": "MMR",
     "mmnr": "MMNR",
+}
+
+AEC_OFF_OUTPUTS = {
+    "official": -1,
+    "raw_0": 0,
+    "raw_1": 1,
 }
 
 
@@ -167,6 +174,14 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_INPUT_FORMAT, default="auto"): cv.enum(
                 INPUT_FORMATS, lower=True
             ),
+            # Dual-mic AEC-off fallback output. "official" forwards
+            # afe_fetch_result_t::data exactly as Espressif's esp_gmf_afe
+            # element does. raw_0/raw_1 select afe_fetch_result_t::raw_data[n],
+            # useful on BSS dual-mic boards where disabling AEC must expose a
+            # specific post-BSS/raw output channel.
+            cv.Optional(CONF_AEC_OFF_OUTPUT, default="official"): cv.enum(
+                AEC_OFF_OUTPUTS, lower=True
+            ),
             # Buffer placement knobs. Default false = internal RAM (fastest on
             # Core 0); set true to free internal at the cost of PSRAM traffic.
             #   feed_buf_in_psram   : ~3 KB scratch built then re-read every frame (~41 us/frame)
@@ -218,6 +233,7 @@ async def to_code(config):
     cg.add(var.set_fetch_task_priority(config[CONF_FETCH_TASK_PRIORITY]))
     cg.add(var.set_fetch_task_stack_size(config[CONF_FETCH_TASK_STACK_SIZE]))
     cg.add(var.set_input_format_override(config[CONF_INPUT_FORMAT]))
+    cg.add(var.set_aec_off_output(config[CONF_AEC_OFF_OUTPUT]))
     cg.add(var.set_feed_buf_in_psram(config[CONF_FEED_BUF_IN_PSRAM]))
     cg.add(var.set_feed_ring_in_psram(config[CONF_FEED_RING_IN_PSRAM]))
     cg.add(var.set_fetch_ring_in_psram(config[CONF_FETCH_RING_IN_PSRAM]))
