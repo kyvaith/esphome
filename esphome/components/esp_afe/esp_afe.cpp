@@ -369,9 +369,9 @@ bool EspAfe::build_instance_(AfeInstance *instance) {
   // declaration order.
   esp_gmf_afe_cfg_t gmf_afe_cfg{};
   gmf_afe_cfg.afe_manager = manager;
-  // ESPHome handles wake-word/VAD gating externally. Keep the official AFE
-  // element's output latency at zero so the ESPHome-facing bridge preserves
-  // the processor cadence expected by microphone consumers.
+  // ESPHome handles Micro Wake Word and Voice Assistant state externally. Keep
+  // the official AFE element's output latency at zero so the ESPHome-facing
+  // bridge preserves the processor cadence expected by microphone consumers.
   gmf_afe_cfg.delay_samples = 0;
   gmf_afe_cfg.models = nullptr;
   gmf_afe_cfg.wakeup_time = ESP_GMF_AFE_DEFAULT_WAKEUP_TIME_MS;
@@ -1266,7 +1266,7 @@ bool EspAfe::process(const int16_t *in_mic, const int16_t *in_ref, int16_t *out,
   this->last_process_mic_channels_ = transport_mic_channels;
 
   // Input RMS: compute on the transport mic before feeding the AFE pipeline.
-  // Replaces data_volume (always 0 without WakeNet). Pass stride so we
+  // Replaces ESP-SR's app-level data_volume signal. Pass stride so we
   // read mic1 samples only when the transport delivers interleaved
   // channels (otherwise the RMS mixes mic1 + mic2 + reference and the
   // dBFS sensor reports nonsense).

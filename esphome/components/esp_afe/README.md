@@ -361,7 +361,8 @@ manager exposes only part of the lower ESP-SR runtime control surface:
 **Why reinit for NS/AGC?** ESP-SR's low-level AFE vtable includes
 `enable_ns()`, `disable_ns()`, `enable_agc()`, and `disable_agc()`, but the
 stock GMF manager keeps the AFE iface/data private and only publishes runtime
-feature toggles for WakeNet, VAD, AEC, and SE. Staying on the stock manager
+feature toggles for VAD, AEC, and SE that are relevant to this component.
+Staying on the stock manager
 therefore means NS/AGC changes are represented as config changes and require
 destroying and rebuilding the AFE instance.
 
@@ -525,7 +526,7 @@ risk on the same network path that carries TTS/media, API and intercom traffic.
 
 2. **Runtime toggles**: AEC is toggled through the GMF manager without rebuilding. VAD, NS/AGC and type/mode changes require a full AFE reinit.
 
-3. **data_volume**: The AFE's built-in `data_volume` field is always 0.0 dB because it requires WakeNet to be active. Input/output RMS is computed locally instead.
+3. **data_volume**: The AFE's built-in `data_volume` field is not used as a product signal in this ESPHome integration. Input/output RMS is computed locally instead.
 
 4. **ESP-SR is closed source**: No API to move AFE internal allocations to PSRAM. The ~55-86 KB internal RAM overhead is unavoidable. Use the IRAM optimization options above to compensate.
 
