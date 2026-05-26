@@ -34,7 +34,9 @@ With esp_audio_stack:
 - **Consumer Registry**: Multiple mic consumers share the I2S bus safely (MWW + VA + intercom). Each consumer registers once at setup via `register_mic_consumer()` and stays registered across internal stop/start cycles.
 - **CPU-Aware Scheduling**: `taskYIELD()` between frames for MWW inference headroom during AEC
 - **Multi-Rate Support**: Run I2S bus at 48kHz for high-quality DAC output while mic/AEC/VA operate at 16kHz via Espressif rate conversion
-- **Configurable Reference Channel**: Choose left or right stereo channel as AEC reference (supports ES8311, ES8388, and other codecs)
+- **Stereo Speaker Output**: `speaker_channels: 2` exposes a true two-channel ESPHome speaker and writes interleaved L/R PCM to IDF STD stereo TX. Mono profiles stay mono even when the physical bus uses two TX slots for codec feedback.
+- **Configurable Reference Channel and TDM TX Slot**: Choose left/right stereo AEC reference, TDM mic/ref slots and the TDM speaker TX slot.
+- **Codec Family Coverage**: `codec.input` can use `es7210`, `es8311`, `es8388`, `es8374` or `es8389`; `codec.output` can use `es8311`, `es8388`, `es8374` or `es8389`, all through `esp_codec_dev`.
 
 ## Architecture
 
@@ -256,6 +258,7 @@ First-version limits:
 | `tdm_mic_slot` | int | 0 | Single TDM slot index for the voice microphone. Use `tdm_mic_slots` instead for dual-mic Speech Enhancement. |
 | `tdm_mic_slots` | list of int | - | List of 1 or 2 TDM slot indices for dual-mic configurations (e.g. ES7210 capturing two MEMS mics on slots 0 and 2). Mutually exclusive with `tdm_mic_slot`. |
 | `tdm_ref_slot` | int | 1 | TDM slot index for AEC reference (e.g. MIC3 capturing DAC output) |
+| `tdm_tx_slot` | int | 0 | TDM slot index where speaker TX PCM is written. Useful for boards/codecs that expect playback on a non-zero TDM slot. |
 | `task_priority` | int | 19 | FreeRTOS priority of the audio task (1-24). Default 19 is above lwIP (18), below WiFi (23). |
 | `task_core` | int | 0 | Core affinity: 0 or 1 for pinned, -1 for unpinned. Default 0 keeps the non-network realtime I2S bridge below Wi-Fi and above lwIP on the ESP-IDF protocol core. |
 | `task_stack_size` | int | 8192 | Audio task stack size in bytes (4096-32768). Increase if you see stack overflow warnings. |
@@ -272,7 +275,8 @@ These options expose the underlying I2S driver controls. Defaults are tuned for 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `bits_per_sample` | int | 16 | Sample bit depth on the wire (16, 24, or 32). Must match the codec's PCM format. |
-| `num_channels` | int | 1 | Bus channel count: 1 (mono) or 2 (stereo). Combined with `use_stereo_aec_reference` for digital DAC feedback. |
+| `num_channels` | int | 1 | Physical TX bus channel count on STD I2S: 1 or 2. Full-duplex codec-reference profiles often use `2` even while the public speaker stream remains mono. |
+| `speaker_channels` | int | 1 | Public ESPHome speaker stream channels: `1` mono default, `2` true interleaved stereo. Requires `num_channels: 2` on STD I2S. TDM profiles always expose mono speaker input and place it in `tdm_tx_slot`. |
 | `mic_channel` | string | `left` | Which stereo channel carries the mic in non-AEC stereo setups: `left` or `right`. |
 | `tx_channel` | string | `left` | Which stereo channel the speaker writes to: `left` or `right`. |
 | `i2s_mode` | string | `primary` | I2S role: `primary` (ESP drives the clocks, default) or `secondary` (codec drives the clocks). |
@@ -317,6 +321,65 @@ Setting `sample_rate`, `bits_per_sample`, or `num_channels` on the child
 microphone is rejected at configuration time because those values would not
 change the shared I2S bus.
 
+### Speaker Options
+
+The public `speaker: platform: esp_audio_stack` entry follows the parent audio
+stack format. With `esp_audio_stack.speaker_channels: 1` it accepts mono PCM.
+With `esp_audio_stack.num_channels: 2` and `speaker_channels: 2` it exposes a
+two-channel ESPHome speaker and
+expects standard interleaved L/R 16-bit PCM at the bus sample rate:
+
+```yaml
+esp_audio_stack:
+  id: audio_stack
+  sample_rate: 48000
+  num_channels: 2
+  speaker_channels: 2
+
+speaker:
+  - platform: esp_audio_stack
+    id: hw_speaker
+    esp_audio_stack_id: audio_stack
+```
+
+For no-codec or codec software-reference AEC, stereo TX is downmixed to mono for
+the AEC reference with Espressif `esp_ae_ch_cvt` before rate conversion. This
+keeps the public speaker stereo while preserving the mono `AudioProcessor`
+contract used by `esp_aec` and `esp_afe`.
+
+### Codec Options
+
+Codec-backed builds use `esp_codec_dev` for register control, mute, volume,
+input gain and data-device ownership. ES7210 remains input-only because it is a
+multi-channel ADC. The other listed codecs can be used as ADC, DAC, or both when
+the board wiring and codec datasheet match the selected I2S format:
+
+```yaml
+esp_audio_stack:
+  id: audio_stack
+  codec:
+    i2c_id: bus_a
+    input:
+      type: es8388
+      address: 0x10
+      gain_db: 24
+    output:
+      type: es8388
+      address: 0x10
+```
+
+| Codec type | Input | Output | Notes |
+|------------|-------|--------|-------|
+| `es7210` | yes | no | Multi-mic ADC, supports `mic_selected`, `ref_channel` and per-channel reference gain. |
+| `es8311` | yes | yes | Single ADC/DAC codec, supports `use_mclk` and `no_dac_ref`; used by Spotpear and P4/WS3 DAC output. |
+| `es8388` | yes | yes | Stereo-capable codec through `esp_codec_dev`; board analog routing still decides which channels are useful. |
+| `es8374` | yes | yes | Codec-dev supported ADC/DAC codec. |
+| `es8389` | yes | yes | Codec-dev supported ADC/DAC codec; `use_mclk` and `no_dac_ref` are passed through. |
+
+The schema intentionally does not expose codec-specific private register writes.
+If a board needs an analog mux, PA, or PGA quirk, keep that in a board package or
+a codec-dev supported option, not as a hidden generic stack behavior.
+
 ### Rate Conversion Backend
 
 Mic/ref rate conversion, 32-bit to 16-bit conversion, channel deinterleave and TX interleave/bit expansion are handled by Espressif `esp_audio_effects` primitives. This branch intentionally does not keep a selectable in-tree conversion backend.
@@ -326,7 +389,8 @@ Mic/ref rate conversion, 32-bit to 16-bit conversion, channel deinterleave and T
 | `esp_ae_rate_cvt` | Bus-rate mic/reference frames to processor rate. Multi-channel RX uses one handle so mic/ref latency stays coupled. |
 | `esp_ae_bit_cvt` | 32-bit I2S samples to 16-bit processor PCM on RX, and 16-bit speaker PCM to 32-bit bus slots on TX. |
 | `esp_ae_deintlv_process` | Stereo/TDM RX slot split before selecting mic/reference channels. |
-| `esp_ae_intlv_process` | Dual-mic processor input and TX stereo/TDM slot layout. |
+| `esp_ae_intlv_process` | Dual-mic processor input, TDM TX slot layout and mono-speaker duplication onto a stereo STD TX bus. True `speaker_channels: 2` STD output is already interleaved by ESPHome and is written directly. |
+| `esp_ae_ch_cvt` | Stereo speaker downmix to mono when a software AEC reference is needed. |
 
 The selected primitives are logged at boot in `dump_config()`:
 

@@ -62,6 +62,7 @@ CONF_TDM_TOTAL_SLOTS = "tdm_total_slots"
 CONF_TDM_MIC_SLOT = "tdm_mic_slot"
 CONF_TDM_MIC_SLOTS = "tdm_mic_slots"
 CONF_TDM_REF_SLOT = "tdm_ref_slot"
+CONF_TDM_TX_SLOT = "tdm_tx_slot"
 CONF_ESP_AUDIO_STACK_ID = "esp_audio_stack_id"
 CONF_TASK_PRIORITY = "task_priority"
 CONF_TASK_CORE = "task_core"
@@ -69,6 +70,7 @@ CONF_TASK_STACK_SIZE = "task_stack_size"
 CONF_DMA_DESC_NUM = "dma_desc_num"
 CONF_DMA_FRAME_NUM = "dma_frame_num"
 CONF_TX_CHANNEL = "tx_channel"
+CONF_SPEAKER_CHANNELS = "speaker_channels"
 CONF_BUFFERS_IN_PSRAM = "buffers_in_psram"
 CONF_AEC_REF_RING_IN_PSRAM = "aec_ref_ring_in_psram"
 CONF_AUDIO_TASK_STACK_IN_PSRAM = "audio_task_stack_in_psram"
@@ -107,8 +109,12 @@ CONF_ON_SPEAKER_IDLE = "on_speaker_idle"
 CONF_ON_AMPLIFIER_REQUIRED = "on_amplifier_required"
 CONF_ON_AMPLIFIER_IDLE = "on_amplifier_idle"
 
-CODEC_INPUT_TYPES = ("es7210", "es8311")
-CODEC_OUTPUT_TYPES = ("es8311",)
+CODEC_KIND = {
+    "es8311": 1,
+    "es8388": 2,
+    "es8374": 3,
+    "es8389": 4,
+}
 RATE_CVT_PERF_TYPES = ("speed", "memory")
 
 I2S_OPTIONAL_MCLK = cv.Any(
@@ -160,6 +166,63 @@ GMF_IO_DIRECTION_SCHEMA = cv.All(
         cv.Optional(CONF_TASK_TIMEOUT_MS, default=0): cv.int_range(min=0, max=60000),
     }),
     _validate_gmf_io_direction,
+)
+
+CODEC_INPUT_SCHEMA = cv.typed_schema(
+    {
+        "es7210": cv.Schema({
+            cv.Optional(CONF_ADDRESS, default=0x40): cv.i2c_address,
+            cv.Optional(CONF_MIC_SELECTED, default=0x0F): cv.hex_uint8_t,
+            cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(min=0.0, max=37.5),
+            cv.Optional(CONF_REF_CHANNEL): cv.int_range(min=0, max=15),
+            cv.Optional(CONF_REF_GAIN_DB, default=0.0): cv.float_range(min=0.0, max=37.5),
+        }),
+        "es8311": cv.Schema({
+            cv.Optional(CONF_ADDRESS, default=0x18): cv.i2c_address,
+            cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(min=0.0, max=37.5),
+            cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
+            cv.Optional(CONF_NO_DAC_REF, default=False): cv.boolean,
+        }),
+        "es8388": cv.Schema({
+            cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
+            cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(min=0.0, max=37.5),
+        }),
+        "es8374": cv.Schema({
+            cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
+            cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(min=0.0, max=37.5),
+        }),
+        "es8389": cv.Schema({
+            cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
+            cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(min=0.0, max=37.5),
+            cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
+            cv.Optional(CONF_NO_DAC_REF, default=False): cv.boolean,
+        }),
+    },
+    lower=True,
+    default_type="es7210",
+)
+
+CODEC_OUTPUT_SCHEMA = cv.typed_schema(
+    {
+        "es8311": cv.Schema({
+            cv.Optional(CONF_ADDRESS, default=0x18): cv.i2c_address,
+            cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
+            cv.Optional(CONF_NO_DAC_REF, default=True): cv.boolean,
+        }),
+        "es8388": cv.Schema({
+            cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
+        }),
+        "es8374": cv.Schema({
+            cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
+        }),
+        "es8389": cv.Schema({
+            cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
+            cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
+            cv.Optional(CONF_NO_DAC_REF, default=True): cv.boolean,
+        }),
+    },
+    lower=True,
+    default_type="es8311",
 )
 
 esp_audio_stack_ns = cg.esphome_ns.namespace("esp_audio_stack")
@@ -225,8 +288,11 @@ def _validate_tdm_config(config):
         )
 
     if use_tdm_bus:
+        if config.get(CONF_SPEAKER_CHANNELS, 1) != 1:
+            raise cv.Invalid("speaker_channels: 2 is only supported on STD I2S, not TDM")
         total_slots = config.get(CONF_TDM_TOTAL_SLOTS, 4)
         ref_slot = config.get(CONF_TDM_REF_SLOT, 1)
+        tx_slot = config.get(CONF_TDM_TX_SLOT, 0)
         mic_slots = config.get(CONF_TDM_MIC_SLOTS, [config.get(CONF_TDM_MIC_SLOT, 0)])
 
         if len(set(mic_slots)) != len(mic_slots):
@@ -238,12 +304,14 @@ def _validate_tdm_config(config):
                     f"tdm_mic_slots contains ref slot {ref_slot}; microphone and reference slots must differ"
                 )
 
-        max_slot = max([ref_slot, *mic_slots])
+        max_slot = max([ref_slot, tx_slot, *mic_slots])
         if total_slots <= max_slot:
             raise cv.Invalid(
                 f"tdm_total_slots ({total_slots}) must be > {max_slot} "
                 f"(highest slot index)"
             )
+    elif config.get(CONF_SPEAKER_CHANNELS, 1) > config.get(CONF_NUM_CHANNELS, 1):
+        raise cv.Invalid("speaker_channels: 2 requires num_channels: 2 on the physical TX bus")
 
     return config
 
@@ -314,6 +382,7 @@ CONFIG_SCHEMA = cv.All(
         ),
         cv.Optional(CONF_CORRECT_DC_OFFSET, default=False): cv.boolean,
         cv.Optional(CONF_NUM_CHANNELS, default=1): cv.one_of(1, 2, int=True),
+        cv.Optional(CONF_SPEAKER_CHANNELS, default=1): cv.one_of(1, 2, int=True),
         cv.Optional(CONF_MIC_CHANNEL, default="left"): cv.one_of("left", "right", lower=True),
         cv.Optional(CONF_TX_CHANNEL, default="left"): cv.one_of("left", "right", lower=True),
         cv.Optional(CONF_I2S_MODE, default="primary"): cv.one_of("primary", "secondary", lower=True),
@@ -351,6 +420,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Length(min=1, max=2),
         ),
         cv.Optional(CONF_TDM_REF_SLOT, default=1): cv.int_range(min=0, max=7),
+        cv.Optional(CONF_TDM_TX_SLOT, default=0): cv.int_range(min=0, max=7),
         # Audio task tuning (advanced)
         cv.Optional(CONF_TASK_PRIORITY, default=19): cv.int_range(min=1, max=24),
         cv.Optional(CONF_TASK_CORE, default=0): cv.int_range(min=-1, max=1),
@@ -395,22 +465,8 @@ CONFIG_SCHEMA = cv.All(
         }),
         cv.Optional(CONF_CODEC): cv.Schema({
             cv.GenerateID(CONF_I2C_ID): cv.use_id(i2c.I2CBus),
-            cv.Optional(CONF_INPUT): cv.Schema({
-                cv.Optional(CONF_TYPE, default="es7210"): cv.one_of(*CODEC_INPUT_TYPES, lower=True),
-                cv.Optional(CONF_ADDRESS, default=0x40): cv.i2c_address,
-                cv.Optional(CONF_MIC_SELECTED, default=0x0F): cv.hex_uint8_t,
-                cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(min=0.0, max=37.5),
-                cv.Optional(CONF_REF_CHANNEL): cv.int_range(min=0, max=15),
-                cv.Optional(CONF_REF_GAIN_DB, default=0.0): cv.float_range(min=0.0, max=37.5),
-                cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
-                cv.Optional(CONF_NO_DAC_REF, default=False): cv.boolean,
-            }),
-            cv.Optional(CONF_OUTPUT): cv.Schema({
-                cv.Optional(CONF_TYPE, default="es8311"): cv.one_of(*CODEC_OUTPUT_TYPES, lower=True),
-                cv.Optional(CONF_ADDRESS, default=0x18): cv.i2c_address,
-                cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
-                cv.Optional(CONF_NO_DAC_REF, default=True): cv.boolean,
-            }),
+            cv.Optional(CONF_INPUT): CODEC_INPUT_SCHEMA,
+            cv.Optional(CONF_OUTPUT): CODEC_OUTPUT_SCHEMA,
         }),
         # Lifecycle hooks for board-level power policy. Use the speaker hooks
         # for amp power gating; the generic audio-stack hooks also fire on mic-only
@@ -462,10 +518,10 @@ def _final_validate(config):
                 f"(max port index: {max_ports - 1})"
             )
 
-    use_tdm = config.get(CONF_USE_TDM_REFERENCE, False)
-    if use_tdm and variant not in TDM_VARIANTS:
+    use_tdm_bus = config.get(CONF_USE_TDM_REFERENCE, False) or CONF_TDM_MIC_SLOTS in config
+    if use_tdm_bus and variant not in TDM_VARIANTS:
         raise cv.Invalid(
-            f"use_tdm_reference requires TDM support, but {variant} does not have SOC_I2S_SUPPORTS_TDM"
+            f"TDM options require TDM support, but {variant} does not have SOC_I2S_SUPPORTS_TDM"
         )
 
     # Single-core SoCs cannot pin to Core 1
@@ -631,6 +687,7 @@ async def to_code(config):
             (CONF_BITS_PER_SAMPLE, var.set_bits_per_sample),
             (CONF_CORRECT_DC_OFFSET, var.set_correct_dc_offset),
             (CONF_NUM_CHANNELS, var.set_num_channels),
+            (CONF_SPEAKER_CHANNELS, var.set_speaker_channels),
             (CONF_USE_APLL, var.set_use_apll),
             (CONF_I2S_NUM, var.set_i2s_num),
             (CONF_MCLK_MULTIPLE, var.set_mclk_multiple),
@@ -697,6 +754,7 @@ async def to_code(config):
         if len(mic_slots) > 1:
             cg.add(var.set_secondary_tdm_mic_slot(mic_slots[1]))
         cg.add(var.set_tdm_ref_slot(config[CONF_TDM_REF_SLOT]))
+        cg.add(var.set_tdm_tx_slot(config[CONF_TDM_TX_SLOT]))
 
     if has_hardware_codec:
         codec_conf = config[CONF_CODEC]
@@ -717,17 +775,33 @@ async def to_code(config):
             elif input_conf[CONF_TYPE] == "es8311":
                 cg.add(var.configure_es8311_input_codec(
                     input_conf[CONF_ADDRESS],
-                    input_conf[CONF_USE_MCLK],
-                    input_conf[CONF_NO_DAC_REF],
+                    input_conf.get(CONF_USE_MCLK, True),
+                    input_conf.get(CONF_NO_DAC_REF, False),
+                    input_conf[CONF_GAIN_DB],
+                ))
+            else:
+                cg.add(var.configure_input_codec(
+                    CODEC_KIND[input_conf[CONF_TYPE]],
+                    input_conf[CONF_ADDRESS],
+                    input_conf.get(CONF_USE_MCLK, True),
+                    input_conf.get(CONF_NO_DAC_REF, False),
                     input_conf[CONF_GAIN_DB],
                 ))
         if CONF_OUTPUT in codec_conf:
             output_conf = codec_conf[CONF_OUTPUT]
-            cg.add(var.configure_es8311_codec(
-                output_conf[CONF_ADDRESS],
-                output_conf[CONF_USE_MCLK],
-                output_conf[CONF_NO_DAC_REF],
-            ))
+            if output_conf[CONF_TYPE] == "es8311":
+                cg.add(var.configure_es8311_codec(
+                    output_conf[CONF_ADDRESS],
+                    output_conf.get(CONF_USE_MCLK, True),
+                    output_conf.get(CONF_NO_DAC_REF, True),
+                ))
+            else:
+                cg.add(var.configure_output_codec(
+                    CODEC_KIND[output_conf[CONF_TYPE]],
+                    output_conf[CONF_ADDRESS],
+                    output_conf.get(CONF_USE_MCLK, True),
+                    output_conf.get(CONF_NO_DAC_REF, True),
+                ))
 
     # Audio task tuning
     _add_config_setters(

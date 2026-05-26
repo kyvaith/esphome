@@ -22,7 +22,8 @@ void ESPAudioStackSpeaker::setup() {
     return;
   }
 
-  this->audio_stream_info_ = audio::AudioStreamInfo(16, 1, this->parent_->get_sample_rate());
+  this->audio_stream_info_ =
+      audio::AudioStreamInfo(16, this->parent_->get_speaker_channels(), this->parent_->get_sample_rate());
 
   // Forward frame-played notifications from I2S audio task to mixer callbacks.
   // Without this, mixer source speakers can't track pending_playback_frames.
@@ -35,7 +36,7 @@ void ESPAudioStackSpeaker::dump_config() {
   ESP_LOGCONFIG(TAG, "ESP Audio Stack Speaker:");
   ESP_LOGCONFIG(TAG, "  Sample Rate: %u Hz", this->parent_->get_sample_rate());
   ESP_LOGCONFIG(TAG, "  Bits Per Sample: 16");
-  ESP_LOGCONFIG(TAG, "  Channels: 1 (mono)");
+  ESP_LOGCONFIG(TAG, "  Channels: %u", (unsigned) this->parent_->get_speaker_channels());
   ESP_LOGCONFIG(TAG, "  Buffer Size: %u bytes", (unsigned) this->parent_->get_speaker_buffer_size());
   if (this->timeout_.has_value()) {
     ESP_LOGCONFIG(TAG, "  Timeout: %u ms", (unsigned) this->timeout_.value());

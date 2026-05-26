@@ -9,6 +9,9 @@
 #include <audio_codec_if.h>
 #include <es7210_adc.h>
 #include <es8311_codec.h>
+#include <es8374_codec.h>
+#include <es8388_codec.h>
+#include <es8389_codec.h>
 #include <esp_codec_dev_types.h>
 #include <esp_gmf_io_codec_dev.h>
 #include <esp_gmf_obj.h>
@@ -160,14 +163,96 @@ esp_codec_dev_sample_info_t CodecDevBackend::make_sample_info_(const SampleConfi
   };
 }
 
+const char *CodecDevBackend::codec_kind_name_(CodecKind kind) {
+  switch (kind) {
+    case CodecKind::ES8311:
+      return "ES8311";
+    case CodecKind::ES8388:
+      return "ES8388";
+    case CodecKind::ES8374:
+      return "ES8374";
+    case CodecKind::ES8389:
+      return "ES8389";
+    default:
+      return "none";
+  }
+}
+
 const char *CodecDevBackend::input_codec_name() const {
   if (this->es7210_.enabled) {
     return "ES7210";
   }
-  if (this->es8311_input_.enabled) {
-    return "ES8311";
+  if (this->input_codec_.enabled) {
+    return codec_kind_name_(this->input_codec_.kind);
   }
   return "none";
+}
+
+const char *CodecDevBackend::output_codec_name() const {
+  return this->output_codec_.enabled ? codec_kind_name_(this->output_codec_.kind) : "none";
+}
+
+const audio_codec_if_t *CodecDevBackend::new_generic_codec_(const GenericCodecConfig &config, bool input,
+                                                            uint16_t mclk_div,
+                                                            const audio_codec_ctrl_if_t **ctrl) {
+  if (!config.enabled || ctrl == nullptr) {
+    return nullptr;
+  }
+  *ctrl = this->new_i2c_ctrl_(config.address);
+  if (*ctrl == nullptr) {
+    return nullptr;
+  }
+  const auto mode = input ? ESP_CODEC_DEV_WORK_MODE_ADC : ESP_CODEC_DEV_WORK_MODE_DAC;
+  switch (config.kind) {
+    case CodecKind::ES8311: {
+      es8311_codec_cfg_t cfg = {};
+      cfg.ctrl_if = *ctrl;
+      cfg.gpio_if = nullptr;
+      cfg.codec_mode = mode;
+      cfg.pa_pin = -1;
+      cfg.master_mode = false;
+      cfg.use_mclk = config.use_mclk;
+      cfg.no_dac_ref = config.no_dac_ref;
+      cfg.mclk_div = mclk_div;
+      return es8311_codec_new(&cfg);
+    }
+    case CodecKind::ES8388: {
+      es8388_codec_cfg_t cfg = {};
+      cfg.ctrl_if = *ctrl;
+      cfg.gpio_if = nullptr;
+      cfg.codec_mode = mode;
+      cfg.pa_pin = -1;
+      cfg.master_mode = false;
+      return es8388_codec_new(&cfg);
+    }
+    case CodecKind::ES8374: {
+      es8374_codec_cfg_t cfg = {};
+      cfg.ctrl_if = *ctrl;
+      cfg.gpio_if = nullptr;
+      cfg.codec_mode = mode;
+      cfg.pa_pin = -1;
+      cfg.master_mode = false;
+      return es8374_codec_new(&cfg);
+    }
+    case CodecKind::ES8389: {
+      es8389_codec_cfg_t cfg = {};
+      cfg.ctrl_if = *ctrl;
+      cfg.gpio_if = nullptr;
+      cfg.codec_mode = mode;
+      cfg.pa_pin = -1;
+      cfg.master_mode = false;
+      cfg.use_mclk = config.use_mclk;
+      cfg.digital_mic = false;
+      cfg.invert_mclk = false;
+      cfg.invert_sclk = false;
+      cfg.no_dac_ref = config.no_dac_ref;
+      cfg.mclk_div = mclk_div;
+      return es8389_codec_new(&cfg);
+    }
+    default:
+      ESP_LOGE(TAG, "Unsupported codec kind: %u", static_cast<unsigned>(config.kind));
+      return nullptr;
+  }
 }
 
 bool CodecDevBackend::open_gmf_io_(esp_codec_dev_handle_t dev, esp_gmf_io_dir_t dir, const char *name,
@@ -317,44 +402,20 @@ bool CodecDevBackend::setup(uint8_t tx_i2s_port, uint8_t rx_i2s_port,
       ESP_LOGE(TAG, "Failed to create ES7210 codec interface");
       return false;
     }
-  } else if (rx_handle != nullptr && this->es8311_input_.enabled) {
-    this->es8311_input_ctrl_ = this->new_i2c_ctrl_(this->es8311_input_.address);
-    if (this->es8311_input_ctrl_ == nullptr) {
-      return false;
-    }
-    es8311_codec_cfg_t cfg = {};
-    cfg.ctrl_if = this->es8311_input_ctrl_;
-    cfg.gpio_if = nullptr;
-    cfg.codec_mode = ESP_CODEC_DEV_WORK_MODE_ADC;
-    cfg.pa_pin = -1;
-    cfg.master_mode = false;
-    cfg.use_mclk = this->es8311_input_.use_mclk;
-    cfg.no_dac_ref = this->es8311_input_.no_dac_ref;
-    cfg.mclk_div = codec_mclk_div;
-    this->rx_codec_if_ = es8311_codec_new(&cfg);
+  } else if (rx_handle != nullptr && this->input_codec_.enabled) {
+    this->rx_codec_if_ =
+        this->new_generic_codec_(this->input_codec_, true, codec_mclk_div, &this->input_codec_ctrl_);
     if (this->rx_codec_if_ == nullptr) {
-      ESP_LOGE(TAG, "Failed to create ES8311 ADC codec interface");
+      ESP_LOGE(TAG, "Failed to create %s ADC codec interface", this->input_codec_name());
       return false;
     }
   }
 
-  if (tx_handle != nullptr && this->es8311_.enabled) {
-    this->es8311_ctrl_ = this->new_i2c_ctrl_(this->es8311_.address);
-    if (this->es8311_ctrl_ == nullptr) {
-      return false;
-    }
-    es8311_codec_cfg_t cfg = {};
-    cfg.ctrl_if = this->es8311_ctrl_;
-    cfg.gpio_if = nullptr;
-    cfg.codec_mode = ESP_CODEC_DEV_WORK_MODE_DAC;
-    cfg.pa_pin = -1;
-    cfg.master_mode = false;
-    cfg.use_mclk = this->es8311_.use_mclk;
-    cfg.no_dac_ref = this->es8311_.no_dac_ref;
-    cfg.mclk_div = codec_mclk_div;
-    this->tx_codec_if_ = es8311_codec_new(&cfg);
+  if (tx_handle != nullptr && this->output_codec_.enabled) {
+    this->tx_codec_if_ =
+        this->new_generic_codec_(this->output_codec_, false, codec_mclk_div, &this->output_codec_ctrl_);
     if (this->tx_codec_if_ == nullptr) {
-      ESP_LOGE(TAG, "Failed to create ES8311 codec interface");
+      ESP_LOGE(TAG, "Failed to create %s DAC codec interface", this->output_codec_name());
       return false;
     }
   }
@@ -423,9 +484,6 @@ bool CodecDevBackend::open(const SampleConfig *tx_config, const SampleConfig *rx
       return false;
     }
     this->apply_output_volume_curve_();
-    if (!this->es8311_.enabled) {
-      esp_codec_dev_set_out_vol(this->tx_dev_, 100);
-    }
   }
   if (this->rx_dev_ != nullptr && rx_config != nullptr) {
     auto fs = make_sample_info_(*rx_config);
@@ -442,8 +500,8 @@ bool CodecDevBackend::open(const SampleConfig *tx_config, const SampleConfig *rx
       if (this->es7210_.has_ref_channel_gain) {
         this->set_input_channel_gain(this->es7210_.ref_channel, this->es7210_.ref_channel_gain_db);
       }
-    } else if (this->es8311_input_.enabled) {
-      this->set_input_gain(this->es8311_input_.input_gain_db);
+    } else if (this->input_codec_.enabled) {
+      this->set_input_gain(this->input_codec_.input_gain_db);
     }
   }
   if (this->tx_dev_ != nullptr && tx_config != nullptr &&
@@ -539,10 +597,6 @@ void CodecDevBackend::set_output_volume(float volume) {
   if (this->tx_dev_ == nullptr) {
     return;
   }
-  if (!this->es8311_.enabled) {
-    esp_codec_dev_set_out_vol(this->tx_dev_, 100);
-    return;
-  }
   if (!(volume > 0.0f)) {
     volume = 0.0f;
   } else if (volume > 1.0f) {
@@ -563,7 +617,7 @@ void CodecDevBackend::set_output_volume_curve(float min_db) {
 }
 
 void CodecDevBackend::apply_output_volume_curve_() {
-  if (!this->output_volume_curve_configured_ || this->tx_dev_ == nullptr || !this->es8311_.enabled) {
+  if (!this->output_volume_curve_configured_ || this->tx_dev_ == nullptr || !this->output_codec_.enabled) {
     return;
   }
   esp_codec_dev_vol_map_t vol_map[2] = {
@@ -611,13 +665,13 @@ void CodecDevBackend::destroy_codecs_() {
     audio_codec_delete_ctrl_if(this->es7210_ctrl_);
     this->es7210_ctrl_ = nullptr;
   }
-  if (this->es8311_input_ctrl_ != nullptr) {
-    audio_codec_delete_ctrl_if(this->es8311_input_ctrl_);
-    this->es8311_input_ctrl_ = nullptr;
+  if (this->input_codec_ctrl_ != nullptr) {
+    audio_codec_delete_ctrl_if(this->input_codec_ctrl_);
+    this->input_codec_ctrl_ = nullptr;
   }
-  if (this->es8311_ctrl_ != nullptr) {
-    audio_codec_delete_ctrl_if(this->es8311_ctrl_);
-    this->es8311_ctrl_ = nullptr;
+  if (this->output_codec_ctrl_ != nullptr) {
+    audio_codec_delete_ctrl_if(this->output_codec_ctrl_);
+    this->output_codec_ctrl_ = nullptr;
   }
 }
 

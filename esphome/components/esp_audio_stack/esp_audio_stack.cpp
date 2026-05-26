@@ -337,10 +337,14 @@ void ESPAudioStack::setup() {
   // rx_rate_converter_ is initialized inside audio_session_ once the processor has
   // reported its frame_spec and we know how many channels the RX stream carries.
 
-  // Speaker ring buffer: stores mono PCM at bus rate (e.g. 48kHz).
+  // Speaker ring buffer: stores the public ESPHome speaker stream at bus rate.
+  // Most full-duplex profiles keep this mono even when the physical TX bus is
+  // stereo for codec feedback/reference. Opt-in stereo speakers store
+  // interleaved L/R.
   // PREFER_PSRAM: staging buffer between API play() and the i2s write path, not
   // realtime-critical itself (the task drains it at priority 19), so PSRAM is fine.
-  const size_t speaker_bytes_per_second = this->sample_rate_ * sizeof(int16_t);
+  const size_t speaker_bytes_per_second =
+      this->sample_rate_ * sizeof(int16_t) * this->get_speaker_channels();
   this->speaker_buffer_size_ = std::max<size_t>(
       SPEAKER_BUFFER_MIN_BYTES,
       (speaker_bytes_per_second * static_cast<size_t>(this->speaker_buffer_duration_ms_)) / 1000);
@@ -489,6 +493,7 @@ void ESPAudioStack::dump_config() {
   }
   ESP_LOGCONFIG(TAG, "  TX Channels: %u (%s)", this->num_channels_,
                 this->num_channels_ == 2 ? "stereo" : "mono");
+  ESP_LOGCONFIG(TAG, "  Speaker Stream Channels: %u", this->get_speaker_channels());
   ESP_LOGCONFIG(TAG, "  RX Mic Channel: %s", this->mic_channel_right_ ? "RIGHT" : "LEFT");
   static const char *const fmt_names[] = {"Philips", "MSB", "PCM Short", "PCM Long"};
   ESP_LOGCONFIG(TAG, "  Comm Format: %s", fmt_names[this->i2s_comm_fmt_ & 3]);
@@ -513,12 +518,12 @@ void ESPAudioStack::dump_config() {
   }
   if (this->use_tdm_bus_) {
     if (this->tdm_second_mic_slot_ >= 0) {
-      ESP_LOGCONFIG(TAG, "  TDM Reference: %u slots, mic_slots=[%u,%d], ref_slot=%u",
+      ESP_LOGCONFIG(TAG, "  TDM Reference: %u slots, mic_slots=[%u,%d], ref_slot=%u, tx_slot=%u",
                     this->tdm_total_slots_, this->tdm_mic_slot_,
-                    this->tdm_second_mic_slot_, this->tdm_ref_slot_);
+                    this->tdm_second_mic_slot_, this->tdm_ref_slot_, this->tdm_tx_slot_);
     } else {
-      ESP_LOGCONFIG(TAG, "  TDM Reference: %u slots, mic_slot=%u, ref_slot=%u",
-                    this->tdm_total_slots_, this->tdm_mic_slot_, this->tdm_ref_slot_);
+      ESP_LOGCONFIG(TAG, "  TDM Reference: %u slots, mic_slot=%u, ref_slot=%u, tx_slot=%u",
+                    this->tdm_total_slots_, this->tdm_mic_slot_, this->tdm_ref_slot_, this->tdm_tx_slot_);
     }
   }
   ESP_LOGCONFIG(TAG, "  AEC: %s", this->processor_ != nullptr ? "enabled" : "disabled");

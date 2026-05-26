@@ -44,7 +44,7 @@ def _set_stream_limits(config):
         min_bits_per_sample=16,
         max_bits_per_sample=16,
         min_channels=1,
-        max_channels=1,
+        max_channels=2,
         min_sample_rate=8000,
         max_sample_rate=48000,
     )(config)

@@ -21,6 +21,14 @@ namespace esp_audio_stack {
 
 class CodecDevBackend {
  public:
+  enum class CodecKind : uint8_t {
+    NONE = 0,
+    ES8311,
+    ES8388,
+    ES8374,
+    ES8389,
+  };
+
   struct Es7210Config {
     bool enabled{false};
     uint8_t address{0x40};
@@ -31,18 +39,12 @@ class CodecDevBackend {
     float ref_channel_gain_db{0.0f};
   };
 
-  struct Es8311Config {
+  struct GenericCodecConfig {
     bool enabled{false};
+    CodecKind kind{CodecKind::NONE};
     uint8_t address{0x18};
     bool use_mclk{true};
     bool no_dac_ref{true};
-  };
-
-  struct Es8311InputConfig {
-    bool enabled{false};
-    uint8_t address{0x18};
-    bool use_mclk{true};
-    bool no_dac_ref{false};
     float input_gain_db{24.0f};
   };
 
@@ -73,8 +75,8 @@ class CodecDevBackend {
 
   void set_i2c_bus(i2c::I2CBus *bus) { this->i2c_bus_ = bus; }
   void set_es7210_config(const Es7210Config &config) { this->es7210_ = config; }
-  void set_es8311_input_config(const Es8311InputConfig &config) { this->es8311_input_ = config; }
-  void set_es8311_config(const Es8311Config &config) { this->es8311_ = config; }
+  void set_input_codec_config(const GenericCodecConfig &config) { this->input_codec_ = config; }
+  void set_output_codec_config(const GenericCodecConfig &config) { this->output_codec_ = config; }
   void set_gmf_reader_config(const GmfIoConfig &config) { this->gmf_reader_ = config; }
   void set_gmf_writer_config(const GmfIoConfig &config) { this->gmf_writer_ = config; }
 
@@ -97,12 +99,13 @@ class CodecDevBackend {
   bool has_tx() const { return this->tx_dev_ != nullptr; }
   bool has_rx() const { return this->rx_dev_ != nullptr; }
   bool is_open() const { return this->open_; }
-  bool has_output_codec() const { return this->es8311_.enabled; }
-  bool has_input_codec() const { return this->es7210_.enabled || this->es8311_input_.enabled; }
+  bool has_output_codec() const { return this->output_codec_.enabled; }
+  bool has_input_codec() const { return this->es7210_.enabled || this->input_codec_.enabled; }
   const char *input_codec_name() const;
-  const char *output_codec_name() const { return this->es8311_.enabled ? "ES8311" : "none"; }
+  const char *output_codec_name() const;
 
  private:
+  static const char *codec_kind_name_(CodecKind kind);
   static esp_codec_dev_sample_info_t make_sample_info_(const SampleConfig &config);
 
   const audio_codec_ctrl_if_t *new_i2c_ctrl_(uint8_t address);
@@ -111,12 +114,14 @@ class CodecDevBackend {
                     bool *io_open);
   void close_gmf_io_(esp_gmf_io_handle_t *io, bool *io_open);
   void apply_output_volume_curve_();
+  const audio_codec_if_t *new_generic_codec_(const GenericCodecConfig &config, bool input,
+                                             uint16_t mclk_div, const audio_codec_ctrl_if_t **ctrl);
   void destroy_codecs_();
 
   i2c::I2CBus *i2c_bus_{nullptr};
   Es7210Config es7210_{};
-  Es8311InputConfig es8311_input_{};
-  Es8311Config es8311_{};
+  GenericCodecConfig input_codec_{};
+  GenericCodecConfig output_codec_{};
   GmfIoConfig gmf_reader_{};
   GmfIoConfig gmf_writer_{};
 
@@ -127,8 +132,8 @@ class CodecDevBackend {
   const audio_codec_data_if_t *data_if_{nullptr};
 #endif
   const audio_codec_ctrl_if_t *es7210_ctrl_{nullptr};
-  const audio_codec_ctrl_if_t *es8311_input_ctrl_{nullptr};
-  const audio_codec_ctrl_if_t *es8311_ctrl_{nullptr};
+  const audio_codec_ctrl_if_t *input_codec_ctrl_{nullptr};
+  const audio_codec_ctrl_if_t *output_codec_ctrl_{nullptr};
   const audio_codec_if_t *rx_codec_if_{nullptr};
   const audio_codec_if_t *tx_codec_if_{nullptr};
   esp_codec_dev_handle_t rx_dev_{nullptr};

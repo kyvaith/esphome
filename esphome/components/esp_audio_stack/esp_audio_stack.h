@@ -203,6 +203,8 @@ class ESPAudioStack : public Component {
   void set_correct_dc_offset(bool enabled) { this->correct_dc_offset_ = enabled; }
   void set_num_channels(uint8_t ch) { this->num_channels_ = ch; }
   uint8_t get_num_channels() const { return this->num_channels_; }
+  void set_speaker_channels(uint8_t ch) { this->speaker_channels_ = ch; }
+  uint8_t get_speaker_channels() const { return this->use_tdm_bus_ ? 1 : this->speaker_channels_; }
   void set_i2s_mode_secondary(bool secondary) { this->i2s_mode_secondary_ = secondary; }
   void set_use_apll(bool use) { this->use_apll_ = use; }
   void set_i2s_num(uint8_t num) { this->i2s_num_ = num; }
@@ -226,21 +228,42 @@ class ESPAudioStack : public Component {
     this->codec_backend_.set_es7210_config(cfg);
   }
   void configure_es8311_input_codec(uint8_t address, bool use_mclk, bool no_dac_ref, float input_gain_db) {
-    CodecDevBackend::Es8311InputConfig cfg;
+    CodecDevBackend::GenericCodecConfig cfg;
     cfg.enabled = true;
+    cfg.kind = CodecDevBackend::CodecKind::ES8311;
     cfg.address = address;
     cfg.use_mclk = use_mclk;
     cfg.no_dac_ref = no_dac_ref;
     cfg.input_gain_db = input_gain_db;
-    this->codec_backend_.set_es8311_input_config(cfg);
+    this->codec_backend_.set_input_codec_config(cfg);
   }
-  void configure_es8311_codec(uint8_t address, bool use_mclk, bool no_dac_ref) {
-    CodecDevBackend::Es8311Config cfg;
+  void configure_input_codec(uint8_t kind, uint8_t address, bool use_mclk, bool no_dac_ref, float input_gain_db) {
+    CodecDevBackend::GenericCodecConfig cfg;
     cfg.enabled = true;
+    cfg.kind = static_cast<CodecDevBackend::CodecKind>(kind);
     cfg.address = address;
     cfg.use_mclk = use_mclk;
     cfg.no_dac_ref = no_dac_ref;
-    this->codec_backend_.set_es8311_config(cfg);
+    cfg.input_gain_db = input_gain_db;
+    this->codec_backend_.set_input_codec_config(cfg);
+  }
+  void configure_es8311_codec(uint8_t address, bool use_mclk, bool no_dac_ref) {
+    CodecDevBackend::GenericCodecConfig cfg;
+    cfg.enabled = true;
+    cfg.kind = CodecDevBackend::CodecKind::ES8311;
+    cfg.address = address;
+    cfg.use_mclk = use_mclk;
+    cfg.no_dac_ref = no_dac_ref;
+    this->codec_backend_.set_output_codec_config(cfg);
+  }
+  void configure_output_codec(uint8_t kind, uint8_t address, bool use_mclk, bool no_dac_ref) {
+    CodecDevBackend::GenericCodecConfig cfg;
+    cfg.enabled = true;
+    cfg.kind = static_cast<CodecDevBackend::CodecKind>(kind);
+    cfg.address = address;
+    cfg.use_mclk = use_mclk;
+    cfg.no_dac_ref = no_dac_ref;
+    this->codec_backend_.set_output_codec_config(cfg);
   }
 #endif
 
@@ -283,6 +306,7 @@ class ESPAudioStack : public Component {
   void set_tdm_mic_slot(uint8_t slot) { this->tdm_mic_slot_ = slot; }
   void set_secondary_tdm_mic_slot(int8_t slot) { this->tdm_second_mic_slot_ = slot; }
   void set_tdm_ref_slot(uint8_t slot) { this->tdm_ref_slot_ = slot; }
+  void set_tdm_tx_slot(uint8_t slot) { this->tdm_tx_slot_ = slot; }
   void set_tdm_slot_level_sensor_enabled(uint8_t slot, bool enabled) {
     if (slot < 8) this->tdm_slot_level_sensor_enabled_[slot] = enabled;
   }
@@ -442,6 +466,8 @@ class ESPAudioStack : public Component {
     uint8_t tdm_mic_slot{0};
     int8_t tdm_second_mic_slot{-1};
     uint8_t tdm_ref_slot{0};
+    uint8_t tdm_tx_slot{0};
+    uint8_t speaker_channels{1};
     uint8_t processor_mic_channels{1};
     uint32_t processor_spec_revision{0};
     bool processor_spec_loaded{false};
@@ -455,6 +481,7 @@ class ESPAudioStack : public Component {
     size_t input_frame_bytes{0};
     size_t output_frame_bytes{0};
     size_t bus_frame_bytes{0};
+    size_t speaker_frame_bytes{0};
     size_t rx_frame_bytes{0};
     size_t tdm_tx_frame_bytes{0};
 
@@ -468,6 +495,7 @@ class ESPAudioStack : public Component {
     int16_t *processor_mic_buffer{nullptr};
     int16_t *spk_buffer{nullptr};
     int16_t *spk_ref_buffer{nullptr};
+    int16_t *tx_ref_mono_buffer{nullptr};
     int16_t *tdm_tx_buffer{nullptr};
     int16_t *tx_interleave_buffer{nullptr};
     int16_t *tx_silence_buffer{nullptr};
@@ -557,7 +585,8 @@ class ESPAudioStack : public Component {
   uint32_t sample_rate_{16000};
   uint8_t bits_per_sample_{16};        // I2S bus bit depth: 16 or 32
   bool correct_dc_offset_{false};      // IIR high-pass filter to remove mic DC bias
-  uint8_t num_channels_{1};            // Speaker TX channels: 1 (mono) or 2 (stereo)
+  uint8_t num_channels_{1};            // Physical STD TX bus channels: 1 or 2
+  uint8_t speaker_channels_{1};        // Public ESPHome speaker stream channels
   bool i2s_mode_secondary_{false};     // false = master (primary), true = slave (secondary)
   bool use_apll_{false};               // Use APLL clock source (ESP32 original only)
   uint8_t i2s_num_{0};                 // I2S port number (0 or 1)
@@ -713,6 +742,7 @@ class ESPAudioStack : public Component {
   uint8_t tdm_mic_slot_{0};    // TDM slot index for voice mic
   int8_t tdm_second_mic_slot_{-1};  // Optional second mic slot for dual-mic AFE
   uint8_t tdm_ref_slot_{1};    // TDM slot index for AEC reference
+  uint8_t tdm_tx_slot_{0};     // TDM slot index for speaker TX
   bool tdm_slot_level_sensor_enabled_[8] = {false};
   std::atomic<float> tdm_slot_level_dbfs_[8] = {};
   uint8_t tdm_slot_level_divider_{0};
@@ -752,6 +782,7 @@ class ESPAudioStack : public Component {
   int16_t *prealloc_processor_mic_buffer_{nullptr};
   int16_t *prealloc_spk_buffer_{nullptr};
   int16_t *prealloc_spk_ref_buffer_{nullptr};
+  int16_t *prealloc_tx_ref_mono_buffer_{nullptr};
   int16_t *prealloc_aec_output_{nullptr};
 #ifdef USE_ESP_AUDIO_STACK_TDM_BUS
   int16_t *prealloc_tdm_tx_buffer_{nullptr};
@@ -768,6 +799,7 @@ class ESPAudioStack : public Component {
   size_t prealloc_processor_mic_buffer_bytes_{0};
   size_t prealloc_spk_buffer_bytes_{0};
   size_t prealloc_spk_ref_buffer_bytes_{0};
+  size_t prealloc_tx_ref_mono_buffer_bytes_{0};
   size_t prealloc_aec_output_bytes_{0};
 #ifdef USE_ESP_AUDIO_STACK_TDM_BUS
   size_t prealloc_tdm_tx_buffer_bytes_{0};
@@ -780,6 +812,9 @@ class ESPAudioStack : public Component {
   size_t prealloc_tx_32_buffer_bytes_{0};
 #endif
   bool audio_buffers_allocated_{false};
+#if defined(USE_ESP_AUDIO_STACK_STEREO_TX) && defined(USE_ESP_AUDIO_STACK_MONO_REF)
+  void *tx_ref_ch_cvt_handle_{nullptr};
+#endif
 #ifdef USE_ESP_AUDIO_STACK_32BIT
   void *tx_bit_cvt_handle_{nullptr};
   uint8_t tx_bit_cvt_channels_{0};
