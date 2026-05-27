@@ -211,6 +211,7 @@ class ESPAudioStack : public Component {
   void set_mclk_multiple(uint32_t mult) { this->mclk_multiple_ = mult; }
   void set_i2s_comm_fmt(uint8_t fmt) { this->i2s_comm_fmt_ = fmt; }
   void set_mic_channel_right(bool right) { this->mic_channel_right_ = right; }
+  void set_rx_slot_mode_stereo(bool stereo) { this->rx_slot_mode_stereo_ = stereo; }
   void set_tx_slot_right(bool right) { this->tx_slot_right_ = right; }
   void set_slot_bit_width(uint8_t sbw) { this->slot_bit_width_ = sbw; }
 #ifdef USE_ESP_AUDIO_STACK_HARDWARE_CODEC
@@ -458,6 +459,7 @@ class ESPAudioStack : public Component {
     uint8_t i2s_bps{2};       // 2 or 4 bytes per I2S sample
     uint8_t num_ch{1};        // TX channels
     bool use_stereo_aec_ref{false};
+    bool rx_slot_mode_stereo{false};
     bool use_tdm_bus{false};
     bool use_tdm_ref{false};
     bool ref_channel_right{false};
@@ -593,6 +595,7 @@ class ESPAudioStack : public Component {
   uint32_t mclk_multiple_{256};        // MCLK multiple: 128, 256, 384, or 512
   uint8_t i2s_comm_fmt_{0};            // 0=philips, 1=msb, 2=pcm_short, 3=pcm_long
   bool mic_channel_right_{false};      // RX mono slot: false=LEFT, true=RIGHT
+  bool rx_slot_mode_stereo_{false};    // STD RX reads both slots; mic_channel selects one in software
   bool tx_slot_right_{false};          // TX mono slot: false=LEFT (default), true=RIGHT
   uint8_t slot_bit_width_{0};          // 0 = auto (match bits_per_sample), or 16/24/32
   uint32_t output_sample_rate_{0};     // 0 = use sample_rate_ (no rate conversion)

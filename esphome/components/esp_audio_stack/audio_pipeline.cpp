@@ -496,6 +496,7 @@ bool ESPAudioStack::prepare_audio_context_(AudioTaskCtx &ctx, bool require_proce
   ctx.num_ch = this->num_channels_;
   ctx.speaker_channels = this->get_speaker_channels();
   ctx.use_stereo_aec_ref = this->use_stereo_aec_ref_;
+  ctx.rx_slot_mode_stereo = this->rx_slot_mode_stereo_;
   ctx.use_tdm_bus = this->use_tdm_bus_;
   ctx.use_tdm_ref = this->use_tdm_ref_;
   ctx.ref_channel_right = this->ref_channel_right_;
@@ -541,10 +542,10 @@ bool ESPAudioStack::prepare_audio_context_(AudioTaskCtx &ctx, bool require_proce
 
 #ifdef USE_ESP_AUDIO_STACK_MULTI_RX
   // Init multi-channel RX rate converter now that we know channel count
-  if (ctx.use_tdm_bus || ctx.use_stereo_aec_ref) {
+  if (ctx.use_tdm_bus || ctx.use_stereo_aec_ref || ctx.rx_slot_mode_stereo) {
     ctx.rx_rate_converter_channels = ctx.use_tdm_bus
         ? (ctx.processor_mic_channels > 1 ? 2 : 1) + (ctx.use_tdm_ref ? 1 : 0)
-        : 2;  // stereo: mic + ref
+        : (ctx.use_stereo_aec_ref ? 2 : 1);  // stereo ref: mic + ref; stereo mic: selected mic only
     this->rx_rate_converter_.init(ctx.ratio, ctx.rx_rate_converter_channels,
                              this->sample_rate_, this->get_output_sample_rate(),
                              this->rate_cvt_complexity_, this->rate_cvt_perf_type_);
@@ -559,12 +560,13 @@ bool ESPAudioStack::prepare_audio_context_(AudioTaskCtx &ctx, bool require_proce
   ctx.speaker_frame_bytes = ctx.bus_frame_bytes * ctx.speaker_channels;
   if (ctx.use_tdm_bus) {
     ctx.rx_frame_bytes = ctx.bus_frame_size * ctx.tdm_total_slots * ctx.i2s_bps;
-  } else if (ctx.use_stereo_aec_ref) {
+  } else if (ctx.use_stereo_aec_ref || ctx.rx_slot_mode_stereo) {
     ctx.rx_frame_bytes = ctx.bus_frame_size * 2 * ctx.i2s_bps;
   } else {
     ctx.rx_frame_bytes = ctx.bus_frame_size * ctx.i2s_bps;
   }
-  ctx.mic_separate = (ctx.ratio > 1) || ctx.use_stereo_aec_ref || ctx.use_tdm_bus || (ctx.i2s_bps == 4);
+  ctx.mic_separate = (ctx.ratio > 1) || ctx.use_stereo_aec_ref ||
+                     ctx.rx_slot_mode_stereo || ctx.use_tdm_bus || (ctx.i2s_bps == 4);
   return true;
 }
 
@@ -945,6 +947,30 @@ void ESPAudioStack::process_rx_path_(AudioTaskCtx &ctx) {
       if (!this->rx_rate_converter_.process_multi(ctx.rx_buffer, ctx.input_frame_size, 2, ch_offsets,
               nullptr, ctx.mic_buffer, ctx.spk_ref_buffer, 1)) {
         conversion_fail("stereo RX audio-effects conversion");
+        return;
+      }
+    }
+    rx_path_converted = true;
+  }
+#endif
+#ifdef USE_ESP_AUDIO_STACK_MULTI_RX
+  if (!rx_path_converted && ctx.rx_slot_mode_stereo) {
+    // Some STD MEMS microphones emit only one slot but require a normal stereo
+    // LRCLK/BCLK frame on the wire. Read both slots, then expose the selected
+    // slot as a mono microphone stream to ESPHome/processor consumers.
+    const uint8_t mic_offset = this->mic_channel_right_ ? 1 : 0;
+    uint8_t ch_offsets[1] = {mic_offset};
+    if (ctx.i2s_bps == 4) {
+      auto *src32 = reinterpret_cast<const int32_t *>(ctx.rx_buffer);
+      if (!this->rx_rate_converter_.process_multi_32(src32, ctx.input_frame_size, 2, ch_offsets,
+              nullptr, ctx.mic_buffer, nullptr, 1)) {
+        conversion_fail("stereo mic RX 32-bit audio-effects conversion");
+        return;
+      }
+    } else {
+      if (!this->rx_rate_converter_.process_multi(ctx.rx_buffer, ctx.input_frame_size, 2, ch_offsets,
+              nullptr, ctx.mic_buffer, nullptr, 1)) {
+        conversion_fail("stereo mic RX audio-effects conversion");
         return;
       }
     }

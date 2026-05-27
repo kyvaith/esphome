@@ -50,6 +50,7 @@ CONF_BITS_PER_SAMPLE = "bits_per_sample"
 CONF_SLOT_BIT_WIDTH = "slot_bit_width"
 CONF_CORRECT_DC_OFFSET = "correct_dc_offset"
 CONF_MIC_CHANNEL = "mic_channel"
+CONF_RX_SLOT_MODE = "rx_slot_mode"
 CONF_I2S_MODE = "i2s_mode"
 CONF_USE_APLL = "use_apll"
 CONF_I2S_NUM = "i2s_num"
@@ -384,6 +385,7 @@ CONFIG_SCHEMA = cv.All(
         cv.Optional(CONF_NUM_CHANNELS, default=1): cv.one_of(1, 2, int=True),
         cv.Optional(CONF_SPEAKER_CHANNELS, default=1): cv.one_of(1, 2, int=True),
         cv.Optional(CONF_MIC_CHANNEL, default="left"): cv.one_of("left", "right", lower=True),
+        cv.Optional(CONF_RX_SLOT_MODE, default="mono"): cv.one_of("mono", "stereo", lower=True),
         cv.Optional(CONF_TX_CHANNEL, default="left"): cv.one_of("left", "right", lower=True),
         cv.Optional(CONF_I2S_MODE, default="primary"): cv.one_of("primary", "secondary", lower=True),
         cv.Optional(CONF_USE_APLL, default=False): cv.boolean,
@@ -617,7 +619,8 @@ async def to_code(config):
     use_rate_cvt = output_rate != config[CONF_SAMPLE_RATE]
     use_32bit = config[CONF_BITS_PER_SAMPLE] > 16
     use_stereo_tx = config[CONF_NUM_CHANNELS] == 2 and not use_tdm_bus
-    use_multi_rx = use_tdm_bus or use_stereo_ref
+    use_rx_slot_stereo = config[CONF_RX_SLOT_MODE] == "stereo"
+    use_multi_rx = use_tdm_bus or use_stereo_ref or use_rx_slot_stereo
     use_mono_rx_effects = not use_multi_rx and (use_rate_cvt or use_32bit)
     use_mono_ref = has_processor and not use_tdm_ref and not use_stereo_ref
     use_ring_ref = use_mono_ref and config[CONF_AEC_REFERENCE_MODE] == "ring_buffer"
@@ -719,6 +722,7 @@ async def to_code(config):
 
     # Mic channel selection (for mono RX: which I2S slot to capture)
     cg.add(var.set_mic_channel_right(config[CONF_MIC_CHANNEL] == "right"))
+    cg.add(var.set_rx_slot_mode_stereo(config[CONF_RX_SLOT_MODE] == "stereo"))
 
     # TX channel selection (for mono TX: which I2S slot to output)
     cg.add(var.set_tx_slot_right(config[CONF_TX_CHANNEL] == "right"))

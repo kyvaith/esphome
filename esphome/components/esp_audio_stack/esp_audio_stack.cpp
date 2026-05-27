@@ -495,6 +495,7 @@ void ESPAudioStack::dump_config() {
                 this->num_channels_ == 2 ? "stereo" : "mono");
   ESP_LOGCONFIG(TAG, "  Speaker Stream Channels: %u", this->get_speaker_channels());
   ESP_LOGCONFIG(TAG, "  RX Mic Channel: %s", this->mic_channel_right_ ? "RIGHT" : "LEFT");
+  ESP_LOGCONFIG(TAG, "  RX Slot Mode: %s", this->rx_slot_mode_stereo_ ? "stereo" : "mono");
   static const char *const fmt_names[] = {"Philips", "MSB", "PCM Short", "PCM Long"};
   ESP_LOGCONFIG(TAG, "  Comm Format: %s", fmt_names[this->i2s_comm_fmt_ & 3]);
   ESP_LOGCONFIG(TAG, "  MCLK Multiple: %u", (unsigned)this->mclk_multiple_);
@@ -867,10 +868,11 @@ bool ESPAudioStack::prepare_i2s_channels_() {
       rx_cfg.gpio_cfg.dout = GPIO_NUM_NC;
       rx_cfg.gpio_cfg.din = pin_or_nc(rx_din_pin);
     }
-    if (this->use_stereo_aec_ref_) {
+    if (this->use_stereo_aec_ref_ || this->rx_slot_mode_stereo_) {
       rx_cfg.slot_cfg = get_std_slot_config(this->i2s_comm_fmt_, bit_width, I2S_SLOT_MODE_STEREO);
       rx_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_BOTH;
-      ESP_LOGD(TAG, "RX configured as STEREO for ES8311 digital feedback AEC");
+      ESP_LOGD(TAG, "RX configured as STEREO (%s)",
+               this->use_stereo_aec_ref_ ? "AEC reference" : "mic channel select");
     } else {
       rx_cfg.slot_cfg = get_std_slot_config(this->i2s_comm_fmt_, bit_width, I2S_SLOT_MODE_MONO);
       rx_cfg.slot_cfg.slot_mask = this->mic_channel_right_ ? I2S_STD_SLOT_RIGHT : I2S_STD_SLOT_LEFT;
