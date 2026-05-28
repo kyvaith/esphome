@@ -932,6 +932,10 @@ bool EspAfe::set_vad_enabled_runtime_(bool enabled) {
   }
 
   if (this->afe_config_ != nullptr && this->afe_config_->vad_init != enabled) {
+    if (this->processing_active_.load(std::memory_order_acquire)) {
+      ESP_LOGW(TAG, "VAD toggle requires AFE restart; refusing while mic path is active");
+      return false;
+    }
     this->vad_enabled_.store(enabled, std::memory_order_relaxed);
     if (!this->recreate_instance_(false)) {
       this->vad_enabled_.store(!enabled, std::memory_order_relaxed);
