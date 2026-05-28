@@ -263,10 +263,10 @@ bool EspAfe::build_instance_(AfeInstance *instance) {
   if (afe_mic_channels >= 2) {
     this->se_enabled_.store(true, std::memory_order_relaxed);
   }
-  // Stack-allocated input format string. Default preserves the historical
-  // "MR" / "MMR" shape; an optional override allows board probes to exercise
-  // Espressif's documented "MMNR" dual-mic layout without changing the
-  // transport-facing mic channel count.
+  // Stack-allocated input format string. Default preserves the established
+  // "MR" / "MMR" shape; an optional override selects Espressif's documented
+  // "MMNR" dual-mic layout without changing the transport-facing mic channel
+  // count.
   char fmt[5];
   if (afe_mic_channels >= 2 && this->input_format_override_[0] != '\0') {
     std::strncpy(fmt, this->input_format_override_, sizeof(fmt) - 1);

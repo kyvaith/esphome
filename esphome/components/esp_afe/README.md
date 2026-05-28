@@ -40,7 +40,7 @@ Unlike `esp_aec` (standalone echo cancellation only), `esp_afe` provides a full 
 | Noise Suppression | No | Yes (WebRTC, single-mic mode) |
 | Voice Activity Detection | No | Yes (WebRTC) |
 | Automatic Gain Control | No | Yes (WebRTC, when kept by `afe_config_check`) |
-| Runtime switches in HA | AEC only | AEC live; VAD/NS/AGC by AFE reinit; SE/BSS is structural |
+| Runtime switches in HA | AEC only | AEC and VAD live through GMF manager; NS/AGC by AFE reinit; SE/BSS is structural |
 | Diagnostic sensors | No | Input volume, output RMS, voice presence |
 | CPU usage (SR LOW_COST) | ~22% Core 0 | ~23% Core 0 (8.4% feed + 15% fetch) |
 | Internal RAM overhead | ~80 KB | ~100 KB (MR), ~120 KB (MMR with Speech Enhancement) |
@@ -140,7 +140,7 @@ esp_afe:
 | `vad_delay_ms` | int | `128` | VAD state transition delay (0-60000 ms) |
 | `vad_mute_playback` | bool | `false` | When VAD detects speech, mute the speaker output to prevent acoustic feedback during voice commands. Useful for voice-assistant pipelines that play TTS while still listening. |
 | `vad_enable_channel_trigger` | bool | `false` | Per-channel VAD triggering (multi-mic setups). esp-sr exposes which mic channel detected the speech, useful for Speech Enhancement-aware downstream consumers. |
-| `continuous_vad` | bool | `false` | Allow VAD to keep the microphone/AFE path active without an external consumer. Keep `false` for intercom/VA targets where MWW/VA own the mic lifecycle. |
+| `continuous_vad` | bool | `false` | Allow VAD to keep the microphone/AFE path active without an external consumer. Use `true` when the `Voice Detected` binary sensor must work in standby; keep `false` when another consumer should own the mic lifecycle. |
 | `agc_compression_gain` | int | `9` | AGC compression gain in dB (0-30) |
 | `agc_target_level` | int | `3` | AGC target level (0-31, lower value = louder output) |
 | `memory_alloc_mode` | string | `more_psram` | Memory allocation: `more_internal`, `internal_psram_balance`, `more_psram` |
@@ -233,7 +233,7 @@ switch:
       restore_mode: RESTORE_DEFAULT_ON
     vad:
       name: "Voice Activity Detector"
-      restore_mode: ALWAYS_OFF
+      restore_mode: RESTORE_DEFAULT_OFF
     agc:
       name: "Auto Gain Control"
       restore_mode: RESTORE_DEFAULT_ON
@@ -243,14 +243,13 @@ switch:
 |--------|------|-------------|
 | `aec` | `mdi:ear-hearing` | Echo cancellation toggle (live, no audio gap) |
 | `ns` | `mdi:volume-off` | Noise suppression toggle (requires AFE reinit, ~70ms gap). Use only on single-mic AFE builds; esp-sr prioritizes SE/BSS over NS on dual-mic input |
-| `vad` | `mdi:account-voice` | Voice activity detection toggle (requires AFE reinit because `vad_init` is structural) |
+| `vad` | `mdi:account-voice` | Voice activity detection toggle. VAD is structurally initialized and enabled/disabled live through the GMF AFE manager |
 | `agc` | `mdi:tune-vertical` | Auto gain control toggle (requires AFE reinit). Use only on single-mic or custom diagnostic builds whose checked runtime config keeps `agc_init: true`; public dual-mic packages omit it |
 
-Use `ALWAYS_OFF` for VAD restore on full-experience intercom targets unless the
-product explicitly wants always-listening VAD. VAD is useful at runtime, but a
-restored ON state must not make the parent audio stack component register a
-background microphone consumer during boot. If a product really needs VAD to
-own the background mic path, set `continuous_vad: true` explicitly.
+Use `RESTORE_DEFAULT_OFF` for VAD restore on full-experience intercom targets:
+VAD is off on first boot, but the user's HA switch state is preserved after
+that. If `Voice Detected` should keep working in standby, set
+`continuous_vad: true` so the background mic path is intentional.
 
 Dual-mic packages keep the feed sent to ESP-SR fixed: both microphone channels
 plus the playback reference are always present. By default the public bridge
@@ -356,12 +355,12 @@ manager exposes only part of the lower ESP-SR runtime control surface:
 | SE | Boot-time graph choice | N/A | Structural on dual-mic builds; single-mic users should use a single-mic config or `esp_aec` |
 | NS | AFE reinit | ~70ms plus possible audio-task restart | ESP-SR exposes low-level vtable entries, but `esp_gmf_afe_manager` does not expose an NS feature enum. Not exposed on dual-mic SE/BSS builds because `afe_config_check()` prioritizes BSS over NS |
 | AGC | AFE reinit | ~70ms plus possible audio-task restart | Same manager limitation as NS. Not exposed by public dual-mic packages because toggling rebuilds the AFE graph and can disturb full-experience audio under load |
-| VAD | AFE reinit | ~70ms plus possible audio-task restart | `vad_init` changes the ESP-SR graph, so enabling/disabling it rebuilds the AFE instance |
+| VAD | Live GMF manager call | None | `vad_init` stays structural; runtime on/off gates `ESP_AFE_FEATURE_VAD` without rebuilding the AFE instance |
 
 **Why reinit for NS/AGC?** ESP-SR's low-level AFE vtable includes
 `enable_ns()`, `disable_ns()`, `enable_agc()`, and `disable_agc()`, but the
 stock GMF manager keeps the AFE iface/data private and only publishes runtime
-feature toggles for VAD, AEC, and SE that are relevant to this component.
+feature toggles for AEC, VAD, and SE that are relevant to this component.
 Staying on the stock manager
 therefore means NS/AGC changes are represented as config changes and require
 destroying and rebuilding the AFE instance.
@@ -524,7 +523,7 @@ risk on the same network path that carries TTS/media, API and intercom traffic.
 
 1. **Speech Enhancement replaces NS on dual-mic input**: With two microphone channels, `afe_config_check()` prioritizes SE/BSS over NS. SE/BSS is structural and is not a runtime toggle. Public dual-mic profiles keep AGC disabled and do not expose AGC controls because AGC changes require full AFE reinit.
 
-2. **Runtime toggles**: AEC is toggled through the GMF manager without rebuilding. VAD, NS/AGC and type/mode changes require a full AFE reinit.
+2. **Runtime toggles**: AEC and VAD are toggled through the GMF manager without rebuilding. NS/AGC and type/mode changes require a full AFE reinit.
 
 3. **data_volume**: The AFE's built-in `data_volume` field is not used as a product signal in this ESPHome integration. Input/output RMS is computed locally instead.
 
@@ -550,7 +549,7 @@ With AFE active, free internal RAM may drop to ~15 KB without IRAM optimization.
 
 ### Switch toggle has no effect
 
-VAD, NS and AGC toggles require AFE reinit. AEC is live through the GMF AFE manager. Public dual-mic packages do not expose NS or AGC toggles. If reinit is in progress, active AFE output is silenced instead of exposing raw pre-AFE microphone audio.
+AEC and VAD are live through the GMF AFE manager. NS and AGC toggles require AFE reinit. Public dual-mic packages do not expose NS or AGC toggles. If reinit is in progress, active AFE output is silenced instead of exposing raw pre-AFE microphone audio.
 
 ### Voice presence always OFF
 

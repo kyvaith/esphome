@@ -169,7 +169,7 @@ flowchart TD
     Mixer["🔊 mixer<br/>VA TTS + Intercom RX"] --> SPK["📦 speaker buffer"]
     SPK --> VOL["🎚️ volume scaling"]
     VOL --> TX["🎛️ I2S TX"]
-    VOL --> DirectRef["🔁 direct ref buffer<br/>mono previous_frame"]
+    VOL --> DirectRef["🔁 software AEC ref<br/>previous_frame mode"]
     RingBuf["📦 AEC ref ring buffer<br/>mono ring_buffer"] -.-> AecRef
 ```
 

@@ -23,7 +23,7 @@ static inline int16_t scale_sample(int16_t sample, float gain) {
 
 #ifndef ESPHOME_SCALE_BLOCK_I16_DEFINED
 #define ESPHOME_SCALE_BLOCK_I16_DEFINED
-// Q15 scale for legacy float gain paths. ESPHome-facing attenuation/volume
+// Q15 scale for standalone float gain paths. ESPHome-facing attenuation/volume
 // uses esp-audio-libs Q31 in esp_audio_stack; user-facing positive mic gain
 // uses esp_ae_alc. This helper remains for board-level input boost and
 // intercom standalone paths that need amplification.
@@ -47,7 +47,7 @@ static inline void scale_block_i16_q15(const int16_t *in, int16_t *out, size_t l
 // option that produces correct samples:
 //
 //   gain == 1.0  -> memcpy (or noop when in == out). Skips the multiply entirely.
-//   0 <= gain <= 1.0 -> scalar Q15 fixed-point attenuation for legacy paths.
+//   0 <= gain <= 1.0 -> scalar Q15 fixed-point attenuation for standalone paths.
 //                       The Q15 fixed-point form is `(input * C_q15) >> 15`,
 //                       which never overflows int16 for C in [0, 32767].
 //   gain > 1.0 (or negative) -> scalar `scale_sample` with saturation, since

@@ -1160,7 +1160,7 @@ void ESPAudioStack::process_aec_and_callbacks_(AudioTaskCtx &ctx) {
     if (spk_frame_has_audio) {
       const float ref_dbfs = compute_rms_dbfs_i16(
           ctx.spk_ref_buffer, ctx.input_frame_size, 1);
-      auto log_tdm_ref_probe = [&](const char *label, uint32_t silent_frames) {
+      auto log_tdm_ref_monitor = [&](const char *label, uint32_t silent_frames) {
         float raw_slot_dbfs[4] = {-120.0f, -120.0f, -120.0f, -120.0f};
         const uint8_t raw_slot_count = std::min<uint8_t>(ctx.tdm_total_slots, 4);
         for (uint8_t slot = 0; slot < raw_slot_count; slot++) {
@@ -1184,14 +1184,14 @@ void ESPAudioStack::process_aec_and_callbacks_(AudioTaskCtx &ctx) {
                  ctx.previous_speaker_dbfs,
                  (unsigned) ctx.previous_speaker_got, (unsigned) ctx.bus_frame_bytes);
       };
-      if (!ctx.tdm_ref_active_probe_logged) {
-        log_tdm_ref_probe("TDM ref active frame", 0);
-        ctx.tdm_ref_active_probe_logged = true;
+      if (!ctx.tdm_ref_active_monitor_logged) {
+        log_tdm_ref_monitor("TDM ref active frame", 0);
+        ctx.tdm_ref_active_monitor_logged = true;
       }
       if (ref_dbfs < kRefSilenceThresholdDbfs) {
         uint32_t n = this->tdm_ref_silent_frames_.fetch_add(1, std::memory_order_relaxed) + 1;
         if (n == kRefSilenceWarnFrames) {
-          log_tdm_ref_probe("TDM ref monitor", n);
+          log_tdm_ref_monitor("TDM ref monitor", n);
         }
       } else {
         this->tdm_ref_silent_frames_.store(0, std::memory_order_relaxed);

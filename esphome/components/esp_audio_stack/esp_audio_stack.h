@@ -474,7 +474,7 @@ class ESPAudioStack : public Component {
     uint32_t processor_spec_revision{0};
     bool processor_spec_loaded{false};
     uint8_t rx_rate_converter_channels{0};
-    bool tdm_ref_active_probe_logged{false};
+    bool tdm_ref_active_monitor_logged{false};
 
     // ── Frame sizing ──
     size_t input_frame_size{0};
@@ -683,7 +683,7 @@ class ESPAudioStack : public Component {
   void service_speaker_reset_();
 
 #ifdef USE_ESP_AUDIO_STACK_TDM_REF_DIAGNOSTIC
-  // TDM AEC reference health: debug-only counter for slot-map bring-up.
+  // TDM AEC reference health: diagnostic-only counter for slot-map bring-up.
   std::atomic<uint32_t> tdm_ref_silent_frames_{0};
 #endif
 

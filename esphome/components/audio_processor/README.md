@@ -35,7 +35,7 @@ The maintained audio stack supports four topologies:
 
 The `AudioProcessor` contract lets `esp_audio_stack` work with any maintained processor at YAML level, and lets future processors drop in without touching the I2S owner. It is also unit-testable: the contract can be mocked without bringing up DMA.
 
-Note: maintained intercom profiles route audio through `esp_audio_stack`; `intercom_api` is transport/FSM glue in that mode. Its legacy standalone `processor_id` path is compile-time gated and kept only for users that build `intercom_api` without `esp_audio_stack`.
+Note: maintained intercom profiles route audio through `esp_audio_stack`; `intercom_api` is transport/FSM glue in that mode. Its standalone direct `processor_id` path is compile-time gated and kept only for users that build `intercom_api` without `esp_audio_stack`.
 
 ## YAML usage
 
@@ -127,7 +127,7 @@ enum class FeatureControl {
 
 `esp_aec` reports `AEC = RESTART_REQUIRED` and everything else `NOT_SUPPORTED`.
 
-`esp_afe` reports `AEC = LIVE_TOGGLE` through Espressif's GMF AFE manager. `VAD / NS / AGC = RESTART_REQUIRED` because those options change the ESP-SR graph or are not exposed as stock GMF manager live toggles. `SE` is `BOOT_ONLY` on dual-mic devices and `NOT_SUPPORTED` on single-mic devices.
+`esp_afe` reports `AEC = LIVE_TOGGLE` and `VAD = LIVE_TOGGLE` through Espressif's GMF AFE manager. VAD is kept structurally initialized in the AFE graph, then enabled or disabled at runtime through the manager. `NS / AGC = RESTART_REQUIRED` because those options are not exposed as stock GMF manager live toggles. `SE` is `BOOT_ONLY` on dual-mic devices and `NOT_SUPPORTED` on single-mic devices.
 
 ## Telemetry
 
