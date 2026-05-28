@@ -1588,12 +1588,16 @@ bool EspAfe::start_pipeline_() {
   if (this->afe_pipeline_ == nullptr) {
     return false;
   }
-  if (this->afe_manager_ != nullptr) {
-    esp_gmf_afe_manager_suspend(this->afe_manager_, false);
-  }
   if (this->afe_pipeline_running_) {
     return true;
   }
+  this->staged_input_samples_ = 0;
+  this->drain_feed_input_ring_();
+  if (this->fetch_output_ring_) {
+    this->fetch_output_ring_->reset();
+  }
+  this->feed_queue_frames_.store(0, std::memory_order_relaxed);
+  this->fetch_queue_frames_.store(0, std::memory_order_relaxed);
   if (this->afe_pipeline_paused_) {
     esp_gmf_err_t ret = esp_gmf_pipeline_resume(this->afe_pipeline_);
     if (ret != ESP_GMF_ERR_OK) {
@@ -1604,6 +1608,9 @@ bool EspAfe::start_pipeline_() {
       return false;
     }
     this->install_manager_result_cb_();
+    if (this->afe_manager_ != nullptr) {
+      esp_gmf_afe_manager_suspend(this->afe_manager_, false);
+    }
     this->afe_pipeline_paused_ = false;
     this->afe_pipeline_running_ = true;
     return true;
@@ -1616,7 +1623,13 @@ bool EspAfe::start_pipeline_() {
     }
     return false;
   }
+  if (this->afe_manager_ != nullptr) {
+    esp_gmf_afe_manager_suspend(this->afe_manager_, true);
+  }
   this->install_manager_result_cb_();
+  if (this->afe_manager_ != nullptr) {
+    esp_gmf_afe_manager_suspend(this->afe_manager_, false);
+  }
   this->afe_pipeline_running_ = true;
   this->afe_pipeline_paused_ = false;
   return true;
