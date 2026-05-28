@@ -391,7 +391,12 @@ class AfeSwitchBase : public switch_::Switch, public Component, public Parented<
 
     auto initial = this->get_initial_state_with_restore_mode();
     if (initial.has_value()) {
-      this->write_state(*initial);
+      if (this->parent_->is_initialized()) {
+        this->write_state(*initial);
+      } else {
+        this->apply_initial_state_(*initial);
+        this->publish_state(this->get_parent_state_());
+      }
     } else {
       this->publish_state(this->get_parent_state_());
     }
@@ -399,6 +404,7 @@ class AfeSwitchBase : public switch_::Switch, public Component, public Parented<
 
  protected:
   virtual bool get_parent_state_() const = 0;
+  virtual void apply_initial_state_(bool state) {}
 
   void publish_parent_state_() {
     if (this->parent_ != nullptr) {
@@ -422,6 +428,7 @@ class AfeAecSwitch : public AfeSwitchBase {
 
  protected:
   bool get_parent_state_() const override { return this->parent_->is_aec_enabled(); }
+  void apply_initial_state_(bool state) override { this->parent_->set_aec_enabled(state); }
 };
 
 class AfeNsSwitch : public AfeSwitchBase {
@@ -438,6 +445,7 @@ class AfeNsSwitch : public AfeSwitchBase {
 
  protected:
   bool get_parent_state_() const override { return this->parent_->is_ns_enabled(); }
+  void apply_initial_state_(bool state) override { this->parent_->set_ns_enabled(state); }
 };
 
 class AfeVadSwitch : public AfeSwitchBase {
@@ -454,6 +462,7 @@ class AfeVadSwitch : public AfeSwitchBase {
 
  protected:
   bool get_parent_state_() const override { return this->parent_->is_vad_enabled(); }
+  void apply_initial_state_(bool state) override { this->parent_->set_vad_enabled(state); }
 };
 
 class AfeAgcSwitch : public AfeSwitchBase {
@@ -470,6 +479,7 @@ class AfeAgcSwitch : public AfeSwitchBase {
 
  protected:
   bool get_parent_state_() const override { return this->parent_->is_agc_enabled(); }
+  void apply_initial_state_(bool state) override { this->parent_->set_agc_enabled(state); }
 };
 
 class AfeVadBinarySensor : public binary_sensor::BinarySensor, public PollingComponent, public Parented<EspAfe> {

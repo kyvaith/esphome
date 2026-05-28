@@ -304,7 +304,10 @@ bool EspAfe::build_instance_(AfeInstance *instance) {
   cfg->ns_model_name = nullptr;
   cfg->afe_ns_mode = AFE_NS_MODE_WEBRTC;
 
-  cfg->vad_init = this->vad_enabled_.load(std::memory_order_relaxed);
+  // ESP-SR/GMF can toggle VAD at runtime only if the VAD block exists in the
+  // AFE instance. Keep it structurally initialized and gate the live state via
+  // esp_gmf_afe_manager_enable_features() before the pipeline starts.
+  cfg->vad_init = true;
   cfg->vad_mode = static_cast<vad_mode_t>(this->vad_mode_);
   cfg->vad_model_name = nullptr;
   cfg->vad_min_speech_ms = this->vad_min_speech_ms_;
@@ -929,20 +932,6 @@ bool EspAfe::set_vad_enabled_runtime_(bool enabled) {
   if (!this->is_initialized()) {
     ESP_LOGW(TAG, "VAD toggle requested before initialization");
     return false;
-  }
-
-  if (this->afe_config_ != nullptr && this->afe_config_->vad_init != enabled) {
-    if (this->processing_active_.load(std::memory_order_acquire)) {
-      ESP_LOGW(TAG, "VAD toggle requires AFE restart; refusing while mic path is active");
-      return false;
-    }
-    this->vad_enabled_.store(enabled, std::memory_order_relaxed);
-    if (!this->recreate_instance_(false)) {
-      this->vad_enabled_.store(!enabled, std::memory_order_relaxed);
-      this->recreate_instance_(false);
-      return false;
-    }
-    return true;
   }
 
   bool needs_rebuild = false;
