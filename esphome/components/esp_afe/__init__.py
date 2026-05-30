@@ -240,10 +240,15 @@ async def to_code(config):
 
     cg.add_define("USE_AUDIO_PROCESSOR")
 
-    # gmf_ai_audio provides Espressif's canonical AFE manager
-    # (feed/fetch/suspend/runtime feature toggles). Track registry latest on
-    # this experimental branch; "*" is ESPHome's unpinned registry constraint.
-    add_idf_component(name="espressif/gmf_ai_audio", ref="*")
+    if config[CONF_MIC_NUM] <= 1:
+        cg.add_define("USE_ESP_AFE_DIRECT_PATH")
+        add_idf_component(name="espressif/esp-sr", ref="^2.4.4")
+    if config[CONF_MIC_NUM] >= 2:
+        cg.add_define("USE_ESP_AFE_GMF_PATH")
+        # gmf_ai_audio provides Espressif's canonical AFE manager
+        # (feed/fetch/suspend/runtime feature toggles). Track registry latest on
+        # this experimental branch; "*" is ESPHome's unpinned registry constraint.
+        add_idf_component(name="espressif/gmf_ai_audio", ref="*")
 
 
 @automation.register_action(

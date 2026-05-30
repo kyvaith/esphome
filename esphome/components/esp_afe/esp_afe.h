@@ -12,6 +12,7 @@
 #include <esp_afe_sr_iface.h>
 #include <esp_afe_sr_models.h>
 #include <esp_afe_config.h>
+#ifdef USE_ESP_AFE_GMF_PATH
 #include <esp_gmf_afe.h>
 #include <esp_gmf_element.h>
 #include <esp_gmf_afe_manager.h>
@@ -19,6 +20,7 @@
 #include <esp_gmf_payload.h>
 #include <esp_gmf_port.h>
 #include <esp_gmf_task.h>
+#endif
 #include <freertos/ringbuf.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -72,11 +74,22 @@ class EspAfe : public Component, public AudioProcessor {
 
   // AudioProcessor interface
   bool is_initialized() const override {
-    // Runtime rings are prepared while tasks are stopped. Including
-    // feed_input_ring_ prevents process() from seeing a "ready" pipeline
-    // during any install window before prepared runtime is complete.
-    return this->afe_manager_ != nullptr &&
-           this->feed_buf_ != nullptr && this->feed_input_ring_ != nullptr;
+    // Runtime buffers are prepared while tasks are stopped. Single-mic uses
+    // ESP-SR direct feed/fetch, dual-mic uses the GMF feed input ring.
+    if (this->feed_buf_ == nullptr) {
+      return false;
+    }
+#ifdef USE_ESP_AFE_DIRECT_PATH
+    if (this->direct_data_ != nullptr && this->direct_feed_signal_ != nullptr) {
+      return true;
+    }
+#endif
+#ifdef USE_ESP_AFE_GMF_PATH
+    if (this->afe_manager_ != nullptr && this->feed_input_ring_ != nullptr) {
+      return true;
+    }
+#endif
+    return false;
   }
   FrameSpec frame_spec() const override;
   bool process(const int16_t *in_mic, const int16_t *in_ref, int16_t *out,
@@ -184,10 +197,16 @@ class EspAfe : public Component, public AudioProcessor {
   int afe_mic_channels_() const;
 
   struct AfeInstance {
+#ifdef USE_ESP_AFE_DIRECT_PATH
+    const esp_afe_sr_iface_t *direct_iface{nullptr};
+    esp_afe_sr_data_t *direct_data{nullptr};
+#endif
+#ifdef USE_ESP_AFE_GMF_PATH
     esp_gmf_afe_manager_handle_t manager{nullptr};
     esp_gmf_obj_handle_t element{nullptr};
     esp_gmf_pipeline_handle_t pipeline{nullptr};
     esp_gmf_task_handle_t task{nullptr};
+#endif
     afe_config_t *config{nullptr};
     int16_t *feed_buf{nullptr};
     int feed_chunksize{0};
@@ -202,8 +221,10 @@ class EspAfe : public Component, public AudioProcessor {
   bool set_vad_enabled_runtime_(bool enabled);
   bool set_reinit_flag_(std::atomic<bool> &flag, bool enabled, const char *name);
   bool prepare_runtime_();
-  bool prepare_feed_input_ring_();
   bool prepare_fetch_output_ring_();
+#ifdef USE_ESP_AFE_GMF_PATH
+  bool prepare_feed_input_ring_();
+#endif
   void release_runtime_buffers_();
   void log_memory_snapshot_(const char *label) const;
   void destroy_instance_(AfeInstance *instance);
@@ -224,13 +245,22 @@ class EspAfe : public Component, public AudioProcessor {
 
   // GMF AFE manager and config. The config must outlive the manager because
   // esp-sr stores pointers into it.
+#ifdef USE_ESP_AFE_DIRECT_PATH
+  const esp_afe_sr_iface_t *direct_iface_{nullptr};
+  esp_afe_sr_data_t *direct_data_{nullptr};
+#endif
+#ifdef USE_ESP_AFE_GMF_PATH
   esp_gmf_afe_manager_handle_t afe_manager_{nullptr};
   esp_gmf_obj_handle_t afe_element_{nullptr};
   esp_gmf_pipeline_handle_t afe_pipeline_{nullptr};
   esp_gmf_task_handle_t afe_task_{nullptr};
+#endif
   afe_config_t *afe_config_{nullptr};
   bool afe_pipeline_running_{false};
   bool afe_pipeline_paused_{false};
+#ifdef USE_ESP_AFE_DIRECT_PATH
+  bool direct_fetch_running_{false};
+#endif
 
   // Feed buffer: interleaved [mic, ref, ...], [mic1, mic2, ref, ...] or
   // [mic1, mic2, N, ref, ...] depending on esp-sr input_format.
@@ -251,10 +281,22 @@ class EspAfe : public Component, public AudioProcessor {
   static constexpr size_t kBridgeRingFrames = 4;
   static constexpr size_t kRingbufferItemHeaderBytes = 8;
 
+#ifdef USE_ESP_AFE_GMF_PATH
   RingbufHandle_t feed_input_ring_{nullptr};
   uint8_t *feed_input_ring_storage_{nullptr};
   StaticRingbuffer_t *feed_input_ring_struct_{nullptr};
+#endif
+#ifdef USE_ESP_AFE_DIRECT_PATH
+  SemaphoreHandle_t direct_feed_signal_{nullptr};
+  StaticSemaphore_t direct_feed_signal_storage_{};
+  static constexpr int kDirectFeedSignalMaxCount = 8;
+  TaskHandle_t direct_fetch_task_handle_{nullptr};
+  StaticTask_t direct_fetch_task_tcb_{};
+  StackType_t *direct_fetch_task_stack_{nullptr};
+  static constexpr uint32_t kDirectFetchTaskStackWords = 4096 / sizeof(StackType_t);
+#endif
 
+#ifdef USE_ESP_AFE_GMF_PATH
   static esp_gmf_err_io_t gmf_input_acquire_cb_(void *ctx, esp_gmf_payload_t *load,
                                                 uint32_t wanted_size, int wait_ticks);
   static esp_gmf_err_io_t gmf_input_release_cb_(void *ctx, esp_gmf_payload_t *load,
@@ -267,15 +309,28 @@ class EspAfe : public Component, public AudioProcessor {
   esp_gmf_err_io_t gmf_input_acquire_(esp_gmf_payload_t *load, uint32_t wanted_size,
                                       int wait_ticks);
   esp_gmf_err_io_t gmf_output_release_(esp_gmf_payload_t *load, int wait_ticks);
+#endif
   void handle_manager_result_(afe_fetch_result_t *result);
+#ifdef USE_ESP_AFE_GMF_PATH
   bool install_manager_result_cb_();
+#endif
+#ifdef USE_ESP_AFE_DIRECT_PATH
+  static void direct_fetch_task_trampoline_(void *arg);
+  void direct_fetch_task_loop_();
+  bool start_direct_fetch_task_();
+  void stop_direct_fetch_task_();
+#endif
+#ifdef USE_ESP_AFE_GMF_PATH
   static void gmf_event_cb_(esp_gmf_element_handle_t el, esp_gmf_afe_evt_t *event,
                             void *user_data);
+#endif
   bool start_pipeline_();
   bool pause_pipeline_();
   void stop_pipeline_();
+#ifdef USE_ESP_AFE_GMF_PATH
   void flush_pipeline_before_stop_();
   void drain_feed_input_ring_();
+#endif
   void update_fetch_ring_free_pct_();
 
   // Fetch bridge: GMF output port writes, process() reads non-blocking.
@@ -310,12 +365,12 @@ class EspAfe : public Component, public AudioProcessor {
   int task_core_{1};
   int task_priority_{5};
   int ringbuf_size_{8};
-  int feed_task_core_{ESP_AFE_MANAGER_FEED_TASK_CORE};
-  int feed_task_priority_{ESP_AFE_MANAGER_FEED_TASK_PRIO};
-  int feed_task_stack_size_{ESP_AFE_MANAGER_FEED_TASK_STACK};
-  int fetch_task_core_{ESP_AFE_MANAGER_FETCH_TASK_CORE};
-  int fetch_task_priority_{ESP_AFE_MANAGER_FETCH_TASK_PRIO};
-  int fetch_task_stack_size_{ESP_AFE_MANAGER_FETCH_TASK_STACK};
+  int feed_task_core_{0};
+  int feed_task_priority_{5};
+  int feed_task_stack_size_{3072};
+  int fetch_task_core_{1};
+  int fetch_task_priority_{5};
+  int fetch_task_stack_size_{3072};
   char input_format_override_[5]{};
   // Dual-mic AEC-off output selector:
   //   -1 = official result->data, 0/1 = result->raw_data[channel].
