@@ -7,11 +7,21 @@
 #include <audio_codec_ctrl_if.h>
 #include <audio_codec_data_if.h>
 #include <audio_codec_if.h>
+#ifdef USE_ESP_AUDIO_STACK_CODEC_ES7210
 #include <es7210_adc.h>
+#endif
+#ifdef USE_ESP_AUDIO_STACK_CODEC_ES8311
 #include <es8311_codec.h>
+#endif
+#ifdef USE_ESP_AUDIO_STACK_CODEC_ES8374
 #include <es8374_codec.h>
+#endif
+#ifdef USE_ESP_AUDIO_STACK_CODEC_ES8388
 #include <es8388_codec.h>
+#endif
+#ifdef USE_ESP_AUDIO_STACK_CODEC_ES8389
 #include <es8389_codec.h>
+#endif
 #include <esp_codec_dev_types.h>
 #include <esp_gmf_io_codec_dev.h>
 #include <esp_gmf_obj.h>
@@ -204,6 +214,7 @@ const audio_codec_if_t *CodecDevBackend::new_generic_codec_(const GenericCodecCo
   }
   const auto mode = input ? ESP_CODEC_DEV_WORK_MODE_ADC : ESP_CODEC_DEV_WORK_MODE_DAC;
   switch (config.kind) {
+#ifdef USE_ESP_AUDIO_STACK_CODEC_ES8311
     case CodecKind::ES8311: {
       es8311_codec_cfg_t cfg = {};
       cfg.ctrl_if = *ctrl;
@@ -216,6 +227,8 @@ const audio_codec_if_t *CodecDevBackend::new_generic_codec_(const GenericCodecCo
       cfg.mclk_div = mclk_div;
       return es8311_codec_new(&cfg);
     }
+#endif
+#ifdef USE_ESP_AUDIO_STACK_CODEC_ES8388
     case CodecKind::ES8388: {
       es8388_codec_cfg_t cfg = {};
       cfg.ctrl_if = *ctrl;
@@ -225,6 +238,8 @@ const audio_codec_if_t *CodecDevBackend::new_generic_codec_(const GenericCodecCo
       cfg.master_mode = false;
       return es8388_codec_new(&cfg);
     }
+#endif
+#ifdef USE_ESP_AUDIO_STACK_CODEC_ES8374
     case CodecKind::ES8374: {
       es8374_codec_cfg_t cfg = {};
       cfg.ctrl_if = *ctrl;
@@ -234,6 +249,8 @@ const audio_codec_if_t *CodecDevBackend::new_generic_codec_(const GenericCodecCo
       cfg.master_mode = false;
       return es8374_codec_new(&cfg);
     }
+#endif
+#ifdef USE_ESP_AUDIO_STACK_CODEC_ES8389
     case CodecKind::ES8389: {
       es8389_codec_cfg_t cfg = {};
       cfg.ctrl_if = *ctrl;
@@ -249,6 +266,7 @@ const audio_codec_if_t *CodecDevBackend::new_generic_codec_(const GenericCodecCo
       cfg.mclk_div = mclk_div;
       return es8389_codec_new(&cfg);
     }
+#endif
     default:
       ESP_LOGE(TAG, "Unsupported codec kind: %u", static_cast<unsigned>(config.kind));
       return nullptr;
@@ -388,6 +406,7 @@ bool CodecDevBackend::setup(uint8_t tx_i2s_port, uint8_t rx_i2s_port,
 #endif
 
   if (rx_handle != nullptr && this->es7210_.enabled) {
+#ifdef USE_ESP_AUDIO_STACK_CODEC_ES7210
     this->es7210_ctrl_ = this->new_i2c_ctrl_(this->es7210_.address);
     if (this->es7210_ctrl_ == nullptr) {
       return false;
@@ -402,6 +421,10 @@ bool CodecDevBackend::setup(uint8_t tx_i2s_port, uint8_t rx_i2s_port,
       ESP_LOGE(TAG, "Failed to create ES7210 codec interface");
       return false;
     }
+#else
+    ESP_LOGE(TAG, "ES7210 codec support was not compiled in");
+    return false;
+#endif
   } else if (rx_handle != nullptr && this->input_codec_.enabled) {
     this->rx_codec_if_ =
         this->new_generic_codec_(this->input_codec_, true, codec_mclk_div, &this->input_codec_ctrl_);

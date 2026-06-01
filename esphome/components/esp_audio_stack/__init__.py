@@ -665,6 +665,14 @@ async def to_code(config):
         cg.add_define("USE_ESP_AUDIO_STACK_32BIT")
     if has_hardware_codec:
         cg.add_define("USE_ESP_AUDIO_STACK_HARDWARE_CODEC")
+        codec_conf = config[CONF_CODEC]
+        codec_types = set()
+        if CONF_INPUT in codec_conf:
+            codec_types.add(codec_conf[CONF_INPUT][CONF_TYPE])
+        if CONF_OUTPUT in codec_conf:
+            codec_types.add(codec_conf[CONF_OUTPUT][CONF_TYPE])
+        for codec_type in sorted(codec_types):
+            cg.add_define(f"USE_ESP_AUDIO_STACK_CODEC_{codec_type.upper()}")
     if has_output_codec:
         cg.add_define("USE_ESP_AUDIO_STACK_HARDWARE_OUTPUT_CODEC")
     include_builtin_idf_component("esp_driver_i2s")
