@@ -1987,6 +1987,7 @@ bool EspAfe::pause_pipeline_() {
     }
     return true;
   }
+  this->flush_pipeline_before_stop_();
   esp_gmf_err_t ret = esp_gmf_pipeline_pause(this->afe_pipeline_);
   if (ret != ESP_GMF_ERR_OK) {
     ESP_LOGW(TAG, "GMF AFE pipeline pause failed (ret=%d)", static_cast<int>(ret));

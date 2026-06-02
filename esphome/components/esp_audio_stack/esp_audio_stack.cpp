@@ -1140,6 +1140,12 @@ void ESPAudioStack::start() {
   // make the component look like active playback; otherwise the last mic
   // consumer leaving would fail to park the pipeline.
 
+  // Wake the permanent audio task (created once in setup()).
+  this->audio_stack_running_.store(true, std::memory_order_relaxed);
+  if (this->audio_task_handle_ != nullptr) {
+    xTaskNotifyGive(this->audio_task_handle_);
+  }
+
 #ifdef USE_AUDIO_PROCESSOR
   if (this->use_stereo_aec_ref_) {
     ESP_LOGD(TAG, "ES8311 digital feedback - reference is sample-aligned");
@@ -1149,15 +1155,15 @@ void ESPAudioStack::start() {
   }
   if (this->processor_ != nullptr &&
       this->has_mic_consumers_.load(std::memory_order_relaxed)) {
+    // GMF AFE pipeline_run() must not be called before the audio task can feed
+    // the AFE input port. Start I2S and wake the realtime task first; otherwise
+    // dual-mic GMF devices can hit ESP_GMF_TASK Run timeout when MWW/VA starts
+    // while media playback is parked/paused.
+    delay(1);
     this->processor_->set_processing_active(true);
   }
 #endif
 
-  // Wake the permanent audio task (created once in setup()).
-  this->audio_stack_running_.store(true, std::memory_order_relaxed);
-  if (this->audio_task_handle_ != nullptr) {
-    xTaskNotifyGive(this->audio_task_handle_);
-  }
   this->start_trigger_.trigger();
   ESP_LOGI(TAG, "Audio stack started");
 }
@@ -1276,10 +1282,10 @@ bool ESPAudioStack::register_mic_consumer(void *token) {
     ESP_LOGI(TAG, "Mic consumer registered (token=%p), mic path active (consumers=%zu)",
              token, count_after);
     this->mic_start_trigger_.trigger();
-    // Wake the audio processor (e.g. esp_afe GMF pipeline/task) before any
-    // consumer expects processed frames; the processor must already be
-    // pumping by the time audio_task starts pushing into it.
-    if (this->processor_ != nullptr) {
+    // If the stack is already running, wake the processor immediately. If this
+    // consumer is also starting the stack, start() will wake the audio task
+    // first and then enable the processor so GMF has input frames available.
+    if (!needs_start && this->processor_ != nullptr) {
       this->processor_->set_processing_active(true);
     }
   } else {
