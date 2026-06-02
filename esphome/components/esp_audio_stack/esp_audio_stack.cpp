@@ -280,7 +280,7 @@ static i2s_std_slot_config_t get_std_slot_config(uint8_t fmt, i2s_data_bit_width
   }
 }
 
-#if SOC_I2S_SUPPORTS_TDM
+#if SOC_I2S_SUPPORTS_TDM && defined(USE_ESP_AUDIO_STACK_TDM_BUS)
 // Helper: get TDM slot config for the configured comm format
 static i2s_tdm_slot_config_t get_tdm_slot_config(uint8_t fmt, i2s_data_bit_width_t bw,
                                                    i2s_slot_mode_t mode, i2s_tdm_slot_mask_t mask) {
@@ -644,7 +644,7 @@ bool ESPAudioStack::prepare_i2s_channels_() {
   if (this->use_stereo_aec_ref_) {
     rx_bytes_per_frame = 2 * bytes_per_sample;
   }
-#if SOC_I2S_SUPPORTS_TDM
+#if SOC_I2S_SUPPORTS_TDM && defined(USE_ESP_AUDIO_STACK_TDM_BUS)
   if (this->use_tdm_bus_) {
     const uint32_t tdm_frame = this->tdm_total_slots_ * bytes_per_sample;
     tx_bytes_per_frame = tdm_frame;
@@ -669,7 +669,7 @@ bool ESPAudioStack::prepare_i2s_channels_() {
       dma_frame_num = max_frames;
     }
   }
-#if SOC_I2S_SUPPORTS_TDM
+#if SOC_I2S_SUPPORTS_TDM && defined(USE_ESP_AUDIO_STACK_TDM_BUS)
 #ifdef USE_AUDIO_PROCESSOR
   if (this->use_tdm_bus_ && this->processor_ != nullptr && max_frames > 0) {
     const auto spec = this->processor_->frame_spec();
@@ -758,7 +758,7 @@ bool ESPAudioStack::prepare_i2s_channels_() {
   }
 #endif
 
-#if SOC_I2S_SUPPORTS_TDM
+#if SOC_I2S_SUPPORTS_TDM && defined(USE_ESP_AUDIO_STACK_TDM_BUS)
   if (this->use_tdm_bus_) {
     // ── TDM MODE: ES7210 multi-slot RX + ES8311 slot-0 TX ──
     // STEREO with 4 slots: DMA contains all 4 interleaved slots, BCLK/FS = 64.
@@ -928,7 +928,7 @@ CodecDevBackend::SampleConfig ESPAudioStack::make_tx_sample_config_() const {
   cfg.sample_rate = this->sample_rate_;
   cfg.bits_per_sample = this->bits_per_sample_;
   cfg.mclk_multiple = this->mclk_multiple_;
-#if SOC_I2S_SUPPORTS_TDM
+#if SOC_I2S_SUPPORTS_TDM && defined(USE_ESP_AUDIO_STACK_TDM_BUS)
   if (this->use_tdm_bus_) {
     cfg.channels = this->tdm_total_slots_;
     cfg.channel_mask = 0;
@@ -953,7 +953,7 @@ CodecDevBackend::SampleConfig ESPAudioStack::make_rx_sample_config_() const {
   cfg.sample_rate = this->sample_rate_;
   cfg.bits_per_sample = this->bits_per_sample_;
   cfg.mclk_multiple = this->mclk_multiple_;
-#if SOC_I2S_SUPPORTS_TDM
+#if SOC_I2S_SUPPORTS_TDM && defined(USE_ESP_AUDIO_STACK_TDM_BUS)
   if (this->use_tdm_bus_) {
     cfg.channels = this->tdm_total_slots_;
     cfg.channel_mask = 0;

@@ -13,7 +13,7 @@
 #endif
 
 #include <driver/i2s_std.h>
-#if SOC_I2S_SUPPORTS_TDM
+#if SOC_I2S_SUPPORTS_TDM && defined(USE_ESP_AUDIO_STACK_TDM_BUS)
 #include <driver/i2s_tdm.h>
 #endif
 #include <freertos/FreeRTOS.h>
