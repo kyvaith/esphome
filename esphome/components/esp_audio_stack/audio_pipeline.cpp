@@ -1128,6 +1128,9 @@ void ESPAudioStack::process_aec_and_callbacks_(AudioTaskCtx &ctx) {
   if (!this->rx_handle_ || ctx.output_buffer == nullptr)
     return;
 
+  if (!ctx.mic_running)
+    return;
+
 #ifdef USE_AUDIO_PROCESSOR
   if (ctx.processor_enabled && (!ctx.processor_ready ||
       ctx.spk_ref_buffer == nullptr || ctx.aec_output == nullptr)) {
