@@ -27,6 +27,7 @@ static const TickType_t CONFIG_MUTEX_TIMEOUT = pdMS_TO_TICKS(250);
 // Max wait for process() to finish its current frame when a config change
 // needs to rebuild the AFE instance. ~1.5 frame periods at 16 kHz / 512 samples.
 static const TickType_t DRAIN_WAIT_TIMEOUT = pdMS_TO_TICKS(50);
+static constexpr uint32_t REINIT_STAGE_WARN_US = 50000;
 
 struct AfeModePreset {
   const char *name;
@@ -767,13 +768,10 @@ bool EspAfe::install_instance_(AfeInstance *instance) {
   if (!this->aec_enabled_.load(std::memory_order_relaxed)) {
     esp_gmf_afe_manager_enable_features(this->afe_manager_, ESP_AFE_FEATURE_AEC, false);
   }
-  // VAD is structural in ESP-SR. If initialized but currently disabled, apply
-  // the runtime gate before feed/fetch start.
-  if (this->afe_config_ != nullptr && this->afe_config_->vad_init &&
-      !this->vad_enabled_.load(std::memory_order_relaxed)) {
-    esp_gmf_afe_manager_enable_features(this->afe_manager_, ESP_AFE_FEATURE_VAD, false);
-    this->voice_present_.store(false, std::memory_order_relaxed);
-  }
+  // VAD must stay enabled when the GMF AFE element opens. GMF creates its
+  // wake/VAD monitor lock only when feat.vad is true during esp_gmf_afe_open();
+  // disabling it here leaves wake_st_lock null, and a later VAD enable crashes
+  // in esp_gmf_afe_result_proc()->wakeup_state_update().
 
   // Runtime buffers are already prepared above. Apply the configured feature
   // state before resuming GMF tasks so an active reconfigure never runs even
@@ -797,7 +795,9 @@ EspAfe::AfeInstance EspAfe::detach_instance_() {
   // no more enqueues can race. Close the official GMF AFE element first: this
   // detaches manager read/result callbacks and releases its data buses.
 #ifdef USE_ESP_AFE_GMF_PATH
-  this->flush_pipeline_before_stop_();
+  if (!this->afe_pipeline_paused_) {
+    this->flush_pipeline_before_stop_();
+  }
 #endif
   this->stop_pipeline_();
 
@@ -843,6 +843,21 @@ EspAfe::AfeInstance EspAfe::detach_instance_() {
 }
 
 bool EspAfe::recreate_instance_(bool require_same_frame_sizes) {
+  const int64_t reinit_start_us = esp_timer_get_time();
+  int64_t stage_start_us = reinit_start_us;
+  auto begin_stage = [&](const char *stage) {
+    (void) stage;
+    stage_start_us = esp_timer_get_time();
+  };
+  auto log_stage = [&](const char *stage) {
+    const int64_t now_us = esp_timer_get_time();
+    const uint32_t stage_us = static_cast<uint32_t>(std::max<int64_t>(0, now_us - stage_start_us));
+    if (stage_us >= REINIT_STAGE_WARN_US) {
+      ESP_LOGW(TAG, "AFE reinit stage %s took %uus", stage, (unsigned) stage_us);
+    }
+    stage_start_us = now_us;
+  };
+
   if (this->config_mutex_ == nullptr) {
     this->config_mutex_ = xSemaphoreCreateMutex();
     if (this->config_mutex_ == nullptr) {
@@ -872,6 +887,7 @@ bool EspAfe::recreate_instance_(bool require_same_frame_sizes) {
     }
     vTaskDelay(1);
   }
+  log_stage("drain");
 
   // From here on the ScopedLock auto-releases on every return path; only the
   // drain flag has to be reset before each return.
@@ -881,9 +897,15 @@ bool EspAfe::recreate_instance_(bool require_same_frame_sizes) {
   // Must destroy the previous instance before creating the next one.
   int old_process = this->process_chunksize_;
   int old_fetch = this->fetch_chunksize_;
+  begin_stage("detach");
   AfeInstance old = this->detach_instance_();
+  log_stage("detach");
+  begin_stage("destroy");
   this->destroy_instance_(&old);
+  log_stage("destroy");
+  begin_stage("release_runtime");
   this->release_runtime_buffers_();
+  log_stage("release_runtime");
 
   // If every user-facing feature is disabled there is nothing to build.
   // Stay in the torn-down state; process() will emit silence via the
@@ -905,11 +927,14 @@ bool EspAfe::recreate_instance_(bool require_same_frame_sizes) {
   }
 
   AfeInstance next;
+  begin_stage("build");
   if (!this->build_instance_(&next)) {
+    log_stage("build_failed");
     ESP_LOGE(TAG, "Failed to build new AFE instance. AFE is DOWN until successful rebuild.");
     release_drain();
     return false;
   }
+  log_stage("build");
 
   if (require_same_frame_sizes && old_process > 0 && old_fetch > 0 &&
       (next.process_chunksize != old_process || next.fetch_chunksize != old_fetch)) {
@@ -933,13 +958,16 @@ bool EspAfe::recreate_instance_(bool require_same_frame_sizes) {
   (void) old_process;
   (void) old_fetch;
 
+  begin_stage("install");
   if (!this->install_instance_(&next)) {
+    log_stage("install_failed");
     AfeInstance failed = this->detach_instance_();
     this->destroy_instance_(&failed);
     this->release_runtime_buffers_();
     release_drain();
     return false;
   }
+  log_stage("install");
 
   this->last_spec_process_size_ = this->process_chunksize_;
   this->last_spec_fetch_size_ = this->fetch_chunksize_;
@@ -1001,6 +1029,11 @@ bool EspAfe::recreate_instance_(bool require_same_frame_sizes) {
   // until the next mic consumer attaches. process() can resume real work on
   // the next frame.
   release_drain();
+  const uint32_t total_us = static_cast<uint32_t>(std::max<int64_t>(0, esp_timer_get_time() - reinit_start_us));
+  if (total_us >= REINIT_STAGE_WARN_US) {
+    ESP_LOGW(TAG, "AFE reinit total took %uus (type=%d mode=%d)",
+             (unsigned) total_us, this->afe_type_, this->afe_mode_);
+  }
   return true;
 }
 
@@ -1578,6 +1611,95 @@ bool EspAfe::reinit_by_name(const char *name) {
   return false;
 }
 
+bool EspAfe::start_reconfigure_task_() {
+  if (this->reconfigure_queue_ == nullptr) {
+    this->reconfigure_queue_ = xQueueCreateStatic(1, sizeof(ReconfigureRequest),
+                                                  this->reconfigure_queue_storage_,
+                                                  &this->reconfigure_queue_struct_);
+    if (this->reconfigure_queue_ == nullptr) {
+      ESP_LOGE(TAG, "Failed to create AFE reconfigure queue");
+      return false;
+    }
+  }
+  if (this->reconfigure_task_handle_ != nullptr) {
+    return true;
+  }
+
+  this->reconfigure_task_running_.store(true, std::memory_order_release);
+  if (!audio_processor::start_pinned_task(&EspAfe::reconfigure_task_trampoline_, "afe_reinit",
+                                           kReconfigureTaskStackBytes, this, 4, 0, false, TAG,
+                                           &this->reconfigure_task_handle_, &this->reconfigure_task_tcb_,
+                                           &this->reconfigure_task_stack_)) {
+    this->reconfigure_task_running_.store(false, std::memory_order_release);
+    return false;
+  }
+  return true;
+}
+
+bool EspAfe::request_reinit_by_name(const std::string &name) {
+  return this->request_reinit_by_name(name.c_str());
+}
+
+bool EspAfe::request_reinit_by_name(const char *name) {
+  if (name == nullptr || name[0] == '\0') {
+    ESP_LOGW(TAG, "Cannot queue empty AFE mode");
+    return false;
+  }
+  if (std::strcmp(name, this->get_mode_name().c_str()) == 0 &&
+      !this->reconfigure_busy_.load(std::memory_order_acquire)) {
+    this->last_reconfigure_ok_.store(true, std::memory_order_release);
+    ESP_LOGI(TAG, "AFE already in mode %s", name);
+    return true;
+  }
+  if (!this->start_reconfigure_task_()) {
+    return false;
+  }
+  if (this->reconfigure_busy_.load(std::memory_order_acquire) ||
+      uxQueueMessagesWaiting(this->reconfigure_queue_) > 0) {
+    ESP_LOGW(TAG, "AFE reconfigure already in progress; %s will wait for current request", name);
+    return true;
+  }
+
+  ReconfigureRequest req{};
+  std::strncpy(req.mode, name, sizeof(req.mode) - 1);
+  this->reconfigure_busy_.store(true, std::memory_order_release);
+  this->last_reconfigure_ok_.store(false, std::memory_order_release);
+  if (xQueueSend(this->reconfigure_queue_, &req, 0) != pdTRUE) {
+    ESP_LOGW(TAG, "AFE reconfigure queue full; rejecting %s", name);
+    this->reconfigure_busy_.store(false, std::memory_order_release);
+    return false;
+  }
+  ESP_LOGI(TAG, "Queued AFE reconfigure to %s", req.mode);
+  return true;
+}
+
+bool EspAfe::is_reconfigure_idle() const {
+  if (this->reconfigure_queue_ == nullptr) {
+    return !this->reconfigure_busy_.load(std::memory_order_acquire);
+  }
+  return !this->reconfigure_busy_.load(std::memory_order_acquire) &&
+         uxQueueMessagesWaiting(this->reconfigure_queue_) == 0;
+}
+
+void EspAfe::reconfigure_task_trampoline_(void *arg) {
+  static_cast<EspAfe *>(arg)->reconfigure_task_loop_();
+  vTaskDelete(nullptr);
+}
+
+void EspAfe::reconfigure_task_loop_() {
+  ReconfigureRequest req{};
+  while (this->reconfigure_task_running_.load(std::memory_order_acquire)) {
+    if (xQueueReceive(this->reconfigure_queue_, &req, portMAX_DELAY) != pdTRUE) {
+      continue;
+    }
+    ESP_LOGI(TAG, "AFE async reconfigure begin: %s", req.mode);
+    const bool ok = this->reinit_by_name(req.mode);
+    this->last_reconfigure_ok_.store(ok, std::memory_order_release);
+    this->reconfigure_busy_.store(false, std::memory_order_release);
+    ESP_LOGI(TAG, "AFE async reconfigure %s: %s", ok ? "done" : "failed", req.mode);
+  }
+}
+
 bool EspAfe::enable_aec() { return this->set_aec_enabled_runtime_(true); }
 bool EspAfe::disable_aec() { return this->set_aec_enabled_runtime_(false); }
 bool EspAfe::enable_ns() { return this->set_reinit_flag_(this->ns_enabled_, true, "ns_enabled"); }
@@ -2021,7 +2143,15 @@ void EspAfe::stop_pipeline_() {
 #endif
 #ifdef USE_ESP_AFE_GMF_PATH
   if (this->afe_pipeline_ != nullptr && (this->afe_pipeline_running_ || this->afe_pipeline_paused_)) {
-    esp_gmf_pipeline_stop(this->afe_pipeline_);
+    const bool was_paused = this->afe_pipeline_paused_;
+    if (this->afe_pipeline_paused_ && this->afe_manager_ != nullptr) {
+      esp_gmf_afe_manager_suspend(this->afe_manager_, false);
+    }
+    esp_gmf_err_t ret = esp_gmf_pipeline_stop(this->afe_pipeline_);
+    ESP_LOGI(TAG, "GMF AFE pipeline stopped (was_paused=%d, ret=%d)", was_paused, static_cast<int>(ret));
+    if (this->afe_manager_ != nullptr) {
+      esp_gmf_afe_manager_suspend(this->afe_manager_, true);
+    }
     this->afe_pipeline_running_ = false;
     this->afe_pipeline_paused_ = false;
   } else if (this->afe_manager_ != nullptr) {

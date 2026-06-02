@@ -6,6 +6,7 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/switch/switch.h"
 #include "../audio_processor/audio_processor.h"
+#include "../audio_processor/task_utils.h"
 
 #ifdef USE_ESP32
 
@@ -21,6 +22,7 @@
 #include <esp_gmf_port.h>
 #include <esp_gmf_task.h>
 #endif
+#include <freertos/queue.h>
 #include <freertos/ringbuf.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -30,6 +32,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 
 namespace esphome {
@@ -188,6 +191,12 @@ class EspAfe : public Component, public AudioProcessor {
   // Caller must stop audio processing before calling this.
   bool reinit_by_name(const std::string &name);
   bool reinit_by_name(const char *name);
+  bool request_reinit_by_name(const std::string &name);
+  bool request_reinit_by_name(const char *name);
+  bool is_reconfigure_idle() const;
+  bool get_last_reconfigure_ok() const {
+    return this->last_reconfigure_ok_.load(std::memory_order_acquire);
+  }
 
   ~EspAfe() override;
 
@@ -217,6 +226,9 @@ class EspAfe : public Component, public AudioProcessor {
 
   bool build_instance_(AfeInstance *instance);
   bool recreate_instance_(bool require_same_frame_sizes);
+  bool start_reconfigure_task_();
+  static void reconfigure_task_trampoline_(void *arg);
+  void reconfigure_task_loop_();
   bool set_aec_enabled_runtime_(bool enabled);
   bool set_vad_enabled_runtime_(bool enabled);
   bool set_reinit_flag_(std::atomic<bool> &flag, bool enabled, const char *name);
@@ -393,6 +405,20 @@ class EspAfe : public Component, public AudioProcessor {
   //   half-demolished instance.
   std::atomic<bool> drain_request_{false};
   std::atomic<bool> process_busy_{false};
+
+  struct ReconfigureRequest {
+    char mode[32]{};
+  };
+  static constexpr uint32_t kReconfigureTaskStackBytes = 12288;
+  QueueHandle_t reconfigure_queue_{nullptr};
+  StaticQueue_t reconfigure_queue_struct_{};
+  uint8_t reconfigure_queue_storage_[sizeof(ReconfigureRequest)]{};
+  TaskHandle_t reconfigure_task_handle_{nullptr};
+  StaticTask_t reconfigure_task_tcb_{};
+  StackType_t *reconfigure_task_stack_{nullptr};
+  std::atomic<bool> reconfigure_task_running_{false};
+  std::atomic<bool> reconfigure_busy_{false};
+  std::atomic<bool> last_reconfigure_ok_{true};
 
   // afe_stopped_ == true means the GMF pipeline/manager is torn down for a
   // single-mic all-features-off configuration. Dual-mic builds keep SE/BSS
@@ -582,7 +608,7 @@ class SetModeAction : public Action<Ts...>, public Parented<EspAfe> {
  public:
   TEMPLATABLE_VALUE(std::string, mode)
   void play(const Ts &...x) override {
-    this->parent_->reinit_by_name(this->mode_.value(x...));
+    this->parent_->request_reinit_by_name(this->mode_.value(x...));
   }
 };
 
