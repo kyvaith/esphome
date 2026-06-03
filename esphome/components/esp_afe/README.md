@@ -148,7 +148,6 @@ esp_afe:
 | `task_core` | int | `1` | Core preference for the esp-sr SE/BSS worker task created by the AFE instance. |
 | `task_priority` | int | `5` | Priority for the esp-sr SE/BSS worker task. |
 | `ringbuf_size` | int | `8` | Internal ring buffer size in frames (2-32). Larger = more latency tolerance, more memory |
-| `aec_off_output` | string | `official` | Output source used only on dual-mic SE/BSS builds while AEC is disabled: `official` forwards `afe_fetch_result_t::data`; `raw_0` / `raw_1` select `afe_fetch_result_t::raw_data[n]` as documented by ESP-SR for BSS multi-output diagnostics |
 | `feed_task_core` | int | `0` | Official `esp_gmf_afe_manager` feed task core. Espressif defaults this to Core 0. |
 | `feed_task_priority` | int | `5` | Official `esp_gmf_afe_manager` feed task priority. |
 | `feed_task_stack_size` | int | `3072` | Official `esp_gmf_afe_manager` feed task stack size in bytes. |
@@ -252,11 +251,11 @@ that. If `Voice Detected` should keep working in standby, set
 `continuous_vad: true` so the background mic path is intentional.
 
 Dual-mic packages keep the feed sent to ESP-SR fixed: both microphone channels
-plus the playback reference are always present. By default the public bridge
-matches the official `esp_gmf_afe` output (`afe_fetch_result_t::data`). Boards
-that need a true non-AEC BSS/raw output when AEC is disabled can set
-`aec_off_output: raw_0` or `raw_1`; this uses ESP-SR's documented
-`afe_fetch_result_t::raw_data[n]` path without patching Espressif code.
+plus the playback reference are always present. The public bridge consumes the
+official `esp_gmf_afe` output port, so Espressif owns the manager callbacks and
+internal output buffer. That element path does not expose
+`afe_fetch_result_t::raw_data[n]`; keep AEC enabled by default on dual-mic
+SE/BSS boards because AEC-off output may sound metallic.
 
 ```
 TDM / codec input
