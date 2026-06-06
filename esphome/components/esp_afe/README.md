@@ -315,7 +315,14 @@ sensor:
 
 ### esp_afe.set_mode
 
-Change the AFE type and mode at runtime. The entire AFE pipeline is recreated (~70 ms gap).
+Queue an AFE type/mode change at runtime. The action is asynchronous: it returns
+after the request is queued, while a background task tears down and rebuilds the
+AFE instance. On GMF dual-mic builds this can take a few hundred milliseconds,
+so callers that restart audio must wait for `is_reconfigure_idle()` and check
+`get_last_reconfigure_ok()`.
+
+For full audio-stack devices, stop the audio stack first, queue the reconfigure,
+wait for completion, then restart audio only if the reconfigure succeeded.
 
 ```yaml
 select:
@@ -329,19 +336,41 @@ select:
       - voip_high_perf
       - fd_low_cost
       - fd_high_perf
-    initial_option: "sr_low_cost"
+    initial_option: "fd_high_perf"
     optimistic: false           # do NOT auto-publish; we publish the live mode below
-    restore_value: true
+    restore_value: false        # HA mirrors boot config; it does not choose the boot mode
     set_action:
+      - esp_audio_stack.stop_and_wait: audio_stack
+      - wait_until:
+          condition:
+            esp_audio_stack.is_idle: audio_stack
+          timeout: 2s
       - esp_afe.set_mode:
           id: afe_processor
           mode: !lambda 'return x;'
+      - wait_until:
+          condition:
+            lambda: 'return id(afe_processor).is_reconfigure_idle();'
+          timeout: 20s
+      - if:
+          condition:
+            lambda: 'return id(afe_processor).is_reconfigure_idle() && id(afe_processor).get_last_reconfigure_ok();'
+          then:
+            - esp_audio_stack.start: audio_stack
+          else:
+            - logger.log:
+                level: ERROR
+                format: "AFE mode switch did not complete cleanly; audio restart skipped"
       - lambda: 'id(afe_mode_select).publish_state(id(afe_processor).get_mode_name());'
 ```
 
 Valid mode strings: `sr_low_cost`, `sr_high_perf`, `voip_low_cost`, `voip_high_perf`, `fd_low_cost`, `fd_high_perf`.
 
-`get_mode_name()` returns the live mode as a string after the reinit. The `optimistic: false` plus the explicit `publish_state()` at the end is the recommended pattern: it stops `template_select::control()` from auto-publishing the user-selected value over a rejected switch (e.g. when `sr_high_perf` cannot allocate the contiguous DMA-capable internal block).
+`get_mode_name()` returns the live mode as a string after the reinit. The
+`optimistic: false` plus the explicit `publish_state()` at the end is the
+recommended pattern: it stops `template_select::control()` from auto-publishing
+the user-selected value over a rejected switch (e.g. when a high-performance mode
+cannot allocate the contiguous DMA-capable internal block).
 
 ## Feature Toggle Behavior
 
@@ -352,8 +381,8 @@ manager exposes only part of the lower ESP-SR runtime control surface:
 |---------|-------------|-----------|-------|
 | AEC | Live GMF manager call | None | Immediate on/off via `ESP_AFE_FEATURE_AEC` |
 | SE | Boot-time graph choice | N/A | Structural on dual-mic builds; single-mic users should use a single-mic config or `esp_aec` |
-| NS | AFE reinit | ~70ms plus possible audio-task restart | ESP-SR exposes low-level vtable entries, but `esp_gmf_afe_manager` does not expose an NS feature enum. Not exposed on dual-mic SE/BSS builds because `afe_config_check()` prioritizes BSS over NS |
-| AGC | AFE reinit | ~70ms plus possible audio-task restart | Same manager limitation as NS. Not exposed by public dual-mic packages because toggling rebuilds the AFE graph and can disturb full-experience audio under load |
+| NS | AFE reinit | hundreds of ms plus possible audio-task restart | ESP-SR exposes low-level vtable entries, but `esp_gmf_afe_manager` does not expose an NS feature enum. Not exposed on dual-mic SE/BSS builds because `afe_config_check()` prioritizes BSS over NS |
+| AGC | AFE reinit | hundreds of ms plus possible audio-task restart | Same manager limitation as NS. Not exposed by public dual-mic packages because toggling rebuilds the AFE graph and can disturb full-experience audio under load |
 | VAD | Live GMF manager call | None | `vad_init` stays structural; runtime on/off gates `ESP_AFE_FEATURE_VAD` without rebuilding the AFE instance |
 
 **Why reinit for NS/AGC?** ESP-SR's low-level AFE vtable includes
@@ -469,10 +498,17 @@ select:
       - sr_low_cost
       - sr_high_perf
     initial_option: sr_low_cost
+    optimistic: false
+    restore_value: false
     set_action:
       - esp_afe.set_mode:
           id: afe_processor
           mode: !lambda 'return x;'
+      - wait_until:
+          condition:
+            lambda: 'return id(afe_processor).is_reconfigure_idle();'
+          timeout: 20s
+      - lambda: 'id(afe_mode_select).publish_state(id(afe_processor).get_mode_name());'
 ```
 
 ## Memory Usage
