@@ -18,7 +18,6 @@ from esphome.components.esp32 import (
     add_idf_sdkconfig_option,
     get_esp32_variant,
 )
-from esphome.components.esp32.const import KEY_ESP32, KEY_SDKCONFIG_OPTIONS
 from esphome.components.image import (
     CONF_OPAQUE,
     IMAGE_TYPE,
@@ -306,15 +305,7 @@ async def to_code(configs):
         "LV_LOG_LEVEL",
         f"LV_LOG_LEVEL_{df.LV_LOG_LEVELS[config_0[CONF_LOG_LEVEL]]}",
     )
-    sdkconfig_options = CORE.data.get(KEY_ESP32, {}).get(KEY_SDKCONFIG_OPTIONS, {})
-    lv_use_log_config = sdkconfig_options.get("CONFIG_LV_USE_LOG")
-    if lv_use_log_config is None:
-        lv_use_log = "1"
-    elif isinstance(lv_use_log_config, bool):
-        lv_use_log = "1" if lv_use_log_config else "0"
-    else:
-        lv_use_log = "1" if str(lv_use_log_config).lower() in ("1", "y", "yes", "true") else "0"
-    df.add_define("LV_USE_LOG", lv_use_log)
+    df.add_define("LV_USE_LOG", "1")
     cg.add_define(
         "LVGL_LOG_LEVEL",
         cg.RawExpression(f"ESPHOME_LOG_LEVEL_{config_0[CONF_LOG_LEVEL]}"),
