@@ -626,27 +626,26 @@ async def to_code(configs):
     # LV_USE_<WIDGET>=0, the theme still references the symbol -> linker error.
     #
     # IMPORTANT: Use CANONICAL define names (the ones with #ifndef guards in
-    # lv_conf_internal.h). LVGL v9.x uses short names as canonical and creates
-    # aliases for long names:
-    #   #ifndef LV_USE_BTN -> canonical (we can override)
-    #   #define LV_USE_BUTTON LV_USE_BTN -> alias (cannot override without warning)
+    # lv_conf_internal.h). LVGL 9.5 uses the long widget names for most widgets,
+    # while ESPHome and old LVGL aliases can still use short names such as
+    # "btn", "img" and "imgbtn".
     #
     # ESPHome lv_uses may contain both long names (from widget self.name, e.g. "button")
     # and short names (from get_uses(), e.g. "btn"). Map all to canonical.
     _TO_CANONICAL = {
-        "BUTTON": "BTN",
-        "BUTTONMATRIX": "BTNMATRIX",
-        "IMAGE": "IMG",
-        "IMAGEBUTTON": "IMGBTN",
+        "BTN": "BUTTON",
+        "BTNMATRIX": "BUTTONMATRIX",
+        "IMG": "IMAGE",
+        "IMGBTN": "IMAGEBUTTON",
         "ANIMIMAGE": "ANIMIMG",
         "SPANGROUP": "SPAN",
         "METER": "SCALE",
     }
     # All canonical LV_USE_* widget define names in LVGL v9.x
     _ALL_CANONICAL_WIDGETS = {
-        "ANIMIMG", "ARC", "BAR", "BTN", "BTNMATRIX",
+        "ANIMIMG", "ARC", "BAR", "BUTTON", "BUTTONMATRIX",
         "CALENDAR", "CANVAS", "CHART", "CHECKBOX", "DROPDOWN",
-        "IMG", "IMGBTN", "KEYBOARD", "LABEL", "LED",
+        "IMAGE", "IMAGEBUTTON", "KEYBOARD", "LABEL", "LED",
         "LINE", "LIST", "MENU", "MSGBOX", "ROLLER", "SCALE",
         "SLIDER", "SPAN", "SPINBOX", "SPINNER", "SWITCH",
         "TABLE", "TABVIEW", "TEXTAREA", "TILEVIEW", "WIN",
@@ -671,7 +670,7 @@ async def to_code(configs):
 
     # lv_theme_default.c references lv_buttonmatrix_class unconditionally,
     # so buttonmatrix must always be compiled even if not used in the YAML.
-    _THEME_REQUIRED_WIDGETS = {"BTNMATRIX"}
+    _THEME_REQUIRED_WIDGETS = {"BUTTONMATRIX"}
     _used_canonical |= _THEME_REQUIRED_WIDGETS
     # Also add to lv_uses so the build filter includes the source files
     for w in _THEME_REQUIRED_WIDGETS:

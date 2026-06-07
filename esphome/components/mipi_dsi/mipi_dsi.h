@@ -189,5 +189,7 @@ class MIPI_DSI : public display::Display {
   uint16_t y_high_{0};
 };
 
+using MipiDsi = MIPI_DSI;
+
 }  // namespace esphome::mipi_dsi
 #endif
