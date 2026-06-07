@@ -1654,22 +1654,19 @@ bool EspAfe::request_reinit_by_name(const char *name) {
   if (!this->start_reconfigure_task_()) {
     return false;
   }
-  if (this->reconfigure_busy_.load(std::memory_order_acquire) ||
-      uxQueueMessagesWaiting(this->reconfigure_queue_) > 0) {
-    ESP_LOGW(TAG, "AFE reconfigure already in progress; %s will wait for current request", name);
-    return true;
-  }
-
   ReconfigureRequest req{};
   std::strncpy(req.mode, name, sizeof(req.mode) - 1);
+  const bool already_pending = this->reconfigure_busy_.load(std::memory_order_acquire) ||
+                               uxQueueMessagesWaiting(this->reconfigure_queue_) > 0;
   this->reconfigure_busy_.store(true, std::memory_order_release);
   this->last_reconfigure_ok_.store(false, std::memory_order_release);
-  if (xQueueSend(this->reconfigure_queue_, &req, 0) != pdTRUE) {
-    ESP_LOGW(TAG, "AFE reconfigure queue full; rejecting %s", name);
+  if (xQueueOverwrite(this->reconfigure_queue_, &req) != pdTRUE) {
+    ESP_LOGW(TAG, "AFE reconfigure queue write failed; rejecting %s", name);
     this->reconfigure_busy_.store(false, std::memory_order_release);
     return false;
   }
-  ESP_LOGI(TAG, "Queued AFE reconfigure to %s", req.mode);
+  ESP_LOGI(TAG, "%s AFE reconfigure to %s",
+           already_pending ? "Updated pending" : "Queued", req.mode);
   return true;
 }
 
@@ -1692,6 +1689,7 @@ void EspAfe::reconfigure_task_loop_() {
     if (xQueueReceive(this->reconfigure_queue_, &req, portMAX_DELAY) != pdTRUE) {
       continue;
     }
+    this->reconfigure_busy_.store(true, std::memory_order_release);
     ESP_LOGI(TAG, "AFE async reconfigure begin: %s", req.mode);
     const bool ok = this->reinit_by_name(req.mode);
     this->last_reconfigure_ok_.store(ok, std::memory_order_release);
@@ -2283,14 +2281,14 @@ bool EspAfe::prepare_fetch_output_ring_() {
   }
 
   if (!this->fetch_output_ring_) {
-    // kBridgeRingFrames of headroom (~128 ms at 16 kHz / 512-sample fetch) absorb
-    // consumer-side jitter when process() is preempted by higher-priority
-    // tasks. Placement is YAML-controlled: internal saves ~6.8 us/frame on
-    // Core 0 read, PSRAM saves ~4 KB internal RAM (set fetch_ring_in_psram).
+    // NOSPLIT keeps each processed AFE frame atomic. process() either receives
+    // a whole frame or emits silence; it never consumes a short byte-buffer read
+    // that would shift the microphone surface seen by MWW/VA/intercom.
     const size_t frame_bytes = static_cast<size_t>(this->fetch_chunksize_) * sizeof(int16_t);
+    const size_t ring_bytes = (frame_bytes + kRingbufferItemHeaderBytes) * kBridgeRingFrames;
     this->fetch_output_ring_ = this->fetch_ring_in_psram_
-        ? audio_processor::create_prefer_psram(frame_bytes * kBridgeRingFrames, "esp_afe.fetch_output_ring")
-        : audio_processor::create_internal(frame_bytes * kBridgeRingFrames, "esp_afe.fetch_output_ring");
+        ? audio_processor::create_nosplit_prefer_psram(ring_bytes, "esp_afe.fetch_output_ring")
+        : audio_processor::create_nosplit_internal(ring_bytes, "esp_afe.fetch_output_ring");
     if (!this->fetch_output_ring_) {
       ESP_LOGE(TAG, "Failed to allocate AFE fetch output ring buffer");
       return false;

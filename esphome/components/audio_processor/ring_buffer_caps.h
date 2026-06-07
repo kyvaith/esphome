@@ -40,8 +40,23 @@ enum class RingBufferPolicy {
 /// derived object has no additional fields.
 class CapsRingBuffer : public ring_buffer::RingBuffer {
  public:
-  bool install(size_t len, uint32_t caps);
+  ~CapsRingBuffer();
+
+  bool install(size_t len, uint32_t caps, RingbufferType_t type = RINGBUF_TYPE_BYTEBUF);
   const void *probe_storage() const { return this->storage_; }
+
+  size_t read(void *data, size_t len, TickType_t ticks_to_wait = 0);
+  size_t write(const void *data, size_t len);
+  size_t write_without_replacement(const void *data, size_t len, TickType_t ticks_to_wait = 0,
+                                   bool write_partial = true);
+  BaseType_t reset();
+
+ protected:
+  bool discard_bytes_(size_t discard_bytes);
+
+ private:
+  bool is_nosplit_() const { return this->type_ == RINGBUF_TYPE_NOSPLIT; }
+  RingbufferType_t type_{RINGBUF_TYPE_BYTEBUF};
 };
 
 using RingBufferPtr = std::unique_ptr<CapsRingBuffer>;
@@ -53,6 +68,7 @@ using RingBufferPtr = std::unique_ptr<CapsRingBuffer>;
 /// @param name   identifier for boot-time placement log (must outlive the call)
 /// @return owned pointer, or nullptr on allocation failure
 RingBufferPtr create_ring_buffer(size_t len, RingBufferPolicy policy, const char *name);
+RingBufferPtr create_nosplit_ring_buffer(size_t len, RingBufferPolicy policy, const char *name);
 
 /// Convenience: force internal RAM. Use for audio hot-path ring buffers.
 inline RingBufferPtr create_internal(size_t len, const char *name) {
@@ -67,6 +83,14 @@ inline RingBufferPtr create_prefer_psram(size_t len, const char *name) {
 /// Convenience: PSRAM only. Use only when internal must be preserved at all cost.
 inline RingBufferPtr create_psram(size_t len, const char *name) {
   return create_ring_buffer(len, RingBufferPolicy::PSRAM_ONLY, name);
+}
+
+inline RingBufferPtr create_nosplit_internal(size_t len, const char *name) {
+  return create_nosplit_ring_buffer(len, RingBufferPolicy::INTERNAL, name);
+}
+
+inline RingBufferPtr create_nosplit_prefer_psram(size_t len, const char *name) {
+  return create_nosplit_ring_buffer(len, RingBufferPolicy::PREFER_PSRAM, name);
 }
 
 }  // namespace audio_processor
