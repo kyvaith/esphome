@@ -12,10 +12,13 @@ Communication from ESPHome (__init__.py) via build flags:
 """
 # ruff: noqa: F821
 # pylint: disable=undefined-variable
+from contextlib import suppress
 from pathlib import Path
 import re
 
-Import("env")
+env = None
+with suppress(NameError):
+    Import("env")  # type: ignore[name-defined]
 
 ATOMIC_SHIM_TEXT = """#pragma once
 
@@ -41,6 +44,8 @@ def write_atomic_shim(shim):
 
 
 def create_piolibdeps_atomic_shim():
+    if env is None:
+        return
     libdeps_dir = env.subst("$PROJECT_LIBDEPS_DIR")
     pioenv = env.subst("$PIOENV")
     if libdeps_dir and pioenv:
@@ -52,7 +57,7 @@ create_piolibdeps_atomic_shim()
 
 def patch_profiler_builtin_source(src):
     src = Path(src)
-    if not src.exists():
+    if not src.exists() and env is not None:
         libdeps_dir = env.subst("$PROJECT_LIBDEPS_DIR")
         pioenv = env.subst("$PIOENV")
         candidate = Path(libdeps_dir) / pioenv / "lvgl" / "src" / "misc" / "lv_profiler_builtin.c"
@@ -85,7 +90,7 @@ def patch_profiler_builtin_source(src):
         print("WARNING: failed to patch LVGL profiler source:", err)
 
 # Parse build flags from ESPHome's __init__.py
-_build_flags = " ".join(env.get("BUILD_FLAGS", []))
+_build_flags = " ".join(env.get("BUILD_FLAGS", [])) if env is not None else ""
 _thorvg_enabled = "LVGL_USE_THORVG=1" in _build_flags
 _sysmon_enabled = "LVGL_USE_SYSMON=1" in _build_flags
 
@@ -164,7 +169,7 @@ if "lottie" in _used_widgets:
     _needed_widget_files.add("canvas")
     _needed_widget_files.add("image")
 
-def lvgl_src_filter(env, node):
+def lvgl_src_filter(build_env, node):
     """Skip compilation of LVGL source files not needed for ESP32."""
     path = str(node.get_path()).replace("\\", "/")
 
@@ -335,4 +340,5 @@ def lvgl_src_filter(env, node):
     return node
 
 
-env.AddBuildMiddleware(lvgl_src_filter)
+if env is not None:
+    env.AddBuildMiddleware(lvgl_src_filter)
