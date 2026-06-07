@@ -693,9 +693,12 @@ async def to_code(configs):
     )
 
     if needs_thorvg:
+        df.add_define("LV_USE_DRAW_SW", "1")
+        df.add_define("LV_DRAW_SW_DRAW_UNIT_CNT", "1")
         df.add_define("LV_USE_FLOAT", "1")
         df.add_define("LV_USE_MATRIX", "1")
         df.add_define("LV_USE_VECTOR_GRAPHIC", "1")
+        df.add_define("LV_USE_THORVG", "1")
         df.add_define("LV_USE_THORVG_INTERNAL", "1")
         df.add_define("LV_VG_LITE_THORVG_16PIXELS_ALIGN", "1")
         # Large stack for ThorVG rendering
@@ -709,6 +712,7 @@ async def to_code(configs):
         df.add_define("LV_USE_FLOAT", "0")
         df.add_define("LV_USE_MATRIX", "0")
         df.add_define("LV_USE_VECTOR_GRAPHIC", "0")
+        df.add_define("LV_USE_THORVG", "0")
         df.add_define("LV_USE_THORVG_INTERNAL", "0")
         df.add_define("LV_USE_SVG", "0")
         df.add_define("LV_USE_LOTTIE", "0")
