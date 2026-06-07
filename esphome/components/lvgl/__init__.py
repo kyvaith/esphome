@@ -440,6 +440,7 @@ async def to_code(configs):
             displays,
             frac,
             config[df.CONF_FULL_REFRESH],
+            config[df.CONF_DIRECT_MODE],
             config[CONF_DRAW_ROUNDING],
             config[df.CONF_RESUME_ON_INPUT],
             config[df.CONF_UPDATE_WHEN_DISPLAY_IDLE],
@@ -725,6 +726,7 @@ LVGL_SCHEMA = cv.All(
                     df.CONF_DEFAULT_FONT, default="montserrat_14"
                 ): lvalid.lv_font,
                 cv.Optional(df.CONF_FULL_REFRESH, default=False): cv.boolean,
+                cv.Optional(df.CONF_DIRECT_MODE, default=False): cv.boolean,
                 cv.Optional(
                     df.CONF_UPDATE_WHEN_DISPLAY_IDLE, default=False
                 ): cv.boolean,
