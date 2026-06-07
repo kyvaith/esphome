@@ -128,6 +128,9 @@ CODEOWNERS = ["@clydebarrow"]
 HELLO_WORLD_FILE = "hello_world.yaml"
 CONF_USE_PPA = "use_ppa"
 CONF_USE_PPA_IMG = "use_ppa_img"
+CONF_FPS_BENCHMARK = "fps_benchmark"
+CONF_PERF_MONITOR = "perf_monitor"
+CONF_PROFILER = "profiler"
 
 
 SIMPLE_TRIGGERS = (
@@ -142,6 +145,12 @@ def as_macro(macro, value):
     if value is None:
         return f"#define {macro}"
     return f"#define {macro} {value}"
+
+
+def _config_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() in ("1", "y", "yes", "true")
 
 
 LVGL_VERSION = "9.5.0"
@@ -343,6 +352,40 @@ async def to_code(configs):
         cg.add_define("LV_USE_PPA_IMG")
     build_filter_script = Path(__file__).parent / "lvgl_build_filter.py"
     cg.add_platformio_option("extra_scripts", [f"pre:{build_filter_script}"])
+    use_fps_benchmark = _config_bool(config_0.get(CONF_FPS_BENCHMARK, False))
+    use_perf_monitor = _config_bool(config_0.get(CONF_PERF_MONITOR, False))
+    use_profiler = _config_bool(config_0.get(CONF_PROFILER, False))
+    if use_fps_benchmark:
+        cg.add_define("USE_LVGL_FPS_BENCHMARK")
+    if use_perf_monitor:
+        df.add_define("LV_USE_LOG", "1")
+        df.add_define("LV_USE_SYSMON", "1")
+        df.add_define("LV_USE_PERF_MONITOR", "1")
+        df.add_define("LV_USE_PERF_MONITOR_POS", "LV_ALIGN_BOTTOM_RIGHT")
+        df.add_define("LV_USE_PERF_MONITOR_LOG_MODE", "0")
+        cg.add_build_flag("-DLVGL_USE_SYSMON=1")
+        cg.add_build_flag("-Wl,--wrap=lv_timer_get_idle")
+        cg.add_build_flag("-Wl,--wrap=lv_os_get_idle_percent")
+    if use_profiler:
+        df.add_define("LV_USE_LOG", "1")
+        df.add_define("LV_USE_PROFILER", "1")
+        df.add_define("LV_USE_PROFILER_BUILTIN", "1")
+        df.add_define("LV_PROFILER_BUILTIN_BUF_SIZE", "(64 * 1024)")
+        df.add_define("LV_PROFILER_BUILTIN_DEFAULT_ENABLE", "0")
+        df.add_define("LV_USE_PROFILER_BUILTIN_POSIX", "0")
+        df.add_define("LV_PROFILER_INCLUDE", '"misc/lv_profiler_builtin.h"')
+        df.add_define("LV_PROFILER_LAYOUT", "1")
+        df.add_define("LV_PROFILER_REFR", "1")
+        df.add_define("LV_PROFILER_DRAW", "1")
+        df.add_define("LV_PROFILER_INDEV", "0")
+        df.add_define("LV_PROFILER_TIMER", "1")
+        df.add_define("LV_PROFILER_EVENT", "0")
+        df.add_define("LV_PROFILER_FONT", "0")
+        df.add_define("LV_PROFILER_DECODER", "0")
+        df.add_define("LV_PROFILER_CACHE", "0")
+        df.add_define("LV_PROFILER_FS", "0")
+        df.add_define("LV_PROFILER_STYLE", "0")
+        cg.add_build_flag("-DLVGL_USE_PROFILER=1")
     # suppress default enabling of extra widgets
     df.add_define("_LV_KCONFIG_PRESENT")
     df.add_define("LV_USE_ASSERT_NULL", "0")
@@ -778,6 +821,9 @@ LVGL_SCHEMA = cv.All(
                 cv.Optional(df.CONF_RESUME_ON_INPUT, default=True): cv.boolean,
                 cv.Optional(CONF_USE_PPA, default=False): cv.boolean,
                 cv.Optional(CONF_USE_PPA_IMG, default=False): cv.boolean,
+                cv.Optional(CONF_FPS_BENCHMARK, default=False): cv.boolean,
+                cv.Optional(CONF_PERF_MONITOR, default=False): cv.boolean,
+                cv.Optional(CONF_PROFILER, default=False): cv.boolean,
             }
         )
         .extend(DISP_BG_SCHEMA),
