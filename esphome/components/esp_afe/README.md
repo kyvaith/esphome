@@ -160,14 +160,13 @@ esp_afe:
 
 > **Buffer placement guidance**: defaults are tuned for the fastest Core 0
 > audio path. Total internal cost when all three flags are `false` is about
-> 19 KB. Current public dual-mic full-experience profiles use a hybrid
-> placement: `feed_buf_in_psram: false`, `feed_ring_in_psram: true`,
-> `fetch_ring_in_psram: false`. This keeps hot per-frame scratch/output
-> internal while moving the larger feed staging ring to PSRAM. The surrounding
-> `esp_audio_stack` and `intercom_api` frame buffers can still live in PSRAM
-> to preserve contiguous internal/DMA heap for HTTPS media, TTS and intercom.
-> Each flag remains independent for board-specific tuning. Cumulative Core 0
-> cost when all are `true` is about
+> 19 KB. Current maintained dual-mic full-experience profiles keep
+> `feed_buf_in_psram`, `feed_ring_in_psram` and `fetch_ring_in_psram` false
+> when the board has enough contiguous internal/DMA heap. This avoids PSRAM
+> traffic on the hot AFE bridge path and improved P4 intercom/TTS latency during
+> validation. Each flag remains independent for board-specific tuning: enabling
+> them can recover up to about 19 KB internal RAM, at the cost of Core 0 PSRAM
+> reads/writes. Cumulative Core 0 cost when all are `true` is about
 > 68 us/frame on Octal PSRAM 80 MHz, lower bound.
 
 > **Defaults are designed so that a minimal config already enables AEC + NS + AGC.** You only need to declare options that differ from the defaults. In particular:

@@ -231,6 +231,25 @@ external_components:
     components: [audio_processor, esp_audio_stack, esp_aec, intercom_api]
 ```
 
+If the device also uses ESPHome's `speaker` media player for HA media/TTS
+playback, full-experience profiles should include the project-local `speaker`
+fork too:
+
+```yaml
+external_components:
+  - source:
+      type: git
+      url: https://github.com/n-IA-hane/esphome-intercom
+      ref: main
+    components: [audio_processor, esp_audio_stack, esp_aec, intercom_api, speaker]
+```
+
+That fork does not change I2S ownership. It adds the
+`pause_releases_pipeline` media-player mode documented in
+[`../speaker/README.md`](../speaker/README.md), so paused media does not keep a
+pipeline around while Voice Assistant TTS, timer alarms or intercom audio need
+the same mixer/output graph.
+
 ### Component Boundaries
 
 `esp_audio_stack` owns the shared I2S bus, codec/data backend, rate conversion,
@@ -718,6 +737,7 @@ HA reads the `sample_rate` from the `announcement_pipeline` in the `media_player
 ```yaml
 media_player:
   - platform: speaker
+    pause_releases_pipeline: true
     announcement_pipeline:
       speaker: va_speaker        # Points to the resampler speaker
       format: FLAC
