@@ -36,17 +36,17 @@ Note: ThorVG rendering requires a large stack (32 KB+). The rendering is
 deferred to a FreeRTOS task with stack allocated in PSRAM to avoid overflow.
 """
 
-import re
 from pathlib import Path
+import re
 
 from esphome import codegen as cg, config_validation as cv
-from esphome.const import CONF_FILE, CONF_HEIGHT, CONF_ID, CONF_RAW_DATA_ID, CONF_WIDTH
+from esphome.const import CONF_FILE, CONF_HEIGHT, CONF_RAW_DATA_ID, CONF_WIDTH
 from esphome.core import CORE
 
-from ..defines import CONF_MAIN, CONF_SRC, add_lv_use, literal
+from ..defines import CONF_MAIN, CONF_SRC, add_lv_use
 from ..lv_validation import size
-from ..lvcode import lv_obj
-from ..types import LvType, lv_obj_t
+from ..lvcode import lv_add, lv_obj
+from ..types import LvType
 from . import Widget, WidgetType
 
 # Global flag – add the #include once
@@ -130,22 +130,21 @@ def validate_svg_source(config):
         )
 
     # For src method, width and height are required
-    if has_src:
-        if CONF_WIDTH not in config or CONF_HEIGHT not in config:
-            raise cv.Invalid(
-                "'width' and 'height' are required when using 'src' "
-                "(filesystem path). Cannot auto-detect dimensions at compile time."
-            )
+    if has_src and (CONF_WIDTH not in config or CONF_HEIGHT not in config):
+        raise cv.Invalid(
+            "'width' and 'height' are required when using 'src' "
+            "(filesystem path). Cannot auto-detect dimensions at compile time."
+        )
 
     # For file method, auto-detect dimensions from SVG
     if has_file:
         file_path = config[CONF_FILE]
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with Path(file_path).open(encoding="utf-8") as f:
                 svg_text = f.read()
             svg_w, svg_h = _parse_svg_dimensions(svg_text)
-        except Exception as e:
-            raise cv.Invalid(f"Error reading SVG file {file_path}: {e}")
+        except (OSError, UnicodeError) as err:
+            raise cv.Invalid(f"Error reading SVG file {file_path}: {err}") from err
 
         # Use auto-detected dimensions unless the user explicitly provided them
         if CONF_WIDTH not in config and CONF_HEIGHT not in config:
@@ -192,14 +191,12 @@ class SvgType(WidgetType):
         return ("CANVAS", "SVG", "THORVG_INTERNAL", "VECTOR_GRAPHIC")
 
     async def to_code(self, w: Widget, config):
-        global _svg_include_added
+        global _svg_include_added  # noqa: PLW0603
 
         add_lv_use("CANVAS")
         add_lv_use("SVG")
         add_lv_use("THORVG_INTERNAL")
         add_lv_use("VECTOR_GRAPHIC")
-
-        from ..lvcode import lv_add
 
         # Determine dimensions
         if CONF_SVG_WIDTH in config:
@@ -234,11 +231,11 @@ class SvgType(WidgetType):
 
         elif file_path := config.get(CONF_FILE):
             # ------- Embedded SVG -------
-            with open(file_path, "rb") as f:
+            with Path(file_path).open("rb") as f:
                 svg_data = f.read()
 
             # Ensure null-terminated (ThorVG expects C string)
-            svg_data_with_null = svg_data + b'\x00'
+            svg_data_with_null = svg_data + b"\x00"
 
             raw_data_id = config[CONF_RAW_DATA_ID]
             prog_arr = cg.progmem_array(raw_data_id, list(svg_data_with_null))

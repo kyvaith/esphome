@@ -6,15 +6,10 @@ The image button widget is a button that displays images for different states
 """
 
 import esphome.config_validation as cv
-from esphome.const import CONF_STATE
 
-from ..defines import (
-    CONF_MAIN,
-    CONF_SRC,
-    add_lv_use,
-)
+from ..defines import CONF_MAIN, add_lv_use
 from ..lv_validation import lv_image
-from ..lvcode import lv, literal
+from ..lvcode import literal, lv
 from ..types import LvType
 from . import Widget, WidgetType
 

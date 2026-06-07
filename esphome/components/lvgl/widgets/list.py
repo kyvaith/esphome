@@ -1,13 +1,7 @@
 import esphome.config_validation as cv
 from esphome.const import CONF_ITEMS, CONF_TEXT, CONF_TYPE
 
-from ..defines import (
-    CONF_MAIN,
-    CONF_SCROLLBAR,
-    CONF_SRC,
-    add_lv_use,
-    literal,
-)
+from ..defines import CONF_MAIN, CONF_SCROLLBAR, CONF_SRC, add_lv_use, literal
 from ..lv_validation import lv_image, lv_text
 from ..lvcode import lv
 from ..types import LvType

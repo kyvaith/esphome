@@ -8,6 +8,16 @@ import logging
 from typing import Any
 
 from esphome import codegen as cg, config_validation as cv
+
+# Re-exported for existing LVGL widget imports.
+from esphome.components.const import (  # pylint: disable=unused-import
+    CONF_ANGLE_RANGE,  # noqa: F401
+    CONF_COLOR_END,  # noqa: F401
+    CONF_COLOR_START,  # noqa: F401
+    CONF_POINTS,  # noqa: F401
+    CONF_SCALE,  # noqa: F401
+    CONF_STRIDE,  # noqa: F401
+)
 from esphome.const import CONF_ITEMS
 from esphome.core import CORE, ID, Lambda
 from esphome.cpp_generator import (
@@ -687,7 +697,6 @@ CONF_ADJUSTABLE = "adjustable"
 CONF_ALIGN = "align"
 CONF_ALIGN_TO = "align_to"
 CONF_ALIGN_TO_LAMBDA_ID = "align_to_lambda_id"
-CONF_ANGLE_RANGE = "angle_range"
 CONF_ANIMATED = "animated"
 CONF_ANIMATION = "animation"
 CONF_ANIMATIONS = "animations"
@@ -709,8 +718,6 @@ CONF_BUTTONS = "buttons"
 CONF_CHANGE_RATE = "change_rate"
 CONF_CLOSE_BUTTON = "close_button"
 CONF_COLOR_DEPTH = "color_depth"
-CONF_COLOR_END = "color_end"
-CONF_COLOR_START = "color_start"
 CONF_CONTAINER = "container"
 CONF_CONTROL = "control"
 CONF_DEFAULT_FONT = "default_font"
@@ -780,7 +787,6 @@ CONF_PASSWORD_MODE = "password_mode"
 CONF_PIVOT_X = "pivot_x"
 CONF_PIVOT_Y = "pivot_y"
 CONF_PLACEHOLDER_TEXT = "placeholder_text"
-CONF_POINTS = "points"
 CONF_PREVIOUS = "previous"
 CONF_RADIUS = "radius"
 CONF_REPEAT_COUNT = "repeat_count"
@@ -790,7 +796,6 @@ CONF_RIGHT_BUTTON = "right_button"
 CONF_ROLLOVER = "rollover"
 CONF_ROOT_BACK_BTN = "root_back_btn"
 CONF_ROWS = "rows"
-CONF_SCALE = "scale"
 CONF_SCALE_LINES = "scale_lines"
 CONF_SCROLLBAR_MODE = "scrollbar_mode"
 CONF_SCROLL_DIR = "scroll_dir"
@@ -804,7 +809,6 @@ CONF_SRC = "src"
 CONF_START_ANGLE = "start_angle"
 CONF_START_VALUE = "start_value"
 CONF_STATES = "states"
-CONF_STRIDE = "stride"
 CONF_STYLE = "style"
 CONF_STYLES = "styles"
 CONF_STYLE_DEFINITIONS = "style_definitions"

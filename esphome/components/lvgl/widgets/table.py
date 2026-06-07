@@ -1,12 +1,7 @@
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_ROW, CONF_TEXT, CONF_WIDTH
 
-from ..defines import (
-    CONF_COLUMN,
-    CONF_ITEMS,
-    CONF_MAIN,
-    add_lv_use,
-)
+from ..defines import CONF_COLUMN, CONF_ITEMS, CONF_MAIN, add_lv_use
 from ..lv_validation import lv_int, lv_text
 from ..lvcode import lv
 from ..types import LvType

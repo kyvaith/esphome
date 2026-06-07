@@ -1,7 +1,7 @@
 from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.const import CONF_DATE, CONF_ID, CONF_YEAR
+from esphome.const import CONF_DAY, CONF_ID, CONF_MONTH, CONF_YEAR
 from esphome.core import Lambda
 
 from ..automation import action_to_code
@@ -15,8 +15,6 @@ CONF_CALENDAR = "calendar"
 CONF_TODAY_DATE = "today_date"
 CONF_SHOWED_DATE = "showed_date"
 CONF_HIGHLIGHTED_DATES = "highlighted_dates"
-CONF_MONTH = "month"
-CONF_DAY = "day"
 CONF_HEADER_MODE = "header_mode"
 CONF_DAY_NAMES = "day_names"
 
@@ -217,9 +215,11 @@ async def calendar_update_to_code(config, action_id, template_arg, args):
                 for k in (CONF_YEAR, CONF_MONTH, CONF_DAY)
             )
             if has_lambda:
-                with LocalVariable("_td_y", cg.int32, year, modifier="") as y_var:
-                    with LvConditional(literal(f"{y_var} > 0")):
-                        lv.calendar_set_today_date(w.obj, y_var, month, day)
+                with (
+                    LocalVariable("_td_y", cg.int32, year, modifier="") as y_var,
+                    LvConditional(literal(f"{y_var} > 0")),
+                ):
+                    lv.calendar_set_today_date(w.obj, y_var, month, day)
             else:
                 lv.calendar_set_today_date(w.obj, year, month, day)
 
@@ -234,9 +234,11 @@ async def calendar_update_to_code(config, action_id, template_arg, args):
                 for k in (CONF_YEAR, CONF_MONTH)
             )
             if has_lambda:
-                with LocalVariable("_sd_y", cg.int32, year, modifier="") as y_var:
-                    with LvConditional(literal(f"{y_var} > 0")):
-                        lv.calendar_set_month_shown(w.obj, y_var, month)
+                with (
+                    LocalVariable("_sd_y", cg.int32, year, modifier="") as y_var,
+                    LvConditional(literal(f"{y_var} > 0")),
+                ):
+                    lv.calendar_set_month_shown(w.obj, y_var, month)
             else:
                 lv.calendar_set_month_shown(w.obj, year, month)
 

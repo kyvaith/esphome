@@ -11,13 +11,11 @@ The menu widget provides hierarchical navigation with:
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_MODE
+from esphome.const import CONF_ID, CONF_MODE, CONF_PAGES
 
 from ..defines import (
-    CONF_BODY,
     CONF_HEADER,
     CONF_MAIN,
-    CONF_PAGE,
     CONF_SIDEBAR,
     CONF_TITLE,
     add_lv_use,
@@ -31,7 +29,6 @@ from . import Widget, WidgetType, add_widgets, set_obj_properties
 from .obj import obj_spec
 
 CONF_MENU = "menu"
-CONF_PAGES = "pages"
 CONF_ROOT_BACK_BUTTON = "root_back_button"
 CONF_SIDEBAR_PAGE = "sidebar_page"
 

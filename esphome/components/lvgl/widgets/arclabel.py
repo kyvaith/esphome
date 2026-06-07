@@ -8,10 +8,10 @@ import esphome.config_validation as cv
 from esphome.const import CONF_ROTATION, CONF_TEXT
 
 from ..defines import (
-    CONF_START_ANGLE,
     CONF_END_ANGLE,
-    CONF_RADIUS,
     CONF_MAIN,
+    CONF_RADIUS,
+    CONF_START_ANGLE,
     add_lv_use,
 )
 from ..lv_validation import lv_angle_degrees, lv_text, pixels

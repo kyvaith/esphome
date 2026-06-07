@@ -8,7 +8,6 @@ In LVGL v9, lv_win_create(parent) creates a flex-column container with:
 """
 
 import esphome.config_validation as cv
-from esphome.const import CONF_ID
 
 from ..defines import (
     CONF_BODY,
@@ -20,7 +19,7 @@ from ..defines import (
     literal,
 )
 from ..lv_validation import lv_image, lv_text
-from ..lvcode import lv, lv_expr
+from ..lvcode import lv
 from ..types import LvType
 from . import Widget, WidgetType
 

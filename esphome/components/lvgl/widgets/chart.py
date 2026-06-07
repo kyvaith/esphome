@@ -13,15 +13,16 @@ The chart widget displays data visualization with support for:
 
 from esphome import automation
 import esphome.codegen as cg
+from esphome.components.const import CONF_POINTS
 import esphome.config_validation as cv
 from esphome.const import (
+    CONF_COLOR,
+    CONF_DIRECTION,
     CONF_ID,
     CONF_MAX_VALUE,
     CONF_MIN_VALUE,
-    CONF_MODE,
     CONF_TYPE,
     CONF_VALUE,
-    CONF_DIRECTION,
 )
 from esphome.core import Lambda
 from esphome.cpp_generator import RawStatement
@@ -45,7 +46,6 @@ from . import Widget, WidgetType, get_widgets
 CONF_CHART = "chart"
 CONF_SERIES = "series"
 CONF_POINT_COUNT = "point_count"
-CONF_POINTS = "points"
 CONF_X_AXIS = "x_axis"
 CONF_Y_AXIS = "y_axis"
 CONF_DIV_LINE_COUNT = "div_line_count"
@@ -54,7 +54,6 @@ CONF_AXIS_SECONDARY_Y = "axis_secondary_y"
 CONF_AXIS_PRIMARY_X = "axis_primary_x"
 CONF_AXIS_SECONDARY_X = "axis_secondary_x"
 CONF_UPDATE_MODE = "update_mode"
-CONF_COLOR = "color"
 
 # Chart type with on_value support for pressed point detection
 lv_chart_t = LvType(
@@ -270,7 +269,7 @@ class ChartType(WidgetType):
         if x_points and y_points:
             # Scatter chart with X/Y coordinates - use lv_chart_get_x_array/y_array
             # to access arrays via public API (lv_chart_series_t is incomplete type)
-            for i, (x_val, y_val) in enumerate(zip(x_points, y_points)):
+            for i, (x_val, y_val) in enumerate(zip(x_points, y_points, strict=False)):
                 x = await lv_int.process(x_val)
                 y = await lv_int.process(y_val)
                 lv_add(RawStatement(f"lv_chart_get_x_array({w.obj}, {series_var})[{i}] = {x};"))

@@ -98,6 +98,6 @@ lvgl:
 
 ---
 
-**Implementation Status:** ✅ Complete  
-**LVGL Version:** 9.4.0  
+**Implementation Status:** ✅ Complete
+**LVGL Version:** 9.4.0
 **Best For:** Circular displays and decorative text

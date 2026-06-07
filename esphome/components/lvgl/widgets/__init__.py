@@ -1,7 +1,7 @@
-from collections.abc import Callable
 import builtins
+from collections.abc import Callable
 import sys
-from typing import Any, Union
+from typing import Any
 
 from esphome import codegen as cg, config_validation as cv
 from esphome.automation import register_action
@@ -17,7 +17,7 @@ from esphome.const import (
 )
 from esphome.core import ID, EsphomeError, TimePeriod
 from esphome.coroutine import FakeAwaitable
-from esphome.cpp_generator import MockObj
+from esphome.cpp_generator import MockObj, RawStatement
 from esphome.schema_extractors import EnableSchemaExtraction
 from esphome.types import Expression
 
@@ -68,7 +68,6 @@ from ..lvcode import (
     lv_Pvariable,
     lvgl_static,
 )
-from esphome.cpp_generator import RawStatement
 from ..types import (
     LV_STATE,
     LvCompound,
@@ -487,7 +486,7 @@ async def wait_for_widgets():
     await FakeAwaitable(widgets_wait_generator())
 
 
-async def get_widgets(config: Union[dict, list], id: str = CONF_ID) -> list[Widget]:
+async def get_widgets(config: dict | list, id: str = CONF_ID) -> list[Widget]:
     if not config:
         return []
     if not isinstance(config, builtins.list):
@@ -594,7 +593,7 @@ async def set_obj_properties(w: Widget, config):
         # Collect all style properties across all states for this part
         # (needed for transition descriptors to cover all animated properties)
         all_part_style_props = set()
-        for _state_name, _state_props in states.items():
+        for _state_props in states.values():
             for prop in _state_props:
                 if prop in ALL_STYLES:
                     remapped = remap_property(prop)

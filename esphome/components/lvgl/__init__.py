@@ -37,7 +37,6 @@ from esphome.const import (
     CONF_PLATFORMIO_OPTIONS,
     CONF_TIMEOUT,
     CONF_TRIGGER_ID,
-    CONF_TYPE,
 )
 from esphome.core import CORE, ID, Lambda
 from esphome.cpp_generator import MockObj
@@ -98,9 +97,13 @@ from .widgets import (
     set_obj_properties,
 )
 from .widgets.img import CONF_IMAGE
-
-# Import only what we actually use directly in this file
 from .widgets.msgbox import MSGBOX_SCHEMA, msgboxes_to_code
+from .widgets.obj import obj_spec  # Used in LVGL_SCHEMA
+from .widgets.page import (  # page_spec used in LVGL_SCHEMA
+    add_pages,
+    generate_page_triggers,
+    page_spec,
+)
 
 
 def _sdkconfig_bool(name: str, default: bool) -> bool:
@@ -117,13 +120,6 @@ def _config_bool(value) -> bool:
     return str(value).lower() in ("1", "y", "yes", "true")
 
 
-from .widgets.obj import obj_spec  # Used in LVGL_SCHEMA
-from .widgets.page import (  # page_spec used in LVGL_SCHEMA
-    add_pages,
-    generate_page_triggers,
-    page_spec,
-)
-
 # Widget registration happens via WidgetType.__init__ in individual widget files
 # The imports below trigger creation of the widget types
 # Action registration (lvgl.{widget}.update) happens automatically
@@ -139,9 +135,9 @@ CODEOWNERS = ["@youkorr"]  # LVGL 9.5.0 implementation with ThorVG enabled by de
 HELLO_WORLD_FILE = "hello_world.yaml"
 CONF_USE_PPA = "use_ppa"
 CONF_USE_PPA_IMG = "use_ppa_img"
-CONF_USE_FPS_BENCHMARK = "fps_benchmark"
-CONF_USE_PERF_MONITOR = "perf_monitor"
-CONF_USE_PROFILER = "profiler"
+CONF_FPS_BENCHMARK = "fps_benchmark"
+CONF_PERF_MONITOR = "perf_monitor"
+CONF_PROFILER = "profiler"
 
 
 SIMPLE_TRIGGERS = (
@@ -383,9 +379,9 @@ async def to_code(configs):
     if use_ppa_img:
         # Enable PPA SRM hardware rotation for images (0/90/180/270 degrees)
         cg.add_define("LV_USE_PPA_IMG")
-    use_fps_benchmark = _config_bool(config_0.get(CONF_USE_FPS_BENCHMARK, False))
-    use_perf_monitor = _config_bool(config_0.get(CONF_USE_PERF_MONITOR, False))
-    use_profiler = _config_bool(config_0.get(CONF_USE_PROFILER, False))
+    use_fps_benchmark = _config_bool(config_0.get(CONF_FPS_BENCHMARK, False))
+    use_perf_monitor = _config_bool(config_0.get(CONF_PERF_MONITOR, False))
+    use_profiler = _config_bool(config_0.get(CONF_PROFILER, False))
 
     if use_fps_benchmark:
         # Espressif esp_lvgl_adapter FPS sampler (P10/25/50/75/90 report).
@@ -926,9 +922,9 @@ LVGL_SCHEMA = cv.All(
                 cv.Optional(df.CONF_RESUME_ON_INPUT, default=True): cv.boolean,
                 cv.Optional(CONF_USE_PPA, default=False): cv.boolean,
                 cv.Optional(CONF_USE_PPA_IMG, default=False): cv.boolean,
-                cv.Optional(CONF_USE_FPS_BENCHMARK, default=False): cv.boolean,
-                cv.Optional(CONF_USE_PERF_MONITOR, default=False): cv.boolean,
-                cv.Optional(CONF_USE_PROFILER, default=False): cv.boolean,
+                cv.Optional(CONF_FPS_BENCHMARK, default=False): cv.boolean,
+                cv.Optional(CONF_PERF_MONITOR, default=False): cv.boolean,
+                cv.Optional(CONF_PROFILER, default=False): cv.boolean,
             }
         )
         .extend(DISP_BG_SCHEMA),

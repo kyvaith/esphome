@@ -32,6 +32,12 @@ LVGL Documentation Examples Coverage:
 
 from esphome import automation
 import esphome.codegen as cg
+from esphome.components.const import (
+    CONF_ANGLE_RANGE,
+    CONF_MAJOR,
+    CONF_SCALE,
+    CONF_STRIDE,
+)
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_COLOR,
@@ -42,21 +48,25 @@ from esphome.const import (
     CONF_MAX_VALUE,
     CONF_MIN_VALUE,
     CONF_MODE,
+    CONF_OFFSET,
     CONF_RANGE_FROM,
     CONF_RANGE_TO,
     CONF_ROTATION,
     CONF_VALUE,
     CONF_WIDTH,
 )
+from esphome.cpp_generator import RawStatement
 from esphome.cpp_types import nullptr
 
-from .. import set_obj_properties
 from ..automation import action_to_code
 from ..defines import (
     CONF_ANIMATED,
     CONF_END_VALUE,
     CONF_INDICATOR,
     CONF_MAIN,
+    CONF_PIVOT_X,
+    CONF_PIVOT_Y,
+    CONF_SRC,
     CONF_START_VALUE,
     CONF_TICKS,
     LV_OBJ_FLAG,
@@ -66,7 +76,6 @@ from ..defines import (
     literal,
 )
 from ..lv_validation import (
-    LV_OPA,
     animated,
     get_end_value,
     get_start_value,
@@ -74,29 +83,20 @@ from ..lv_validation import (
     lv_bool,
     lv_color,
     lv_float,
-    lv_int,
     lv_image,
-    opacity,
+    lv_int,
     size,
 )
-from ..lvcode import LambdaContext, lv, lv_add, lv_obj, lv_expr
-from esphome.cpp_generator import RawStatement
+from ..lvcode import LambdaContext, lv, lv_add, lv_obj
 from ..types import LV_EVENT, LvNumber, ObjUpdateAction, lv_event_t, lv_obj_t
 from . import NumberType, Widget, get_widgets
 
 # Configuration keys
-CONF_ANGLE_RANGE = "angle_range"
-CONF_COLOR_END = "color_end"
-CONF_COLOR_START = "color_start"
 CONF_LABEL_GAP = "label_gap"
 CONF_LABEL_SHOW = "label_show"
-CONF_MAJOR = "major"
 CONF_RADIAL_OFFSET = "radial_offset"
-CONF_SCALE = "scale"
 CONF_SECTION = "section"
 CONF_SECTIONS = "sections"
-CONF_STRIDE = "stride"
-CONF_OFFSET = "offset"
 CONF_TEXT_SRC = "text_src"
 CONF_POST_FIX = "post_fix"
 CONF_PRE_FIX = "pre_fix"
@@ -107,9 +107,6 @@ CONF_NEEDLE_LENGTH = "needle_length"
 CONF_NEEDLE_WIDTH = "needle_width"
 CONF_NEEDLE_COLOR = "needle_color"
 CONF_NEEDLE_ROUNDED = "needle_rounded"
-CONF_NEEDLE_SRC = "src"
-CONF_NEEDLE_PIVOT_X = "pivot_x"
-CONF_NEEDLE_PIVOT_Y = "pivot_y"
 
 # Label transform configuration keys
 CONF_ROTATE_MATCH_TICKS = "rotate_match_ticks"
@@ -166,17 +163,17 @@ LINE_NEEDLE_SCHEMA = cv.Schema(
 IMAGE_NEEDLE_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(lv_obj_t),
-        cv.Required(CONF_NEEDLE_SRC): lv_image,
+        cv.Required(CONF_SRC): lv_image,
         cv.Optional(CONF_VALUE, default=0): lv_int,
-        cv.Optional(CONF_NEEDLE_PIVOT_X, default=3): cv.int_,
-        cv.Optional(CONF_NEEDLE_PIVOT_Y, default=4): cv.int_,
+        cv.Optional(CONF_PIVOT_X, default=3): cv.int_,
+        cv.Optional(CONF_PIVOT_Y, default=4): cv.int_,
     }
 )
 
 
 def needle_validator(config):
     """Validate needle configuration - determine if it's a line or image needle."""
-    if CONF_NEEDLE_SRC in config:
+    if CONF_SRC in config:
         return IMAGE_NEEDLE_SCHEMA(config)
     return LINE_NEEDLE_SCHEMA(config)
 
@@ -192,9 +189,9 @@ NEEDLE_SCHEMA = cv.Schema(
         cv.Optional(CONF_NEEDLE_COLOR, default=0xFF0000): lv_color,
         cv.Optional(CONF_NEEDLE_ROUNDED, default=True): lv_bool,
         # Image needle properties
-        cv.Optional(CONF_NEEDLE_SRC): lv_image,
-        cv.Optional(CONF_NEEDLE_PIVOT_X): cv.int_,
-        cv.Optional(CONF_NEEDLE_PIVOT_Y): cv.int_,
+        cv.Optional(CONF_SRC): lv_image,
+        cv.Optional(CONF_PIVOT_X): cv.int_,
+        cv.Optional(CONF_PIVOT_Y): cv.int_,
     }
 )
 
@@ -431,27 +428,27 @@ class ScaleType(NumberType):
             # Build C array of const char*
             labels_c = ", ".join(f'"{label}"' for label in text_src)
             lv_add(RawStatement(
-                f'static const char *{labels_array_name}[] = {{{labels_c}, NULL}};'
+                f"static const char *{labels_array_name}[] = {{{labels_c}, NULL}};"
             ))
             lv_add(RawStatement(
                 f"lv_scale_set_text_src({w.obj}, {labels_array_name});"
             ))
 
         # Post-fix for labels
-        if post_fix := config.get(CONF_POST_FIX):
+        if config.get(CONF_POST_FIX):
             lv_add(RawStatement(
-                f'lv_scale_set_post_draw({w.obj}, true);'
+                f"lv_scale_set_post_draw({w.obj}, true);"
             ))
 
         # Pre-fix for labels
-        if pre_fix := config.get(CONF_PRE_FIX):
+        if config.get(CONF_PRE_FIX):
             lv_add(RawStatement(
-                f'lv_scale_set_post_draw({w.obj}, true);'
+                f"lv_scale_set_post_draw({w.obj}, true);"
             ))
 
         # Add colored sections
         if sections := config.get(CONF_SECTIONS):
-            for idx, section_conf in enumerate(sections):
+            for section_conf in sections:
                 section_id = section_conf[CONF_ID]
 
                 # Determine start and end values
@@ -548,13 +545,13 @@ class ScaleType(NumberType):
                 needle_id = needle_conf[CONF_ID]
                 value = needle_conf.get(CONF_VALUE, 0)
 
-                if CONF_NEEDLE_SRC in needle_conf:
+                if CONF_SRC in needle_conf:
                     # Image needle
                     add_lv_use("img")
                     needle_var_name = f"needle_img_{id(needle_conf) & 0xFFFFFF:06x}"
-                    src = needle_conf[CONF_NEEDLE_SRC]
-                    pivot_x = needle_conf.get(CONF_NEEDLE_PIVOT_X, 3)
-                    pivot_y = needle_conf.get(CONF_NEEDLE_PIVOT_Y, 4)
+                    src = needle_conf[CONF_SRC]
+                    pivot_x = needle_conf.get(CONF_PIVOT_X, 3)
+                    pivot_y = needle_conf.get(CONF_PIVOT_Y, 4)
 
                     lv_add(RawStatement(
                         f"lv_obj_t *{needle_var_name} = lv_image_create({w.obj});"

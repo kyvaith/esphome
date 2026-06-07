@@ -23,6 +23,7 @@ from esphome.const import (
     CONF_COLOR,
     CONF_HEIGHT,
     CONF_ID,
+    CONF_INDEX,
     CONF_TEXT,
     CONF_WIDTH,
     CONF_X,
@@ -55,7 +56,7 @@ from ..lv_validation import (
     pixels_or_percent,
     size,
 )
-from ..lvcode import LocalVariable, lv, lv_assign, lv_expr
+from ..lvcode import LocalVariable, lv, lv_assign
 from ..schemas import STYLE_PROPS, TEXT_SCHEMA, point_schema, remap_property
 from ..types import LvType, ObjUpdateAction, lv_point_precise_t
 from . import Widget, WidgetType, get_widgets
@@ -297,7 +298,6 @@ async def canvas_set_pixel(config, action_id, template_arg, args):
     )
 
 
-CONF_INDEX = "index"
 CONF_PALETTE_COLOR = "palette_color"
 
 

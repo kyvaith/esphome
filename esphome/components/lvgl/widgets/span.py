@@ -6,13 +6,9 @@ Each span can have different font, color, and decoration.
 """
 
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_MODE, CONF_TEXT
+from esphome.const import CONF_MODE, CONF_TEXT
 
-from ..defines import (
-    CONF_MAIN,
-    add_lv_use,
-    literal,
-)
+from ..defines import CONF_MAIN, add_lv_use, literal
 from ..lv_validation import lv_color, lv_text
 from ..lvcode import lv, lv_expr
 from ..types import LvType

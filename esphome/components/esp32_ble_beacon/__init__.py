@@ -1,5 +1,6 @@
 import esphome.codegen as cg
 from esphome.components import esp32_ble
+from esphome.components.const import CONF_MAJOR
 from esphome.components.esp32 import add_idf_sdkconfig_option
 from esphome.components.esp32_ble import CONF_BLE_ID
 import esphome.config_validation as cv
@@ -11,7 +12,6 @@ DEPENDENCIES = ["esp32"]
 
 esp32_ble_beacon_ns = cg.esphome_ns.namespace("esp32_ble_beacon")
 ESP32BLEBeacon = esp32_ble_beacon_ns.class_("ESP32BLEBeacon", cg.Component)
-CONF_MAJOR = "major"
 CONF_MINOR = "minor"
 CONF_MIN_INTERVAL = "min_interval"
 CONF_MAX_INTERVAL = "max_interval"

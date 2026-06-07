@@ -1,6 +1,5 @@
 from esphome import automation
 import esphome.codegen as cg
-from esphome.cpp_generator import RawStatement
 from esphome.const import (
     CONF_ID,
     CONF_ON_BOOT,
@@ -10,7 +9,7 @@ from esphome.const import (
     CONF_X,
     CONF_Y,
 )
-from esphome.cpp_generator import MockObj, new_Pvariable
+from esphome.cpp_generator import MockObj, RawStatement, new_Pvariable
 from esphome.cpp_helpers import register_component
 from esphome.cpp_types import nullptr
 

@@ -10,8 +10,10 @@ Communication from ESPHome (__init__.py) via build flags:
   -DLVGL_USE_THORVG=1        → compile ThorVG sources
   -DLVGL_WIDGETS_USED="..."  → comma-separated list of used widget/feature names
 """
-import re
+# ruff: noqa: F821
+# pylint: disable=undefined-variable
 from pathlib import Path
+import re
 
 Import("env")
 
@@ -24,7 +26,7 @@ ATOMIC_SHIM_TEXT = """#pragma once
 #endif
 """
 
-PROFILER_NULL_FUNC_PATCHED = "const char * func = item->func ? item->func : \"<null>\";"
+PROFILER_NULL_FUNC_PATCHED = 'const char * func = item->func ? item->func : "<null>";'
 
 
 def write_atomic_shim(shim):
@@ -67,7 +69,7 @@ def patch_profiler_builtin_source(src):
         "lv_profiler_builtin_item_t * item = &profiler_ctx->item_arr[cur++];\n"
         "        uint64_t sec = item->tick / tick_per_sec;",
         "lv_profiler_builtin_item_t * item = &profiler_ctx->item_arr[cur++];\n"
-        "        const char * func = item->func ? item->func : \"<null>\";\n"
+        '        const char * func = item->func ? item->func : "<null>";\n'
         "        uint64_t sec = item->tick / tick_per_sec;",
     )
     text = text.replace(
@@ -181,12 +183,12 @@ def lvgl_src_filter(env, node):
             src = Path(node.get_path())
             write_atomic_shim(src.parent / "atomic.h")
 
-        except Exception as err:
+        except OSError as err:
             print("WARNING: failed to create LVGL osal atomic.h shim:", err)
 
     if path.endswith("/misc/lv_profiler_builtin.c"):
         patch_profiler_builtin_source(node.get_path())
-  
+
     # Only filter files inside the LVGL library
     if "/lvgl/" not in path:
         return node

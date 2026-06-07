@@ -5,6 +5,7 @@ from esphome.const import (
     CONF_MAX_VALUE,
     CONF_MIN_VALUE,
     CONF_MODE,
+    CONF_OFFSET,
     CONF_ROTATION,
     CONF_VALUE,
 )
@@ -36,7 +37,6 @@ from . import NumberType, Widget, get_widget_
 
 CONF_ARC = "arc"
 CONF_ROTATE_LABEL = "rotate_label"
-CONF_OFFSET = "offset"
 
 ROTATE_LABEL_SCHEMA = cv.Schema(
     {

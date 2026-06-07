@@ -1,5 +1,15 @@
+"""LVGL meter compatibility built on top of the LVGL 9 scale widget."""
+# pylint: disable=too-many-nested-blocks
+
 from esphome import automation
 import esphome.codegen as cg
+from esphome.components.const import (
+    CONF_ANGLE_RANGE,
+    CONF_COLOR_END,
+    CONF_COLOR_START,
+    CONF_MAJOR,
+    CONF_STRIDE,
+)
 from esphome.components.image import get_image_metadata
 import esphome.config_validation as cv
 from esphome.const import (
@@ -37,7 +47,6 @@ from ..defines import (
     CONF_SRC,
     CONF_START_VALUE,
     CONF_TICKS,
-    LV_OBJ_FLAG,
     LV_PART,
     LV_SCALE_MODE,
     add_lv_use,
@@ -65,22 +74,13 @@ from ..lv_validation import (
 from ..lvcode import LocalVariable, lv, lv_add, lv_expr, lv_obj
 from ..schemas import STATE_SCHEMA
 from ..styles import LVStyle
-from ..types import (
-    LvCompound,
-    LvType,
-    ObjUpdateAction,
-    lv_image_t,
-    lv_obj_t,
-)
+from ..types import LvCompound, LvType, ObjUpdateAction, lv_image_t, lv_obj_t
 from . import Widget, WidgetType, get_widgets, widget_to_code
 from .arc import CONF_ARC
 from .img import CONF_IMAGE
 from .label import CONF_LABEL
 from .line import CONF_LINE
 
-CONF_ANGLE_RANGE = "angle_range"
-CONF_COLOR_END = "color_end"
-CONF_COLOR_START = "color_start"
 CONF_IMAGE_ID = "image_id"
 CONF_INDICATORS = "indicators"
 CONF_DASH_GAP = "dash_gap"
@@ -88,14 +88,12 @@ CONF_DASH_WIDTH = "dash_width"
 CONF_LINE_ID = "line_id"
 CONF_ROUNDED = "rounded"
 CONF_LABEL_GAP = "label_gap"
-CONF_MAJOR = "major"
 CONF_METER = "meter"
 CONF_PADDING = "padding"
 CONF_PIVOT = "pivot"
 CONF_R_MOD = "r_mod"
 CONF_RADIAL_OFFSET = "radial_offset"
 CONF_SCALES = "scales"
-CONF_STRIDE = "stride"
 CONF_TICK_STYLE = "tick_style"
 
 # LVGL 9.4 Migration: Use scale widget instead of removed meter widget
@@ -674,22 +672,21 @@ class MeterType(WidgetType):
                     )
                 else:
                     lv.scale_set_major_tick_every(scale_var, 0)
+            elif has_indicators:
+                # No ticks config but has indicators - need ticks for sections
+                lv.scale_set_total_tick_count(scale_var, 21)
+                lv_obj.set_style_line_opa(
+                    scale_var, LV_OPA.TRANSP, LV_PART.ITEMS
+                )
+                lv_obj.set_style_line_opa(
+                    scale_var, LV_OPA.TRANSP, LV_PART.INDICATOR
+                )
+                lv.scale_set_major_tick_every(scale_var, 0)
             else:
-                if has_indicators:
-                    # No ticks config but has indicators - need ticks for sections
-                    lv.scale_set_total_tick_count(scale_var, 21)
-                    lv_obj.set_style_line_opa(
-                        scale_var, LV_OPA.TRANSP, LV_PART.ITEMS
-                    )
-                    lv_obj.set_style_line_opa(
-                        scale_var, LV_OPA.TRANSP, LV_PART.INDICATOR
-                    )
-                    lv.scale_set_major_tick_every(scale_var, 0)
-                else:
-                    # Must have at least 2 ticks otherwise the scale isn't even drawn.
-                    lv.scale_set_total_tick_count(scale_var, 2)
-                    lv_obj.set_style_line_width(scale_var, 0, LV_PART.ITEMS)
-                    lv.scale_set_major_tick_every(scale_var, 0)
+                # Must have at least 2 ticks otherwise the scale isn't even drawn.
+                lv.scale_set_total_tick_count(scale_var, 2)
+                lv_obj.set_style_line_width(scale_var, 0, LV_PART.ITEMS)
+                lv.scale_set_major_tick_every(scale_var, 0)
 
         # Add a pivot
         # Get the default style
