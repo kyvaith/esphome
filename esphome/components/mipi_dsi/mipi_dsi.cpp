@@ -228,7 +228,7 @@ void MipiDsi::setup() {
   ESP_LOGCONFIG(TAG, "MIPI DSI setup complete");
 }
 
-void MIPI_DSI::start_async_flush_task_() {
+void MipiDsi::start_async_flush_task_() {
   if (!this->async_lvgl_flush_)
     return;
   if (!this->use_dma2d_) {
@@ -242,7 +242,7 @@ void MIPI_DSI::start_async_flush_task_() {
   constexpr BaseType_t flush_core = 0;
 #endif
   TaskHandle_t task_handle = nullptr;
-  const BaseType_t ok = xTaskCreatePinnedToCore(&MIPI_DSI::async_flush_task_trampoline_, "mipi_flush_ready", 4096, this,
+  const BaseType_t ok = xTaskCreatePinnedToCore(&MipiDsi::async_flush_task_trampoline_, "mipi_flush_ready", 4096, this,
                                                 6, &task_handle, flush_core);
   if (ok != pdPASS) {
     ESP_LOGW(TAG, "Async LVGL flush task allocation failed");
@@ -253,11 +253,11 @@ void MIPI_DSI::start_async_flush_task_() {
   ESP_LOGCONFIG(TAG, "Async LVGL flush ready task enabled on core %d", (int) flush_core);
 }
 
-void MIPI_DSI::async_flush_task_trampoline_(void *arg) {
-  static_cast<MIPI_DSI *>(arg)->async_flush_task_();
+void MipiDsi::async_flush_task_trampoline_(void *arg) {
+  static_cast<MipiDsi *>(arg)->async_flush_task_();
 }
 
-void MIPI_DSI::async_flush_task_() {
+void MipiDsi::async_flush_task_() {
   while (true) {
     if (xSemaphoreTake(this->async_flush_done_, portMAX_DELAY) != pdTRUE)
       continue;
@@ -278,7 +278,7 @@ void MIPI_DSI::async_flush_task_() {
   }
 }
 
-bool MIPI_DSI::ensure_async_staging_buffer_(size_t size) {
+bool MipiDsi::ensure_async_staging_buffer_(size_t size) {
   if (size == 0)
     return false;
   if (this->async_staging_buffer_ != nullptr && this->async_staging_buffer_size_ >= size)
@@ -304,7 +304,7 @@ bool MIPI_DSI::ensure_async_staging_buffer_(size_t size) {
   return true;
 }
 
-bool MIPI_DSI::wait_for_refresh_done(uint32_t timeout_ms) {
+bool MipiDsi::wait_for_refresh_done(uint32_t timeout_ms) {
   if (this->refresh_lock_ == nullptr)
     return false;
   while (xSemaphoreTake(this->refresh_lock_, 0) == pdTRUE) {
@@ -312,7 +312,7 @@ bool MIPI_DSI::wait_for_refresh_done(uint32_t timeout_ms) {
   return xSemaphoreTake(this->refresh_lock_, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
 }
 
-void MIPI_DSI::update() {
+void MipiDsi::update() {
   if (this->auto_clear_enabled_) {
     this->clear();
   }
@@ -353,7 +353,7 @@ void MipiDsi::draw_pixels_at(int x_start, int y_start, int w, int h, const uint8
   this->write_to_display_(x_start, y_start, w, h, ptr, x_offset, y_offset, x_pad);
 }
 
-bool MIPI_DSI::draw_pixels_at_async(int x_start, int y_start, int w, int h, const uint8_t *ptr,
+bool MipiDsi::draw_pixels_at_async(int x_start, int y_start, int w, int h, const uint8_t *ptr,
                                     display::ColorOrder order, display::ColorBitness bitness, bool big_endian,
                                     int x_offset, int y_offset, int x_pad, AsyncFlushReadyCallback ready_callback,
                                     void *ready_arg) {
@@ -441,7 +441,7 @@ bool MIPI_DSI::draw_pixels_at_async(int x_start, int y_start, int w, int h, cons
   return true;
 }
 
-void MIPI_DSI::consume_async_flush_perf(AsyncFlushPerfStats *stats) {
+void MipiDsi::consume_async_flush_perf(AsyncFlushPerfStats *stats) {
   if (stats == nullptr)
     return;
   stats->flushes = this->async_perf_flushes_;
@@ -479,7 +479,7 @@ void MIPI_DSI::consume_async_flush_perf(AsyncFlushPerfStats *stats) {
   this->async_perf_done_max_us_ = 0;
 }
 
-bool MIPI_DSI::present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end) {
+bool MipiDsi::present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end) {
   if (frame_buffer == nullptr || (frame_buffer != this->frame_buffers_[0] && frame_buffer != this->frame_buffers_[1]))
     return false;
   if (y_end < y_start)
@@ -507,7 +507,7 @@ bool MIPI_DSI::present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_en
   return true;
 }
 
-void MIPI_DSI::write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,
+void MipiDsi::write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,
                                  int x_pad) {
   esp_err_t err = ESP_OK;
   auto bytes_per_pixel = this->get_bytes_per_pixel_();

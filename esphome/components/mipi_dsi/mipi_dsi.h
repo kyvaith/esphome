@@ -66,7 +66,7 @@ struct AsyncFlushPerfStats {
   uint32_t done_max_us{};
 };
 
-class MIPI_DSI : public display::Display {
+class MipiDsi : public display::Display {
  public:
   MipiDsi(size_t width, size_t height, display::ColorBitness color_depth, uint8_t pixel_mode)
       : width_(width), height_(height), color_depth_(color_depth), pixel_mode_(pixel_mode) {}
@@ -189,7 +189,6 @@ class MIPI_DSI : public display::Display {
   uint16_t y_high_{0};
 };
 
-using MipiDsi = MIPI_DSI;
 
 }  // namespace esphome::mipi_dsi
 #endif
