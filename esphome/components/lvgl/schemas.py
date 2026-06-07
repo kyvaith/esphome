@@ -130,6 +130,9 @@ ENCODER_SCHEMA = cv.Schema(
         ),
         cv.Optional(df.CONF_LONG_PRESS_TIME, default="400ms"): PRESS_TIME,
         cv.Optional(df.CONF_LONG_PRESS_REPEAT_TIME, default="100ms"): PRESS_TIME,
+        cv.Optional(df.CONF_ROTARY_SENSITIVITY, default=1.0): cv.float_range(
+            min=0.1, max=10.0
+        ),
     }
 )
 
@@ -273,6 +276,7 @@ BASE_PROPS = {
     "text_outline_stroke_opa": lvalid.opacity,
     "text_outline_stroke_width": lvalid.lv_positive_int,
     "transform_height": lvalid.pixels_or_percent,
+    "transform_width": lvalid.pixels_or_percent,
     "transform_pivot_x": lvalid.pixels_or_percent,
     "transform_pivot_y": lvalid.pixels_or_percent,
     "transform_rotation": lvalid.lv_angle,
@@ -288,16 +292,47 @@ BASE_PROPS = {
     "width": lvalid.size,
     "x": lvalid.pixels_or_percent,
     "y": lvalid.pixels_or_percent,
+    # LVGL 9.5: Blur / Frosted Glass properties
+    "blur_radius": lvalid.lv_positive_int,
+    "blur_backdrop": lvalid.lv_bool,
+    "blur_quality": df.LvConstant(
+        "LV_BLUR_QUALITY_", "SPEED", "PRECISION", "AUTO"
+    ).one_of,
+    # LVGL 9.5: Gradient per-stop opacity
+    "bg_main_opa": lvalid.opacity,
+    "bg_grad_opa": lvalid.opacity,
+    # LVGL 9.5: Image opacity
+    "image_opa": lvalid.opacity,
+    # LVGL 9.5: Bitmap mask source
+    "bitmap_mask_src": lvalid.lv_image,
+    # LVGL 9.5: External margins (flex/grid)
+    "margin_top": lvalid.padding,
+    "margin_bottom": lvalid.padding,
+    "margin_left": lvalid.padding,
+    "margin_right": lvalid.padding,
+    # LVGL 9.5: Text outline stroke
+    "text_outline_stroke_color": lvalid.lv_color,
+    "text_outline_stroke_opa": lvalid.opacity,
+    "text_outline_stroke_width": lvalid.lv_positive_int,
+    # LVGL 9.5: Drop shadow (independent from regular shadow)
+    "drop_shadow_radius": lvalid.lv_positive_int,
+    "drop_shadow_offset_x": lvalid.lv_int,
+    "drop_shadow_offset_y": lvalid.lv_int,
+    "drop_shadow_color": lvalid.lv_color,
+    "drop_shadow_opa": lvalid.opacity,
+    "drop_shadow_quality": df.LvConstant(
+        "LV_BLUR_QUALITY_", "SPEED", "PRECISION", "AUTO"
+    ).one_of,
+    # LVGL 9.5: Additional image properties
+    "image_colorkey": lvalid.lv_color,
+    "arc_image_src": lvalid.lv_image,
 }
 
 STYLE_REMAP = {
     "anim_time": "anim_duration",
     "transform_angle": "transform_rotation",
-    "transform_zoom": "transform_scale",
     "zoom": "scale",
     "angle": "rotation",
-    "shadow_ofs_x": "shadow_offset_x",
-    "shadow_ofs_y": "shadow_offset_y",
     "r_mod": "length",
 }
 
@@ -332,6 +367,11 @@ STYLE_SCHEMA = cv.Schema({cv.Optional(k): v for k, v in STYLE_PROPS.items()}).ex
         cv.Optional(CONF_SCROLL_DIR): df.SCROLL_DIRECTIONS.one_of,
         cv.Optional(CONF_SCROLL_SNAP_X): df.SNAP_DIRECTIONS.one_of,
         cv.Optional(CONF_SCROLL_SNAP_Y): df.SNAP_DIRECTIONS.one_of,
+        cv.Optional(df.CONF_STYLE_TRANSITION_TIME): lvalid.lv_milliseconds,
+        cv.Optional(df.CONF_STYLE_TRANSITION_DELAY): lvalid.lv_milliseconds,
+        cv.Optional(df.CONF_STYLE_TRANSITION_PATH): cv.one_of(
+            *df.ANIM_PATHS.keys(), lower=True
+        ),
     }
 )
 

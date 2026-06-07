@@ -1,6 +1,7 @@
 from collections.abc import Callable
+import builtins
 import sys
-from typing import Any
+from typing import Any, Union
 
 from esphome import codegen as cg, config_validation as cv
 from esphome.automation import register_action
@@ -21,6 +22,7 @@ from esphome.schema_extractors import EnableSchemaExtraction
 from esphome.types import Expression
 
 from ..defines import (
+    ANIM_PATHS,
     CONF_FLEX_ALIGN_CROSS,
     CONF_FLEX_ALIGN_MAIN,
     CONF_FLEX_ALIGN_TRACK,
@@ -34,6 +36,9 @@ from ..defines import (
     CONF_PAD_COLUMN,
     CONF_PAD_ROW,
     CONF_SCALE,
+    CONF_STYLE_TRANSITION_DELAY,
+    CONF_STYLE_TRANSITION_PATH,
+    CONF_STYLE_TRANSITION_TIME,
     CONF_STYLES,
     CONF_WIDGETS,
     OBJ_FLAGS,
@@ -63,6 +68,7 @@ from ..lvcode import (
     lv_Pvariable,
     lvgl_static,
 )
+from esphome.cpp_generator import RawStatement
 from ..types import (
     LV_STATE,
     LvCompound,
@@ -290,6 +296,7 @@ class Widget:
         # Properties for linear equations
         self.slope = None
         self.y_int = None
+        self.parent = None
 
     @staticmethod
     def create(name, var, wtype: WidgetType, config: dict = None):
@@ -397,7 +404,7 @@ class Widget:
     def get_value(self):
         if isinstance(self.type.w_type, LvType):
             result = self.type.w_type.value(self)
-            if isinstance(result, list):
+            if isinstance(result, builtins.list):
                 return result[0]
             return result
         return self.obj
@@ -405,7 +412,7 @@ class Widget:
     def get_values(self):
         if isinstance(self.type.w_type, LvType):
             result = self.type.w_type.value(self)
-            if isinstance(result, list):
+            if isinstance(result, builtins.list):
                 return result
             return [result]
         return [self.obj]
@@ -480,10 +487,10 @@ async def wait_for_widgets():
     await FakeAwaitable(widgets_wait_generator())
 
 
-async def get_widgets(config: dict | list, id: str = CONF_ID) -> list[Widget]:
+async def get_widgets(config: Union[dict, list], id: str = CONF_ID) -> list[Widget]:
     if not config:
         return []
-    if not isinstance(config, list):
+    if not isinstance(config, builtins.list):
         config = [config]
     return [await get_widget_(c[id]) for c in config if id in c]
 
@@ -505,6 +512,10 @@ def collect_props(config):
                 props[CONF_SCALE + "_y"] = config[prop]
             else:
                 props[prop] = config[prop]
+    # Collect transition properties
+    for prop in [CONF_STYLE_TRANSITION_TIME, CONF_STYLE_TRANSITION_DELAY, CONF_STYLE_TRANSITION_PATH]:
+        if prop in config:
+            props[prop] = config[prop]
     return props
 
 
@@ -534,12 +545,6 @@ def collect_parts(config):
     return parts
 
 
-def _size_to_str(value):
-    if isinstance(value, float):
-        return f"lv_pct({int(value * 100)})"
-    return str(value)
-
-
 async def set_obj_properties(w: Widget, config):
     """Generate a list of C++ statements to apply properties to an lv_obj_t"""
 
@@ -555,12 +560,18 @@ async def set_obj_properties(w: Widget, config):
             w.set_style(CONF_PAD_COLUMN, pad_column)
         if layout_type == TYPE_GRID:
             wid = config[CONF_ID]
-            rows = [_size_to_str(x) for x in layout[CONF_GRID_ROWS]]
+
+            def grid_value_to_str(x):
+                if isinstance(x, float):
+                    return f"lv_pct({int(x * 100)})"
+                return str(x)
+
+            rows = [grid_value_to_str(x) for x in layout[CONF_GRID_ROWS]]
             rows = "{" + ",".join(rows) + ", LV_GRID_TEMPLATE_LAST}"
             row_id = ID(f"{wid}_row_dsc", is_declaration=True, type=lv_coord_t)
             row_array = cg.static_const_array(row_id, cg.RawExpression(rows))
             w.set_style("grid_row_dsc_array", row_array)
-            columns = [_size_to_str(x) for x in layout[CONF_GRID_COLUMNS]]
+            columns = [grid_value_to_str(x) for x in layout[CONF_GRID_COLUMNS]]
             columns = "{" + ",".join(columns) + ", LV_GRID_TEMPLATE_LAST}"
             column_id = ID(f"{wid}_column_dsc", is_declaration=True, type=lv_coord_t)
             column_array = cg.static_const_array(column_id, cg.RawExpression(columns))
@@ -580,6 +591,23 @@ async def set_obj_properties(w: Widget, config):
             lv_obj.set_flex_align(w.obj, main, cross, track)
     parts = collect_parts(config)
     for part, states in parts.items():
+        # Collect all style properties across all states for this part
+        # (needed for transition descriptors to cover all animated properties)
+        all_part_style_props = set()
+        for _state_name, _state_props in states.items():
+            for prop in _state_props:
+                if prop in ALL_STYLES:
+                    remapped = remap_property(prop)
+                    # pad_all is a convenience setter (lv_obj_set_style_pad_all)
+                    # but LV_STYLE_PAD_ALL doesn't exist as an enum in LVGL 9.x.
+                    # Expand it into the four individual padding properties.
+                    if remapped == "pad_all":
+                        all_part_style_props.update(
+                            ("pad_top", "pad_bottom", "pad_left", "pad_right")
+                        )
+                    else:
+                        all_part_style_props.add(remapped)
+
         part = "LV_PART_" + part.upper()
         for state, props in states.items():
             state = "LV_STATE_" + state.upper()
@@ -598,6 +626,29 @@ async def set_obj_properties(w: Widget, config):
                     value = await ALL_STYLES[prop].process(value)
                 prop_r = remap_property(prop)
                 w.set_style(prop_r, value, lv_state)
+            # Handle style transitions for animated state changes
+            trans_time = props.get(CONF_STYLE_TRANSITION_TIME)
+            if trans_time is not None and all_part_style_props:
+                trans_delay = props.get(CONF_STYLE_TRANSITION_DELAY)
+                trans_path = props.get(CONF_STYLE_TRANSITION_PATH, "ease_in_out")
+                path_func = ANIM_PATHS.get(trans_path, "lv_anim_path_ease_in_out")
+                time_ms = int(trans_time.total_milliseconds)
+                delay_ms = int(trans_delay.total_milliseconds) if trans_delay else 0
+                # Generate unique variable names from widget ID and state
+                wid_str = str(config[CONF_ID])
+                state_str = state.replace("LV_STATE_", "").lower()
+                part_str = part.replace("LV_PART_", "").lower()
+                base_name = f"{wid_str}_{part_str}_{state_str}"
+                props_var = f"{base_name}_tr_props"
+                dsc_var = f"{base_name}_tr_dsc"
+                # Build LV_STYLE_* property enum list for transition
+                prop_enums = sorted(f"LV_STYLE_{p.upper()}" for p in all_part_style_props)
+                props_str = "{" + ", ".join(prop_enums) + ", 0}"
+                # Generate C++ transition descriptor code
+                lv_add(RawStatement(f"static const lv_style_prop_t {props_var}[] = {props_str};"))
+                lv_add(RawStatement(f"static lv_style_transition_dsc_t {dsc_var};"))
+                lv_add(RawStatement(f"lv_style_transition_dsc_init(&{dsc_var}, {props_var}, {path_func}, {time_ms}, {delay_ms}, NULL);"))
+                w.set_style("transition", literal(f"&{dsc_var}"), lv_state)
     if group := config.get(CONF_GROUP):
         group = await cg.get_variable(group)
         lv.group_add_obj(group, w.obj)

@@ -1,4 +1,3 @@
-from esphome import codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_OPTIONS
 
@@ -24,34 +23,6 @@ from .label import CONF_LABEL
 CONF_DROPDOWN = "dropdown"
 CONF_DROPDOWN_LIST = "dropdown_list"
 
-# Example valid dropdown symbol (left arrow) for error messages
-EXAMPLE_DROPDOWN_SYMBOL = "\U00002190"  # ←
-
-
-def dropdown_symbol_validator(value):
-    """
-    Validate that the dropdown symbol is a single Unicode character
-    with a codepoint of 0x100 (256) or greater.
-    This is required because LVGL uses codepoints below 0x100 for internal symbols.
-    """
-    value = cv.string(value)
-    # len(value) counts Unicode code points, not grapheme clusters or bytes
-    if len(value) != 1:
-        raise cv.Invalid(
-            f"Dropdown symbol must be a single character, got '{value}' with length {len(value)}"
-        )
-    codepoint = ord(value)
-    if codepoint < 0x100:
-        # Format the example symbol as a Unicode escape for the error message
-        example_escape = f"\\U{ord(EXAMPLE_DROPDOWN_SYMBOL):08X}"
-        raise cv.Invalid(
-            f"Dropdown symbol must have a Unicode codepoint of 0x100 (256) or greater. "
-            f"'{value}' has codepoint {codepoint} (0x{codepoint:X}). "
-            f"Use a character like '{example_escape}' ({EXAMPLE_DROPDOWN_SYMBOL}) or other Unicode symbols with codepoint >= 0x100."
-        )
-    return value
-
-
 lv_dropdown_t = LvSelect("LvDropdownType", parents=(LvCompound,))
 
 lv_dropdown_list_t = LvType("lv_dropdown_list_t")
@@ -61,7 +32,7 @@ dropdown_list_spec = WidgetType(
 
 DROPDOWN_BASE_SCHEMA = cv.Schema(
     {
-        cv.Optional(CONF_SYMBOL): dropdown_symbol_validator,
+        cv.Optional(CONF_SYMBOL): lv_text,
         cv.Exclusive(CONF_SELECTED_INDEX, CONF_SELECTED_TEXT): lv_int,
         cv.Exclusive(CONF_SELECTED_TEXT, CONF_SELECTED_TEXT): lv_text,
         cv.Optional(CONF_DROPDOWN_LIST): part_schema(dropdown_list_spec.parts),
@@ -97,7 +68,7 @@ class DropdownType(WidgetType):
         if options := config.get(CONF_OPTIONS):
             lv_add(w.var.set_options(options))
         if symbol := config.get(CONF_SYMBOL):
-            lv.dropdown_set_symbol(w.var.obj, cg.safe_exp(symbol))
+            lv.dropdown_set_symbol(w.var.obj, await lv_text.process(symbol))
         if (selected := config.get(CONF_SELECTED_INDEX)) is not None:
             value = await lv_int.process(selected)
             lv_add(w.var.set_selected_index(value, literal("LV_ANIM_OFF")))

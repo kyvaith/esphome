@@ -336,9 +336,9 @@ def size_validator(value):
 size = LValidator(
     size_validator,
     uint32,
-    retmapper=lambda x: (
-        literal(x) if isinstance(x, str) else pixels_or_percent.retmapper(x)
-    ),
+    retmapper=lambda x: literal(x)
+    if isinstance(x, str)
+    else pixels_or_percent.retmapper(x),
 )
 
 
@@ -369,22 +369,62 @@ def stop_value(value):
 
 
 def image_validator(value):
-    value = cv.requires_component("image")(value)
-    value = cv.use_id(Image_)(value)
-    get_lv_images_used().add(value)
-    add_lv_use("label")
-    return value
+    # Accept multiple image source types:
+    # 1. Image_ ID - standard ESPHome image (image: component)
+    #    Also matches SdImageComponent since it inherits from Image_
+    # 2. SvgFile ID - embedded SVG from svg_file: component
+    # 3. String path - file on filesystem (e.g., "/sdcard/icons/wifi.svg")
+    #
+    # Order matters: try Image_ first (base class) so both regular images
+    # and SdImageComponent (which inherits from Image_) are accepted.
+
+    # Try Image_ first - covers both standard images AND SdImageComponent
+    try:
+        value_id = cv.use_id(Image_)(value)
+        get_lv_images_used().add(value_id)
+        add_lv_use("img", "label")
+        return value_id
+    except cv.Invalid:
+        pass
+
+    # Try SdImageComponent explicitly (in case Image_ check fails)
+    try:
+        sd_image_class = cg.esphome_ns.namespace("storage").class_(
+            "SdImageComponent"
+        )
+        result = cv.use_id(sd_image_class)(value)
+        add_lv_use("img", "label")
+        return result
+    except cv.Invalid:
+        pass
+
+    # Try svg_file ID
+    try:
+        svg_file_class = cg.esphome_ns.namespace("svg_file").class_("SvgFile")
+        result = cv.use_id(svg_file_class)(value)
+        add_lv_use("img", "label")
+        return result
+    except cv.Invalid:
+        pass
+
+    # If all ID resolutions failed and it's a string starting with "/", treat as file path
+    if isinstance(value, str) and value.startswith("/"):
+        add_lv_use("img", "label")
+        return value
+
+    raise cv.Invalid(
+        f"Invalid image source: {value}. "
+        f"Must be an image/sd_image/svg_file ID or a file path starting with '/'"
+    )
 
 
 lv_image = LValidator(
     image_validator,
     image.Image_.operator("ptr"),
-    requires="image",
 )
 lv_image_list = LValidator(
     cv.ensure_list(image_validator),
     cg.std_vector.template(image.Image_.operator("ptr")),
-    requires="image",
 )
 lv_bool = LValidator(cv.boolean, cg.bool_, retmapper=literal)
 
@@ -422,7 +462,6 @@ class TextValidator(LValidator):
                 str_args = [str(x) for x in value[CONF_ARGS]]
                 arg_expr = cg.RawExpression(",".join(str_args))
                 format_str = cpp_string_escape(format_str)
-                # str_sprintf justified: user-defined format, can't optimize without permanent RAM cost
                 sprintf_str = f"str_sprintf({format_str}, {arg_expr}).c_str()"
                 if nanval := value.get(CONF_IF_NAN):
                     nanval = cpp_string_escape(nanval)

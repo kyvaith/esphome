@@ -224,8 +224,12 @@ class GridLayout(Layout):
                     {
                         cv.Optional(CONF_GRID_CELL_ROW_POS): cv.positive_int,
                         cv.Optional(CONF_GRID_CELL_COLUMN_POS): cv.positive_int,
-                        cv.Optional(CONF_GRID_CELL_ROW_SPAN): cv.int_range(min=1),
-                        cv.Optional(CONF_GRID_CELL_COLUMN_SPAN): cv.int_range(min=1),
+                        cv.Optional(
+                            CONF_GRID_CELL_ROW_SPAN, default=1
+                        ): cv.positive_int,
+                        cv.Optional(
+                            CONF_GRID_CELL_COLUMN_SPAN, default=1
+                        ): cv.positive_int,
                         cv.Optional(
                             CONF_GRID_CELL_X_ALIGN, default="center"
                         ): grid_alignments,

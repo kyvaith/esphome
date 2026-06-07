@@ -1,0 +1,101 @@
+# ESPHome LVGL List Widget Example
+# Demonstrates list widget features in LVGL v9.5
+#
+# The list widget provides:
+# - Scrollable list of items
+# - Two item types: "button" (clickable) and "text" (section header)
+# - Optional icon support for button items (via 'src')
+#
+# List items are defined under the 'items' key.
+
+lvgl:
+  displays:
+    - display_id: my_display
+      pages:
+        - id: main_page
+          widgets:
+            # ============================================
+            # Example 1: Simple Navigation List
+            # ============================================
+            - list:
+                id: nav_list
+                x: 10
+                y: 10
+                width: 220
+                height: 280
+                bg_color: 0xFFFFFF
+                border_width: 1
+                border_color: 0xE0E0E0
+
+                items:
+                  - type: text
+                    text: "Navigation"
+
+                  - type: button
+                    text: "Dashboard"
+
+                  - type: button
+                    text: "Sensors"
+
+                  - type: button
+                    text: "Controls"
+
+                  - type: button
+                    text: "Settings"
+
+            # ============================================
+            # Example 2: File List with Section Headers
+            # ============================================
+            - list:
+                id: file_list
+                x: 250
+                y: 10
+                width: 220
+                height: 280
+                bg_color: 0xFAFAFA
+
+                items:
+                  - type: text
+                    text: "Folders"
+
+                  - type: button
+                    text: "Documents"
+
+                  - type: button
+                    text: "Pictures"
+
+                  - type: button
+                    text: "Downloads"
+
+                  - type: text
+                    text: "Files"
+
+                  - type: button
+                    text: "config.yaml"
+
+                  - type: button
+                    text: "readme.txt"
+
+            # ============================================
+            # Example 3: List with Icons
+            # ============================================
+            # - list:
+            #     id: icon_list
+            #     width: 250
+            #     height: 200
+            #     items:
+            #       - type: button
+            #         text: "WiFi Settings"
+            #         src: wifi_icon
+            #       - type: button
+            #         text: "Bluetooth"
+            #         src: bt_icon
+
+# Dynamic list update example:
+# - lvgl.list.update:
+#     id: nav_list
+#     items:
+#       - type: text
+#         text: "Updated Items"
+#       - type: button
+#         text: "New Item"

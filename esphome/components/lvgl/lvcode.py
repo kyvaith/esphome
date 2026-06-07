@@ -356,7 +356,7 @@ def lv_Pvariable(type, name) -> MockObj:
     """
     if isinstance(name, str):
         name = ID(name, True, type)
-    decl = VariableDeclarationExpression(type, "*", name, static=True)
+    decl = VariableDeclarationExpression(type, "*", name)
     CORE.add_global(decl)
     var = MockObj(name, "->")
     CORE.register_variable(name, var)
@@ -372,7 +372,7 @@ def lv_variable(type, name) -> MockObj:
     """
     if isinstance(name, str):
         name = ID(name, True, type)
-    decl = VariableDeclarationExpression(type, "", name, static=True)
+    decl = VariableDeclarationExpression(type, "", name)
     CORE.add_global(decl)
     var = MockObj(name, ".")
     CORE.register_variable(name, var)

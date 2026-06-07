@@ -13,6 +13,7 @@ from .defines import (
     CONF_LONG_PRESS_REPEAT_TIME,
     CONF_LONG_PRESS_TIME,
     CONF_RIGHT_BUTTON,
+    CONF_ROTARY_SENSITIVITY,
     add_lv_use,
 )
 from .lvcode import lv, lv_add, lv_assign, lv_expr, lv_Pvariable
@@ -56,6 +57,10 @@ async def encoders_to_code(var, config, default_group):
             enc_conf[CONF_ID], lv_indev_type_t.LV_INDEV_TYPE_ENCODER, lpt, lprt
         )
         await cg.register_parented(listener, var)
+        # LVGL 9.5: Set rotary encoder sensitivity
+        sensitivity = enc_conf.get(CONF_ROTARY_SENSITIVITY, 1.0)
+        if sensitivity != 1.0:
+            cg.add(listener.set_sensitivity(sensitivity))
         if sensor_config := enc_conf.get(CONF_SENSOR):
             if isinstance(sensor_config, dict):
                 b_sensor = await cg.get_variable(sensor_config[CONF_LEFT_BUTTON])

@@ -319,6 +319,8 @@ class LvConstant(LValidator):
 
 # Parts
 CONF_MAIN = "main"
+CONF_HEADER = "header"
+CONF_SIDEBAR = "sidebar"
 CONF_SCROLLBAR = "scrollbar"
 CONF_INDICATOR = "indicator"
 CONF_KNOB = "knob"
@@ -347,10 +349,14 @@ LV_EVENT_MAP = {
     "CANCEL": "CANCEL",
     "CHANGE": "VALUE_CHANGED",
     "CHILD_CHANGE": "CHILD_CHANGED",
+    "CHILD_CHANGED": "CHILD_CHANGED",
     "CHILD_CREATE": "CHILD_CREATED",
+    "CHILD_CREATED": "CHILD_CREATED",
     "CHILD_DELETE": "CHILD_DELETED",
+    "CHILD_DELETED": "CHILD_DELETED",
     "CLICK": "CLICKED",
     "COLOR_FORMAT_CHANGE": "COLOR_FORMAT_CHANGED",
+    "COLOR_FORMAT_CHANGED": "COLOR_FORMAT_CHANGED",
     "COVER_CHECK": "COVER_CHECK",
     "CREATE": "CREATE",
     "DEFOCUS": "DEFOCUSED",
@@ -363,6 +369,7 @@ LV_EVENT_MAP = {
     "DRAW_POST_BEGIN": "DRAW_POST_BEGIN",
     "DRAW_POST_END": "DRAW_POST_END",
     "DRAW_TASK_ADD": "DRAW_TASK_ADDED",
+    "DRAW_TASK_ADDED": "DRAW_TASK_ADDED",
     "FOCUS": "FOCUSED",
     "GESTURE": "GESTURE",
     "GET_SELF_SIZE": "GET_SELF_SIZE",
@@ -374,6 +381,7 @@ LV_EVENT_MAP = {
     "INVALIDATE_AREA": "INVALIDATE_AREA",
     "KEY": "KEY",
     "LAYOUT_CHANGE": "LAYOUT_CHANGED",
+    "LAYOUT_CHANGED": "LAYOUT_CHANGED",
     "LEAVE": "LEAVE",
     "LONG_PRESS": "LONG_PRESSED",
     "LONG_PRESS_REPEAT": "LONG_PRESSED_REPEAT",
@@ -392,8 +400,10 @@ LV_EVENT_MAP = {
     "SHORT_CLICK": "SHORT_CLICKED",
     "SINGLE_CLICK": "SINGLE_CLICKED",
     "SIZE_CHANGE": "SIZE_CHANGED",
+    "SIZE_CHANGED": "SIZE_CHANGED",
     "STATE_CHANGE": "STATE_CHANGED",
     "STYLE_CHANGE": "STYLE_CHANGED",
+    "STYLE_CHANGED": "STYLE_CHANGED",
     "TRIPLE_CLICK": "TRIPLE_CLICKED",
 }
 
@@ -414,8 +424,10 @@ def is_press_event(event: str) -> bool:
 LV_SCREEN_EVENT_MAP = {
     "SCREEN_LOAD": "SCREEN_LOADED",
     "SCREEN_LOAD_START": "SCREEN_LOAD_START",
+    "SCREEN_LOADED": "SCREEN_LOADED",
     "SCREEN_UNLOAD": "SCREEN_UNLOADED",
     "SCREEN_UNLOAD_START": "SCREEN_UNLOAD_START",
+    "SCREEN_UNLOADED": "SCREEN_UNLOADED",
 }
 
 LV_DISPLAY_EVENT_MAP = {
@@ -429,6 +441,7 @@ LV_DISPLAY_EVENT_MAP = {
     "RENDER_READY": "RENDER_READY",
     "RENDER_START": "RENDER_START",
     "RESOLUTION_CHANGE": "RESOLUTION_CHANGED",
+    "RESOLUTION_CHANGED": "RESOLUTION_CHANGED",
     "UPDATE_LAYOUT_COMPLETE": "UPDATE_LAYOUT_COMPLETED",
     "VSYNC": "VSYNC",
     "VSYNC_REQUEST": "VSYNC_REQUEST",
@@ -484,7 +497,7 @@ LV_LONG_MODES = LvConstant(
 )
 
 STATES = (
-    # default state not included here
+    "default",
     "checked",
     "focused",
     "focus_key",
@@ -493,6 +506,7 @@ STATES = (
     "pressed",
     "scrolled",
     "disabled",
+    "alt",  # LVGL 9.5: LV_STATE_ALT for dark/light mode switching
     "user_1",
     "user_2",
     "user_3",
@@ -501,12 +515,14 @@ STATES = (
 
 PARTS = (
     CONF_MAIN,
+    CONF_HEADER,
+    CONF_SIDEBAR,
     CONF_SCROLLBAR,
     CONF_INDICATOR,
     CONF_KNOB,
     CONF_SELECTED,
     CONF_ITEMS,
-    # CONF_TICKS,
+    # Note: CONF_TICKS removed - LV_PART_TICKS doesn't exist in LVGL 9.x
     CONF_CURSOR,
     CONF_TEXTAREA_PLACEHOLDER,
 )
@@ -591,6 +607,7 @@ OBJ_FLAGS = (
     "layout_1",
     "layout_2",
     "send_draw_task_events",
+    "radio_button",  # LVGL 9.5: LV_OBJ_FLAG_RADIO_BUTTON for radio group behavior
     "widget_1",
     "widget_2",
     "user_1",
@@ -656,6 +673,7 @@ LV_CHART_TYPES = (
     "LINE",
     "BAR",
     "SCATTER",
+    "CURVE",  # LVGL 9.5: Bézier curved charts (requires Vector Graphics/ThorVG)
 )
 LV_CHART_AXES = (
     "PRIMARY_Y",
@@ -715,6 +733,7 @@ CONF_FLEX_GROW = "flex_grow"
 CONF_FREEZE = "freeze"
 CONF_DARK_MODE = "dark_mode"
 CONF_FULL_REFRESH = "full_refresh"
+CONF_DIRECT_MODE = "direct_mode"
 CONF_GRADIENTS = "gradients"
 CONF_GRID_CELL_ROW_POS = "grid_cell_row_pos"
 CONF_GRID_CELL_COLUMN_POS = "grid_cell_column_pos"
@@ -814,6 +833,62 @@ CONF_WIDGET = "widget"
 CONF_WIDGETS = "widgets"
 CONF_ZOOM = "zoom"
 
+# LVGL 9.5 blur / frosted glass properties
+CONF_BLUR_RADIUS = "blur_radius"
+CONF_BLUR_BACKDROP = "blur_backdrop"
+CONF_BLUR_QUALITY = "blur_quality"
+
+# LVGL 9.5 gradient opacity properties
+CONF_BG_MAIN_OPA = "bg_main_opa"
+CONF_BG_GRAD_OPA = "bg_grad_opa"
+
+# LVGL 9.5 image properties
+CONF_IMAGE_OPA = "image_opa"
+
+# LVGL 9.5 bitmap mask
+CONF_BITMAP_MASK_SRC = "bitmap_mask_src"
+
+# LVGL 9.5 margin properties (for flex/grid layouts)
+CONF_MARGIN_TOP = "margin_top"
+CONF_MARGIN_BOTTOM = "margin_bottom"
+CONF_MARGIN_LEFT = "margin_left"
+CONF_MARGIN_RIGHT = "margin_right"
+
+# LVGL 9.5 text outline stroke properties
+CONF_TEXT_OUTLINE_STROKE_COLOR = "text_outline_stroke_color"
+CONF_TEXT_OUTLINE_STROKE_OPA = "text_outline_stroke_opa"
+CONF_TEXT_OUTLINE_STROKE_WIDTH = "text_outline_stroke_width"
+
+# LVGL 9.5 drop shadow properties
+CONF_DROP_SHADOW_RADIUS = "drop_shadow_radius"
+CONF_DROP_SHADOW_OFFSET_X = "drop_shadow_offset_x"
+CONF_DROP_SHADOW_OFFSET_Y = "drop_shadow_offset_y"
+CONF_DROP_SHADOW_COLOR = "drop_shadow_color"
+CONF_DROP_SHADOW_OPA = "drop_shadow_opa"
+CONF_DROP_SHADOW_QUALITY = "drop_shadow_quality"
+
+# LVGL 9.5 additional image properties
+CONF_IMAGE_COLORKEY = "image_colorkey"
+CONF_ARC_IMAGE_SRC = "arc_image_src"
+
+# LVGL 9.5 rotary encoder sensitivity
+CONF_ROTARY_SENSITIVITY = "rotary_sensitivity"
+
+# Transition properties for animated state changes
+CONF_STYLE_TRANSITION_TIME = "style_transition_time"
+CONF_STYLE_TRANSITION_DELAY = "style_transition_delay"
+CONF_STYLE_TRANSITION_PATH = "style_transition_path"
+
+ANIM_PATHS = {
+    "linear": "lv_anim_path_linear",
+    "ease_in": "lv_anim_path_ease_in",
+    "ease_out": "lv_anim_path_ease_out",
+    "ease_in_out": "lv_anim_path_ease_in_out",
+    "overshoot": "lv_anim_path_overshoot",
+    "bounce": "lv_anim_path_bounce",
+    "step": "lv_anim_path_step",
+}
+
 # Keypad keys
 
 LV_KEYS = LvConstant(
@@ -854,29 +929,3 @@ def join_enums(enums, prefix=""):
     if prefix:
         return literal("|".join(f"{prefix}{e.upper()}" for e in enums))
     return literal("|".join(f"(int){e.upper()}" for e in enums))
-
-
-# fmt: off
-LV_COLOR_FORMATS = (
-    "RGB565", "SWAPPED", "RGB565A8", "RGB888", "XRGB8888", "ARGB8888", "PREMULTIPLIED", "L8", "AL88", "A8", "I1",
-)
-
-LV_DEFINES = (
-    "LV_USE_FREERTOS_TASK_NOTIFY", "LV_DRAW_BUF_STRIDE_ALIGN", "LV_USE_DRAW_SW", "LV_DRAW_SW_DRAW_UNIT_CNT",
-    "LV_DRAW_SW_COMPLEX", "LV_USE_DRAW_PXP", "LV_USE_PXP_DRAW_THREAD", "LV_USE_DRAW_G2D",
-    "LV_USE_G2D_DRAW_THREAD", "LV_VG_LITE_USE_BOX_SHADOW", "LV_VG_LITE_THORVG_16PIXELS_ALIGN", "LV_LOG_USE_TIMESTAMP",
-    "LV_LOG_USE_FILE_LINE", "LV_USE_OBJ_ID_BUILTIN", "LV_USE_OBJ_PROPERTY_NAME", "LV_ATTRIBUTE_MEM_ALIGN_SIZE",
-    "LV_FONT_MONTSERRAT_14", "LV_USE_FONT_PLACEHOLDER", "LV_WIDGETS_HAS_DEFAULT_VALUE", "LV_USE_ARCLABEL",
-    "LV_USE_CALENDAR", "LV_USE_CALENDAR_HEADER_ARROW", "LV_USE_CALENDAR_HEADER_DROPDOWN", "LV_USE_CHART",
-    "LV_USE_LIST", "LV_USE_MENU", "LV_USE_MSGBOX", "LV_USE_SCALE",
-    "LV_USE_TABLE", "LV_USE_SPAN", "LV_USE_WIN", "LV_USE_THEME_DEFAULT",
-    "LV_THEME_DEFAULT_GROW", "LV_USE_THEME_SIMPLE", "LV_USE_THEME_MONO", "LV_USE_FLEX",
-    "LV_USE_GRID", "LV_USE_PROFILER_BUILTIN", "LV_PROFILER_BUILTIN_DEFAULT_ENABLE", "LV_PROFILER_LAYOUT",
-    "LV_PROFILER_REFR", "LV_PROFILER_DRAW", "LV_PROFILER_INDEV", "LV_PROFILER_DECODER",
-    "LV_PROFILER_FONT", "LV_PROFILER_FS", "LV_PROFILER_TIMER", "LV_PROFILER_CACHE",
-    "LV_PROFILER_EVENT", "LV_USE_OBSERVER", "LV_IME_PINYIN_USE_DEFAULT_DICT", "LV_IME_PINYIN_USE_K9_MODE",
-    "LV_FILE_EXPLORER_QUICK_ACCESS", "LV_TEST_SCREENSHOT_CREATE_REFERENCE_IMAGE", "LV_LINUX_FBDEV_MMAP",
-    "LV_USE_NUTTX_MOUSE_MOVE_STEP", "LV_USE_GENERIC_MIPI", "LV_BUILD_EXAMPLES", "LV_BUILD_DEMOS",
-    "LV_WAYLAND_USE_EGL", "LV_WAYLAND_USE_G2D", "LV_WAYLAND_USE_SHM", "LV_LINUX_DRM_USE_EGL",
-    "LV_USE_LZ4", "LV_USE_THORVG", "LV_SDL_USE_EGL", "LV_USE_EGL", "LV_LABEL_LONG_TXT_HINT", "LV_LABEL_TEXT_SELECTION",
-) + tuple(f"LV_DRAW_SW_SUPPORT_{f}" for f in LV_COLOR_FORMATS)
