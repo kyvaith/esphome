@@ -3026,9 +3026,10 @@ void snapshot_swipe_direct_animate_to(int current_x, int next_x, uint32_t durati
   snapshot_swipe_state.finish_next_x = next_x;
   snapshot_swipe_state.anim_start_current_x = snapshot_swipe_state.current_x;
   snapshot_swipe_state.anim_start_next_x = snapshot_swipe_state.next_x;
-  snapshot_swipe_state.anim_start_us = esp_timer_get_time();
+  snapshot_swipe_state.anim_start_us = esp_timer_get_time() - 16666ULL;
   snapshot_swipe_state.anim_duration_ms = duration_ms;
   snapshot_swipe_state.direct_anim_active = true;
+  snapshot_swipe_direct_anim_tick();
 }
 
 void snapshot_swipe_anim_completed_cb(lv_anim_t *anim) {
