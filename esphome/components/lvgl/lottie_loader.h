@@ -14,6 +14,7 @@
 #include "esp_memory_utils.h"
 #include "esp_timer.h"
 #include <cstring>
+#include <cstdlib>
 
 // Access lv_lottie_t internals for safe re-initialisation on screen re-load.
 // Needed to null out the dangling anim pointer and to clear the ThorVG canvas
@@ -68,6 +69,31 @@ inline size_t lottie_required_buffer_bytes(uint32_t width, uint32_t height) {
   const int32_t stride =
       lv_draw_buf_width_to_stride(static_cast<int32_t>(width), LV_COLOR_FORMAT_ARGB8888_PREMULTIPLIED);
   return static_cast<size_t>(stride) * height;
+}
+
+inline bool lottie_read_json_number(const char *json, const char *key, float *value) {
+  const char *pos = strstr(json, key);
+  if (pos == nullptr) {
+    return false;
+  }
+  pos += strlen(key);
+  char *end = nullptr;
+  float parsed = strtof(pos, &end);
+  if (end == pos) {
+    return false;
+  }
+  *value = parsed;
+  return true;
+}
+
+inline bool lottie_read_timing_from_json(const void *data, float *start_frame, float *end_frame, float *frame_rate) {
+  if (data == nullptr) {
+    return false;
+  }
+  const char *json = reinterpret_cast<const char *>(data);
+  return lottie_read_json_number(json, "\"ip\":", start_frame) &&
+         lottie_read_json_number(json, "\"op\":", end_frame) &&
+         lottie_read_json_number(json, "\"fr\":", frame_rate) && *end_frame > *start_frame && *frame_rate > 0.0f;
 }
 
 inline void lottie_sync_canvas_buffer(LottieContext *ctx) {
@@ -170,24 +196,35 @@ inline void lottie_load_task(void *param) {
                    static_cast<unsigned>(ctx->data_size));
     }
 
-    float total_frames = 0.0f;
-    tvg_animation_get_total_frame(lottie->tvg_anim, &total_frames);
-    if (ctx->exec_cb != nullptr && ctx->anim_var != nullptr && total_frames > 0.0f) {
-      ctx->start_frame = 0;
-      ctx->end_frame = static_cast<int32_t>(total_frames);
-      ctx->duration_ms = static_cast<uint32_t>(ctx->end_frame * 1000 / 60);
+    float frame_rate = 60.0f;
+    float start_frame = 0.0f;
+    float end_frame = 0.0f;
+    bool timing_ok = lottie_read_timing_from_json(ctx->data, &start_frame, &end_frame, &frame_rate);
+    if (!timing_ok) {
+      float total_frames = 0.0f;
+      tvg_animation_get_total_frame(lottie->tvg_anim, &total_frames);
+      start_frame = 0.0f;
+      end_frame = total_frames;
+      frame_rate = 60.0f;
+      timing_ok = total_frames > 0.0f;
+    }
+    if (ctx->exec_cb != nullptr && ctx->anim_var != nullptr && timing_ok) {
+      ctx->start_frame = static_cast<int32_t>(start_frame);
+      ctx->end_frame = static_cast<int32_t>(end_frame);
+      ctx->duration_ms =
+          static_cast<uint32_t>((end_frame - start_frame) * 1000.0f / frame_rate);
       lv_lottie_set_buffer(ctx->obj, ctx->width, ctx->height, ctx->pixel_buffer);
 
-      LV_LOG_WARN("Lottie anim: data=%u bytes frames=%d..%d total=%d duration=%u ms",
+      LV_LOG_WARN("Lottie anim: data=%u bytes frames=%d..%d total=%d duration=%u ms rate=%d",
                   static_cast<unsigned>(ctx->data_size), static_cast<int>(ctx->start_frame),
-                  static_cast<int>(ctx->end_frame), static_cast<int>(total_frames),
-                  static_cast<unsigned>(ctx->duration_ms));
+                  static_cast<int>(ctx->end_frame), static_cast<int>(end_frame - start_frame),
+                  static_cast<unsigned>(ctx->duration_ms), static_cast<int>(frame_rate));
 
       ctx->data_loaded = true;
       LV_LOG_TRACE("LVGL anim removed - rendering from PSRAM task");
     } else {
       LV_LOG_ERROR("Animation INVALID after load: data=%u bytes total_frames=%d", static_cast<unsigned>(ctx->data_size),
-                   static_cast<int>(total_frames));
+                   static_cast<int>(end_frame - start_frame));
     }
   } else {
     // ===== RE-LOAD (screen came back) =====
