@@ -150,25 +150,38 @@ inline void lottie_load_task(void *param) {
     // ===== FIRST LOAD =====
     LV_LOG_TRACE("First load: parsing lottie data...");
 
-    // Set pixel buffer - this calls anim_exec_cb internally but since
-    // no data is loaded yet ThorVG has nothing to render (safe).
-    lv_lottie_set_buffer(ctx->obj, ctx->width, ctx->height, ctx->pixel_buffer);
+    lv_lottie_t *lottie = reinterpret_cast<lv_lottie_t *>(ctx->obj);
+    Tvg_Result load_result = TVG_RESULT_INVALID_ARGUMENT;
 
-    // Parse lottie data (heavy ThorVG work - needs 64 KB stack)
+    // Parse lottie data (heavy ThorVG work - needs 64 KB stack).  Do this
+    // before lv_lottie_set_buffer(), because LVGL forces a render from
+    // set_buffer() and ThorVG reports an error if the paint is still empty.
     if (ctx->data != nullptr) {
-      lv_lottie_set_src_data(ctx->obj, ctx->data, ctx->data_size);
+      load_result =
+          tvg_picture_load_data(lottie->tvg_paint, reinterpret_cast<const char *>(ctx->data), ctx->data_size, "lottie",
+                                true);
       LV_LOG_WARN("Lottie loaded embedded source: data=%u bytes", static_cast<unsigned>(ctx->data_size));
     } else if (ctx->file_path != nullptr) {
-      lv_lottie_set_src_file(ctx->obj, ctx->file_path);
+      load_result = tvg_picture_load(lottie->tvg_paint, ctx->file_path);
       LV_LOG_WARN("Lottie loaded file source: %s", ctx->file_path);
+    }
+    if (load_result != TVG_RESULT_SUCCESS) {
+      LV_LOG_ERROR("Lottie source load failed: result=%d data=%u bytes", static_cast<int>(load_result),
+                   static_cast<unsigned>(ctx->data_size));
     }
 
     // Capture animation parameters before deleting the LVGL animation
     lv_anim_t *anim = lv_lottie_get_anim(ctx->obj);
-    lv_lottie_t *lottie = reinterpret_cast<lv_lottie_t *>(ctx->obj);
     float total_frames = 0.0f;
     tvg_animation_get_total_frame(lottie->tvg_anim, &total_frames);
     if (anim != nullptr) {
+      lv_anim_set_duration(anim, static_cast<int32_t>(total_frames) * 1000 / 60);
+      anim->act_time = 0;
+      anim->end_value = static_cast<int32_t>(total_frames);
+      anim->reverse_play_in_progress = false;
+
+      lv_lottie_set_buffer(ctx->obj, ctx->width, ctx->height, ctx->pixel_buffer);
+
       ctx->exec_cb = anim->exec_cb;
       ctx->anim_var = anim->var;
       ctx->start_frame = anim->start_value;
