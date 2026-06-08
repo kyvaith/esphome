@@ -165,6 +165,9 @@ inline void lottie_load_task(void *param) {
 
     // Capture animation parameters before deleting the LVGL animation
     lv_anim_t *anim = lv_lottie_get_anim(ctx->obj);
+    lv_lottie_t *lottie = reinterpret_cast<lv_lottie_t *>(ctx->obj);
+    float total_frames = 0.0f;
+    tvg_animation_get_total_frame(lottie->tvg_anim, &total_frames);
     if (anim != nullptr) {
       ctx->exec_cb = anim->exec_cb;
       ctx->anim_var = anim->var;
@@ -182,13 +185,13 @@ inline void lottie_load_task(void *param) {
       // CRITICAL: null out the dangling pointer in lv_lottie_t.
       // Without this, anim_exec_cb (called by lv_lottie_set_buffer
       // on re-load) would dereference freed memory.
-      lv_lottie_t *lottie = reinterpret_cast<lv_lottie_t *>(ctx->obj);
       lottie->anim = nullptr;
 
       ctx->data_loaded = true;
       LV_LOG_TRACE("LVGL anim removed - rendering from PSRAM task");
     } else {
-      LV_LOG_ERROR("Animation INVALID - parsing may have failed!");
+      LV_LOG_ERROR("Animation INVALID after load: data=%u bytes total_frames=%d", static_cast<unsigned>(ctx->data_size),
+                   static_cast<int>(total_frames));
     }
   } else {
     // ===== RE-LOAD (screen came back) =====
@@ -513,7 +516,7 @@ inline void lottie_screen_unloaded_cb(lv_event_t *e) {
 
 inline void lottie_screen_loaded_cb(lv_event_t *e) {
   LottieContext *ctx = static_cast<LottieContext *>(lv_event_get_user_data(e));
-  if (ctx->pixel_buffer == nullptr) {
+  if (ctx != nullptr && ctx->auto_start && !ctx->runtime_hidden && ctx->pixel_buffer == nullptr) {
     lottie_launch(ctx);
   }
 }
