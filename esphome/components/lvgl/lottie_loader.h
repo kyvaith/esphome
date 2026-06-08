@@ -554,7 +554,7 @@ inline void lottie_screen_unloaded_cb(lv_event_t *e) {
 
 inline void lottie_screen_loaded_cb(lv_event_t *e) {
   LottieContext *ctx = static_cast<LottieContext *>(lv_event_get_user_data(e));
-  if (ctx != nullptr && ctx->auto_start && !ctx->runtime_hidden && ctx->pixel_buffer == nullptr) {
+  if (ctx != nullptr && ctx->auto_start && ctx->pixel_buffer == nullptr) {
     lottie_launch(ctx);
   }
 }
@@ -568,6 +568,31 @@ inline void lottie_restart(LottieContext *ctx) {
     ctx->restart_requested = true;
     LV_LOG_TRACE("Restart requested (will reset on next frame)");
   }
+}
+
+inline void lottie_show(LottieContext *ctx, bool restart) {
+  if (ctx == nullptr || ctx->obj == nullptr) {
+    return;
+  }
+  const bool was_hidden = ctx->runtime_hidden || lv_obj_has_flag(ctx->obj, LV_OBJ_FLAG_HIDDEN);
+  ctx->runtime_hidden = false;
+  if (ctx->pixel_buffer == nullptr) {
+    lottie_launch(ctx);
+    return;
+  }
+  lv_obj_remove_flag(ctx->obj, LV_OBJ_FLAG_HIDDEN);
+  if (restart && was_hidden) {
+    lottie_restart(ctx);
+  }
+  lv_obj_invalidate(ctx->obj);
+}
+
+inline void lottie_hide(LottieContext *ctx) {
+  if (ctx == nullptr || ctx->obj == nullptr) {
+    return;
+  }
+  ctx->runtime_hidden = true;
+  lv_obj_add_flag(ctx->obj, LV_OBJ_FLAG_HIDDEN);
 }
 
 // --------------------------------------------------------------------------
