@@ -170,37 +170,18 @@ inline void lottie_load_task(void *param) {
                    static_cast<unsigned>(ctx->data_size));
     }
 
-    // Capture animation parameters before deleting the LVGL animation
-    lv_anim_t *anim = lv_lottie_get_anim(ctx->obj);
     float total_frames = 0.0f;
     tvg_animation_get_total_frame(lottie->tvg_anim, &total_frames);
-    if (anim != nullptr) {
-      lv_anim_set_duration(anim, static_cast<int32_t>(total_frames) * 1000 / 60);
-      anim->act_time = 0;
-      anim->end_value = static_cast<int32_t>(total_frames);
-      anim->reverse_play_in_progress = false;
-
+    if (ctx->exec_cb != nullptr && ctx->anim_var != nullptr && total_frames > 0.0f) {
+      ctx->start_frame = 0;
+      ctx->end_frame = static_cast<int32_t>(total_frames);
+      ctx->duration_ms = static_cast<uint32_t>(ctx->end_frame * 1000 / 60);
       lv_lottie_set_buffer(ctx->obj, ctx->width, ctx->height, ctx->pixel_buffer);
-
-      ctx->exec_cb = anim->exec_cb;
-      ctx->anim_var = anim->var;
-      ctx->start_frame = anim->start_value;
-      ctx->end_frame = anim->end_value;
-      ctx->duration_ms = static_cast<uint32_t>(lv_anim_get_time(anim));
 
       LV_LOG_WARN("Lottie anim: data=%u bytes frames=%d..%d total=%d duration=%u ms",
                   static_cast<unsigned>(ctx->data_size), static_cast<int>(ctx->start_frame),
                   static_cast<int>(ctx->end_frame), static_cast<int>(total_frames),
                   static_cast<unsigned>(ctx->duration_ms));
-
-      // Delete the LVGL animation - we drive rendering ourselves
-      // from this PSRAM task instead of the main task (small stack).
-      lv_anim_delete(ctx->anim_var, ctx->exec_cb);
-
-      // CRITICAL: null out the dangling pointer in lv_lottie_t.
-      // Without this, anim_exec_cb (called by lv_lottie_set_buffer
-      // on re-load) would dereference freed memory.
-      lottie->anim = nullptr;
 
       ctx->data_loaded = true;
       LV_LOG_TRACE("LVGL anim removed - rendering from PSRAM task");
@@ -580,6 +561,19 @@ inline bool lottie_init(lv_obj_t *obj, const void *data, size_t data_size, const
   // Store context on the LVGL object so user scripts can retrieve it
   // via lv_obj_get_user_data() for lottie_restart() calls
   lv_obj_set_user_data(obj, ctx);
+
+  // The built-in LVGL Lottie widget starts its own lv_anim in the constructor.
+  // ESP targets can overflow the main LVGL task stack when ThorVG renders
+  // there, so capture the exec callback and let the dedicated 64 KB task own
+  // every frame render from now on.
+  lv_anim_t *anim = lv_lottie_get_anim(obj);
+  if (anim != nullptr) {
+    ctx->exec_cb = anim->exec_cb;
+    ctx->anim_var = anim->var;
+    lv_anim_delete(ctx->anim_var, ctx->exec_cb);
+    lv_lottie_t *lottie = reinterpret_cast<lv_lottie_t *>(obj);
+    lottie->anim = nullptr;
+  }
 
   // Register screen events for PSRAM lifecycle (two-phase unload).
   // IMPORTANT: We do NOT call lottie_launch() here.  Resources are only
