@@ -157,10 +157,10 @@ inline void lottie_load_task(void *param) {
     // Parse lottie data (heavy ThorVG work - needs 64 KB stack)
     if (ctx->data != nullptr) {
       lv_lottie_set_src_data(ctx->obj, ctx->data, ctx->data_size);
-      LV_LOG_TRACE("Data loaded from embedded source (%d bytes)", static_cast<int>(ctx->data_size));
+      LV_LOG_WARN("Lottie loaded embedded source: data=%u bytes", static_cast<unsigned>(ctx->data_size));
     } else if (ctx->file_path != nullptr) {
       lv_lottie_set_src_file(ctx->obj, ctx->file_path);
-      LV_LOG_TRACE("Data loaded from file: %s", ctx->file_path);
+      LV_LOG_WARN("Lottie loaded file source: %s", ctx->file_path);
     }
 
     // Capture animation parameters before deleting the LVGL animation
@@ -175,8 +175,10 @@ inline void lottie_load_task(void *param) {
       ctx->end_frame = anim->end_value;
       ctx->duration_ms = static_cast<uint32_t>(lv_anim_get_time(anim));
 
-      LV_LOG_TRACE("Anim: frames %d..%d, duration %u ms", static_cast<int>(ctx->start_frame),
-                   static_cast<int>(ctx->end_frame), static_cast<unsigned>(ctx->duration_ms));
+      LV_LOG_WARN("Lottie anim: data=%u bytes frames=%d..%d total=%d duration=%u ms",
+                  static_cast<unsigned>(ctx->data_size), static_cast<int>(ctx->start_frame),
+                  static_cast<int>(ctx->end_frame), static_cast<int>(total_frames),
+                  static_cast<unsigned>(ctx->duration_ms));
 
       // Delete the LVGL animation - we drive rendering ourselves
       // from this PSRAM task instead of the main task (small stack).
@@ -425,6 +427,11 @@ inline bool lottie_launch(LottieContext *ctx) {
     return false;
   }
   memset(ctx->pixel_buffer, 0, alloc_bytes);
+
+  LV_LOG_WARN("Lottie launch: data=%u bytes size=%ux%u runtime_hidden=%d auto_start=%d",
+              static_cast<unsigned>(ctx->data_size), static_cast<unsigned>(ctx->width),
+              static_cast<unsigned>(ctx->height), static_cast<int>(ctx->runtime_hidden),
+              static_cast<int>(ctx->auto_start));
 
   // Hide temporarily during async load (pixel buffer is blank)
   lv_obj_add_flag(ctx->obj, LV_OBJ_FLAG_HIDDEN);
