@@ -587,6 +587,8 @@ inline void lottie_hide(LottieContext *ctx) {
   }
   ctx->runtime_hidden = true;
   lv_obj_add_flag(ctx->obj, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_invalidate(ctx->obj);
+  lottie_free_resources(ctx);
 }
 
 // --------------------------------------------------------------------------
