@@ -64,6 +64,12 @@ struct LottieContext {
 
 inline size_t lottie_align_up(size_t value, size_t align) { return (value + align - 1) & ~(align - 1); }
 
+inline size_t lottie_required_buffer_bytes(uint32_t width, uint32_t height) {
+  const int32_t stride =
+      lv_draw_buf_width_to_stride(static_cast<int32_t>(width), LV_COLOR_FORMAT_ARGB8888_PREMULTIPLIED);
+  return static_cast<size_t>(stride) * height;
+}
+
 inline void lottie_sync_canvas_buffer(LottieContext *ctx) {
   if (ctx == nullptr || ctx->obj == nullptr) {
     return;
@@ -382,7 +388,8 @@ inline void lottie_free_resources(LottieContext *ctx) {
   ctx->stop_requested = false;
 
   LV_LOG_TRACE("Lottie freed (%ux%u = %u KB %s buf + 64 KB stack)", static_cast<unsigned>(ctx->width),
-               static_cast<unsigned>(ctx->height), static_cast<unsigned>(ctx->width * ctx->height * 4 / 1024),
+               static_cast<unsigned>(ctx->height),
+               static_cast<unsigned>(lottie_required_buffer_bytes(ctx->width, ctx->height) / 1024),
                ctx->pixel_buffer_internal ? "SRAM" : "PSRAM");
   ctx->pixel_buffer_internal = false;
 }
@@ -405,7 +412,8 @@ inline bool lottie_launch(LottieContext *ctx) {
   // same canvas repeatedly, and keeping that source out of PSRAM avoids a
   // fragile cache/PPA/display-read path on ESP32-P4. Larger animations still
   // fall back to PSRAM to keep the UI bootable.
-  size_t buf_bytes = static_cast<size_t>(ctx->width) * ctx->height * 4;
+  size_t logical_bytes = static_cast<size_t>(ctx->width) * ctx->height * 4;
+  size_t buf_bytes = lottie_required_buffer_bytes(ctx->width, ctx->height);
   size_t alloc_bytes = lottie_align_up(buf_bytes, lottie_cache_align);
   ctx->pixel_buffer_internal = false;
   ctx->pixel_buffer = lottie_alloc_pixel_buffer(alloc_bytes, &ctx->pixel_buffer_internal);
@@ -438,10 +446,10 @@ inline bool lottie_launch(LottieContext *ctx) {
     return false;
   }
 
-  LV_LOG_TRACE("Lottie launched (runtime_hidden=%d, %s: %u KB buf + 64 KB stack, free PSRAM: %u KB, free SRAM: %u KB, "
-               "largest SRAM: %u KB)",
+  LV_LOG_TRACE("Lottie launched (runtime_hidden=%d, %s: %u KB buf (%u KB logical) + 64 KB stack, free PSRAM: %u KB, "
+               "free SRAM: %u KB, largest SRAM: %u KB)",
                static_cast<int>(ctx->runtime_hidden), ctx->pixel_buffer_internal ? "SRAM" : "PSRAM",
-               static_cast<unsigned>(buf_bytes / 1024),
+               static_cast<unsigned>(buf_bytes / 1024), static_cast<unsigned>(logical_bytes / 1024),
                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) / 1024));
@@ -496,7 +504,7 @@ inline void lottie_screen_unloaded_cb(lv_event_t *e) {
 
   LV_LOG_TRACE("Lottie FREED (%ux%u = %u KB %s buf + 64 KB stack) -> free PSRAM: %u KB, free SRAM: %u KB",
                static_cast<unsigned>(ctx->width), static_cast<unsigned>(ctx->height),
-               static_cast<unsigned>(ctx->width * ctx->height * 4 / 1024),
+               static_cast<unsigned>(lottie_required_buffer_bytes(ctx->width, ctx->height) / 1024),
                ctx->pixel_buffer_internal ? "SRAM" : "PSRAM",
                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
