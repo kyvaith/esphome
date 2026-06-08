@@ -73,6 +73,10 @@ static volatile uint32_t s_swipe_logging_enabled = 0;
 static volatile bool s_snapshot_swipe_active = false;
 static volatile bool s_snapshot_direct_active = false;
 
+namespace {
+bool snapshot_swipe_direct_anim_tick();
+}  // namespace
+
 #if LV_USE_PROFILER && LV_USE_PROFILER_BUILTIN
 static volatile uint32_t s_profiler_enabled = 0;
 static bool s_profiler_initialized = false;
@@ -2489,6 +2493,7 @@ void LvglComponent::loop() {
       this->write_random_();
   } else {
     if (s_snapshot_direct_active) {
+      snapshot_swipe_direct_anim_tick();
       return;
     }
     // Time the LVGL handler. flush_cb_ separately accumulates the DSI
@@ -2664,6 +2669,7 @@ struct SnapshotSwipeState {
   int anim_start_next_x{0};
   uint64_t anim_start_us{0};
   uint32_t anim_duration_ms{0};
+  bool direct_anim_active{false};
   bool owns_current_buf{false};
   bool owns_next_buf{false};
   int finish_current_x{0};
@@ -2934,6 +2940,7 @@ void snapshot_swipe_cleanup() {
   snapshot_swipe_state.anim_start_next_x = 0;
   snapshot_swipe_state.anim_start_us = 0;
   snapshot_swipe_state.anim_duration_ms = 0;
+  snapshot_swipe_state.direct_anim_active = false;
   snapshot_swipe_state.finish_current_x = 0;
   snapshot_swipe_state.finish_next_x = 0;
   snapshot_swipe_state.current_x = 0;
@@ -2980,14 +2987,13 @@ int snapshot_swipe_ease_out(int start, int end, uint32_t elapsed_ms, uint32_t du
 
 void snapshot_swipe_finish_now();
 
-void snapshot_swipe_direct_anim_timer_cb(lv_timer_t *timer) {
+bool snapshot_swipe_direct_anim_tick() {
   auto &state = snapshot_swipe_state;
-  if (!state.direct_render || state.component == nullptr || timer != state.direct_anim_timer) {
-    if (timer != nullptr)
-      lv_timer_delete(timer);
-    if (state.direct_anim_timer == timer)
-      state.direct_anim_timer = nullptr;
-    return;
+  if (!state.direct_anim_active)
+    return false;
+  if (!state.direct_render || state.component == nullptr) {
+    state.direct_anim_active = false;
+    return false;
   }
 
   const uint64_t now_us = esp_timer_get_time();
@@ -3003,10 +3009,10 @@ void snapshot_swipe_direct_anim_timer_cb(lv_timer_t *timer) {
   }
 
   if (elapsed_ms >= duration_ms) {
-    state.direct_anim_timer = nullptr;
-    lv_timer_delete(timer);
+    state.direct_anim_active = false;
     snapshot_swipe_finish_now();
   }
+  return true;
 }
 
 void snapshot_swipe_direct_animate_to(int current_x, int next_x, uint32_t duration_ms) {
@@ -3022,13 +3028,7 @@ void snapshot_swipe_direct_animate_to(int current_x, int next_x, uint32_t durati
   snapshot_swipe_state.anim_start_next_x = snapshot_swipe_state.next_x;
   snapshot_swipe_state.anim_start_us = esp_timer_get_time();
   snapshot_swipe_state.anim_duration_ms = duration_ms;
-  snapshot_swipe_state.direct_anim_timer = lv_timer_create(snapshot_swipe_direct_anim_timer_cb, 16, nullptr);
-  if (snapshot_swipe_state.direct_anim_timer != nullptr) {
-    lv_timer_ready(snapshot_swipe_state.direct_anim_timer);
-  } else {
-    snapshot_swipe_render_direct_frame(current_x, next_x);
-    snapshot_swipe_finish_now();
-  }
+  snapshot_swipe_state.direct_anim_active = true;
 }
 
 void snapshot_swipe_anim_completed_cb(lv_anim_t *anim) {
