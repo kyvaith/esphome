@@ -177,54 +177,48 @@ inline void lottie_load_task(void *param) {
     LV_LOG_TRACE("First load: parsing lottie data...");
 
     lv_lottie_t *lottie = reinterpret_cast<lv_lottie_t *>(ctx->obj);
-    Tvg_Result load_result = TVG_RESULT_INVALID_ARGUMENT;
+    lv_lottie_set_buffer(ctx->obj, ctx->width, ctx->height, ctx->pixel_buffer);
 
-    // Parse lottie data (heavy ThorVG work - needs 64 KB stack).  Do this
-    // before lv_lottie_set_buffer(), because LVGL forces a render from
-    // set_buffer() and ThorVG reports an error if the paint is still empty.
+    // Parse Lottie data in this task because LVGL renders the first frame
+    // synchronously from lv_lottie_set_src_*().
     if (ctx->data != nullptr) {
-      load_result =
-          tvg_picture_load_data(lottie->tvg_paint, reinterpret_cast<const char *>(ctx->data), ctx->data_size, "lottie",
-                                true);
+      lv_lottie_set_src_data(ctx->obj, ctx->data, ctx->data_size);
       LV_LOG_WARN("Lottie loaded embedded source: data=%u bytes", static_cast<unsigned>(ctx->data_size));
     } else if (ctx->file_path != nullptr) {
-      load_result = tvg_picture_load(lottie->tvg_paint, ctx->file_path);
+      lv_lottie_set_src_file(ctx->obj, ctx->file_path);
       LV_LOG_WARN("Lottie loaded file source: %s", ctx->file_path);
     }
-    if (load_result != TVG_RESULT_SUCCESS) {
-      LV_LOG_ERROR("Lottie source load failed: result=%d data=%u bytes", static_cast<int>(load_result),
-                   static_cast<unsigned>(ctx->data_size));
-    }
 
-    float frame_rate = 60.0f;
-    float start_frame = 0.0f;
-    float end_frame = 0.0f;
-    bool timing_ok = lottie_read_timing_from_json(ctx->data, &start_frame, &end_frame, &frame_rate);
-    if (!timing_ok) {
-      float total_frames = 0.0f;
-      tvg_animation_get_total_frame(lottie->tvg_anim, &total_frames);
-      start_frame = 0.0f;
-      end_frame = total_frames;
-      frame_rate = 60.0f;
-      timing_ok = total_frames > 0.0f;
-    }
-    if (ctx->exec_cb != nullptr && ctx->anim_var != nullptr && timing_ok) {
-      ctx->start_frame = static_cast<int32_t>(start_frame);
-      ctx->end_frame = static_cast<int32_t>(end_frame);
-      ctx->duration_ms =
-          static_cast<uint32_t>((end_frame - start_frame) * 1000.0f / frame_rate);
-      lv_lottie_set_buffer(ctx->obj, ctx->width, ctx->height, ctx->pixel_buffer);
+    lv_anim_t *anim = lv_lottie_get_anim(ctx->obj);
+    if (anim != nullptr) {
+      ctx->exec_cb = anim->exec_cb;
+      ctx->anim_var = anim->var;
 
+      float frame_rate = 60.0f;
+      float start_frame = 0.0f;
+      float end_frame = 0.0f;
+      bool timing_ok = lottie_read_timing_from_json(ctx->data, &start_frame, &end_frame, &frame_rate);
+      if (timing_ok) {
+        ctx->start_frame = static_cast<int32_t>(start_frame);
+        ctx->end_frame = static_cast<int32_t>(end_frame);
+        ctx->duration_ms = static_cast<uint32_t>((end_frame - start_frame) * 1000.0f / frame_rate);
+      } else {
+        ctx->start_frame = anim->start_value;
+        ctx->end_frame = anim->end_value;
+        ctx->duration_ms = static_cast<uint32_t>(lv_anim_get_time(anim));
+      }
       LV_LOG_WARN("Lottie anim: data=%u bytes frames=%d..%d total=%d duration=%u ms rate=%d",
                   static_cast<unsigned>(ctx->data_size), static_cast<int>(ctx->start_frame),
-                  static_cast<int>(ctx->end_frame), static_cast<int>(end_frame - start_frame),
+                  static_cast<int>(ctx->end_frame), static_cast<int>(ctx->end_frame - ctx->start_frame),
                   static_cast<unsigned>(ctx->duration_ms), static_cast<int>(frame_rate));
+
+      lv_anim_delete(ctx->anim_var, ctx->exec_cb);
+      lottie->anim = nullptr;
 
       ctx->data_loaded = true;
       LV_LOG_TRACE("LVGL anim removed - rendering from PSRAM task");
     } else {
-      LV_LOG_ERROR("Animation INVALID after load: data=%u bytes total_frames=%d", static_cast<unsigned>(ctx->data_size),
-                   static_cast<int>(end_frame - start_frame));
+      LV_LOG_ERROR("Animation INVALID after load: data=%u bytes", static_cast<unsigned>(ctx->data_size));
     }
   } else {
     // ===== RE-LOAD (screen came back) =====
@@ -623,19 +617,6 @@ inline bool lottie_init(lv_obj_t *obj, const void *data, size_t data_size, const
   // Store context on the LVGL object so user scripts can retrieve it
   // via lv_obj_get_user_data() for lottie_restart() calls
   lv_obj_set_user_data(obj, ctx);
-
-  // The built-in LVGL Lottie widget starts its own lv_anim in the constructor.
-  // ESP targets can overflow the main LVGL task stack when ThorVG renders
-  // there, so capture the exec callback and let the dedicated 64 KB task own
-  // every frame render from now on.
-  lv_anim_t *anim = lv_lottie_get_anim(obj);
-  if (anim != nullptr) {
-    ctx->exec_cb = anim->exec_cb;
-    ctx->anim_var = anim->var;
-    lv_anim_delete(ctx->anim_var, ctx->exec_cb);
-    lv_lottie_t *lottie = reinterpret_cast<lv_lottie_t *>(obj);
-    lottie->anim = nullptr;
-  }
 
   // Register screen events for PSRAM lifecycle (two-phase unload).
   // IMPORTANT: We do NOT call lottie_launch() here.  Resources are only
