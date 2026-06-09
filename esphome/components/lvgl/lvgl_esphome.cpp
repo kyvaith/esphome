@@ -2880,6 +2880,38 @@ bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf) {
 #endif
 }
 
+uint8_t snapshot_cache_expand_video_range_channel(uint8_t value) {
+  if (value <= 16)
+    return 0;
+  if (value >= 235)
+    return 255;
+  return (uint16_t) (value - 16) * 255 / 219;
+}
+
+void snapshot_cache_expand_video_range(lv_draw_buf_t *buf) {
+#if defined(USE_LVGL_SNAPSHOT_JPEG_CACHE) && LV_COLOR_DEPTH == 32
+  if (buf == nullptr || buf->data == nullptr || buf->header.cf != LV_COLOR_FORMAT_RGB888)
+    return;
+  const uint32_t width = buf->header.w;
+  const uint32_t height = buf->header.h;
+  const uint32_t stride = buf->header.stride;
+  if (width == 0 || height == 0 || stride < width * 3)
+    return;
+
+  uint8_t *row = buf->data;
+  for (uint32_t y = 0; y < height; y++) {
+    uint8_t *pixel = row;
+    for (uint32_t x = 0; x < width; x++) {
+      pixel[0] = snapshot_cache_expand_video_range_channel(pixel[0]);
+      pixel[1] = snapshot_cache_expand_video_range_channel(pixel[1]);
+      pixel[2] = snapshot_cache_expand_video_range_channel(pixel[2]);
+      pixel += 3;
+    }
+    row += stride;
+  }
+#endif
+}
+
 lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
 #if defined(USE_LVGL_SNAPSHOT_JPEG_CACHE) && LV_COLOR_DEPTH == 32
   if (entry.buf != nullptr)
@@ -2934,6 +2966,8 @@ lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
     lv_draw_buf_destroy(decoded);
     return nullptr;
   }
+
+  snapshot_cache_expand_video_range(decoded);
 
   entry.buf = decoded;
   entry.decoded_from_jpeg = true;
