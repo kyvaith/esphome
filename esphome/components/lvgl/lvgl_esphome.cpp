@@ -2841,7 +2841,7 @@ bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf) {
       .sub_sample = JPEG_DOWN_SAMPLING_YUV422,
       .image_quality = SNAPSHOT_JPEG_QUALITY,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
-      .pixel_reverse = !entry.big_endian,
+      .pixel_reverse = entry.big_endian,
 #endif
   };
   uint32_t out_size = 0;
