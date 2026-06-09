@@ -21,6 +21,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "soc/soc_caps.h"
+#if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED && __has_include("driver/jpeg_encode.h")
+#include "driver/jpeg_decode.h"
+#include "driver/jpeg_encode.h"
+#define USE_LVGL_SNAPSHOT_JPEG_CACHE 1
+#endif
 #endif
 
 #ifdef USE_LVGL_PPA
@@ -2717,6 +2723,13 @@ struct SnapshotScrollState {
 struct SnapshotCacheEntry {
   lv_obj_t *obj{nullptr};
   lv_draw_buf_t *buf{nullptr};
+  uint8_t *jpeg_buf{nullptr};
+  size_t jpeg_size{0};
+  uint32_t width{0};
+  uint32_t height{0};
+  uint32_t stride{0};
+  lv_color_format_t cf{LV_COLOR_FORMAT_UNKNOWN};
+  bool decoded_from_jpeg{false};
 };
 
 struct SnapshotPanoramaCacheEntry {
@@ -2736,13 +2749,204 @@ SnapshotPanoramaCacheEntry snapshot_panorama_cache[4];
 constexpr lv_color_format_t SNAPSHOT_CF = LV_COLOR_FORMAT_RGB888;
 constexpr int SNAPSHOT_PANORAMA_SCALE = 1;
 constexpr bool SNAPSHOT_DIRECT_COMPOSITOR_ENABLED = true;
+constexpr bool SNAPSHOT_JPEG_CACHE_ENABLED = true;
+constexpr uint32_t SNAPSHOT_JPEG_QUALITY = 92;
 
-lv_draw_buf_t *snapshot_cache_find(lv_obj_t *obj) {
+SnapshotCacheEntry *snapshot_cache_find_entry(lv_obj_t *obj) {
   for (auto &entry : snapshot_cache) {
     if (entry.obj == obj)
-      return entry.buf;
+      return &entry;
   }
   return nullptr;
+}
+
+void snapshot_cache_destroy_raw(SnapshotCacheEntry &entry) {
+  if (entry.buf != nullptr) {
+    lv_draw_buf_destroy(entry.buf);
+    entry.buf = nullptr;
+  }
+  entry.decoded_from_jpeg = false;
+}
+
+void snapshot_cache_destroy_jpeg(SnapshotCacheEntry &entry) {
+#ifdef USE_ESP32
+  if (entry.jpeg_buf != nullptr) {
+    heap_caps_free(entry.jpeg_buf);
+    entry.jpeg_buf = nullptr;
+  }
+#else
+  entry.jpeg_buf = nullptr;
+#endif
+  entry.jpeg_size = 0;
+  entry.width = 0;
+  entry.height = 0;
+  entry.stride = 0;
+  entry.cf = LV_COLOR_FORMAT_UNKNOWN;
+}
+
+void snapshot_cache_free_entry(SnapshotCacheEntry &entry) {
+  snapshot_cache_destroy_raw(entry);
+  snapshot_cache_destroy_jpeg(entry);
+  entry.obj = nullptr;
+}
+
+bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf) {
+#if defined(USE_LVGL_SNAPSHOT_JPEG_CACHE) && LV_COLOR_DEPTH == 32
+  if (!SNAPSHOT_JPEG_CACHE_ENABLED || buf == nullptr || buf->data == nullptr)
+    return false;
+  if (buf->header.cf != LV_COLOR_FORMAT_RGB888)
+    return false;
+  const uint32_t width = buf->header.w;
+  const uint32_t height = buf->header.h;
+  const uint32_t stride = buf->header.stride;
+  const size_t raw_size = buf->data_size != 0 ? buf->data_size : (size_t) stride * height;
+  if (width == 0 || height == 0 || stride != width * 3 || raw_size < (size_t) stride * height)
+    return false;
+  if ((width % 16) != 0 || (height % 16) != 0)
+    return false;
+
+  jpeg_encoder_handle_t encoder = nullptr;
+  jpeg_encode_engine_cfg_t engine_cfg = {
+      .intr_priority = 0,
+      .timeout_ms = 120,
+  };
+  if (jpeg_new_encoder_engine(&engine_cfg, &encoder) != ESP_OK || encoder == nullptr)
+    return false;
+
+  jpeg_encode_memory_alloc_cfg_t out_mem_cfg = {
+      .buffer_direction = JPEG_ENC_ALLOC_OUTPUT_BUFFER,
+  };
+  size_t out_alloc_size = 0;
+  uint8_t *out_buf = static_cast<uint8_t *>(jpeg_alloc_encoder_mem(raw_size, &out_mem_cfg, &out_alloc_size));
+  if (out_buf == nullptr) {
+    jpeg_del_encoder_engine(encoder);
+    return false;
+  }
+
+  jpeg_encode_cfg_t encode_cfg = {
+      .height = height,
+      .width = width,
+      .src_type = JPEG_ENCODE_IN_FORMAT_RGB888,
+      .sub_sample = JPEG_DOWN_SAMPLING_YUV422,
+      .image_quality = SNAPSHOT_JPEG_QUALITY,
+  };
+  uint32_t out_size = 0;
+  const uint64_t t0 = esp_timer_get_time();
+  const esp_err_t err = jpeg_encoder_process(encoder, &encode_cfg, buf->data, raw_size, out_buf, out_alloc_size,
+                                             &out_size);
+  const uint64_t elapsed_us = esp_timer_get_time() - t0;
+  jpeg_del_encoder_engine(encoder);
+
+  bool stored = false;
+  if (err == ESP_OK && out_size > 0 && out_size < raw_size) {
+    auto *stored_buf = static_cast<uint8_t *>(heap_caps_malloc(out_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (stored_buf != nullptr) {
+      memcpy(stored_buf, out_buf, out_size);
+      snapshot_cache_destroy_jpeg(entry);
+      entry.jpeg_buf = stored_buf;
+      entry.jpeg_size = out_size;
+      entry.width = width;
+      entry.height = height;
+      entry.stride = stride;
+      entry.cf = static_cast<lv_color_format_t>(buf->header.cf);
+      stored = true;
+    }
+  }
+  free(out_buf);
+
+  if (s_swipe_logging_enabled) {
+    if (stored) {
+      ESP_LOGI(TAG, "snapshot jpeg: encoded %ux%u %u KB -> %u KB q=%u in %lluus", (unsigned) width,
+               (unsigned) height, (unsigned) (raw_size / 1024), (unsigned) (out_size / 1024),
+               (unsigned) SNAPSHOT_JPEG_QUALITY, (unsigned long long) elapsed_us);
+    } else {
+      ESP_LOGW(TAG, "snapshot jpeg: encode skipped/failed err=%d out=%u raw=%u in %lluus", (int) err,
+               (unsigned) out_size, (unsigned) raw_size, (unsigned long long) elapsed_us);
+    }
+  }
+  return stored;
+#else
+  return false;
+#endif
+}
+
+lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
+#if defined(USE_LVGL_SNAPSHOT_JPEG_CACHE) && LV_COLOR_DEPTH == 32
+  if (entry.buf != nullptr)
+    return entry.buf;
+  if (entry.jpeg_buf == nullptr || entry.jpeg_size == 0 || entry.width == 0 || entry.height == 0)
+    return nullptr;
+
+  jpeg_decode_picture_info_t info = {};
+  if (jpeg_decoder_get_info(entry.jpeg_buf, entry.jpeg_size, &info) != ESP_OK || info.width != entry.width ||
+      info.height != entry.height) {
+    return nullptr;
+  }
+
+  auto *decoded = lv_draw_buf_create(entry.width, entry.height, entry.cf, entry.stride);
+  if (decoded == nullptr || decoded->data == nullptr) {
+    if (decoded != nullptr)
+      lv_draw_buf_destroy(decoded);
+    return nullptr;
+  }
+
+  jpeg_decoder_handle_t decoder = nullptr;
+  jpeg_decode_engine_cfg_t engine_cfg = {
+      .intr_priority = 0,
+      .timeout_ms = 120,
+  };
+  if (jpeg_new_decoder_engine(&engine_cfg, &decoder) != ESP_OK || decoder == nullptr) {
+    lv_draw_buf_destroy(decoded);
+    return nullptr;
+  }
+
+  jpeg_decode_cfg_t decode_cfg = {
+      .output_format = JPEG_DECODE_OUT_FORMAT_RGB888,
+      .rgb_order = JPEG_DEC_RGB_ELEMENT_ORDER_RGB,
+      .conv_std = JPEG_YUV_RGB_CONV_STD_BT601,
+  };
+  uint32_t out_size = 0;
+  const uint64_t t0 = esp_timer_get_time();
+  const esp_err_t err = jpeg_decoder_process(decoder, &decode_cfg, entry.jpeg_buf, entry.jpeg_size, decoded->data,
+                                             decoded->data_size, &out_size);
+  const uint64_t elapsed_us = esp_timer_get_time() - t0;
+  jpeg_del_decoder_engine(decoder);
+
+  if (err != ESP_OK || out_size == 0) {
+    if (s_swipe_logging_enabled) {
+      ESP_LOGW(TAG, "snapshot jpeg: decode failed err=%d out=%u jpeg=%u in %lluus", (int) err, (unsigned) out_size,
+               (unsigned) entry.jpeg_size, (unsigned long long) elapsed_us);
+    }
+    lv_draw_buf_destroy(decoded);
+    return nullptr;
+  }
+
+  entry.buf = decoded;
+  entry.decoded_from_jpeg = true;
+  if (s_swipe_logging_enabled) {
+    ESP_LOGI(TAG, "snapshot jpeg: decoded %u KB -> %u KB in %lluus", (unsigned) (entry.jpeg_size / 1024),
+             (unsigned) (decoded->data_size / 1024), (unsigned long long) elapsed_us);
+  }
+  return entry.buf;
+#else
+  return nullptr;
+#endif
+}
+
+lv_draw_buf_t *snapshot_cache_find(lv_obj_t *obj) {
+  auto *entry = snapshot_cache_find_entry(obj);
+  if (entry == nullptr)
+    return nullptr;
+  if (entry->buf != nullptr)
+    return entry->buf;
+  return snapshot_cache_decode_jpeg(*entry);
+}
+
+void snapshot_cache_release_decoded_if_compressed(lv_obj_t *obj) {
+  auto *entry = snapshot_cache_find_entry(obj);
+  if (entry == nullptr || entry->jpeg_buf == nullptr || entry->buf == nullptr)
+    return;
+  snapshot_cache_destroy_raw(*entry);
 }
 
 void snapshot_panorama_free_entry(SnapshotPanoramaCacheEntry &entry) {
@@ -2773,9 +2977,13 @@ void snapshot_cache_store(lv_obj_t *obj, lv_draw_buf_t *buf) {
   for (auto &entry : snapshot_cache) {
     if (entry.obj == obj) {
       snapshot_panorama_cache_invalidate(obj);
-      if (entry.buf != nullptr)
-        lv_draw_buf_destroy(entry.buf);
-      entry.buf = buf;
+      snapshot_cache_destroy_raw(entry);
+      if (snapshot_cache_encode_jpeg(entry, buf)) {
+        lv_draw_buf_destroy(buf);
+      } else {
+        snapshot_cache_destroy_jpeg(entry);
+        entry.buf = buf;
+      }
       return;
     }
     if (slot == nullptr && entry.obj == nullptr)
@@ -2784,10 +2992,13 @@ void snapshot_cache_store(lv_obj_t *obj, lv_draw_buf_t *buf) {
   if (slot == nullptr)
     slot = &snapshot_cache[0];
   snapshot_panorama_cache_invalidate(slot->obj);
-  if (slot->buf != nullptr)
-    lv_draw_buf_destroy(slot->buf);
+  snapshot_cache_free_entry(*slot);
   slot->obj = obj;
-  slot->buf = buf;
+  if (snapshot_cache_encode_jpeg(*slot, buf)) {
+    lv_draw_buf_destroy(buf);
+  } else {
+    slot->buf = buf;
+  }
 }
 
 void snapshot_swipe_clear_panorama() {
@@ -3171,7 +3382,12 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
     return false;
   if (snapshot_cache_find(right) == nullptr && !lvgl_esphome_snapshot_cache_page(right))
     return false;
-  return snapshot_panorama_cache_prepare(left, right, width) != nullptr;
+  const bool prepared = snapshot_panorama_cache_prepare(left, right, width) != nullptr;
+  if (prepared) {
+    snapshot_cache_release_decoded_if_compressed(left);
+    snapshot_cache_release_decoded_if_compressed(right);
+  }
+  return prepared;
 #else
   return false;
 #endif
@@ -3227,6 +3443,10 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
       snapshot_swipe_state.panorama_scale = panorama->scale;
       snapshot_swipe_state.panorama_next_x = next_x;
       snapshot_swipe_state.panorama_render = true;
+      snapshot_cache_release_decoded_if_compressed(current);
+      snapshot_cache_release_decoded_if_compressed(next);
+      snapshot_swipe_state.current_buf = nullptr;
+      snapshot_swipe_state.next_buf = nullptr;
     }
     snapshot_swipe_state.direct_render = true;
     s_snapshot_direct_active = true;

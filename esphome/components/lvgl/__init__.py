@@ -13,7 +13,7 @@ from esphome.components.const import (
     CONF_DRAW_ROUNDING,
 )
 from esphome.components.display import Display, get_display_metadata
-from esphome.components.esp32 import add_idf_sdkconfig_option
+from esphome.components.esp32 import add_idf_sdkconfig_option, include_builtin_idf_component
 from esphome.components.esp32.const import KEY_ESP32, KEY_SDKCONFIG_OPTIONS
 from esphome.components.image import (
     CONF_OPAQUE,
@@ -326,6 +326,7 @@ async def to_code(configs):
         # own UI tree and these sources only add compile time/flash pressure.
         add_idf_sdkconfig_option("CONFIG_LV_BUILD_EXAMPLES", False)
         add_idf_sdkconfig_option("CONFIG_LV_BUILD_DEMOS", False)
+        include_builtin_idf_component("esp_driver_jpeg")
     cg.add_library("lvgl/lvgl", "9.5.0")
     cg.add_define("USE_LVGL")
 
