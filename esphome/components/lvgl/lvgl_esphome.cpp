@@ -2806,30 +2806,6 @@ SnapshotPanoramaCacheEntry *snapshot_panorama_cache_find(lv_obj_t *left, lv_obj_
   return nullptr;
 }
 
-lv_draw_buf_t *snapshot_take_page(lv_obj_t *obj) {
-#if LV_USE_SNAPSHOT
-  if (obj == nullptr)
-    return nullptr;
-  const bool was_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
-  const lv_coord_t old_x = lv_obj_get_x(obj);
-  const lv_coord_t old_y = lv_obj_get_y(obj);
-
-  lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_align(obj, LV_ALIGN_CENTER, 0, 0);
-  lv_obj_update_layout(lv_obj_get_parent(obj));
-
-  auto *buf = lv_snapshot_take(obj, SNAPSHOT_CF);
-
-  lv_obj_align(obj, LV_ALIGN_CENTER, old_x, old_y);
-  if (was_hidden)
-    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
-
-  return buf;
-#else
-  return nullptr;
-#endif
-}
-
 SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare(lv_obj_t *left_obj, lv_obj_t *right_obj, int width) {
 #if defined(USE_ESP32) && LV_COLOR_DEPTH == 32
   if (left_obj == nullptr || right_obj == nullptr || width <= 0)
@@ -3123,7 +3099,20 @@ int snapshot_scroll_clamp_y(int scroll_y) {
 
 extern "C" bool lvgl_esphome_snapshot_cache_page(lv_obj_t *obj) {
 #if LV_USE_SNAPSHOT
-  auto *buf = snapshot_take_page(obj);
+  if (obj == nullptr)
+    return false;
+  const bool was_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  const lv_coord_t old_x = lv_obj_get_x(obj);
+  const lv_coord_t old_y = lv_obj_get_y(obj);
+
+  lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_align(obj, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_update_layout(lv_obj_get_parent(obj));
+
+  auto *buf = lv_snapshot_take(obj, SNAPSHOT_CF);
+  lv_obj_align(obj, LV_ALIGN_CENTER, old_x, old_y);
+  if (was_hidden)
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
   if (buf == nullptr) {
     ESP_LOGW(TAG, "snapshot cache: failed for obj=%p", obj);
     return false;
@@ -3144,32 +3133,6 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
     return false;
   if (snapshot_cache_find(right) == nullptr && !lvgl_esphome_snapshot_cache_page(right))
     return false;
-  return snapshot_panorama_cache_prepare(left, right, width) != nullptr;
-#else
-  return false;
-#endif
-}
-
-extern "C" bool lvgl_esphome_snapshot_refresh_pair(lv_obj_t *left, lv_obj_t *right, int width) {
-#if LV_USE_SNAPSHOT
-  if (left == nullptr || right == nullptr)
-    return false;
-
-  auto *left_buf = snapshot_take_page(left);
-  if (left_buf == nullptr) {
-    ESP_LOGW(TAG, "snapshot refresh: failed for left obj=%p", left);
-    return false;
-  }
-
-  auto *right_buf = snapshot_take_page(right);
-  if (right_buf == nullptr) {
-    ESP_LOGW(TAG, "snapshot refresh: failed for right obj=%p", right);
-    lv_draw_buf_destroy(left_buf);
-    return false;
-  }
-
-  snapshot_cache_store(left, left_buf);
-  snapshot_cache_store(right, right_buf);
   return snapshot_panorama_cache_prepare(left, right, width) != nullptr;
 #else
   return false;
