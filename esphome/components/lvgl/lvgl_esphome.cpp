@@ -2751,7 +2751,7 @@ constexpr lv_color_format_t SNAPSHOT_CF = LV_COLOR_FORMAT_RGB888;
 constexpr int SNAPSHOT_PANORAMA_SCALE = 1;
 constexpr bool SNAPSHOT_DIRECT_COMPOSITOR_ENABLED = true;
 constexpr bool SNAPSHOT_JPEG_CACHE_ENABLED = true;
-constexpr uint32_t SNAPSHOT_JPEG_QUALITY = 100;
+constexpr uint32_t SNAPSHOT_JPEG_QUALITY = 98;
 
 SnapshotCacheEntry *snapshot_cache_find_entry(lv_obj_t *obj) {
   for (auto &entry : snapshot_cache) {
@@ -2837,7 +2837,7 @@ bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf) {
       .height = height,
       .width = width,
       .src_type = JPEG_ENCODE_IN_FORMAT_RGB888,
-      .sub_sample = JPEG_DOWN_SAMPLING_YUV444,
+      .sub_sample = JPEG_DOWN_SAMPLING_YUV422,
       .image_quality = SNAPSHOT_JPEG_QUALITY,
   };
   uint32_t out_size = 0;
