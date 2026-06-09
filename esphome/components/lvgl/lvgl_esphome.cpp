@@ -73,6 +73,8 @@ static volatile uint32_t s_swipe_logging_enabled = 0;
 static volatile bool s_snapshot_swipe_active = false;
 static volatile bool s_snapshot_direct_active = false;
 
+bool snapshot_swipe_process_pending();
+
 namespace {
 bool snapshot_swipe_direct_anim_tick();
 }  // namespace
@@ -2492,6 +2494,8 @@ void LvglComponent::loop() {
     if (this->paused_ && this->show_snow_)
       this->write_random_();
   } else {
+    if (snapshot_swipe_process_pending())
+      return;
     if (s_snapshot_direct_active) {
       snapshot_swipe_direct_anim_tick();
       return;
@@ -2678,6 +2682,14 @@ struct SnapshotSwipeState {
   int next_x{0};
   int width{0};
   bool commit{false};
+  bool pending_update{false};
+  int pending_current_x{0};
+  int pending_next_x{0};
+  bool pending_finish{false};
+  int pending_finish_current_x{0};
+  int pending_finish_next_x{0};
+  uint32_t pending_finish_duration_ms{0};
+  bool pending_finish_commit{false};
   bool direct_render{false};
   bool panorama_render{false};
   uint8_t *panorama_buf{nullptr};
@@ -2947,6 +2959,14 @@ void snapshot_swipe_cleanup() {
   snapshot_swipe_state.next_x = 0;
   snapshot_swipe_state.width = 0;
   snapshot_swipe_state.commit = false;
+  snapshot_swipe_state.pending_update = false;
+  snapshot_swipe_state.pending_current_x = 0;
+  snapshot_swipe_state.pending_next_x = 0;
+  snapshot_swipe_state.pending_finish = false;
+  snapshot_swipe_state.pending_finish_current_x = 0;
+  snapshot_swipe_state.pending_finish_next_x = 0;
+  snapshot_swipe_state.pending_finish_duration_ms = 0;
+  snapshot_swipe_state.pending_finish_commit = false;
   snapshot_swipe_state.direct_render = false;
   snapshot_swipe_state.component = nullptr;
 }
@@ -3189,22 +3209,16 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
       snapshot_swipe_state.panorama_scale = panorama->scale;
       snapshot_swipe_state.panorama_next_x = next_x;
       snapshot_swipe_state.panorama_render = true;
-      if (!snapshot_swipe_render_direct_frame(0, next_x)) {
-        snapshot_swipe_clear_panorama();
-      }
     }
-    if (snapshot_swipe_state.panorama_render || snapshot_swipe_render_direct_frame(0, next_x)) {
-      snapshot_swipe_state.direct_render = true;
-      s_snapshot_direct_active = true;
-      lv_obj_add_flag(current, LV_OBJ_FLAG_HIDDEN);
-      lv_obj_add_flag(next, LV_OBJ_FLAG_HIDDEN);
-      if (s_swipe_logging_enabled) {
-        ESP_LOGI(TAG, "snapshot swipe: direct framebuffer compositor active (%s), next_x=%d",
-                 snapshot_swipe_state.panorama_render ? "RGB888 panorama" : "RGB888 strips", next_x);
-      }
-      return true;
+    snapshot_swipe_state.direct_render = true;
+    s_snapshot_direct_active = true;
+    lv_obj_add_flag(current, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(next, LV_OBJ_FLAG_HIDDEN);
+    if (s_swipe_logging_enabled) {
+      ESP_LOGI(TAG, "snapshot swipe: direct framebuffer compositor active (%s), next_x=%d",
+               snapshot_swipe_state.panorama_render ? "RGB888 panorama" : "RGB888 strips", next_x);
     }
-    snapshot_swipe_state.component = nullptr;
+    return true;
   }
 
   snapshot_swipe_state.layer = lv_obj_create(parent);
@@ -3262,6 +3276,15 @@ extern "C" void lvgl_esphome_snapshot_swipe_update(int current_x, int next_x) {
   snapshot_swipe_align(snapshot_swipe_state.layer, current_x);
 }
 
+extern "C" void lvgl_esphome_snapshot_swipe_request_update(int current_x, int next_x) {
+  auto &state = snapshot_swipe_state;
+  if (!s_snapshot_swipe_active || state.pending_finish)
+    return;
+  state.pending_current_x = current_x;
+  state.pending_next_x = next_x;
+  state.pending_update = true;
+}
+
 extern "C" void lvgl_esphome_snapshot_swipe_finish(int current_x, int next_x, uint32_t duration_ms, bool commit) {
   if (snapshot_swipe_state.direct_render) {
     snapshot_swipe_state.finish_current_x = current_x;
@@ -3298,6 +3321,42 @@ extern "C" void lvgl_esphome_snapshot_swipe_finish(int current_x, int next_x, ui
   lv_anim_set_values(&anim, lv_obj_get_x(snapshot_swipe_state.layer), current_x);
   lv_anim_set_completed_cb(&anim, snapshot_swipe_anim_completed_cb);
   lv_anim_start(&anim);
+}
+
+extern "C" void lvgl_esphome_snapshot_swipe_request_finish(int current_x, int next_x, uint32_t duration_ms, bool commit) {
+  auto &state = snapshot_swipe_state;
+  if (!s_snapshot_swipe_active)
+    return;
+  state.pending_update = false;
+  state.pending_finish_current_x = current_x;
+  state.pending_finish_next_x = next_x;
+  state.pending_finish_duration_ms = duration_ms;
+  state.pending_finish_commit = commit;
+  state.finish_current_x = current_x;
+  state.finish_next_x = next_x;
+  state.commit = commit;
+  state.pending_finish = true;
+}
+
+bool snapshot_swipe_process_pending() {
+  auto &state = snapshot_swipe_state;
+  if (state.pending_finish) {
+    const int current_x = state.pending_finish_current_x;
+    const int next_x = state.pending_finish_next_x;
+    const uint32_t duration_ms = state.pending_finish_duration_ms;
+    const bool commit = state.pending_finish_commit;
+    state.pending_finish = false;
+    lvgl_esphome_snapshot_swipe_finish(current_x, next_x, duration_ms, commit);
+    return true;
+  }
+  if (state.pending_update) {
+    const int current_x = state.pending_current_x;
+    const int next_x = state.pending_next_x;
+    state.pending_update = false;
+    lvgl_esphome_snapshot_swipe_update(current_x, next_x);
+    return true;
+  }
+  return false;
 }
 
 extern "C" void lvgl_esphome_snapshot_swipe_end(void) {
