@@ -2815,45 +2815,13 @@ bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf) {
   if ((width % 16) != 0 || (height % 16) != 0)
     return false;
 
-  uint8_t *input_buf = nullptr;
-  const uint8_t *encode_data = buf->data;
-  size_t encode_size = raw_size;
-  if (!entry.big_endian) {
-    jpeg_encode_memory_alloc_cfg_t in_mem_cfg = {
-        .buffer_direction = JPEG_ENC_ALLOC_INPUT_BUFFER,
-    };
-    size_t input_alloc_size = 0;
-    input_buf = static_cast<uint8_t *>(jpeg_alloc_encoder_mem(raw_size, &in_mem_cfg, &input_alloc_size));
-    if (input_buf == nullptr)
-      return false;
-
-    const uint8_t *src_row = buf->data;
-    uint8_t *dst_row = input_buf;
-    for (uint32_t y = 0; y < height; y++) {
-      for (uint32_t x = 0; x < width; x++) {
-        const uint8_t *src = src_row + x * 3;
-        uint8_t *dst = dst_row + x * 3;
-        dst[0] = src[2];
-        dst[1] = src[1];
-        dst[2] = src[0];
-      }
-      src_row += stride;
-      dst_row += width * 3;
-    }
-    encode_data = input_buf;
-    encode_size = width * height * 3;
-  }
-
   jpeg_encoder_handle_t encoder = nullptr;
   jpeg_encode_engine_cfg_t engine_cfg = {
       .intr_priority = 0,
       .timeout_ms = 120,
   };
-  if (jpeg_new_encoder_engine(&engine_cfg, &encoder) != ESP_OK || encoder == nullptr) {
-    if (input_buf != nullptr)
-      free(input_buf);
+  if (jpeg_new_encoder_engine(&engine_cfg, &encoder) != ESP_OK || encoder == nullptr)
     return false;
-  }
 
   jpeg_encode_memory_alloc_cfg_t out_mem_cfg = {
       .buffer_direction = JPEG_ENC_ALLOC_OUTPUT_BUFFER,
@@ -2862,8 +2830,6 @@ bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf) {
   uint8_t *out_buf = static_cast<uint8_t *>(jpeg_alloc_encoder_mem(raw_size, &out_mem_cfg, &out_alloc_size));
   if (out_buf == nullptr) {
     jpeg_del_encoder_engine(encoder);
-    if (input_buf != nullptr)
-      free(input_buf);
     return false;
   }
 
@@ -2871,17 +2837,15 @@ bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf) {
       .height = height,
       .width = width,
       .src_type = JPEG_ENCODE_IN_FORMAT_RGB888,
-      .sub_sample = JPEG_DOWN_SAMPLING_YUV422,
+      .sub_sample = JPEG_DOWN_SAMPLING_YUV444,
       .image_quality = SNAPSHOT_JPEG_QUALITY,
   };
   uint32_t out_size = 0;
   const uint64_t t0 = esp_timer_get_time();
-  const esp_err_t err = jpeg_encoder_process(encoder, &encode_cfg, encode_data, encode_size, out_buf, out_alloc_size,
+  const esp_err_t err = jpeg_encoder_process(encoder, &encode_cfg, buf->data, raw_size, out_buf, out_alloc_size,
                                              &out_size);
   const uint64_t elapsed_us = esp_timer_get_time() - t0;
   jpeg_del_encoder_engine(encoder);
-  if (input_buf != nullptr)
-    free(input_buf);
 
   bool stored = false;
   if (err == ESP_OK && out_size > 0 && out_size < raw_size) {
@@ -2948,8 +2912,10 @@ lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
 
   jpeg_decode_cfg_t decode_cfg = {
       .output_format = JPEG_DECODE_OUT_FORMAT_RGB888,
-      // Decode to the LVGL RGB888 byte layout. The encoder input is normalized
-      // to RGB order, so little-endian LVGL buffers need B,G,R output again.
+      // ESP32-P4's JPEG RGB888 path uses the same byte layout convention as
+      // LVGL RGB888: little-endian buffers are B,G,R and big-endian buffers are
+      // R,G,B. Decode to the configured LVGL byte layout before the direct
+      // compositor copies the snapshot into the display framebuffer.
       .rgb_order = entry.big_endian ? JPEG_DEC_RGB_ELEMENT_ORDER_RGB : JPEG_DEC_RGB_ELEMENT_ORDER_BGR,
       .conv_std = JPEG_YUV_RGB_CONV_STD_BT601,
   };
