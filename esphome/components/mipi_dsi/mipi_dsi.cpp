@@ -8,7 +8,6 @@
 #include "esp_heap_caps.h"
 #include "esp_memory_utils.h"
 #include "esp_timer.h"
-#include "hal/axi_icm_ll.h"
 #include "hal/mipi_dsi_brg_ll.h"
 
 namespace esphome::mipi_dsi {
@@ -16,36 +15,8 @@ namespace esphome::mipi_dsi {
 // Maximum bytes to log for init commands (truncated if larger)
 static constexpr size_t MIPI_DSI_MAX_CMD_LOG_BYTES = 64;
 static constexpr size_t DMA2D_SAFE_ALIGN_BYTES = 4;
-static constexpr uint32_t DSI_FIFO_EARLY_DMA_THRESHOLD = 1024 - 128;
-static constexpr uint32_t DSI_DMA_QOS_PRIORITY = 15;
 
 static bool is_aligned(uintptr_t value, size_t alignment) { return (value & (alignment - 1U)) == 0; }
-
-static void tune_dsi_bridge_for_scanout(dsi_brg_dev_t *bridge) {
-  if (bridge == nullptr)
-    return;
-
-  // The ESP32-P4 DSI bridge emits this reserved pixel value when its DPI FIFO
-  // is briefly empty. The hardware default is visibly blue; use black so any
-  // remaining rare FIFO underrun is less disruptive.
-  bridge->dpi_rsv_dpi_data.dpi_rsv_data = 0;
-
-  // Keep the DSI bridge FIFO memory clocks active during continuous DPI scanout.
-  // The register clock is handled by the IDF driver; these bits cover the FIFO
-  // memory itself and avoid a short wake-up bubble after clock gating.
-  bridge->mem_clk_ctrl.dsi_bridge_mem_clk_force_on = 1;
-  bridge->mem_clk_ctrl.dsi_mem_clk_force_on = 1;
-
-  // Ask the GDMA path for the next burst earlier than the IDF default. This
-  // gives the bridge more headroom for short PSRAM/AXI contention spikes.
-  mipi_dsi_brg_ll_set_empty_threshold(bridge, DSI_FIFO_EARLY_DMA_THRESHOLD);
-  mipi_dsi_brg_ll_update_dpi_config(bridge);
-
-  // Continuous scanout is latency sensitive: prioritize both DW-GDMA master
-  // ports because the concrete channel-to-master mapping is internal to IDF.
-  axi_icm_ll_set_dw_gdma_qos_arbiter_prio(0, DSI_DMA_QOS_PRIORITY, DSI_DMA_QOS_PRIORITY);
-  axi_icm_ll_set_dw_gdma_qos_arbiter_prio(1, DSI_DMA_QOS_PRIORITY, DSI_DMA_QOS_PRIORITY);
-}
 
 static bool IRAM_ATTR notify_color_trans_ready(esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_event_data_t *edata,
                                                void *user_ctx) {
@@ -151,7 +122,13 @@ void MipiDsi::setup() {
     this->smark_failed(LOG_STR("esp_lcd_new_panel_dpi failed"), err);
     return;
   }
-  tune_dsi_bridge_for_scanout(MIPI_DSI_LL_GET_BRG(0));
+  if (auto *bridge = MIPI_DSI_LL_GET_BRG(0); bridge != nullptr) {
+    // The ESP32-P4 DSI bridge emits this reserved pixel value when its DPI
+    // FIFO is briefly empty. The hardware default is visibly blue; use black
+    // so a rare FIFO underrun does not flash a full blue frame.
+    bridge->dpi_rsv_dpi_data.dpi_rsv_data = 0;
+    mipi_dsi_brg_ll_update_dpi_config(bridge);
+  }
   void *fb0 = nullptr;
   void *fb1 = nullptr;
   err = esp_lcd_dpi_panel_get_frame_buffer(this->handle_, 2, &fb0, &fb1);
