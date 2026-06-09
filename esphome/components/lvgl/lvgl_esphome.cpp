@@ -12,10 +12,13 @@
 #ifdef USE_MIPI_DSI
 #include "esphome/components/mipi_dsi/mipi_dsi.h"
 #endif
+#ifdef USE_ESP32_JPEG
+#include "esphome/components/esp32_jpeg/esp32_jpeg.h"
+#define USE_LVGL_SNAPSHOT_JPEG_CACHE 1
+#endif
 #ifdef USE_ESP32
 #include "esp_cache.h"
 #include "esp_heap_caps.h"
-#include "esp_idf_version.h"
 #include "esp_memory_utils.h"
 #include "esp_timer.h"
 #include "esp_private/esp_cache_private.h"
@@ -23,11 +26,6 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "soc/soc_caps.h"
-#if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED && __has_include("driver/jpeg_encode.h")
-#include "driver/jpeg_decode.h"
-#include "driver/jpeg_encode.h"
-#define USE_LVGL_SNAPSHOT_JPEG_CACHE 1
-#endif
 #endif
 
 #ifdef USE_LVGL_PPA
@@ -57,6 +55,7 @@ void lvgl_esphome_note_frame(void);
 #include <cstdlib>
 #include <cstring>
 #include <numeric>
+#include <utility>
 
 namespace esphome::lvgl {
 static const char *const TAG = "lvgl";
@@ -2724,8 +2723,9 @@ struct SnapshotScrollState {
 struct SnapshotCacheEntry {
   lv_obj_t *obj{nullptr};
   lv_draw_buf_t *buf{nullptr};
-  uint8_t *jpeg_buf{nullptr};
-  size_t jpeg_size{0};
+#ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
+  esp32_jpeg::JpegBuffer jpeg;
+#endif
   uint32_t width{0};
   uint32_t height{0};
   uint32_t stride{0};
@@ -2771,15 +2771,9 @@ void snapshot_cache_destroy_raw(SnapshotCacheEntry &entry) {
 }
 
 void snapshot_cache_destroy_jpeg(SnapshotCacheEntry &entry) {
-#ifdef USE_ESP32
-  if (entry.jpeg_buf != nullptr) {
-    heap_caps_free(entry.jpeg_buf);
-    entry.jpeg_buf = nullptr;
-  }
-#else
-  entry.jpeg_buf = nullptr;
+#ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
+  entry.jpeg.release();
 #endif
-  entry.jpeg_size = 0;
   entry.width = 0;
   entry.height = 0;
   entry.stride = 0;
@@ -2816,66 +2810,39 @@ bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf) {
   if ((width % 16) != 0 || (height % 16) != 0)
     return false;
 
-  jpeg_encoder_handle_t encoder = nullptr;
-  jpeg_encode_engine_cfg_t engine_cfg = {
-      .intr_priority = 0,
+  esp32_jpeg::EncodeConfig encode_cfg = {
+      .width = width,
+      .height = height,
+      .input_format = esp32_jpeg::PixelFormat::RGB888,
+      .down_sampling = esp32_jpeg::DownSampling::YUV444,
+      .quality = SNAPSHOT_JPEG_QUALITY,
+      .pixel_reverse = entry.big_endian,
       .timeout_ms = 120,
   };
-  if (jpeg_new_encoder_engine(&engine_cfg, &encoder) != ESP_OK || encoder == nullptr)
-    return false;
-
-  jpeg_encode_memory_alloc_cfg_t out_mem_cfg = {
-      .buffer_direction = JPEG_ENC_ALLOC_OUTPUT_BUFFER,
-  };
-  size_t out_alloc_size = 0;
-  uint8_t *out_buf = static_cast<uint8_t *>(jpeg_alloc_encoder_mem(raw_size, &out_mem_cfg, &out_alloc_size));
-  if (out_buf == nullptr) {
-    jpeg_del_encoder_engine(encoder);
-    return false;
-  }
-
-  jpeg_encode_cfg_t encode_cfg = {
-      .height = height,
-      .width = width,
-      .src_type = JPEG_ENCODE_IN_FORMAT_RGB888,
-      .sub_sample = JPEG_DOWN_SAMPLING_YUV444,
-      .image_quality = SNAPSHOT_JPEG_QUALITY,
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
-      .pixel_reverse = entry.big_endian,
-#endif
-  };
-  uint32_t out_size = 0;
+  esp32_jpeg::JpegBuffer out;
   const uint64_t t0 = esp_timer_get_time();
-  const esp_err_t err = jpeg_encoder_process(encoder, &encode_cfg, buf->data, raw_size, out_buf, out_alloc_size,
-                                             &out_size);
+  const esp_err_t err = esp32_jpeg::encode(encode_cfg, static_cast<const uint8_t *>(buf->data), raw_size, &out);
   const uint64_t elapsed_us = esp_timer_get_time() - t0;
-  jpeg_del_encoder_engine(encoder);
 
   bool stored = false;
-  if (err == ESP_OK && out_size > 0 && out_size < raw_size) {
-    auto *stored_buf = static_cast<uint8_t *>(heap_caps_malloc(out_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    if (stored_buf != nullptr) {
-      memcpy(stored_buf, out_buf, out_size);
-      snapshot_cache_destroy_jpeg(entry);
-      entry.jpeg_buf = stored_buf;
-      entry.jpeg_size = out_size;
-      entry.width = width;
-      entry.height = height;
-      entry.stride = stride;
-      entry.cf = static_cast<lv_color_format_t>(buf->header.cf);
-      stored = true;
-    }
+  if (err == ESP_OK && out.size() > 0 && out.size() < raw_size) {
+    snapshot_cache_destroy_jpeg(entry);
+    entry.jpeg = std::move(out);
+    entry.width = width;
+    entry.height = height;
+    entry.stride = stride;
+    entry.cf = static_cast<lv_color_format_t>(buf->header.cf);
+    stored = true;
   }
-  free(out_buf);
 
   if (s_swipe_logging_enabled) {
     if (stored) {
       ESP_LOGI(TAG, "snapshot jpeg: encoded %ux%u %u KB -> %u KB q=%u in %lluus", (unsigned) width,
-               (unsigned) height, (unsigned) (raw_size / 1024), (unsigned) (out_size / 1024),
+               (unsigned) height, (unsigned) (raw_size / 1024), (unsigned) (entry.jpeg.size() / 1024),
                (unsigned) SNAPSHOT_JPEG_QUALITY, (unsigned long long) elapsed_us);
     } else {
       ESP_LOGW(TAG, "snapshot jpeg: encode skipped/failed err=%d out=%u raw=%u in %lluus", (int) err,
-               (unsigned) out_size, (unsigned) raw_size, (unsigned long long) elapsed_us);
+               (unsigned) out.size(), (unsigned) raw_size, (unsigned long long) elapsed_us);
     }
   }
   return stored;
@@ -2888,11 +2855,11 @@ lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
 #if defined(USE_LVGL_SNAPSHOT_JPEG_CACHE) && LV_COLOR_DEPTH == 32
   if (entry.buf != nullptr)
     return entry.buf;
-  if (entry.jpeg_buf == nullptr || entry.jpeg_size == 0 || entry.width == 0 || entry.height == 0)
+  if (entry.jpeg.empty() || entry.width == 0 || entry.height == 0)
     return nullptr;
 
-  jpeg_decode_picture_info_t info = {};
-  if (jpeg_decoder_get_info(entry.jpeg_buf, entry.jpeg_size, &info) != ESP_OK || info.width != entry.width ||
+  esp32_jpeg::PictureInfo info = {};
+  if (esp32_jpeg::get_info(entry.jpeg.data(), entry.jpeg.size(), &info) != ESP_OK || info.width != entry.width ||
       info.height != entry.height) {
     return nullptr;
   }
@@ -2904,36 +2871,26 @@ lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
     return nullptr;
   }
 
-  jpeg_decoder_handle_t decoder = nullptr;
-  jpeg_decode_engine_cfg_t engine_cfg = {
-      .intr_priority = 0,
-      .timeout_ms = 120,
-  };
-  if (jpeg_new_decoder_engine(&engine_cfg, &decoder) != ESP_OK || decoder == nullptr) {
-    lv_draw_buf_destroy(decoded);
-    return nullptr;
-  }
-
-  jpeg_decode_cfg_t decode_cfg = {
-      .output_format = JPEG_DECODE_OUT_FORMAT_RGB888,
+  esp32_jpeg::DecodeConfig decode_cfg = {
+      .output_format = esp32_jpeg::PixelFormat::RGB888,
       // ESP32-P4's JPEG RGB888 path uses the same byte layout convention as
       // LVGL RGB888: little-endian buffers are B,G,R and big-endian buffers are
       // R,G,B. Decode to the configured LVGL byte layout before the direct
       // compositor copies the snapshot into the display framebuffer.
-      .rgb_order = entry.big_endian ? JPEG_DEC_RGB_ELEMENT_ORDER_RGB : JPEG_DEC_RGB_ELEMENT_ORDER_BGR,
-      .conv_std = JPEG_YUV_RGB_CONV_STD_BT601,
+      .rgb_order = entry.big_endian ? esp32_jpeg::RgbElementOrder::RGB : esp32_jpeg::RgbElementOrder::BGR,
+      .color_conversion = esp32_jpeg::ColorConversionStandard::BT601,
+      .timeout_ms = 120,
   };
-  uint32_t out_size = 0;
+  size_t out_size = 0;
   const uint64_t t0 = esp_timer_get_time();
-  const esp_err_t err = jpeg_decoder_process(decoder, &decode_cfg, entry.jpeg_buf, entry.jpeg_size, decoded->data,
-                                             decoded->data_size, &out_size);
+  const esp_err_t err = esp32_jpeg::decode(decode_cfg, entry.jpeg.data(), entry.jpeg.size(),
+                                           static_cast<uint8_t *>(decoded->data), decoded->data_size, &out_size);
   const uint64_t elapsed_us = esp_timer_get_time() - t0;
-  jpeg_del_decoder_engine(decoder);
 
   if (err != ESP_OK || out_size == 0) {
     if (s_swipe_logging_enabled) {
       ESP_LOGW(TAG, "snapshot jpeg: decode failed err=%d out=%u jpeg=%u in %lluus", (int) err, (unsigned) out_size,
-               (unsigned) entry.jpeg_size, (unsigned long long) elapsed_us);
+               (unsigned) entry.jpeg.size(), (unsigned long long) elapsed_us);
     }
     lv_draw_buf_destroy(decoded);
     return nullptr;
@@ -2942,7 +2899,7 @@ lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
   entry.buf = decoded;
   entry.decoded_from_jpeg = true;
   if (s_swipe_logging_enabled) {
-    ESP_LOGI(TAG, "snapshot jpeg: decoded %u KB -> %u KB order=%s in %lluus", (unsigned) (entry.jpeg_size / 1024),
+    ESP_LOGI(TAG, "snapshot jpeg: decoded %u KB -> %u KB order=%s in %lluus", (unsigned) (entry.jpeg.size() / 1024),
              (unsigned) (decoded->data_size / 1024), entry.big_endian ? "rgb" : "bgr",
              (unsigned long long) elapsed_us);
   }
@@ -2962,10 +2919,14 @@ lv_draw_buf_t *snapshot_cache_find(lv_obj_t *obj) {
 }
 
 void snapshot_cache_release_decoded_if_compressed(lv_obj_t *obj) {
+#ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
   auto *entry = snapshot_cache_find_entry(obj);
-  if (entry == nullptr || entry->jpeg_buf == nullptr || entry->buf == nullptr)
+  if (entry == nullptr || entry->jpeg.empty() || entry->buf == nullptr)
     return;
   snapshot_cache_destroy_raw(*entry);
+#else
+  (void) obj;
+#endif
 }
 
 void snapshot_panorama_free_entry(SnapshotPanoramaCacheEntry &entry) {
