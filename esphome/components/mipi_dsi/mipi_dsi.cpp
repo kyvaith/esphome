@@ -8,6 +8,7 @@
 #include "esp_heap_caps.h"
 #include "esp_memory_utils.h"
 #include "esp_timer.h"
+#include "hal/mipi_dsi_brg_ll.h"
 
 namespace esphome::mipi_dsi {
 
@@ -120,6 +121,13 @@ void MipiDsi::setup() {
   if (err != ESP_OK) {
     this->smark_failed(LOG_STR("esp_lcd_new_panel_dpi failed"), err);
     return;
+  }
+  if (auto *bridge = MIPI_DSI_LL_GET_BRG(0); bridge != nullptr) {
+    // The ESP32-P4 DSI bridge emits this reserved pixel value when its DPI
+    // FIFO is briefly empty. The hardware default is visibly blue; use black
+    // so a rare FIFO underrun does not flash a full blue frame.
+    bridge->dpi_rsv_dpi_data.dpi_rsv_data = 0;
+    mipi_dsi_brg_ll_update_dpi_config(bridge);
   }
   void *fb0 = nullptr;
   void *fb1 = nullptr;
