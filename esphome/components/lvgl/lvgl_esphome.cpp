@@ -5,6 +5,7 @@
 #include "lvgl_esphome.h"
 
 #include "core/lv_obj_class_private.h"
+#include "core/lv_refr.h"
 #include "display/lv_display_private.h"
 #include "misc/lv_ll.h"
 
@@ -3096,7 +3097,17 @@ void snapshot_swipe_finish_now() {
   }
   snapshot_swipe_apply_final_roots();
   if (direct_render) {
-    snapshot_swipe_discard_pending_refresh(snapshot_swipe_state.component->get_disp());
+    auto *component = snapshot_swipe_state.component;
+    const bool commit = snapshot_swipe_state.commit;
+    if (commit) {
+      snapshot_swipe_discard_pending_refresh(component->get_disp());
+    } else {
+      s_snapshot_swipe_active = false;
+      s_snapshot_direct_active = false;
+      lv_obj_invalidate(lv_screen_active());
+      lv_refr_now(component->get_disp());
+      component->wait_for_direct_frame_presented(50);
+    }
     snapshot_swipe_cleanup();
     return;
   }
