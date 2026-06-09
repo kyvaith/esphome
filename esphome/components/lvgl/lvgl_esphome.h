@@ -296,6 +296,7 @@ class LvglComponent : public PollingComponent {
   void show_prev_page(lv_screen_load_anim_t anim, uint32_t time);
   void set_page_wrap(bool wrap) { this->page_wrap_ = wrap; }
   void set_big_endian(bool big_endian) { this->big_endian_ = big_endian; }
+  bool is_big_endian() const { return this->big_endian_; }
   size_t get_current_page() const;
   void set_focus_mark(lv_group_t *group) { this->focus_marks_[group] = lv_group_get_focused(group); }
   void restore_focus_mark(lv_group_t *group) {

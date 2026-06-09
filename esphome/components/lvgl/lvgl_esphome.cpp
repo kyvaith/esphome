@@ -2729,6 +2729,7 @@ struct SnapshotCacheEntry {
   uint32_t height{0};
   uint32_t stride{0};
   lv_color_format_t cf{LV_COLOR_FORMAT_UNKNOWN};
+  bool big_endian{false};
   bool decoded_from_jpeg{false};
 };
 
@@ -2784,10 +2785,19 @@ void snapshot_cache_destroy_jpeg(SnapshotCacheEntry &entry) {
   entry.cf = LV_COLOR_FORMAT_UNKNOWN;
 }
 
+bool snapshot_cache_obj_big_endian(lv_obj_t *obj) {
+  if (obj == nullptr)
+    return false;
+  auto *disp = lv_obj_get_display(obj);
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component != nullptr && component->is_big_endian();
+}
+
 void snapshot_cache_free_entry(SnapshotCacheEntry &entry) {
   snapshot_cache_destroy_raw(entry);
   snapshot_cache_destroy_jpeg(entry);
   entry.obj = nullptr;
+  entry.big_endian = false;
 }
 
 bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf) {
@@ -2902,7 +2912,7 @@ lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
 
   jpeg_decode_cfg_t decode_cfg = {
       .output_format = JPEG_DECODE_OUT_FORMAT_RGB888,
-      .rgb_order = JPEG_DEC_RGB_ELEMENT_ORDER_RGB,
+      .rgb_order = entry.big_endian ? JPEG_DEC_RGB_ELEMENT_ORDER_RGB : JPEG_DEC_RGB_ELEMENT_ORDER_BGR,
       .conv_std = JPEG_YUV_RGB_CONV_STD_BT601,
   };
   uint32_t out_size = 0;
@@ -2924,8 +2934,9 @@ lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
   entry.buf = decoded;
   entry.decoded_from_jpeg = true;
   if (s_swipe_logging_enabled) {
-    ESP_LOGI(TAG, "snapshot jpeg: decoded %u KB -> %u KB in %lluus", (unsigned) (entry.jpeg_size / 1024),
-             (unsigned) (decoded->data_size / 1024), (unsigned long long) elapsed_us);
+    ESP_LOGI(TAG, "snapshot jpeg: decoded %u KB -> %u KB order=%s in %lluus", (unsigned) (entry.jpeg_size / 1024),
+             (unsigned) (decoded->data_size / 1024), entry.big_endian ? "rgb" : "bgr",
+             (unsigned long long) elapsed_us);
   }
   return entry.buf;
 #else
@@ -2978,6 +2989,7 @@ void snapshot_cache_store(lv_obj_t *obj, lv_draw_buf_t *buf) {
     if (entry.obj == obj) {
       snapshot_panorama_cache_invalidate(obj);
       snapshot_cache_destroy_raw(entry);
+      entry.big_endian = snapshot_cache_obj_big_endian(obj);
       if (snapshot_cache_encode_jpeg(entry, buf)) {
         lv_draw_buf_destroy(buf);
       } else {
@@ -2994,6 +3006,7 @@ void snapshot_cache_store(lv_obj_t *obj, lv_draw_buf_t *buf) {
   snapshot_panorama_cache_invalidate(slot->obj);
   snapshot_cache_free_entry(*slot);
   slot->obj = obj;
+  slot->big_endian = snapshot_cache_obj_big_endian(obj);
   if (snapshot_cache_encode_jpeg(*slot, buf)) {
     lv_draw_buf_destroy(buf);
   } else {
