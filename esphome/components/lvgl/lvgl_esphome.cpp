@@ -3109,7 +3109,13 @@ void snapshot_swipe_finish_now() {
     // LVGL resumes. Otherwise the first real-page refresh can briefly present
     // an older buffer and flash between the snapshot compositor and LVGL.
     const uint64_t render_t0 = esp_timer_get_time();
-    snapshot_swipe_render_direct_frame(snapshot_swipe_state.finish_current_x, snapshot_swipe_state.finish_next_x);
+    if (snapshot_swipe_state.current_x != snapshot_swipe_state.finish_current_x ||
+        snapshot_swipe_state.next_x != snapshot_swipe_state.finish_next_x) {
+      if (snapshot_swipe_render_direct_frame(snapshot_swipe_state.finish_current_x, snapshot_swipe_state.finish_next_x)) {
+        snapshot_swipe_state.current_x = snapshot_swipe_state.finish_current_x;
+        snapshot_swipe_state.next_x = snapshot_swipe_state.finish_next_x;
+      }
+    }
     const uint32_t render_us = (uint32_t) (esp_timer_get_time() - render_t0);
     const uint64_t wait_t0 = esp_timer_get_time();
     const bool waited = snapshot_swipe_state.component->wait_for_direct_frame_presented(50);
@@ -3323,7 +3329,6 @@ extern "C" void lvgl_esphome_snapshot_swipe_finish(int current_x, int next_x, ui
     snapshot_swipe_state.finish_next_x = next_x;
     snapshot_swipe_state.commit = commit;
     if (duration_ms == 0) {
-      snapshot_swipe_render_direct_frame(current_x, next_x);
       snapshot_swipe_finish_now();
       return;
     }
