@@ -33,6 +33,7 @@ from esphome.components.mipi import (
     dimension_schema,
     get_color_depth,
     map_sequence,
+    model_schema_extractor,
     power_of_two,
     requires_buffer,
 )
@@ -166,6 +167,7 @@ def model_schema(config):
     )
 
 
+@model_schema_extractor(MODELS, model_schema)
 def _config_schema(config):
     config = cv.Schema(
         {
