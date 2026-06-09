@@ -3993,7 +3993,7 @@ void *lv_malloc_core(size_t size) {
   }
 
   // Log very large buffers only when snapshot diagnostics are explicitly enabled.
-  if (s_swipe_logging_enabled && size > 1000000) {
+  if (esphome::lvgl::s_swipe_logging_enabled && size > 1000000) {
     ESP_LOGI(esphome::lvgl::TAG, "Large buffer allocated: %zu bytes at %p", size, ptr);
   }
 
