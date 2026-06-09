@@ -2751,7 +2751,7 @@ constexpr lv_color_format_t SNAPSHOT_CF = LV_COLOR_FORMAT_RGB888;
 constexpr int SNAPSHOT_PANORAMA_SCALE = 1;
 constexpr bool SNAPSHOT_DIRECT_COMPOSITOR_ENABLED = true;
 constexpr bool SNAPSHOT_JPEG_CACHE_ENABLED = true;
-constexpr uint32_t SNAPSHOT_JPEG_QUALITY = 92;
+constexpr uint32_t SNAPSHOT_JPEG_QUALITY = 98;
 
 SnapshotCacheEntry *snapshot_cache_find_entry(lv_obj_t *obj) {
   for (auto &entry : snapshot_cache) {
@@ -2912,7 +2912,11 @@ lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
 
   jpeg_decode_cfg_t decode_cfg = {
       .output_format = JPEG_DECODE_OUT_FORMAT_RGB888,
-      .rgb_order = entry.big_endian ? JPEG_DEC_RGB_ELEMENT_ORDER_RGB : JPEG_DEC_RGB_ELEMENT_ORDER_BGR,
+      // ESP32-P4's JPEG encoder does not expose an RGB/BGR input order. Feed it
+      // the LVGL RGB888 memory layout and decode back to the same byte layout
+      // expected by LVGL: little-endian RGB888 is B,G,R in memory, big-endian is
+      // R,G,B.
+      .rgb_order = entry.big_endian ? JPEG_DEC_RGB_ELEMENT_ORDER_BGR : JPEG_DEC_RGB_ELEMENT_ORDER_RGB,
       .conv_std = JPEG_YUV_RGB_CONV_STD_BT601,
   };
   uint32_t out_size = 0;
@@ -2935,7 +2939,7 @@ lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
   entry.decoded_from_jpeg = true;
   if (s_swipe_logging_enabled) {
     ESP_LOGI(TAG, "snapshot jpeg: decoded %u KB -> %u KB order=%s in %lluus", (unsigned) (entry.jpeg_size / 1024),
-             (unsigned) (decoded->data_size / 1024), entry.big_endian ? "rgb" : "bgr",
+             (unsigned) (decoded->data_size / 1024), entry.big_endian ? "bgr" : "rgb",
              (unsigned long long) elapsed_us);
   }
   return entry.buf;
