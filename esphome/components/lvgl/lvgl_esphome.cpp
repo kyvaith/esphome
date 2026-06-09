@@ -2917,7 +2917,7 @@ lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
       // R,G,B. Decode to the configured LVGL byte layout before the direct
       // compositor copies the snapshot into the display framebuffer.
       .rgb_order = entry.big_endian ? JPEG_DEC_RGB_ELEMENT_ORDER_RGB : JPEG_DEC_RGB_ELEMENT_ORDER_BGR,
-      .conv_std = JPEG_YUV_RGB_CONV_STD_BT601,
+      .conv_std = JPEG_YUV_RGB_CONV_STD_BT709,
   };
   uint32_t out_size = 0;
   const uint64_t t0 = esp_timer_get_time();
