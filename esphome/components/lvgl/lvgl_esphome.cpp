@@ -1679,6 +1679,8 @@ bool LvglComponent::snapshot_swipe_direct_render(lv_draw_buf_t *current, lv_draw
   uint8_t *target = this->next_snapshot_render_buffer_();
   if (target == nullptr)
     return false;
+  bool ppa_copy_used = false;
+  bool cpu_copy_used = false;
 
   auto sync_range = [](uint8_t *ptr, size_t len) {
     if (esp_ptr_internal(ptr))
@@ -1720,8 +1722,10 @@ bool LvglComponent::snapshot_swipe_direct_render(lv_draw_buf_t *current, lv_draw
       cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
       cfg.mode = PPA_TRANS_MODE_BLOCKING;
       esp_err_t ret = ppa_do_scale_rotate_mirror(s_display_srm_client, &cfg);
-      if (ret == ESP_OK)
+      if (ret == ESP_OK) {
+        ppa_copy_used = true;
         return false;
+      }
       static bool warned = false;
       if (!warned) {
         ESP_LOGW(TAG, "snapshot direct: PPA copy failed (%d), using CPU fallback", ret);
@@ -1737,6 +1741,7 @@ bool LvglComponent::snapshot_swipe_direct_render(lv_draw_buf_t *current, lv_draw
       src_row += src_stride;
       dst_row += row_bytes;
     }
+    cpu_copy_used = true;
     return true;
   };
 
@@ -1748,13 +1753,23 @@ bool LvglComponent::snapshot_swipe_direct_render(lv_draw_buf_t *current, lv_draw
       sync_range(dst, fb_bytes);
   };
 
+  const uint64_t copy_t0 = esp_timer_get_time();
   render_to(target);
+  const uint32_t copy_us = (uint32_t) (esp_timer_get_time() - copy_t0);
+  const uint64_t present_t0 = esp_timer_get_time();
   if (!this->present_snapshot_render_buffer_(target))
     return false;
+  const uint32_t present_us = (uint32_t) (esp_timer_get_time() - present_t0);
 #ifdef USE_LVGL_FPS_BENCHMARK
   lvgl_esphome_note_frame();
 #endif
   uint32_t frame_us = (uint32_t) (esp_timer_get_time() - t0);
+  static uint64_t last_slow_log_us = 0;
+  if (frame_us > 30000 && (last_slow_log_us == 0 || esp_timer_get_time() - last_slow_log_us >= 1000000ULL)) {
+    ESP_LOGW(TAG, "snapshot direct slow: frame=%uus copy=%uus present=%uus ppa=%d cpu=%d x=%d/%d", frame_us, copy_us,
+             present_us, ppa_copy_used, cpu_copy_used, current_x, next_x);
+    last_slow_log_us = esp_timer_get_time();
+  }
   static uint64_t last_log_us = 0;
   static uint32_t frames = 0;
   static uint64_t total_us = 0;
@@ -1830,7 +1845,9 @@ bool LvglComponent::snapshot_swipe_direct_render_panorama(const uint8_t *panoram
   cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
   cfg.mode = PPA_TRANS_MODE_BLOCKING;
 
+  const uint64_t ppa_t0 = esp_timer_get_time();
   esp_err_t ret = ppa_do_scale_rotate_mirror(s_display_srm_client, &cfg);
+  const uint32_t ppa_us = (uint32_t) (esp_timer_get_time() - ppa_t0);
   if (ret != ESP_OK) {
     static bool warned = false;
     if (!warned) {
@@ -1839,13 +1856,21 @@ bool LvglComponent::snapshot_swipe_direct_render_panorama(const uint8_t *panoram
     }
     return false;
   }
+  const uint64_t present_t0 = esp_timer_get_time();
   if (!this->present_snapshot_render_buffer_(target))
     return false;
+  const uint32_t present_us = (uint32_t) (esp_timer_get_time() - present_t0);
 
 #ifdef USE_LVGL_FPS_BENCHMARK
   lvgl_esphome_note_frame();
 #endif
   uint32_t frame_us = (uint32_t) (esp_timer_get_time() - t0);
+  static uint64_t last_slow_log_us = 0;
+  if (frame_us > 30000 && (last_slow_log_us == 0 || esp_timer_get_time() - last_slow_log_us >= 1000000ULL)) {
+    ESP_LOGW(TAG, "snapshot panorama slow: frame=%uus ppa=%uus present=%uus x=%d scale=%dx", frame_us, ppa_us,
+             present_us, current_x, scale);
+    last_slow_log_us = esp_timer_get_time();
+  }
   static uint64_t last_log_us = 0;
   static uint32_t frames = 0;
   static uint64_t total_us = 0;
@@ -3083,8 +3108,15 @@ void snapshot_swipe_finish_now() {
     // Prime the inactive framebuffer with the exact final snapshot frame before
     // LVGL resumes. Otherwise the first real-page refresh can briefly present
     // an older buffer and flash between the snapshot compositor and LVGL.
+    const uint64_t render_t0 = esp_timer_get_time();
     snapshot_swipe_render_direct_frame(snapshot_swipe_state.finish_current_x, snapshot_swipe_state.finish_next_x);
-    snapshot_swipe_state.component->wait_for_direct_frame_presented(50);
+    const uint32_t render_us = (uint32_t) (esp_timer_get_time() - render_t0);
+    const uint64_t wait_t0 = esp_timer_get_time();
+    const bool waited = snapshot_swipe_state.component->wait_for_direct_frame_presented(50);
+    const uint32_t wait_us = (uint32_t) (esp_timer_get_time() - wait_t0);
+    if (render_us + wait_us > 30000) {
+      ESP_LOGW(TAG, "snapshot finish slow: render=%uus wait=%uus waited=%d", render_us, wait_us, waited);
+    }
     snapshot_swipe_state.component->realign_direct_buffer_after_manual_present();
   }
   snapshot_swipe_apply_final_roots();
