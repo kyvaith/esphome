@@ -84,6 +84,7 @@ bool snapshot_swipe_process_pending();
 
 namespace {
 bool snapshot_swipe_direct_anim_tick();
+bool snapshot_app_direct_anim_tick();
 }  // namespace
 
 #if LV_USE_PROFILER && LV_USE_PROFILER_BUILTIN
@@ -1991,6 +1992,149 @@ bool LvglComponent::snapshot_scroll_direct_render(lv_draw_buf_t *content, int sc
 #endif
 }
 
+bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_draw_buf_t *app, int center_x,
+                                               int center_y, int width, int height) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32)
+  if (app == nullptr || app->data == nullptr)
+    return false;
+  if (this->width_ <= 0 || this->height_ <= 0 || width <= 0 || height <= 0)
+    return false;
+  if (app->header.cf != LV_COLOR_FORMAT_RGB888 || app->header.w < this->width_ || app->header.h < this->height_)
+    return false;
+  if (background != nullptr &&
+      (background->data == nullptr || background->header.cf != LV_COLOR_FORMAT_RGB888 ||
+       background->header.w < this->width_ || background->header.h < this->height_)) {
+    background = nullptr;
+  }
+
+  constexpr size_t BYTES_PER_PIXEL = 3;
+  constexpr uintptr_t CACHE_ALIGN = 128;
+  const size_t row_bytes = (size_t) this->width_ * BYTES_PER_PIXEL;
+  const size_t fb_bytes = row_bytes * (size_t) this->height_;
+  uint8_t *target = this->next_snapshot_render_buffer_();
+  if (target == nullptr)
+    return false;
+
+  bool needs_sync = false;
+  auto sync_full = [&]() {
+    if (esp_ptr_internal(target))
+      return;
+    uintptr_t start = reinterpret_cast<uintptr_t>(target) & ~(CACHE_ALIGN - 1);
+    uintptr_t end = (reinterpret_cast<uintptr_t>(target) + fb_bytes + CACHE_ALIGN - 1) & ~(CACHE_ALIGN - 1);
+    if (end > start)
+      esp_cache_msync(reinterpret_cast<void *>(start), end - start, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  };
+
+  auto copy_full = [&](const lv_draw_buf_t *src) -> bool {
+    if (src == nullptr)
+      return false;
+#ifdef USE_LVGL_PPA
+    if (s_display_srm_client != nullptr) {
+      ppa_srm_oper_config_t cfg = {};
+      cfg.in.buffer = src->data;
+      cfg.in.pic_w = src->header.w;
+      cfg.in.pic_h = src->header.h;
+      cfg.in.block_w = this->width_;
+      cfg.in.block_h = this->height_;
+      cfg.in.block_offset_x = 0;
+      cfg.in.block_offset_y = 0;
+      cfg.in.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
+      cfg.out.buffer = target;
+      cfg.out.buffer_size = fb_bytes;
+      cfg.out.pic_w = this->width_;
+      cfg.out.pic_h = this->height_;
+      cfg.out.block_offset_x = 0;
+      cfg.out.block_offset_y = 0;
+      cfg.out.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
+      cfg.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+      cfg.scale_x = 1.0f;
+      cfg.scale_y = 1.0f;
+      cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+      cfg.mode = PPA_TRANS_MODE_BLOCKING;
+      if (ppa_do_scale_rotate_mirror(s_display_srm_client, &cfg) == ESP_OK)
+        return true;
+    }
+#endif
+    const uint8_t *src_row = src->data;
+    uint8_t *dst_row = target;
+    for (int y = 0; y < this->height_; y++) {
+      memcpy(dst_row, src_row, row_bytes);
+      src_row += src->header.stride;
+      dst_row += row_bytes;
+    }
+    needs_sync = true;
+    return true;
+  };
+
+  if (!copy_full(background)) {
+    memset(target, 0, fb_bytes);
+    needs_sync = true;
+  }
+
+  width = std::clamp(width, 1, this->width_);
+  height = std::clamp(height, 1, this->height_);
+  const int dst_x = std::clamp(center_x - width / 2, 0, this->width_ - width);
+  const int dst_y = std::clamp(center_y - height / 2, 0, this->height_ - height);
+
+#ifdef USE_LVGL_PPA
+  if (s_display_srm_client != nullptr) {
+    ppa_srm_oper_config_t cfg = {};
+    cfg.in.buffer = app->data;
+    cfg.in.pic_w = app->header.w;
+    cfg.in.pic_h = app->header.h;
+    cfg.in.block_w = this->width_;
+    cfg.in.block_h = this->height_;
+    cfg.in.block_offset_x = 0;
+    cfg.in.block_offset_y = 0;
+    cfg.in.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
+    cfg.out.buffer = target;
+    cfg.out.buffer_size = fb_bytes;
+    cfg.out.pic_w = this->width_;
+    cfg.out.pic_h = this->height_;
+    cfg.out.block_offset_x = dst_x;
+    cfg.out.block_offset_y = dst_y;
+    cfg.out.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
+    cfg.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+    cfg.scale_x = (float) width / (float) this->width_;
+    cfg.scale_y = (float) height / (float) this->height_;
+    cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+    cfg.mode = PPA_TRANS_MODE_BLOCKING;
+    if (ppa_do_scale_rotate_mirror(s_display_srm_client, &cfg) == ESP_OK) {
+      if (needs_sync)
+        sync_full();
+      if (!this->present_snapshot_render_buffer_(target))
+        return false;
+#ifdef USE_LVGL_FPS_BENCHMARK
+      lvgl_esphome_note_frame();
+#endif
+      return true;
+    }
+  }
+#endif
+
+  const uint8_t *src = static_cast<const uint8_t *>(app->data);
+  for (int y = 0; y < height; y++) {
+    const int src_y = (int) (((int64_t) y * this->height_) / height);
+    const uint8_t *src_row = src + (size_t) src_y * app->header.stride;
+    uint8_t *dst_row = target + (size_t) (dst_y + y) * row_bytes + (size_t) dst_x * BYTES_PER_PIXEL;
+    for (int x = 0; x < width; x++) {
+      const int src_x = (int) (((int64_t) x * this->width_) / width);
+      const uint8_t *px = src_row + (size_t) src_x * BYTES_PER_PIXEL;
+      memcpy(dst_row + (size_t) x * BYTES_PER_PIXEL, px, BYTES_PER_PIXEL);
+    }
+  }
+  sync_full();
+  if (!this->present_snapshot_render_buffer_(target))
+    return false;
+#ifdef USE_LVGL_FPS_BENCHMARK
+  lvgl_esphome_note_frame();
+#endif
+  return true;
+#else
+  return false;
+#endif
+}
+
 IdleTrigger::IdleTrigger(LvglComponent *parent, TemplatableFn<uint32_t> timeout) : timeout_(timeout) {
   parent->add_on_idle_callback([this](uint32_t idle_time) {
     if (!this->is_idle_ && idle_time > this->timeout_.value()) {
@@ -2506,6 +2650,7 @@ void LvglComponent::loop() {
       return;
     if (s_snapshot_direct_active) {
       snapshot_swipe_direct_anim_tick();
+      snapshot_app_direct_anim_tick();
       return;
     }
     // Time the LVGL handler. flush_cb_ separately accumulates the DSI
@@ -2720,6 +2865,25 @@ struct SnapshotScrollState {
   LvglComponent *component{nullptr};
 };
 
+struct SnapshotAppState {
+  lv_obj_t *app_root{nullptr};
+  lv_obj_t *background_root{nullptr};
+  lv_draw_buf_t *app_buf{nullptr};
+  lv_draw_buf_t *background_buf{nullptr};
+  bool owns_app_buf{false};
+  bool active{false};
+  bool opening{true};
+  uint64_t anim_start_us{0};
+  uint32_t anim_duration_ms{0};
+  int start_size{1};
+  int end_size{0};
+  int start_center_x{0};
+  int start_center_y{0};
+  int end_center_x{0};
+  int end_center_y{0};
+  LvglComponent *component{nullptr};
+};
+
 struct SnapshotCacheEntry {
   lv_obj_t *obj{nullptr};
   lv_draw_buf_t *buf{nullptr};
@@ -2745,7 +2909,8 @@ struct SnapshotPanoramaCacheEntry {
 
 SnapshotSwipeState snapshot_swipe_state;
 SnapshotScrollState snapshot_scroll_state;
-SnapshotCacheEntry snapshot_cache[4];
+SnapshotAppState snapshot_app_state;
+SnapshotCacheEntry snapshot_cache[8];
 SnapshotPanoramaCacheEntry snapshot_panorama_cache[4];
 
 constexpr lv_color_format_t SNAPSHOT_CF = LV_COLOR_FORMAT_RGB888;
@@ -3200,6 +3365,107 @@ int snapshot_swipe_ease_out(int start, int end, uint32_t elapsed_ms, uint32_t du
   return start + (int) (((int64_t) (end - start) * eased) / 1024);
 }
 
+void snapshot_app_cleanup() {
+  if (snapshot_app_state.owns_app_buf && snapshot_app_state.app_buf != nullptr) {
+    lv_draw_buf_destroy(snapshot_app_state.app_buf);
+  }
+  snapshot_app_state = {};
+}
+
+void snapshot_scroll_cleanup();
+
+lv_draw_buf_t *snapshot_app_cached_or_take(lv_obj_t *obj, bool force_fresh, bool *owns) {
+  if (owns != nullptr)
+    *owns = false;
+  if (obj == nullptr)
+    return nullptr;
+  if (!force_fresh) {
+    if (auto *cached = snapshot_cache_find(obj))
+      return cached;
+    if (lvgl_esphome_snapshot_cache_page(obj)) {
+      return snapshot_cache_find(obj);
+    }
+  }
+  const bool was_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_update_layout(lv_obj_get_parent(obj) == nullptr ? obj : lv_obj_get_parent(obj));
+  auto *buf = lv_snapshot_take(obj, SNAPSHOT_CF);
+  if (was_hidden)
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  if (buf != nullptr && owns != nullptr)
+    *owns = true;
+  return buf;
+}
+
+bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_center_x, int end_center_y,
+                        uint32_t duration_ms, bool opening) {
+#if LV_USE_SNAPSHOT
+  snapshot_swipe_cleanup();
+  snapshot_scroll_cleanup();
+  snapshot_app_cleanup();
+  if (app == nullptr || width <= 0)
+    return false;
+
+  auto *disp = lv_obj_get_display(app);
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  if (component == nullptr || !SNAPSHOT_DIRECT_COMPOSITOR_ENABLED)
+    return false;
+
+  bool owns_app = false;
+  auto *app_buf = snapshot_app_cached_or_take(app, !opening, &owns_app);
+  auto *background_buf = snapshot_app_cached_or_take(background, false, nullptr);
+  if (app_buf == nullptr) {
+    ESP_LOGW(TAG, "snapshot app: failed to capture app=%p", app);
+    return false;
+  }
+
+  snapshot_app_state.app_root = app;
+  snapshot_app_state.background_root = background;
+  snapshot_app_state.app_buf = app_buf;
+  snapshot_app_state.background_buf = background_buf;
+  snapshot_app_state.owns_app_buf = owns_app;
+  snapshot_app_state.active = true;
+  snapshot_app_state.opening = opening;
+  snapshot_app_state.anim_start_us = esp_timer_get_time() - 16666ULL;
+  snapshot_app_state.anim_duration_ms = duration_ms == 0 ? 1 : duration_ms;
+  snapshot_app_state.start_size = opening ? 1 : width;
+  snapshot_app_state.end_size = opening ? width : 1;
+  snapshot_app_state.start_center_x = width / 2;
+  snapshot_app_state.start_center_y = width / 2;
+  snapshot_app_state.end_center_x = end_center_x;
+  snapshot_app_state.end_center_y = end_center_y;
+  snapshot_app_state.component = component;
+  s_snapshot_direct_active = true;
+  snapshot_app_direct_anim_tick();
+  return true;
+#else
+  return false;
+#endif
+}
+
+bool snapshot_app_direct_anim_tick() {
+  auto &state = snapshot_app_state;
+  if (!state.active || state.component == nullptr)
+    return false;
+
+  const uint64_t now_us = esp_timer_get_time();
+  const uint32_t elapsed_ms = (uint32_t) ((now_us - state.anim_start_us) / 1000ULL);
+  const uint32_t duration_ms = state.anim_duration_ms;
+  const int size = snapshot_swipe_ease_out(state.start_size, state.end_size, elapsed_ms, duration_ms);
+  const int center_x = snapshot_swipe_ease_out(state.start_center_x, state.end_center_x, elapsed_ms, duration_ms);
+  const int center_y = snapshot_swipe_ease_out(state.start_center_y, state.end_center_y, elapsed_ms, duration_ms);
+
+  state.component->snapshot_app_direct_render(state.background_buf, state.app_buf, center_x, center_y, size, size);
+  if (elapsed_ms >= duration_ms) {
+    state.component->wait_for_direct_frame_presented(50);
+    state.component->realign_direct_buffer_after_manual_present();
+    snapshot_app_cleanup();
+    s_snapshot_direct_active = false;
+    lv_obj_invalidate(lv_screen_active());
+  }
+  return true;
+}
+
 void snapshot_swipe_finish_now();
 
 bool snapshot_swipe_direct_anim_tick() {
@@ -3373,6 +3639,16 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
 #else
   return false;
 #endif
+}
+
+extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *background, int width,
+                                               uint32_t duration_ms) {
+  return snapshot_app_begin(app, background, width, width / 2, width / 2, duration_ms, true);
+}
+
+extern "C" bool lvgl_esphome_snapshot_app_close(lv_obj_t *app, lv_obj_t *background, int width, int target_center_x,
+                                                int target_center_y, uint32_t duration_ms) {
+  return snapshot_app_begin(app, background, width, target_center_x, target_center_y, duration_ms, false);
 }
 
 extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *next, int width, int next_x) {
