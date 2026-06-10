@@ -3575,6 +3575,11 @@ bool snapshot_app_direct_anim_tick() {
   if (elapsed_ms >= duration_ms) {
     state.component->wait_for_direct_frame_presented(50);
     state.component->realign_direct_buffer_after_manual_present();
+    if (!state.opening && state.owns_app_buf && state.app_root != nullptr && state.app_buf != nullptr) {
+      snapshot_cache_store(state.app_root, state.app_buf);
+      state.app_buf = nullptr;
+      state.owns_app_buf = false;
+    }
     snapshot_app_cleanup();
     s_snapshot_direct_active = false;
     lv_obj_invalidate(lv_screen_active());
