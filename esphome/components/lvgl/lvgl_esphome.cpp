@@ -3541,7 +3541,7 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
   snapshot_app_state.owns_app_buf = owns_app;
   snapshot_app_state.active = true;
   snapshot_app_state.opening = opening;
-  snapshot_app_state.anim_start_us = esp_timer_get_time() - 16666ULL;
+  snapshot_app_state.anim_start_us = esp_timer_get_time();
   snapshot_app_state.anim_duration_ms = duration_ms == 0 ? 1 : duration_ms;
   snapshot_app_state.start_size = opening ? 1 : width;
   snapshot_app_state.end_size = opening ? width : 1;
