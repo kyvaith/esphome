@@ -3500,7 +3500,7 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
     return false;
 
   bool owns_app = false;
-  auto *app_buf = snapshot_app_cached_or_take(app, !opening, &owns_app);
+  auto *app_buf = snapshot_app_cached_or_take(app, false, &owns_app);
   auto *background_buf = snapshot_app_cached_or_take(background, false, nullptr);
   if (app_buf == nullptr) {
     ESP_LOGW(TAG, "snapshot app: failed to capture app=%p", app);
