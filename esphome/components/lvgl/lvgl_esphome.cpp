@@ -3936,20 +3936,21 @@ void *lv_malloc_core(size_t size) {
   // Note: LV_DRAW_BUF_ALIGN is set to 4 to avoid LVGL warnings from
   // internal stack/static buffers, but heap allocations use 64-byte alignment.
   constexpr size_t LVGL_ALIGNMENT = 64;
+  const size_t aligned_size = (size + LVGL_ALIGNMENT - 1) & ~(LVGL_ALIGNMENT - 1);
 
   // BUGFIX: Don't modify global cap_bits - use local variable
   unsigned caps = cap_bits;
 
   // Try PSRAM first
-  ptr = heap_caps_aligned_alloc(LVGL_ALIGNMENT, size, caps);
+  ptr = heap_caps_aligned_alloc(LVGL_ALIGNMENT, aligned_size, caps);
   if (ptr == nullptr) {
     // Fallback to internal RAM if PSRAM allocation fails
     caps = MALLOC_CAP_8BIT;
-    ptr = heap_caps_aligned_alloc(LVGL_ALIGNMENT, size, caps);
+    ptr = heap_caps_aligned_alloc(LVGL_ALIGNMENT, aligned_size, caps);
   }
 
   if (ptr == nullptr) {
-    ESP_LOGE(esphome::lvgl::TAG, "Failed to allocate %zu bytes (64-byte aligned)", size);
+    ESP_LOGE(esphome::lvgl::TAG, "Failed to allocate %zu bytes (%zu aligned)", size, aligned_size);
     return nullptr;
   }
 
