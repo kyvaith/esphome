@@ -483,6 +483,9 @@ inline void lottie_screen_unloaded_cb(lv_event_t *e) {
     LottieContext *ctx = (LottieContext *)lv_event_get_user_data(e);
 
     // Now safe to free – screen is no longer visible
+    if (!lottie_stop_task(ctx)) {
+        return;
+    }
     if (ctx->task_stack)    { heap_caps_free(ctx->task_stack);    ctx->task_stack = nullptr; }
     if (ctx->task_tcb)      { heap_caps_free(ctx->task_tcb);      ctx->task_tcb = nullptr; }
     if (ctx->pixel_buffer)  { heap_caps_free(ctx->pixel_buffer);  ctx->pixel_buffer = nullptr; }
@@ -593,8 +596,6 @@ inline bool lottie_init(lv_obj_t *obj, const void *data, size_t data_size,
 
 #endif  // LV_USE_LOTTIE
 #endif  // USE_ESP32
-
-
 
 
 
