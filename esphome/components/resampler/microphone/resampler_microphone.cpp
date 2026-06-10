@@ -246,6 +246,11 @@ void ResamplerMicrophone::resample_task(void *params) {
       xEventGroupSetBits(this_resampler->event_group_, ResamplingEventGroupBits::ERR_ESP_FAIL);
       break;
     }
+
+    // The microphone source can keep the resampler runnable almost continuously.
+    // Yield explicitly so lower-priority ESPHome work, including loopTask's
+    // watchdog reset, is not starved while wake word/audio capture is active.
+    vTaskDelay(1);
   }
 
   xEventGroupSetBits(this_resampler->event_group_, ResamplingEventGroupBits::TASK_STOPPING);
