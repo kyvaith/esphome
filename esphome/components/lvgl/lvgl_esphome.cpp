@@ -2998,6 +2998,8 @@ struct SnapshotPanoramaCacheEntry {
 SnapshotSwipeState snapshot_swipe_state;
 SnapshotScrollState snapshot_scroll_state;
 SnapshotAppState snapshot_app_state;
+lv_obj_t *snapshot_app_prepared_close_obj = nullptr;
+lv_draw_buf_t *snapshot_app_prepared_close_buf = nullptr;
 SnapshotCacheEntry snapshot_cache[8];
 SnapshotPanoramaCacheEntry snapshot_panorama_cache[4];
 
@@ -3462,6 +3464,26 @@ void snapshot_app_cleanup() {
 
 void snapshot_scroll_cleanup();
 
+void snapshot_app_clear_prepared_close() {
+  if (snapshot_app_prepared_close_buf != nullptr) {
+    lv_draw_buf_destroy(snapshot_app_prepared_close_buf);
+  }
+  snapshot_app_prepared_close_buf = nullptr;
+  snapshot_app_prepared_close_obj = nullptr;
+}
+
+lv_draw_buf_t *snapshot_app_take_fresh(lv_obj_t *obj) {
+  if (obj == nullptr)
+    return nullptr;
+  const bool was_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_update_layout(lv_obj_get_parent(obj) == nullptr ? obj : lv_obj_get_parent(obj));
+  auto *buf = lv_snapshot_take(obj, SNAPSHOT_CF);
+  if (was_hidden)
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  return buf;
+}
+
 lv_draw_buf_t *snapshot_app_cached_or_take(lv_obj_t *obj, bool force_fresh, bool *owns) {
   if (owns != nullptr)
     *owns = false;
@@ -3474,12 +3496,7 @@ lv_draw_buf_t *snapshot_app_cached_or_take(lv_obj_t *obj, bool force_fresh, bool
       return snapshot_cache_find(obj);
     }
   }
-  const bool was_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_update_layout(lv_obj_get_parent(obj) == nullptr ? obj : lv_obj_get_parent(obj));
-  auto *buf = lv_snapshot_take(obj, SNAPSHOT_CF);
-  if (was_hidden)
-    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  auto *buf = snapshot_app_take_fresh(obj);
   if (buf != nullptr && owns != nullptr)
     *owns = true;
   return buf;
@@ -3500,7 +3517,17 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
     return false;
 
   bool owns_app = false;
-  auto *app_buf = snapshot_app_cached_or_take(app, false, &owns_app);
+  lv_draw_buf_t *app_buf = nullptr;
+  if (!opening && snapshot_app_prepared_close_obj == app && snapshot_app_prepared_close_buf != nullptr) {
+    app_buf = snapshot_app_prepared_close_buf;
+    snapshot_app_prepared_close_obj = nullptr;
+    snapshot_app_prepared_close_buf = nullptr;
+    owns_app = true;
+  } else {
+    if (opening)
+      snapshot_app_clear_prepared_close();
+    app_buf = snapshot_app_cached_or_take(app, !opening, &owns_app);
+  }
   auto *background_buf = snapshot_app_cached_or_take(background, false, nullptr);
   if (app_buf == nullptr) {
     ESP_LOGW(TAG, "snapshot app: failed to capture app=%p", app);
@@ -3739,6 +3766,26 @@ extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *backgrou
 extern "C" bool lvgl_esphome_snapshot_app_close(lv_obj_t *app, lv_obj_t *background, int width, int target_center_x,
                                                 int target_center_y, uint32_t duration_ms) {
   return snapshot_app_begin(app, background, width, target_center_x, target_center_y, duration_ms, false);
+}
+
+extern "C" bool lvgl_esphome_snapshot_app_prepare_close(lv_obj_t *app) {
+#if LV_USE_SNAPSHOT
+  snapshot_app_clear_prepared_close();
+  auto *buf = snapshot_app_take_fresh(app);
+  if (buf == nullptr)
+    return false;
+  snapshot_app_prepared_close_obj = app;
+  snapshot_app_prepared_close_buf = buf;
+  return true;
+#else
+  return false;
+#endif
+}
+
+extern "C" void lvgl_esphome_snapshot_app_clear_prepared_close(void) {
+#if LV_USE_SNAPSHOT
+  snapshot_app_clear_prepared_close();
+#endif
 }
 
 extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *next, int width, int next_x) {

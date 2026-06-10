@@ -51,6 +51,8 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
 extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *background, int width, uint32_t duration_ms);
 extern "C" bool lvgl_esphome_snapshot_app_close(lv_obj_t *app, lv_obj_t *background, int width, int target_center_x,
                                                 int target_center_y, uint32_t duration_ms);
+extern "C" bool lvgl_esphome_snapshot_app_prepare_close(lv_obj_t *app);
+extern "C" void lvgl_esphome_snapshot_app_clear_prepared_close(void);
 extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *next, int width, int next_x);
 extern "C" void lvgl_esphome_snapshot_swipe_update(int current_x, int next_x);
 extern "C" void lvgl_esphome_snapshot_swipe_request_update(int current_x, int next_x);
