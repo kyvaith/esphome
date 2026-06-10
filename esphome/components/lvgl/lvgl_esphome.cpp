@@ -9,6 +9,8 @@
 #include "display/lv_display_private.h"
 #include "misc/lv_ll.h"
 
+#include <cmath>
+
 #ifdef USE_MIPI_DSI
 #include "esphome/components/mipi_dsi/mipi_dsi.h"
 #endif
@@ -2071,57 +2073,24 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     needs_sync = true;
   }
 
-  width = std::clamp<int>(width, 1, this->width_);
-  height = std::clamp<int>(height, 1, this->height_);
-  const int dst_x = std::clamp(center_x - width / 2, 0, this->width_ - width);
-  const int dst_y = std::clamp(center_y - height / 2, 0, this->height_ - height);
-
-#ifdef USE_LVGL_PPA
-  if (s_display_srm_client != nullptr) {
-    ppa_srm_oper_config_t cfg = {};
-    cfg.in.buffer = app->data;
-    cfg.in.pic_w = app->header.w;
-    cfg.in.pic_h = app->header.h;
-    cfg.in.block_w = this->width_;
-    cfg.in.block_h = this->height_;
-    cfg.in.block_offset_x = 0;
-    cfg.in.block_offset_y = 0;
-    cfg.in.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
-    cfg.out.buffer = target;
-    cfg.out.buffer_size = fb_bytes;
-    cfg.out.pic_w = this->width_;
-    cfg.out.pic_h = this->height_;
-    cfg.out.block_offset_x = dst_x;
-    cfg.out.block_offset_y = dst_y;
-    cfg.out.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
-    cfg.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
-    cfg.scale_x = (float) width / (float) this->width_;
-    cfg.scale_y = (float) height / (float) this->height_;
-    cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
-    cfg.mode = PPA_TRANS_MODE_BLOCKING;
-    if (ppa_do_scale_rotate_mirror(s_display_srm_client, &cfg) == ESP_OK) {
-      if (needs_sync)
-        sync_full();
-      if (!this->present_snapshot_render_buffer_(target))
-        return false;
-#ifdef USE_LVGL_FPS_BENCHMARK
-      lvgl_esphome_note_frame();
-#endif
-      return true;
-    }
-  }
-#endif
-
   const uint8_t *src = static_cast<const uint8_t *>(app->data);
-  for (int y = 0; y < height; y++) {
-    const int src_y = (int) (((int64_t) y * this->height_) / height);
-    const uint8_t *src_row = src + (size_t) src_y * app->header.stride;
-    uint8_t *dst_row = target + (size_t) (dst_y + y) * row_bytes + (size_t) dst_x * BYTES_PER_PIXEL;
-    for (int x = 0; x < width; x++) {
-      const int src_x = (int) (((int64_t) x * this->width_) / width);
-      const uint8_t *px = src_row + (size_t) src_x * BYTES_PER_PIXEL;
-      memcpy(dst_row + (size_t) x * BYTES_PER_PIXEL, px, BYTES_PER_PIXEL);
-    }
+  const int diameter = std::clamp<int>(std::max(width, height), 1, std::max(this->width_, this->height_));
+  const int radius = std::max(1, diameter / 2);
+  const int radius_sq = radius * radius;
+  for (int y = 0; y < this->height_; y++) {
+    const int dy = y - center_y;
+    const int dy_sq = dy * dy;
+    if (dy_sq > radius_sq)
+      continue;
+    const int span = (int) std::sqrt((float) (radius_sq - dy_sq));
+    const int x1 = std::clamp(center_x - span, 0, this->width_ - 1);
+    const int x2 = std::clamp(center_x + span, 0, this->width_ - 1);
+    if (x2 < x1)
+      continue;
+    const size_t copy_bytes = (size_t) (x2 - x1 + 1) * BYTES_PER_PIXEL;
+    const uint8_t *src_row = src + (size_t) y * app->header.stride + (size_t) x1 * BYTES_PER_PIXEL;
+    uint8_t *dst_row = target + (size_t) y * row_bytes + (size_t) x1 * BYTES_PER_PIXEL;
+    memcpy(dst_row, src_row, copy_bytes);
   }
   sync_full();
   if (!this->present_snapshot_render_buffer_(target))
