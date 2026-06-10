@@ -82,6 +82,30 @@ static volatile uint32_t s_swipe_logging_enabled = 0;
 static volatile bool s_snapshot_swipe_active = false;
 static volatile bool s_snapshot_direct_active = false;
 
+struct SnapshotAppRenderBufferState {
+  uint8_t *buffer{nullptr};
+  int radius{0};
+  int center_x{0};
+  int center_y{0};
+  bool initialized{false};
+  bool opening{true};
+};
+
+static SnapshotAppRenderBufferState s_snapshot_app_render_buffers[2];
+static bool s_snapshot_app_render_opening = true;
+
+static void snapshot_app_render_buffers_reset(bool opening) {
+  s_snapshot_app_render_opening = opening;
+  for (auto &state : s_snapshot_app_render_buffers) {
+    state.buffer = nullptr;
+    state.radius = opening ? 0 : 32767;
+    state.center_x = 0;
+    state.center_y = 0;
+    state.initialized = false;
+    state.opening = opening;
+  }
+}
+
 bool snapshot_swipe_process_pending();
 
 namespace {
@@ -2018,6 +2042,14 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     return false;
 
   bool needs_sync = false;
+  auto sync_range = [&](void *ptr, size_t len) {
+    if (ptr == nullptr || len == 0 || esp_ptr_internal(ptr))
+      return;
+    uintptr_t start = reinterpret_cast<uintptr_t>(ptr) & ~(CACHE_ALIGN - 1);
+    uintptr_t end = (reinterpret_cast<uintptr_t>(ptr) + len + CACHE_ALIGN - 1) & ~(CACHE_ALIGN - 1);
+    if (end > start)
+      esp_cache_msync(reinterpret_cast<void *>(start), end - start, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  };
   auto sync_full = [&]() {
     if (esp_ptr_internal(target))
       return;
@@ -2068,31 +2100,118 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     return true;
   };
 
-  if (!copy_full(background)) {
-    memset(target, 0, fb_bytes);
-    needs_sync = true;
+  SnapshotAppRenderBufferState *buffer_state = nullptr;
+  for (auto &state : s_snapshot_app_render_buffers) {
+    if (state.buffer == target) {
+      buffer_state = &state;
+      break;
+    }
+  }
+  if (buffer_state == nullptr) {
+    for (auto &state : s_snapshot_app_render_buffers) {
+      if (state.buffer == nullptr) {
+        buffer_state = &state;
+        state.buffer = target;
+        break;
+      }
+    }
+  }
+  if (buffer_state == nullptr) {
+    buffer_state = &s_snapshot_app_render_buffers[0];
+    buffer_state->buffer = target;
+    buffer_state->initialized = false;
+  }
+  if (buffer_state->opening != s_snapshot_app_render_opening) {
+    buffer_state->initialized = false;
+    buffer_state->opening = s_snapshot_app_render_opening;
   }
 
-  const uint8_t *src = static_cast<const uint8_t *>(app->data);
+  if (!buffer_state->initialized) {
+    if (!copy_full(background)) {
+      memset(target, 0, fb_bytes);
+      needs_sync = true;
+    }
+    buffer_state->radius = 0;
+    buffer_state->center_x = center_x;
+    buffer_state->center_y = center_y;
+    buffer_state->initialized = true;
+  }
+
   const int diameter = std::clamp<int>(std::max(width, height), 1, std::max(this->width_, this->height_));
   const int radius = std::max(1, diameter / 2);
   const int radius_sq = radius * radius;
-  for (int y = 0; y < this->height_; y++) {
-    const int dy = y - center_y;
-    const int dy_sq = dy * dy;
-    if (dy_sq > radius_sq)
-      continue;
-    const int span = (int) std::sqrt((float) (radius_sq - dy_sq));
-    const int x1 = std::clamp(center_x - span, 0, this->width_ - 1);
-    const int x2 = std::clamp(center_x + span, 0, this->width_ - 1);
+
+  auto copy_span = [&](int y, int x1, int x2, const lv_draw_buf_t *src_buf) {
+    x1 = std::clamp(x1, 0, this->width_ - 1);
+    x2 = std::clamp(x2, 0, this->width_ - 1);
     if (x2 < x1)
-      continue;
+      return;
     const size_t copy_bytes = (size_t) (x2 - x1 + 1) * BYTES_PER_PIXEL;
-    const uint8_t *src_row = src + (size_t) y * app->header.stride + (size_t) x1 * BYTES_PER_PIXEL;
     uint8_t *dst_row = target + (size_t) y * row_bytes + (size_t) x1 * BYTES_PER_PIXEL;
-    memcpy(dst_row, src_row, copy_bytes);
+    if (src_buf == nullptr || src_buf->data == nullptr) {
+      memset(dst_row, 0, copy_bytes);
+    } else {
+      const uint8_t *src_row = static_cast<const uint8_t *>(src_buf->data) + (size_t) y * src_buf->header.stride +
+                               (size_t) x1 * BYTES_PER_PIXEL;
+      memcpy(dst_row, src_row, copy_bytes);
+    }
+    sync_range(dst_row, copy_bytes);
+  };
+
+  auto copy_circle = [&](const lv_draw_buf_t *src_buf, int circle_center_x, int circle_center_y, int circle_radius) {
+    if (circle_radius <= 0)
+      return;
+    const int circle_radius_sq = circle_radius * circle_radius;
+    for (int y = 0; y < this->height_; y++) {
+      const int dy = y - circle_center_y;
+      const int dy_sq = dy * dy;
+      if (dy_sq > circle_radius_sq)
+        continue;
+      const int span = (int) std::sqrt((float) (circle_radius_sq - dy_sq));
+      copy_span(y, circle_center_x - span, circle_center_x + span, src_buf);
+    }
+  };
+
+  if (s_snapshot_app_render_opening) {
+    if (buffer_state->center_x != center_x || buffer_state->center_y != center_y) {
+      if (!copy_full(background)) {
+        memset(target, 0, fb_bytes);
+        needs_sync = true;
+      }
+      buffer_state->radius = 0;
+    }
+    const int previous_radius = std::max(0, std::min(buffer_state->radius, radius));
+    const int previous_radius_sq = previous_radius * previous_radius;
+    for (int y = 0; y < this->height_; y++) {
+      const int dy = y - center_y;
+      const int dy_sq = dy * dy;
+      if (dy_sq > radius_sq)
+        continue;
+      const int outer_span = (int) std::sqrt((float) (radius_sq - dy_sq));
+      const int outer_x1 = center_x - outer_span;
+      const int outer_x2 = center_x + outer_span;
+      if (dy_sq > previous_radius_sq || previous_radius == 0) {
+        copy_span(y, outer_x1, outer_x2, app);
+        continue;
+      }
+      const int inner_span = (int) std::sqrt((float) (previous_radius_sq - dy_sq));
+      const int inner_x1 = center_x - inner_span;
+      const int inner_x2 = center_x + inner_span;
+      copy_span(y, outer_x1, inner_x1 - 1, app);
+      copy_span(y, inner_x2 + 1, outer_x2, app);
+    }
+    buffer_state->radius = std::max(buffer_state->radius, radius);
+    buffer_state->center_x = center_x;
+    buffer_state->center_y = center_y;
+  } else {
+    copy_circle(background, buffer_state->center_x, buffer_state->center_y, buffer_state->radius);
+    copy_circle(app, center_x, center_y, radius);
+    buffer_state->radius = radius;
+    buffer_state->center_x = center_x;
+    buffer_state->center_y = center_y;
   }
-  sync_full();
+  if (needs_sync)
+    sync_full();
   if (!this->present_snapshot_render_buffer_(target))
     return false;
 #ifdef USE_LVGL_FPS_BENCHMARK
@@ -3404,6 +3523,7 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
   snapshot_app_state.end_center_x = end_center_x;
   snapshot_app_state.end_center_y = end_center_y;
   snapshot_app_state.component = component;
+  snapshot_app_render_buffers_reset(opening);
   s_snapshot_direct_active = true;
   snapshot_app_direct_anim_tick();
   return true;
@@ -3576,7 +3696,8 @@ extern "C" bool lvgl_esphome_snapshot_cache_page(lv_obj_t *obj) {
   lv_obj_update_layout(lv_obj_get_parent(obj));
 
   auto *buf = lv_snapshot_take(obj, SNAPSHOT_CF);
-  lv_obj_align(obj, LV_ALIGN_CENTER, old_x, old_y);
+  lv_obj_set_pos(obj, old_x, old_y);
+  lv_obj_update_layout(lv_obj_get_parent(obj) == nullptr ? obj : lv_obj_get_parent(obj));
   if (was_hidden)
     lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
   if (buf == nullptr) {
