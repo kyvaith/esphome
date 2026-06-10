@@ -17,9 +17,7 @@
 namespace esphome::esp32_jpeg {
 namespace {
 
-uint32_t align_up(uint32_t value, uint32_t alignment) {
-  return (value + alignment - 1) / alignment * alignment;
-}
+uint32_t align_up(uint32_t value, uint32_t alignment) { return (value + alignment - 1) / alignment * alignment; }
 
 #if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
 jpeg_enc_input_format_t to_encode_format(PixelFormat format) {
@@ -167,8 +165,6 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   if (input_size < expected_input_size)
     return ESP_ERR_INVALID_SIZE;
 
-  output->release();
-
   jpeg_encoder_handle_t encoder = nullptr;
   jpeg_encode_engine_cfg_t engine_cfg = {
       .intr_priority = 0,
@@ -182,8 +178,8 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   jpeg_encode_memory_alloc_cfg_t mem_cfg = {
       .buffer_direction = JPEG_ENC_ALLOC_OUTPUT_BUFFER,
   };
-  uint8_t *output_data = static_cast<uint8_t *>(
-      jpeg_alloc_encoder_mem(expected_input_size, &mem_cfg, &output_capacity));
+  uint8_t *output_data =
+      static_cast<uint8_t *>(jpeg_alloc_encoder_mem(expected_input_size, &mem_cfg, &output_capacity));
   if (output_data == nullptr) {
     jpeg_del_encoder_engine(encoder);
     return ESP_ERR_NO_MEM;
@@ -191,13 +187,13 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
 
   uint8_t quality = std::min<uint8_t>(std::max<uint8_t>(config.quality, 1), 100);
   jpeg_encode_cfg_t encode_cfg = {
-      .height = config.height,
-      .width = config.width,
-      .src_type = to_encode_format(config.input_format),
-      .sub_sample = to_down_sampling(config.down_sampling),
-      .image_quality = quality,
+    .height = config.height,
+    .width = config.width,
+    .src_type = to_encode_format(config.input_format),
+    .sub_sample = to_down_sampling(config.down_sampling),
+    .image_quality = quality,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
-      .pixel_reverse = config.pixel_reverse,
+    .pixel_reverse = config.pixel_reverse,
 #endif
   };
   uint32_t encoded_size = 0;
@@ -226,8 +222,8 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
 #endif
 }
 
-esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_size, uint8_t *output,
-                 size_t output_size, size_t *written) {
+esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_size, uint8_t *output, size_t output_size,
+                 size_t *written) {
 #if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
   if (jpeg == nullptr || jpeg_size == 0 || output == nullptr || output_size == 0)
     return ESP_ERR_INVALID_ARG;

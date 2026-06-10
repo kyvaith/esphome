@@ -50,7 +50,8 @@ class JpegBuffer {
   JpegBuffer(JpegBuffer &&other) noexcept;
   JpegBuffer &operator=(JpegBuffer &&other) noexcept;
 
-  uint8_t *data() const { return this->data_; }
+  uint8_t *data() { return this->data_; }
+  const uint8_t *data() const { return this->data_; }
   size_t size() const { return this->size_; }
   size_t capacity() const { return this->capacity_; }
   bool empty() const { return this->data_ == nullptr || this->size_ == 0; }
@@ -87,8 +88,8 @@ size_t decoded_output_size(const PictureInfo &info, PixelFormat format);
 
 esp_err_t get_info(const uint8_t *jpeg, size_t jpeg_size, PictureInfo *info);
 esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_size, JpegBuffer *output);
-esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_size, uint8_t *output,
-                 size_t output_size, size_t *written = nullptr);
+esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_size, uint8_t *output, size_t output_size,
+                 size_t *written = nullptr);
 
 }  // namespace esphome::esp32_jpeg
 
