@@ -2071,8 +2071,8 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     needs_sync = true;
   }
 
-  width = std::clamp(width, 1, this->width_);
-  height = std::clamp(height, 1, this->height_);
+  width = std::clamp<int>(width, 1, this->width_);
+  height = std::clamp<int>(height, 1, this->height_);
   const int dst_x = std::clamp(center_x - width / 2, 0, this->width_ - width);
   const int dst_y = std::clamp(center_y - height / 2, 0, this->height_ - height);
 
