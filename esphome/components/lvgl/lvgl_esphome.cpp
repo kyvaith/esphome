@@ -3684,9 +3684,6 @@ void snapshot_swipe_finish_now() {
       component->wait_for_direct_frame_presented(50);
     }
     snapshot_swipe_cleanup();
-    if (commit) {
-      lv_obj_invalidate(lv_screen_active());
-    }
     return;
   }
   snapshot_swipe_cleanup();
