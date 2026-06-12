@@ -30,6 +30,10 @@ const char *SendspinTextSensor::extract_value_(const sendspin::ServerMetadataSta
       if (metadata.album_artist.has_value())
         return metadata.album_artist.value().c_str();
       return nullptr;
+    case SendspinTextMetadataTypes::ARTWORK_URL:
+      if (metadata.artwork_url.has_value())
+        return metadata.artwork_url.value().c_str();
+      return nullptr;
   }
   return nullptr;
 }

@@ -16,6 +16,7 @@ enum class SendspinTextMetadataTypes {
   ARTIST,
   ALBUM,
   ALBUM_ARTIST,
+  ARTWORK_URL,
 };
 
 class SendspinTextSensor : public SendspinChild, public text_sensor::TextSensor {
