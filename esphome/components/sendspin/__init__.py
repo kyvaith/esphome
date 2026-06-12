@@ -200,7 +200,7 @@ async def to_code(config: ConfigType) -> None:
     esp32.add_idf_component(
         name="sendspin/sendspin-cpp",
         repo="https://github.com/kyvaith/sendspin-cpp.git",
-        ref="493954aa3c5a1a1ff4c42533bd8508b21431b66d",
+        ref="c08ce10676ddb1fde97375ac111240c2aa149357",
     )
 
     cg.add_define("USE_SENDSPIN", True)  # for MDNS
