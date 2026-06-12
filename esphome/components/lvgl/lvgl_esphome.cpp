@@ -1361,13 +1361,6 @@ bool LvglComponent::present_snapshot_render_buffer_(uint8_t *buffer) {
 #ifdef USE_ESP32
 bool LvglComponent::start_partial_compositor_() {
 #ifdef USE_MIPI_DSI
-  // Prefer ESP-IDF's native DPI async framebuffer copy path for partial LVGL
-  // buffers. The manual compositor remains in-tree for future experiments, but
-  // on ESP32-P4 DSI framebuffers the custom PPA/SRM path can hit cache msync
-  // validation errors and the CPU-copy fallback contends heavily with scanout.
-  ESP_LOGI(TAG, "LVGL partial framebuffer compositor disabled; using native MIPI DSI async flush");
-  return false;
-
   if (this->rotation != display::DISPLAY_ROTATION_0_DEGREES || this->displays_.size() != 1 || this->draw_buf2_ == nullptr)
     return false;
   auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
