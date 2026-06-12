@@ -8,6 +8,7 @@
 #endif
 #ifdef USE_WIFI
 #include "esphome/components/wifi/wifi_component.h"
+#include <esp_wifi.h>
 #endif
 
 #include "esphome/core/application.h"
@@ -95,10 +96,22 @@ void SendspinHub::update_state(sendspin::SendspinClientState state) {
 const char *SendspinHub::get_client_id_into_buffer(std::span<char, MAC_ADDRESS_PRETTY_BUFFER_SIZE> buf) {
   // The server matches client_id against the L2 source MAC of the device's multicast traffic.
   // ESP-IDF derives the ethernet MAC as base+3 by default on ESP32-S3, so we cannot use the
-  // eFuse base MAC when ethernet is the active interface.
+  // eFuse base MAC when ethernet is the active interface. ESP32-P4 boards commonly use an
+  // external Wi-Fi coprocessor; in that case the STA interface MAC can also differ from the
+  // chip's base MAC.
 #ifdef USE_ETHERNET
   if (ethernet::global_eth_component != nullptr) {
     return ethernet::global_eth_component->get_eth_mac_address_pretty_into_buffer(buf);
+  }
+#endif
+#ifdef USE_WIFI
+  if (wifi::global_wifi_component != nullptr) {
+    uint8_t mac[6];
+    if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK && mac_address_is_valid(mac)) {
+      snprintf(buf.data(), buf.size(), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4],
+               mac[5]);
+      return buf.data();
+    }
   }
 #endif
   return get_mac_address_pretty_into_buffer(buf);

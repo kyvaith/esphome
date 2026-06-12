@@ -197,7 +197,11 @@ async def to_code(config: ConfigType) -> None:
         psram.request_external_task_stack()
 
     # sendspin-cpp library
-    esp32.add_idf_component(name="sendspin/sendspin-cpp", ref="0.6.1")
+    esp32.add_idf_component(
+        name="sendspin/sendspin-cpp",
+        repo="https://github.com/kyvaith/sendspin-cpp.git",
+        ref="493954aa3c5a1a1ff4c42533bd8508b21431b66d",
+    )
 
     cg.add_define("USE_SENDSPIN", True)  # for MDNS
 
