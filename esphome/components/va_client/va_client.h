@@ -71,6 +71,7 @@ class VaClient : public Component {
   // is no longer armed (e.g. user already pressed wake before the chime
   // finished — the new session takes priority).
   void commit_followup_mic();
+  bool turn_has_reply_audio() const { return this->turn_t_first_audio_out_ != 0; }
 
   // Called from the static esp-idf event handler trampoline.
   void on_ws_event(int32_t event_id, void *event_data);
