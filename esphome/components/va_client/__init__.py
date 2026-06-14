@@ -80,10 +80,12 @@ async def to_code(config):
     cg.add(var.set_url(config[CONF_URL]))
     cg.add(var.set_barge_in(config[CONF_BARGE_IN]))
 
-    # Passive mode keeps the AEC-backed microphone owned by micro_wake_word.
-    # va_client receives the already-processed stream whenever that mic is running.
+    # Own an active microphone source during realtime turns. The underlying
+    # esp_audio_stack microphone is reference-counted, so this can run alongside
+    # micro_wake_word while ensuring the realtime uplink never depends on another
+    # component keeping the mic open.
     mic_source = await microphone.microphone_source_to_code(
-        config[CONF_MICROPHONE], passive=True
+        config[CONF_MICROPHONE], passive=False
     )
     cg.add(var.set_microphone_source(mic_source))
 

@@ -97,6 +97,7 @@ class VaClient : public Component {
   void handle_text_(const char *data, size_t len);
   void handle_binary_(const uint8_t *data, size_t len);
   void set_phase_(const std::string &phase);
+  void set_streaming_(bool enabled);
   // Marshal a phase-LED trigger fire onto the main loop (used to drive the LED
   // ring to `listening`/`idle` from timer callbacks during the follow-up window,
   // independently of a server-sent phase).
@@ -400,6 +401,18 @@ class VaClient : public Component {
   uint32_t clipped_samples_{0};    // clipped samples in this turn
   bool underrun_logged_this_turn_{false};
   static constexpr uint32_t kWsGapWarnMs = 80;  // > ~3× normal 20 ms frame
+
+  // Realtime microphone uplink diagnostics. These run on the mic callback path
+  // and tell us whether the backend is receiving real post-AEC samples or an
+  // empty/silent stream.
+  uint32_t mic_stream_started_ms_{0};
+  uint32_t mic_last_frame_ms_{0};
+  uint32_t mic_no_frame_warn_ms_{0};
+  uint32_t mic_stats_last_ms_{0};
+  uint32_t mic_frames_this_sec_{0};
+  uint32_t mic_bytes_this_sec_{0};
+  uint32_t mic_send_failures_this_sec_{0};
+  uint32_t mic_max_abs_this_sec_{0};
 };
 
 }  // namespace va_client

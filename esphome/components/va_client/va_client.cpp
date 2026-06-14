@@ -126,6 +126,17 @@ void VaClient::setup() {
 }
 
 void VaClient::loop() {
+  if (this->streaming_ && this->mic_source_ != nullptr) {
+    const uint32_t now = millis();
+    const uint32_t last_frame = this->mic_last_frame_ms_;
+    const uint32_t reference = last_frame != 0 ? last_frame : this->mic_stream_started_ms_;
+    if (reference != 0 && now - reference > 1000 && now - this->mic_no_frame_warn_ms_ > 1000) {
+      ESP_LOGW(TAG, "mic uplink: no frames for %u ms while streaming (source_running=%s)",
+               (unsigned) (now - reference), this->mic_source_->is_running() ? "yes" : "no");
+      this->mic_no_frame_warn_ms_ = now;
+    }
+  }
+
   // Drain the audio ring buffer into the speaker. speaker.play() accepts
   // only what fits in its own ring (returns the count actually queued).
   if (this->speaker_ != nullptr && this->audio_buf_ != nullptr) {
@@ -664,6 +675,8 @@ void VaClient::on_mic_data_(const std::vector<uint8_t> &samples) {
 
   const auto *mono_samples = reinterpret_cast<const int16_t *>(samples.data());
   const size_t mono_sample_count = samples.size() / sizeof(int16_t);
+  const uint32_t now_ms = millis();
+  this->mic_last_frame_ms_ = now_ms;
 
   // Streaming gate. When no session is active we don't forward frames to the
   // server (otherwise OpenAI's VAD would respond to any room speech — the wake
@@ -693,12 +706,40 @@ void VaClient::on_mic_data_(const std::vector<uint8_t> &samples) {
     this->preroll_head_ = 0;
   }
 
+  uint32_t max_abs = 0;
+  for (size_t i = 0; i < mono_sample_count; i++) {
+    const int32_t sample = mono_samples[i];
+    const uint32_t abs_sample = sample < 0 ? static_cast<uint32_t>(-sample) : static_cast<uint32_t>(sample);
+    if (abs_sample > max_abs)
+      max_abs = abs_sample;
+  }
+  if (max_abs > this->mic_max_abs_this_sec_)
+    this->mic_max_abs_this_sec_ = max_abs;
+  this->mic_frames_this_sec_++;
+  this->mic_bytes_this_sec_ += samples.size();
+
   // 10ms timeout (~portTICK_PERIOD_MS): if WS task is briefly busy we wait
   // a tick rather than dropping the frame and spamming "Could not lock"
   // errors. If we're swamped, we accept dropping rather than blocking mic.
-  esp_websocket_client_send_bin(handle, reinterpret_cast<const char *>(samples.data()),
-                                static_cast<int>(mono_sample_count * sizeof(int16_t)),
-                                10 / portTICK_PERIOD_MS);
+  const int len = static_cast<int>(mono_sample_count * sizeof(int16_t));
+  const int sent = esp_websocket_client_send_bin(handle, reinterpret_cast<const char *>(samples.data()),
+                                                 len, 10 / portTICK_PERIOD_MS);
+  if (sent != len)
+    this->mic_send_failures_this_sec_++;
+
+  if (now_ms - this->mic_stats_last_ms_ >= 1000) {
+    ESP_LOGW(TAG, "mic uplink: frames=%u bytes=%u max_abs=%u send_failures=%u ws=%s",
+             (unsigned) this->mic_frames_this_sec_,
+             (unsigned) this->mic_bytes_this_sec_,
+             (unsigned) this->mic_max_abs_this_sec_,
+             (unsigned) this->mic_send_failures_this_sec_,
+             this->ws_connected_ ? "yes" : "no");
+    this->mic_stats_last_ms_ = now_ms;
+    this->mic_frames_this_sec_ = 0;
+    this->mic_bytes_this_sec_ = 0;
+    this->mic_send_failures_this_sec_ = 0;
+    this->mic_max_abs_this_sec_ = 0;
+  }
 }
 
 void VaClient::preroll_push_(const int16_t *data, size_t n) {
@@ -734,6 +775,36 @@ const char *VaClient::phase_name_(Phase p) {
       return "replying";
     default:
       return "idle";
+  }
+}
+
+void VaClient::set_streaming_(bool enabled) {
+  if (this->streaming_ == enabled)
+    return;
+
+  this->streaming_ = enabled;
+  if (enabled) {
+    const uint32_t now = millis();
+    this->mic_stream_started_ms_ = now;
+    this->mic_last_frame_ms_ = 0;
+    this->mic_no_frame_warn_ms_ = 0;
+    this->mic_stats_last_ms_ = now;
+    this->mic_frames_this_sec_ = 0;
+    this->mic_bytes_this_sec_ = 0;
+    this->mic_send_failures_this_sec_ = 0;
+    this->mic_max_abs_this_sec_ = 0;
+    if (this->mic_source_ != nullptr) {
+      this->mic_source_->start();
+      ESP_LOGI(TAG, "mic uplink opened (source_running=%s)",
+               this->mic_source_->is_running() ? "yes" : "no");
+    } else {
+      ESP_LOGE(TAG, "mic uplink opened but microphone source is missing");
+    }
+  } else {
+    if (this->mic_source_ != nullptr) {
+      this->mic_source_->stop();
+    }
+    ESP_LOGI(TAG, "mic uplink closed");
   }
 }
 
@@ -793,7 +864,7 @@ void VaClient::set_phase_(const std::string &phase) {
   if (phase == "listening") {
     if (!this->streaming_) {
       ESP_LOGI(TAG, "phase=listening — mic streaming on");
-      this->streaming_ = true;
+      this->set_streaming_(true);
     }
     // Handsfree barge-in cut-over: a `listening` arriving while we still have
     // TTS queued means the backend's server VAD heard the user talk over the
@@ -827,7 +898,7 @@ void VaClient::set_phase_(const std::string &phase) {
     // echo cost to keeping the mic open until the reply genuinely starts.
     if (phase == "replying" && this->streaming_ && !this->barge_in_) {
       ESP_LOGI(TAG, "phase=replying — mic streaming off");
-      this->streaming_ = false;
+      this->set_streaming_(false);
     }
     if (phase == "thinking" && this->turn_t_thinking_ == 0 && this->turn_t_wake_ != 0) {
       this->turn_t_thinking_ = millis();
@@ -876,7 +947,7 @@ void VaClient::set_phase_(const std::string &phase) {
       if (this->streaming_) {
         ESP_LOGI(TAG, "idle while mic open (prev=%s) — closing orphaned mic gate",
                  phase_name_(prev));
-        this->streaming_ = false;
+        this->set_streaming_(false);
         this->cancel_timeout("va_no_speech");
       }
     } else if (this->suppress_followup_) {
@@ -884,7 +955,7 @@ void VaClient::set_phase_(const std::string &phase) {
       // Close the session cleanly: streaming off, no follow-up, fall through
       // to the regular trigger fire so the LED goes idle.
       this->suppress_followup_ = false;
-      this->streaming_ = false;
+      this->set_streaming_(false);
       this->followup_pending_ = false;
       this->waiting_for_speaker_stop_ = false;
       this->request_follow_up_pending_ = false;
@@ -1003,7 +1074,7 @@ void VaClient::start_session() {
   // mic task does the actual ring reset (its sole owner) when it sees this flag.
   this->preroll_discard_pending_ = true;
   ESP_LOGI(TAG, "start_session() — streaming on");
-  this->streaming_ = true;
+  this->set_streaming_(true);
   // Tell the backend a fresh wake started (dangling-VAD guard, A). Sent AFTER
   // the residual-reply interrupt above so the backend sees interrupt → wake in
   // order. The first real mic frame for this turn doesn't flow until after this
@@ -1045,7 +1116,7 @@ void VaClient::start_session() {
       auto handle = static_cast<esp_websocket_client_handle_t>(this->ws_handle_);
       esp_websocket_client_send_text(handle, m, sizeof(m) - 1, portMAX_DELAY);
     }
-    this->streaming_ = false;
+    this->set_streaming_(false);
     this->turn_t_wake_ = 0;
     // Force LED back to idle from yaml side.
     this->defer([this]() {
@@ -1104,7 +1175,7 @@ void VaClient::open_followup_window_(uint32_t duration_ms) {
     // original pipeline. Leave the mic closed; user must say a wake word
     // for the next turn. (The LED idle was already emitted above / by the
     // set_phase_ tail.)
-    this->streaming_ = false;
+    this->set_streaming_(false);
     return;
   }
   // Follow-up dialog window. We do NOT open the mic immediately: has_buffered_
@@ -1130,12 +1201,12 @@ void VaClient::open_followup_window_(uint32_t duration_ms) {
       return;
     }
     ESP_LOGI(TAG, "follow-up window open (mic on, listening for %u ms)", (unsigned) duration_ms);
-    this->streaming_ = true;
+    this->set_streaming_(true);
     this->fire_phase_led_("listening");  // blue ring: user may answer now
     this->set_timeout("va_followup", duration_ms, [this]() {
       if (this->streaming_) {
         ESP_LOGI(TAG, "follow-up window expired — mic streaming off");
-        this->streaming_ = false;
+        this->set_streaming_(false);
         this->send_mic_flush_();        // drop any uncommitted partial utterance
         this->fire_phase_led_("idle");  // no answer came; back to idle
       }
@@ -1205,11 +1276,11 @@ void VaClient::commit_followup_mic() {
   // into the ring; don't replay it to OpenAI. (Same "Au!" guard as the wake
   // path; consumed by the mic task on the next frame.)
   this->preroll_discard_pending_ = true;
-  this->streaming_ = true;
+  this->set_streaming_(true);
   this->set_timeout("va_followup", kRequestFollowUpMs, [this]() {
     if (this->streaming_) {
       ESP_LOGI(TAG, "follow-up window expired — mic streaming off");
-      this->streaming_ = false;
+      this->set_streaming_(false);
       this->send_mic_flush_();  // drop any uncommitted partial utterance
     }
   });
@@ -1256,7 +1327,7 @@ void VaClient::send_interrupt() {
   // cancelled just below — mic open + streaming to OpenAI indefinitely, so any
   // later room speech becomes an unprompted turn. Callers that start a fresh
   // turn (start_session) re-open it themselves right after.
-  this->streaming_ = false;
+  this->set_streaming_(false);
   this->followup_pending_ = false;
   this->waiting_for_speaker_stop_ = false;
   this->request_follow_up_pending_ = false;
