@@ -54,6 +54,13 @@ void VaClient::set_url(const std::string &url) {
   this->url_ = url;
 
   if (this->ws_handle_ == nullptr) {
+    if (!this->url_.empty()) {
+      ESP_LOGI(TAG, "Realtime backend URL set to %s; connecting", this->url_.c_str());
+      this->cancel_timeout("va_reconnect");
+      this->cancel_timeout("va_stable_connection");
+      this->reconnect_delay_ms_ = 1000;
+      this->connect_();
+    }
     return;
   }
 
