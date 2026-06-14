@@ -11,6 +11,7 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
+#include <freertos/task.h>
 
 namespace esphome {
 namespace va_client {
@@ -78,6 +79,8 @@ class VaClient : public Component {
   void connect_();
   void schedule_reconnect_();
   void on_mic_data_(const std::vector<uint8_t> &samples);
+  bool drain_audio_();
+  void audio_task_();
   // Tell the backend to drop any uncommitted mic audio NOW. Sent when the mic
   // gate closes mid-stream by TIMER (a follow-up window expiring) — a partial
   // utterance left in OpenAI's input buffer would otherwise be "completed" by a
@@ -107,6 +110,7 @@ class VaClient : public Component {
   std::string url_;
   microphone::MicrophoneSource *mic_source_{nullptr};
   speaker::Speaker *speaker_{nullptr};
+  TaskHandle_t audio_task_handle_{nullptr};
 
   // esp_websocket_client_handle_t kept opaque to avoid leaking esp-idf into the header.
   void *ws_handle_{nullptr};
@@ -344,7 +348,8 @@ class VaClient : public Component {
 
   // Ring buffer for pending TTS audio, allocated in PSRAM. The server can
   // burst the entire response in ~200 ms; we buffer here and drain into
-  // speaker.play() from loop() to keep playback smooth.
+  // speaker.play() from audio_task_ so main-loop LVGL/artwork work cannot
+  // starve playback.
   //
   // 2 MB / (24000 Hz × 2 B) ≈ 43 s of headroom. A 30 s monologue arriving
   // in ~1 s would peak at ~1.4 MB; this size gives ~40 % overhead on top.
@@ -353,6 +358,7 @@ class VaClient : public Component {
   static constexpr size_t kAudioBufBytes = 2 * 1024 * 1024;
   size_t audio_head_{0};  // read pos (next byte to play)
   size_t audio_tail_{0};  // write pos (next byte to fill)
+  uint32_t audio_generation_{0};  // increments on queue flush to detect stale drain-task snapshots
   size_t audio_fill_{0};  // bytes currently queued (audio_tail_ ≥ audio_head_ when not wrapped)
   // ESP32-S3 is dual-core: handle_binary_ runs in the esp-idf
   // websocket task (background) while loop() runs in the main app task,

@@ -122,7 +122,101 @@ void VaClient::setup() {
     this->speaker_->start();
   }
 
+  BaseType_t task_ok = xTaskCreatePinnedToCore(
+      [](void *arg) { static_cast<VaClient *>(arg)->audio_task_(); },
+      "va_audio", 4096, this, 5, &this->audio_task_handle_, tskNO_AFFINITY);
+  if (task_ok != pdPASS) {
+    this->audio_task_handle_ = nullptr;
+    ESP_LOGE(TAG, "Failed to start realtime audio drain task");
+  }
+
   this->connect_();
+}
+
+void VaClient::audio_task_() {
+  while (true) {
+    const bool did_work = this->drain_audio_();
+    vTaskDelay(pdMS_TO_TICKS(did_work ? 1 : 5));
+  }
+}
+
+bool VaClient::drain_audio_() {
+  if (this->speaker_ == nullptr || this->audio_buf_ == nullptr)
+    return false;
+
+  portENTER_CRITICAL(&this->ring_mux_);
+  size_t head = this->audio_head_;
+  size_t tail = this->audio_tail_;
+  size_t fill = this->audio_fill_;
+  uint32_t generation = this->audio_generation_;
+  portEXIT_CRITICAL(&this->ring_mux_);
+  if (fill == 0)
+    return false;
+
+  {
+    const uint32_t now_ms = millis();
+    const bool resampler_cold = this->speaker_->is_stopped() || this->last_fed_ms_ == 0 ||
+                                (now_ms - this->last_fed_ms_) > kChainColdMs;
+    if (this->chain_prime_remaining_ == 0 && resampler_cold) {
+      this->chain_prime_remaining_ =
+          (size_t) kChainPrimeMs * (kPlaybackSampleRate / 1000) * 2;
+      ESP_LOGD(TAG, "resampler cold — priming %u bytes of silence before reply",
+               (unsigned) this->chain_prime_remaining_);
+    }
+    if (this->chain_prime_remaining_ > 0) {
+      static const uint8_t kSilence[480] = {0};
+      size_t want = std::min(this->chain_prime_remaining_, sizeof(kSilence));
+      size_t fed = this->speaker_->play(kSilence, want);
+      if (fed > 0) {
+        this->chain_prime_remaining_ -= fed;
+        this->last_fed_ms_ = now_ms;
+        return true;
+      }
+      return false;
+    }
+  }
+
+  if (this->playback_priming_) {
+    const size_t target = (size_t) this->playback_prebuffer_ms_ * (kPlaybackSampleRate / 1000) * 2;
+    if (fill >= target || (millis() - this->prime_started_ms_) >= this->playback_prebuffer_ms_) {
+      this->playback_priming_ = false;
+      ESP_LOGD(TAG, "prebuffer ready (%u bytes) — playback start", (unsigned) fill);
+    } else {
+      return false;
+    }
+  }
+
+  if (!this->underrun_logged_this_turn_ && !this->speaker_->has_buffered_data() &&
+      this->last_fed_ms_ != 0) {
+    ESP_LOGW(TAG, "downstream underrun: %u bytes queued in PSRAM but speaker chain is dry",
+             (unsigned) fill);
+    this->underrun_logged_this_turn_ = true;
+  }
+
+  size_t contiguous = (head < tail) ? (tail - head) : (kAudioBufBytes - head);
+  if (contiguous > fill)
+    contiguous = fill;
+
+  size_t accepted = this->speaker_->play(this->audio_buf_ + head, contiguous);
+  if (accepted == 0)
+    return false;
+
+  this->last_fed_ms_ = millis();
+  portENTER_CRITICAL(&this->ring_mux_);
+  if (this->audio_generation_ == generation && this->audio_fill_ >= accepted) {
+    this->audio_head_ = (this->audio_head_ + accepted) % kAudioBufBytes;
+    this->audio_fill_ -= accepted;
+  }
+  portEXIT_CRITICAL(&this->ring_mux_);
+
+  static uint32_t dbg_last = 0;
+  uint32_t now = millis();
+  if (now - dbg_last >= 500) {
+    ESP_LOGD(TAG, "drained %u bytes (%u still queued)", (unsigned) accepted,
+             (unsigned) (fill - accepted));
+    dbg_last = now;
+  }
+  return true;
 }
 
 void VaClient::loop() {
@@ -137,110 +231,8 @@ void VaClient::loop() {
     }
   }
 
-  // Drain the audio ring buffer into the speaker. speaker.play() accepts
-  // only what fits in its own ring (returns the count actually queued).
-  if (this->speaker_ != nullptr && this->audio_buf_ != nullptr) {
-    // Snapshot ring state under the lock — head/tail/fill are all
-    // mutated from the WS task on the other core.
-    portENTER_CRITICAL(&this->ring_mux_);
-    size_t head = this->audio_head_;
-    size_t tail = this->audio_tail_;
-    size_t fill = this->audio_fill_;
-    portEXIT_CRITICAL(&this->ring_mux_);
-    if (fill > 0) {
-      // Resampler cold-start SILENCE-PRIME (crackle fix). The resampler does NOT
-      // idle-timeout (verified vs ESPHome source): resample(stop_gracefully=false)
-      // never returns FINISHED, and its output mixer-source is timeout:never, so the
-      // chain stays WARM between normal replies. It goes COLD only after an explicit
-      // `speaker.stop: media_resampling_speaker` (yaml interrupt / "stop" word / wake /
-      // follow-up), which tears the task down to STATE_STOPPED. The next reply then
-      // cold-starts a fresh AudioResampler whose windowed-sinc FIR begins from a zero
-      // state → a startup-transient click. A PSRAM prebuffer can't fix it (the transient
-      // is downstream of the ring). Fix: when cold, feed kChainPrimeMs of silence BEFORE
-      // the first real sample so the FIR settles to a clean zero output first. We detect
-      // "cold" two ways: the resampler actually reporting is_stopped() (true exactly
-      // post-speaker.stop — the precise signal) OR, as a backup, nothing fed for
-      // > kChainColdMs. is_stopped() closes the window the timer alone misses: a reply
-      // whose audio lands < kChainColdMs after a speaker.stop (the residual click). A
-      // needless prime on an already-warm chain is harmless (60ms of silence); both
-      // signals are only ever true at a real cold reply-start, never mid-speech. The
-      // real audio waits safely in PSRAM (and builds a small cushion) until priming done.
-      {
-        const uint32_t now_ms = millis();
-        const bool resampler_cold = this->speaker_->is_stopped() ||
-                                    this->last_fed_ms_ == 0 ||
-                                    (now_ms - this->last_fed_ms_) > kChainColdMs;
-        if (this->chain_prime_remaining_ == 0 && resampler_cold) {
-          this->chain_prime_remaining_ =
-              (size_t) kChainPrimeMs * (kPlaybackSampleRate / 1000) * 2;  // ms→bytes (mono 16-bit)
-          ESP_LOGD(TAG, "resampler cold — priming %u bytes of silence before reply",
-                   (unsigned) this->chain_prime_remaining_);
-        }
-        if (this->chain_prime_remaining_ > 0) {
-          static const uint8_t kSilence[480] = {0};  // 10ms @24k mono16; fed in chunks
-          size_t want = std::min(this->chain_prime_remaining_, sizeof(kSilence));
-          size_t fed = this->speaker_->play(kSilence, want);
-          if (fed > 0) {
-            this->chain_prime_remaining_ -= fed;
-            this->last_fed_ms_ = now_ms;  // count silence as "fed" so cold-check clears
-          }
-          // Hold real-audio drain until the chain is warmed. Real audio stays in
-          // PSRAM. Re-enter loop() next tick to continue/finish priming.
-          return;
-        }
-      }
-      // Jitter buffer priming gate. After the ring was empty (reply start or a
-      // post-underflow gap) hold playback until either the prebuffer cushion has
-      // accumulated (fill >= target) or a deadline elapses (so real-time, non-
-      // burst audio still starts promptly). Holding here lets the downstream
-      // chain start with a cushion so a network gap doesn't dry it out → no
-      // crackle. Skipped entirely when playback_prebuffer_ms_ == 0 (disabled).
-      if (this->playback_priming_) {
-        const size_t target =
-            (size_t) this->playback_prebuffer_ms_ * (kPlaybackSampleRate / 1000) * 2;
-        if (fill >= target ||
-            (millis() - this->prime_started_ms_) >= this->playback_prebuffer_ms_) {
-          this->playback_priming_ = false;
-          ESP_LOGD(TAG, "prebuffer ready (%u bytes) — playback start", (unsigned) fill);
-        } else {
-          return;  // keep accumulating; don't drain (and don't false-flag underrun)
-        }
-      }
-      // Detector 3: downstream underrun. If the resampler/mixer/i2s chain
-      // ran out of bytes to play while we *still* have PSRAM queued,
-      // something hiccupped downstream — the user hears silence or a
-      // brief stuck-sample glitch. Log the first occurrence per reply so
-      // we know whether bad audio in a turn correlates with this.
-      if (!this->underrun_logged_this_turn_ && !this->speaker_->has_buffered_data()) {
-        ESP_LOGW(TAG, "downstream underrun: %u bytes queued in PSRAM but speaker chain is dry",
-                 (unsigned) fill);
-        this->underrun_logged_this_turn_ = true;
-      }
-      // Contiguous slice we can hand to play() without copying: from head
-      // to either the end of the buffer or the tail.
-      size_t contiguous = (head < tail) ? (tail - head) : (kAudioBufBytes - head);
-      if (contiguous > fill)
-        contiguous = fill;
-      // play() runs OUTSIDE the critical section: it can take milliseconds
-      // (resampler ring may be full, mixer blocks). Holding ring_mux_
-      // across it would block the writer and cause audio underrun.
-      size_t accepted = this->speaker_->play(this->audio_buf_ + head, contiguous);
-      if (accepted > 0) {
-        this->last_fed_ms_ = millis();  // keep the chain "warm" for cold-detection
-        portENTER_CRITICAL(&this->ring_mux_);
-        this->audio_head_ = (this->audio_head_ + accepted) % kAudioBufBytes;
-        this->audio_fill_ -= accepted;
-        portEXIT_CRITICAL(&this->ring_mux_);
-        static uint32_t dbg_last = 0;
-        uint32_t now = millis();
-        if (now - dbg_last >= 500) {
-          ESP_LOGD(TAG, "drained %u bytes (%u still queued)", (unsigned) accepted,
-                   (unsigned) (fill - accepted));
-          dbg_last = now;
-        }
-      }
-    }
-  }
+  // Audio playback is drained by audio_task_ so LVGL/artwork work in the main
+  // loop cannot starve realtime TTS.
   // If a follow-up window was deferred while audio was draining, wait for
   // the downstream chain (resampler + mixer + i2s + DAC tail) to actually
   // finish playing before firing the deferred LED-idle / chime trigger.
@@ -877,6 +869,7 @@ void VaClient::set_phase_(const std::string &phase) {
       this->audio_head_ = 0;
       this->audio_tail_ = 0;
       this->audio_fill_ = 0;
+      this->audio_generation_++;
       portEXIT_CRITICAL(&this->ring_mux_);
       this->idle_emit_pending_ = false;
       ESP_LOGI(TAG, "phase=listening during reply — barge-in, flushed TTS queue");
@@ -1313,6 +1306,7 @@ void VaClient::send_interrupt() {
   this->audio_head_ = 0;
   this->audio_tail_ = 0;
   this->audio_fill_ = 0;
+  this->audio_generation_++;
   portEXIT_CRITICAL(&this->ring_mux_);
   // Drop further incoming TTS until the backend confirms the turn boundary —
   // it keeps streaming the rest of the (already-generated) reply otherwise.
