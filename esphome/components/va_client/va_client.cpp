@@ -47,6 +47,30 @@ static bool parse_uint_after_key(const std::string &msg, const char *key, uint32
   return true;
 }
 
+void VaClient::set_url(const std::string &url) {
+  if (url == this->url_) {
+    return;
+  }
+  this->url_ = url;
+
+  if (this->ws_handle_ == nullptr) {
+    return;
+  }
+
+  ESP_LOGI(TAG, "Realtime backend URL changed; reconnecting to %s", this->url_.c_str());
+  this->cancel_timeout("va_reconnect");
+  this->cancel_timeout("va_stable_connection");
+  this->ws_connected_ = false;
+  this->reconnect_pending_ = false;
+  this->reconnect_delay_ms_ = 1000;
+
+  auto handle = static_cast<esp_websocket_client_handle_t>(this->ws_handle_);
+  esp_websocket_client_stop(handle);
+  esp_websocket_client_destroy(handle);
+  this->ws_handle_ = nullptr;
+  this->connect_();
+}
+
 void VaClient::setup() {
   ESP_LOGCONFIG(TAG, "Setting up VA Client...");
 
@@ -269,6 +293,11 @@ void VaClient::loop() {
 }
 
 void VaClient::connect_() {
+  if (this->url_.empty()) {
+    ESP_LOGW(TAG, "Realtime backend URL is empty; websocket connection disabled");
+    return;
+  }
+
   if (this->ws_handle_ != nullptr) {
     // Already initialised; just (re)start. A synchronous start failure must
     // reschedule — otherwise the reconnect chain stalls silently and the

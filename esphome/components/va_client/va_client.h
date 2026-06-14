@@ -21,7 +21,7 @@ class OnFollowupOpenedTrigger;
 
 class VaClient : public Component {
  public:
-  void set_url(const std::string &url) { url_ = url; }
+  void set_url(const std::string &url);
   void set_microphone_source(microphone::MicrophoneSource *m) { mic_source_ = m; }
   void set_speaker(speaker::Speaker *s) { speaker_ = s; }
   // Enables handsfree barge-in: when true the mic keeps streaming through the
