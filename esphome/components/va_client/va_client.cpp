@@ -485,7 +485,7 @@ void VaClient::on_ws_event(int32_t event_id, void *event_data) {
       });
 
       const char start_msg[] = "{\"type\":\"start\"}";
-      this->ws_send_text_(start_msg, sizeof(start_msg) - 1, portMAX_DELAY);
+      this->ws_send_text_(start_msg, sizeof(start_msg) - 1, kWsControlSendTimeout);
       this->set_phase_("idle");
       break;
     }
@@ -1417,7 +1417,7 @@ void VaClient::send_mic_flush_() {
   // never drop a valid command. Cheap no-op when the buffer was empty.
   if (this->ws_connected_ && this->ws_handle_ != nullptr) {
     const char msg[] = "{\"type\":\"flush\"}";
-    this->ws_send_text_(msg, sizeof(msg) - 1, portMAX_DELAY);
+    this->ws_send_text_(msg, sizeof(msg) - 1, kWsControlSendTimeout);
     ESP_LOGI(TAG, "follow-up window closed — sent flush (drop uncommitted mic audio)");
   }
 }
@@ -1431,7 +1431,7 @@ void VaClient::send_wake_() {
   // the racing response. Sent on every start_session(); old backends ignore it.
   if (this->ws_connected_ && this->ws_handle_ != nullptr) {
     const char msg[] = "{\"type\":\"wake\"}";
-    this->ws_send_text_(msg, sizeof(msg) - 1, portMAX_DELAY);
+    this->ws_send_text_(msg, sizeof(msg) - 1, kWsControlSendTimeout);
     ESP_LOGI(TAG, "wake — sent {\"type\":\"wake\"} (dangling-VAD guard)");
   }
 }
@@ -1494,7 +1494,7 @@ void VaClient::send_interrupt() {
   // room the instant we reconnected.
   if (this->ws_connected_ && this->ws_handle_ != nullptr) {
     const char msg[] = "{\"type\":\"interrupt\"}";
-    this->ws_send_text_(msg, sizeof(msg) - 1, portMAX_DELAY);
+    this->ws_send_text_(msg, sizeof(msg) - 1, kWsControlSendTimeout);
   } else {
     ESP_LOGW(TAG, "send_interrupt: WS not connected — local cleanup only");
   }

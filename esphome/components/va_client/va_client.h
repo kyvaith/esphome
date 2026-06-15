@@ -118,6 +118,8 @@ class VaClient : public Component {
   int ws_send_text_(const char *data, int len, TickType_t timeout);
   int ws_send_bin_(const char *data, int len, TickType_t timeout);
 
+  static constexpr TickType_t kWsControlSendTimeout = pdMS_TO_TICKS(250);
+
   std::string url_;
   microphone::MicrophoneSource *mic_source_{nullptr};
   speaker::Speaker *speaker_{nullptr};
