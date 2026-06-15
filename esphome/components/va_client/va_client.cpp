@@ -132,7 +132,7 @@ void VaClient::setup() {
 
   BaseType_t task_ok = xTaskCreatePinnedToCore(
       [](void *arg) { static_cast<VaClient *>(arg)->audio_task_(); },
-      "va_audio", 4096, this, 5, &this->audio_task_handle_, tskNO_AFFINITY);
+      "va_audio", 4096, this, 9, &this->audio_task_handle_, tskNO_AFFINITY);
   if (task_ok != pdPASS) {
     this->audio_task_handle_ = nullptr;
     ESP_LOGE(TAG, "Failed to start realtime audio drain task");
@@ -141,7 +141,7 @@ void VaClient::setup() {
   if (this->mic_tx_buf_ != nullptr) {
     task_ok = xTaskCreatePinnedToCore(
         [](void *arg) { static_cast<VaClient *>(arg)->mic_tx_task_(); },
-        "va_mic_tx", 4096, this, 5, &this->mic_tx_task_handle_, tskNO_AFFINITY);
+        "va_mic_tx", 4096, this, 4, &this->mic_tx_task_handle_, tskNO_AFFINITY);
     if (task_ok != pdPASS) {
       this->mic_tx_task_handle_ = nullptr;
       ESP_LOGE(TAG, "Failed to start realtime mic uplink task");
@@ -761,14 +761,26 @@ void VaClient::on_mic_data_(const std::vector<uint8_t> &samples) {
     tx_dropped = this->mic_tx_dropped_bytes_this_sec_;
     this->mic_tx_dropped_bytes_this_sec_ = 0;
     portEXIT_CRITICAL(&this->mic_tx_mux_);
-    ESP_LOGW(TAG, "mic uplink: frames=%u bytes=%u max_abs=%u send_failures=%u tx_queued=%u tx_dropped=%u ws=%s",
-             (unsigned) this->mic_frames_this_sec_,
-             (unsigned) this->mic_bytes_this_sec_,
-             (unsigned) this->mic_max_abs_this_sec_,
-             (unsigned) this->mic_send_failures_this_sec_,
-             (unsigned) tx_queued,
-             (unsigned) tx_dropped,
-             this->ws_connected_ ? "yes" : "no");
+    const bool anomaly = this->mic_send_failures_this_sec_ != 0 || tx_dropped != 0 ||
+                         this->mic_bytes_this_sec_ < 24000;
+    if (anomaly) {
+      ESP_LOGW(TAG, "mic uplink anomaly: frames=%u bytes=%u max_abs=%u send_failures=%u "
+                    "tx_queued=%u tx_dropped=%u ws=%s",
+               (unsigned) this->mic_frames_this_sec_,
+               (unsigned) this->mic_bytes_this_sec_,
+               (unsigned) this->mic_max_abs_this_sec_,
+               (unsigned) this->mic_send_failures_this_sec_,
+               (unsigned) tx_queued,
+               (unsigned) tx_dropped,
+               this->ws_connected_ ? "yes" : "no");
+    } else {
+      ESP_LOGD(TAG, "mic uplink: frames=%u bytes=%u max_abs=%u tx_queued=%u ws=%s",
+               (unsigned) this->mic_frames_this_sec_,
+               (unsigned) this->mic_bytes_this_sec_,
+               (unsigned) this->mic_max_abs_this_sec_,
+               (unsigned) tx_queued,
+               this->ws_connected_ ? "yes" : "no");
+    }
     this->mic_stats_last_ms_ = now_ms;
     this->mic_frames_this_sec_ = 0;
     this->mic_bytes_this_sec_ = 0;
