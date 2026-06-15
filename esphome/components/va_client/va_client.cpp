@@ -363,7 +363,10 @@ void VaClient::loop() {
         // for the chime → wait_until !is_announcing → commit_followup_mic
         // sequence (announcement lane is separate from the TTS lane we
         // just waited on, so the chime won't collide with our tail).
-        this->open_followup_window_(0);  // emit deferred LED idle + latency log; no mic
+        // Do not emit the deferred idle here. ESPHome yaml resumes paused
+        // media on idle, and the user should answer the assistant's question
+        // in silence instead of over resumed music.
+        this->idle_emit_pending_ = false;
         this->followup_armed_ = true;
         for (auto *t : this->followup_opened_triggers_) {
           t->trigger();
@@ -624,16 +627,11 @@ void VaClient::handle_text_(const char *data, size_t len) {
 
   if (msg.find("\"type\":\"request_follow_up\"") != std::string::npos) {
     // Server's model called the request_follow_up tool — it asked a
-    // question and wants the user to answer without saying a wake word.
-    // Defer to loop()'s waiting_for_speaker_stop_ logic so we only fire
-    // the chime + arm the mic after speaker_->is_stopped() returns true
-    // (i.e. the i2s pipeline has finished playing the question's audio).
-    // Setting both pending flags is idempotent — loop() handles both the
-    // "already drained" and "still queued" cases uniformly via the
-    // speaker-state poll.
-    ESP_LOGI(TAG, "request_follow_up — waiting for speaker drain (%u bytes queued)",
-             (unsigned) this->audio_fill_);
-    this->followup_pending_ = true;
+    // question and wants the user to answer without saying a wake word. This
+    // can arrive before phase=replying / before audio is queued, so only latch
+    // the intent here. phase=idle (response.done) arms the follow-up once the
+    // real reply has actually played out.
+    ESP_LOGI(TAG, "request_follow_up — latched for end of reply");
     this->request_follow_up_pending_ = true;
     return;
   }
@@ -1071,6 +1069,11 @@ void VaClient::set_phase_(const std::string &phase) {
     // Server heard us — watchdog no longer needed.
     this->cancel_timeout("va_no_speech");
     this->cancel_timeout("va_followup");
+    this->followup_pending_ = false;
+    this->waiting_for_speaker_stop_ = false;
+    this->request_follow_up_pending_ = false;
+    this->followup_armed_ = false;
+    this->idle_emit_pending_ = false;
   } else if (phase == "thinking" || phase == "replying") {
     // Gate the mic off only once the bot actually starts speaking (`replying`).
     // With handsfree barge-in we don't gate at all (the server VAD + XMOS AEC
@@ -1091,9 +1094,10 @@ void VaClient::set_phase_(const std::string &phase) {
     this->cancel_timeout("va_followup_open");
     this->cancel_timeout("va_tts_tail");
     this->cancel_timeout("va_no_speech");
-    this->followup_pending_ = false;
-    this->waiting_for_speaker_stop_ = false;
-    this->request_follow_up_pending_ = false;
+    if (!this->request_follow_up_pending_) {
+      this->followup_pending_ = false;
+      this->waiting_for_speaker_stop_ = false;
+    }
     this->followup_armed_ = false;
     this->idle_emit_pending_ = false;  // new turn began, drop any held idle
   } else if (phase == "thanks") {
@@ -1197,6 +1201,19 @@ void VaClient::set_phase_(const std::string &phase) {
       } else {
         // Server says response.done and the device has actually played out.
         // Open the follow-up window (mic on so user can answer a question).
+        const bool was_request = this->request_follow_up_pending_;
+        this->request_follow_up_pending_ = false;
+        if (was_request) {
+          // The assistant explicitly asked a question. Do not expose the
+          // server's transitionary idle to YAML: media resume is bound to idle
+          // and would restart music under the user's follow-up answer.
+          this->idle_emit_pending_ = false;
+          this->followup_armed_ = true;
+          for (auto *t : this->followup_opened_triggers_) {
+            t->trigger();
+          }
+          return;
+        }
         this->open_followup_window_(this->followup_ms_);
       }
       // fall through to fire the trigger normally below (LED -> idle); the
