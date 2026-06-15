@@ -535,6 +535,17 @@ inline void lottie_show(LottieContext *ctx, bool restart) {
   lv_obj_invalidate(ctx->obj);
 }
 
+inline void lottie_pause(LottieContext *ctx, bool hide = true) {
+  if (ctx == nullptr || ctx->obj == nullptr) {
+    return;
+  }
+  ctx->runtime_hidden = true;
+  if (hide) {
+    lv_obj_add_flag(ctx->obj, LV_OBJ_FLAG_HIDDEN);
+  }
+  lv_obj_invalidate(ctx->obj);
+}
+
 inline void lottie_hide(LottieContext *ctx) {
   if (ctx == nullptr || ctx->obj == nullptr) {
     return;
@@ -596,7 +607,6 @@ inline bool lottie_init(lv_obj_t *obj, const void *data, size_t data_size,
 
 #endif  // LV_USE_LOTTIE
 #endif  // USE_ESP32
-
 
 
 
