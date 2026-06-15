@@ -31,24 +31,119 @@ static void jpeg_error_exit(j_common_ptr cinfo) {
 static constexpr size_t MAX_JPEG_DOWNLOAD_SIZE = 2 * 1024 * 1024;  // 2 MB
 static constexpr size_t JPEG_DMA_ALIGNMENT = 128;
 
+static bool is_sof_marker(uint8_t marker) {
+  switch (marker) {
+    case 0xC0:  // Baseline DCT
+    case 0xC1:
+    case 0xC2:  // Progressive DCT
+    case 0xC3:
+    case 0xC5:
+    case 0xC6:
+    case 0xC7:
+    case 0xC9:
+    case 0xCA:
+    case 0xCB:
+    case 0xCD:
+    case 0xCE:
+    case 0xCF:
+      return true;
+    default:
+      return false;
+  }
+}
+
+static bool is_progressive_sof_marker(uint8_t marker) {
+  return marker == 0xC2 || marker == 0xC6 || marker == 0xCA || marker == 0xCE;
+}
+
+static bool read_jpeg_frame_info(const uint8_t *buffer, size_t size, uint32_t *width, uint32_t *height,
+                                 bool *progressive) {
+  if (buffer == nullptr || size < 4 || buffer[0] != 0xFF || buffer[1] != 0xD8) {
+    return false;
+  }
+
+  size_t pos = 2;
+  while (pos + 3 < size) {
+    while (pos < size && buffer[pos] != 0xFF) {
+      pos++;
+    }
+    while (pos < size && buffer[pos] == 0xFF) {
+      pos++;
+    }
+    if (pos >= size) {
+      break;
+    }
+
+    const uint8_t marker = buffer[pos++];
+    if (marker == 0xD9 || marker == 0xDA) {
+      break;
+    }
+    if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+      continue;
+    }
+    if (pos + 1 >= size) {
+      break;
+    }
+
+    const uint16_t segment_len = (static_cast<uint16_t>(buffer[pos]) << 8) | buffer[pos + 1];
+    if (segment_len < 2 || pos + segment_len > size) {
+      break;
+    }
+
+    if (is_sof_marker(marker) && segment_len >= 7) {
+      const size_t data_pos = pos + 2;
+      *height = (static_cast<uint16_t>(buffer[data_pos + 1]) << 8) | buffer[data_pos + 2];
+      *width = (static_cast<uint16_t>(buffer[data_pos + 3]) << 8) | buffer[data_pos + 4];
+      *progressive = is_progressive_sof_marker(marker);
+      return *width > 0 && *height > 0;
+    }
+
+    pos += segment_len;
+  }
+
+  return false;
+}
+
 int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
 #ifdef USE_ESP32_JPEG
   if (this->image_->image_type() != image::ImageType::IMAGE_TYPE_RGB565) {
     return 0;
   }
 
-  esp32_jpeg::PictureInfo info = {};
-  esp_err_t err = esp32_jpeg::get_info(buffer, size, &info);
-  if (err != ESP_OK || info.width == 0 || info.height == 0) {
+  uint32_t frame_w = 0;
+  uint32_t frame_h = 0;
+  bool progressive = false;
+  bool frame_info_valid = read_jpeg_frame_info(buffer, size, &frame_w, &frame_h, &progressive);
+  if (frame_info_valid && progressive) {
+    ESP_LOGD(TAG, "Hardware JPEG decode skipped: progressive JPEG %ux%u", (unsigned) frame_w,
+             (unsigned) frame_h);
     return 0;
   }
 
-  if (!this->set_size(info.width, info.height)) {
+  esp32_jpeg::PictureInfo info = {};
+  esp_err_t err = esp32_jpeg::get_info(buffer, size, &info);
+  if (err != ESP_OK && !frame_info_valid) {
+    return 0;
+  }
+
+  if (!frame_info_valid) {
+    frame_w = info.width;
+    frame_h = info.height;
+  }
+  if (frame_w == 0 || frame_h == 0) {
+    return 0;
+  }
+  if (err == ESP_OK && (info.width != frame_w || info.height != frame_h)) {
+    ESP_LOGD(TAG, "Hardware JPEG parser size mismatch: esp-idf=%ux%u frame=%ux%u", (unsigned) info.width,
+             (unsigned) info.height, (unsigned) frame_w, (unsigned) frame_h);
+  }
+
+  if (!this->set_size(frame_w, frame_h)) {
     return DECODE_ERROR_OUT_OF_MEMORY;
   }
 
-  const size_t aligned_w = (info.width + 15u) & ~15u;
-  const size_t aligned_h = (info.height + 15u) & ~15u;
+  const size_t aligned_w = (frame_w + 15u) & ~15u;
+  const size_t aligned_h = (frame_h + 15u) & ~15u;
   const size_t output_size = aligned_w * aligned_h * 2u;
   auto *output = static_cast<uint8_t *>(
       heap_caps_aligned_alloc(JPEG_DMA_ALIGNMENT, output_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -79,8 +174,8 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   }
 
   const size_t stride = aligned_w * 2u;
-  for (uint32_t y = 0; y < info.height; y++) {
-    this->draw_rgb565_block(0, y, info.width, 1, output + y * stride);
+  for (uint32_t y = 0; y < frame_h; y++) {
+    this->draw_rgb565_block(0, y, frame_w, 1, output + y * stride);
     if ((y & 63u) == 0) {
       App.feed_wdt();
     }
@@ -88,8 +183,8 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
 
   heap_caps_free(output);
   this->decoded_bytes_ = size;
-  ESP_LOGI(TAG, "Hardware JPEG decode finished: %ux%u, %zu -> %zu bytes in %lluus", (unsigned) info.width,
-           (unsigned) info.height, size, written, (unsigned long long) elapsed_us);
+  ESP_LOGI(TAG, "Hardware JPEG decode finished: %ux%u, %zu -> %zu bytes in %lluus", (unsigned) frame_w,
+           (unsigned) frame_h, size, written, (unsigned long long) elapsed_us);
   return size;
 #else
   return 0;
