@@ -43,15 +43,6 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
     return 0;
   }
 
-  const int target_w = this->image_->get_fixed_width();
-  const int target_h = this->image_->get_fixed_height();
-  if (target_w > 0 && target_h > 0 &&
-      (static_cast<int>(info.width) != target_w || static_cast<int>(info.height) != target_h)) {
-    ESP_LOGD(TAG, "Hardware JPEG decode skipped: source=%ux%u target=%dx%d", (unsigned) info.width,
-             (unsigned) info.height, target_w, target_h);
-    return 0;
-  }
-
   if (!this->set_size(info.width, info.height)) {
     return DECODE_ERROR_OUT_OF_MEMORY;
   }
