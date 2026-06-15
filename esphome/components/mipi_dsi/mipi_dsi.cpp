@@ -390,14 +390,16 @@ bool MipiDsi::draw_pixels_at_async(int x_start, int y_start, int w, int h, const
   uint32_t sync_us = 0;
   uint32_t copy_us = 0;
   if (can_zero_copy) {
-    const uint64_t sync_start_us = esp_timer_get_time();
-    esp_err_t sync_err = esp_cache_msync(const_cast<uint8_t *>(ptr), payload_size,
-                                         ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
-    sync_us = (uint32_t) (esp_timer_get_time() - sync_start_us);
-    if (sync_err != ESP_OK) {
-      ESP_LOGW(TAG, "async zero-copy cache sync failed: %s ptr=%p size=%zu w=%d h=%d row=%zu",
-               esp_err_to_name(sync_err), ptr, payload_size, w, h, row_bytes);
-      return false;
+    if (esp_ptr_external_ram(ptr)) {
+      const uint64_t sync_start_us = esp_timer_get_time();
+      esp_err_t sync_err = esp_cache_msync(const_cast<uint8_t *>(ptr), payload_size,
+                                           ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+      sync_us = (uint32_t) (esp_timer_get_time() - sync_start_us);
+      if (sync_err != ESP_OK) {
+        ESP_LOGW(TAG, "async zero-copy cache sync failed: %s ptr=%p size=%zu w=%d h=%d row=%zu",
+                 esp_err_to_name(sync_err), ptr, payload_size, w, h, row_bytes);
+        return false;
+      }
     }
   } else if (!esp_ptr_external_ram(ptr)) {
     if (!this->ensure_async_staging_buffer_(payload_size))

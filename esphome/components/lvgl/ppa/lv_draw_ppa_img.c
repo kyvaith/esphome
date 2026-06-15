@@ -203,7 +203,7 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
         return;
     }
 
-    if(decoded->data_size > 0) {
+    if(decoded->data != NULL && decoded->data_size > 0 && !esp_ptr_internal((void *)decoded->data)) {
         esp_cache_msync((void *)decoded->data,
                         lv_draw_ppa_align_size(decoded->data_size),
                         ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
@@ -384,7 +384,7 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
 
     /* Flush decoded source buffer for PPA DMA access. Align size to cache
      * line; _UNALIGNED flag is only a safety net for the address. */
-    if(decoded->data_size > 0) {
+    if(decoded->data != NULL && decoded->data_size > 0 && !esp_ptr_internal((void *)decoded->data)) {
         esp_cache_msync((void *)decoded->data,
                         lv_draw_ppa_align_size(decoded->data_size),
                         ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);

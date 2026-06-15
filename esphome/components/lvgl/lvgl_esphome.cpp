@@ -1224,6 +1224,8 @@ void LvglComponent::sync_direct_framebuffer_area_(const lv_area_t *area, uint8_t
 
   uint8_t *sync_start = framebuffer + (size_t) y1 * row_bytes;
   const size_t sync_size = (size_t) (y2 - y1 + 1) * row_bytes;
+  if (sync_start == nullptr || sync_size == 0 || esp_ptr_internal(sync_start))
+    return;
   esp_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
 #endif
 }
@@ -1246,6 +1248,8 @@ void LvglComponent::sync_direct_other_buffer_(const lv_area_t *area, uint8_t *co
     return;
 
   auto sync_range = [](uint8_t *ptr, size_t len) {
+    if (ptr == nullptr || len == 0 || esp_ptr_internal(ptr))
+      return;
     uintptr_t start = reinterpret_cast<uintptr_t>(ptr) & ~(CACHE_ALIGN - 1);
     uintptr_t end = (reinterpret_cast<uintptr_t>(ptr) + len + CACHE_ALIGN - 1) & ~(CACHE_ALIGN - 1);
     if (end > start) {
@@ -1613,6 +1617,8 @@ void LvglComponent::partial_compositor_copy_area_(uint8_t *dst, const lv_area_t 
   }
   uint8_t *sync_start = dst + (size_t) y1 * row_bytes;
   const size_t sync_size = (size_t) (y2 - y1 + 1) * row_bytes;
+  if (sync_start == nullptr || sync_size == 0 || esp_ptr_internal(sync_start))
+    return;
   esp_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
 }
 
