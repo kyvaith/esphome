@@ -94,6 +94,11 @@ void VaClient::set_url(const std::string &url) {
 void VaClient::setup() {
   ESP_LOGCONFIG(TAG, "Setting up VA Client...");
 
+  this->ws_send_mutex_ = xSemaphoreCreateMutex();
+  if (this->ws_send_mutex_ == nullptr) {
+    ESP_LOGE(TAG, "Failed to create websocket send mutex");
+  }
+
   if (this->mic_source_ != nullptr) {
     this->mic_source_->add_data_callback(
         [this](const std::vector<uint8_t> &data) { this->on_mic_data_(data); });
@@ -148,6 +153,32 @@ void VaClient::setup() {
   }
 
   this->connect_();
+}
+
+int VaClient::ws_send_text_(const char *data, int len, TickType_t timeout) {
+  auto handle = static_cast<esp_websocket_client_handle_t>(this->ws_handle_);
+  if (handle == nullptr)
+    return -1;
+
+  if (this->ws_send_mutex_ != nullptr && xSemaphoreTake(this->ws_send_mutex_, timeout) != pdTRUE)
+    return -1;
+  const int sent = esp_websocket_client_send_text(handle, data, len, timeout);
+  if (this->ws_send_mutex_ != nullptr)
+    xSemaphoreGive(this->ws_send_mutex_);
+  return sent;
+}
+
+int VaClient::ws_send_bin_(const char *data, int len, TickType_t timeout) {
+  auto handle = static_cast<esp_websocket_client_handle_t>(this->ws_handle_);
+  if (handle == nullptr)
+    return -1;
+
+  if (this->ws_send_mutex_ != nullptr && xSemaphoreTake(this->ws_send_mutex_, timeout) != pdTRUE)
+    return -1;
+  const int sent = esp_websocket_client_send_bin(handle, data, len, timeout);
+  if (this->ws_send_mutex_ != nullptr)
+    xSemaphoreGive(this->ws_send_mutex_);
+  return sent;
 }
 
 void VaClient::audio_task_() {
@@ -256,9 +287,8 @@ void VaClient::mic_tx_task_() {
       continue;
     }
 
-    auto handle = static_cast<esp_websocket_client_handle_t>(this->ws_handle_);
-    const int sent = esp_websocket_client_send_bin(handle, reinterpret_cast<const char *>(chunk),
-                                                   static_cast<int>(len), 100 / portTICK_PERIOD_MS);
+    const int sent = this->ws_send_bin_(reinterpret_cast<const char *>(chunk),
+                                        static_cast<int>(len), pdMS_TO_TICKS(100));
     if (sent != static_cast<int>(len)) {
       this->mic_send_failures_this_sec_++;
     }
@@ -455,8 +485,7 @@ void VaClient::on_ws_event(int32_t event_id, void *event_data) {
       });
 
       const char start_msg[] = "{\"type\":\"start\"}";
-      auto handle = static_cast<esp_websocket_client_handle_t>(this->ws_handle_);
-      esp_websocket_client_send_text(handle, start_msg, sizeof(start_msg) - 1, portMAX_DELAY);
+      this->ws_send_text_(start_msg, sizeof(start_msg) - 1, portMAX_DELAY);
       this->set_phase_("idle");
       break;
     }
@@ -1388,8 +1417,7 @@ void VaClient::send_mic_flush_() {
   // never drop a valid command. Cheap no-op when the buffer was empty.
   if (this->ws_connected_ && this->ws_handle_ != nullptr) {
     const char msg[] = "{\"type\":\"flush\"}";
-    auto handle = static_cast<esp_websocket_client_handle_t>(this->ws_handle_);
-    esp_websocket_client_send_text(handle, msg, sizeof(msg) - 1, portMAX_DELAY);
+    this->ws_send_text_(msg, sizeof(msg) - 1, portMAX_DELAY);
     ESP_LOGI(TAG, "follow-up window closed — sent flush (drop uncommitted mic audio)");
   }
 }
@@ -1403,8 +1431,7 @@ void VaClient::send_wake_() {
   // the racing response. Sent on every start_session(); old backends ignore it.
   if (this->ws_connected_ && this->ws_handle_ != nullptr) {
     const char msg[] = "{\"type\":\"wake\"}";
-    auto handle = static_cast<esp_websocket_client_handle_t>(this->ws_handle_);
-    esp_websocket_client_send_text(handle, msg, sizeof(msg) - 1, portMAX_DELAY);
+    this->ws_send_text_(msg, sizeof(msg) - 1, portMAX_DELAY);
     ESP_LOGI(TAG, "wake — sent {\"type\":\"wake\"} (dangling-VAD guard)");
   }
 }
@@ -1467,8 +1494,7 @@ void VaClient::send_interrupt() {
   // room the instant we reconnected.
   if (this->ws_connected_ && this->ws_handle_ != nullptr) {
     const char msg[] = "{\"type\":\"interrupt\"}";
-    auto handle = static_cast<esp_websocket_client_handle_t>(this->ws_handle_);
-    esp_websocket_client_send_text(handle, msg, sizeof(msg) - 1, portMAX_DELAY);
+    this->ws_send_text_(msg, sizeof(msg) - 1, portMAX_DELAY);
   } else {
     ESP_LOGW(TAG, "send_interrupt: WS not connected — local cleanup only");
   }

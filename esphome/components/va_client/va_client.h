@@ -11,6 +11,7 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 
 namespace esphome {
@@ -114,6 +115,8 @@ class VaClient : public Component {
   void fire_phase_led_(const std::string &phase);
   void fire_transcript_(const std::string &role, const std::string &text);
   void open_followup_window_(uint32_t duration_ms);
+  int ws_send_text_(const char *data, int len, TickType_t timeout);
+  int ws_send_bin_(const char *data, int len, TickType_t timeout);
 
   std::string url_;
   microphone::MicrophoneSource *mic_source_{nullptr};
@@ -124,6 +127,7 @@ class VaClient : public Component {
   // esp_websocket_client_handle_t kept opaque to avoid leaking esp-idf into the header.
   void *ws_handle_{nullptr};
   bool ws_connected_{false};
+  SemaphoreHandle_t ws_send_mutex_{nullptr};
 
   uint32_t reconnect_delay_ms_{1000};
   // Set when a reconnect timer is in flight. esp_websocket_client emits both
