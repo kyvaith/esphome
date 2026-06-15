@@ -13,6 +13,11 @@ class OnPhaseTrigger : public Trigger<std::string> {
   explicit OnPhaseTrigger(VaClient *parent) { parent->add_on_phase_trigger(this); }
 };
 
+class OnTranscriptTrigger : public Trigger<std::string, std::string> {
+ public:
+  explicit OnTranscriptTrigger(VaClient *parent) { parent->add_on_transcript_trigger(this); }
+};
+
 class OnRepeatedFailureTrigger : public Trigger<> {
  public:
   explicit OnRepeatedFailureTrigger(VaClient *parent) {

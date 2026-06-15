@@ -17,6 +17,7 @@ namespace esphome {
 namespace va_client {
 
 class OnPhaseTrigger;
+class OnTranscriptTrigger;
 class OnRepeatedFailureTrigger;
 class OnFollowupOpenedTrigger;
 
@@ -42,6 +43,7 @@ class VaClient : public Component {
   // [0, 1]; values are clamped on read so callers don't have to bounds-check.
   void set_volume(float v) { volume_ = v; }
   void add_on_phase_trigger(OnPhaseTrigger *t) { phase_triggers_.push_back(t); }
+  void add_on_transcript_trigger(OnTranscriptTrigger *t) { transcript_triggers_.push_back(t); }
   void add_on_repeated_failure_trigger(OnRepeatedFailureTrigger *t) {
     repeated_failure_triggers_.push_back(t);
   }
@@ -110,6 +112,7 @@ class VaClient : public Component {
   // ring to `listening`/`idle` from timer callbacks during the follow-up window,
   // independently of a server-sent phase).
   void fire_phase_led_(const std::string &phase);
+  void fire_transcript_(const std::string &role, const std::string &text);
   void open_followup_window_(uint32_t duration_ms);
 
   std::string url_;
@@ -133,11 +136,12 @@ class VaClient : public Component {
   // reply check — as a std::string that was a cross-task data race (benign in
   // practice thanks to SSO, but UB). The yaml trigger path still receives the
   // phase as a string parameter; only this cross-task state is an enum.
-  enum class Phase : uint8_t { IDLE = 0, LISTENING, THINKING, REPLYING };
+  enum class Phase : uint8_t { IDLE = 0, LISTENING, THINKING, REPLYING, THANKS };
   static Phase phase_from_string_(const std::string &phase);
   static const char *phase_name_(Phase p);
   std::atomic<uint8_t> current_phase_{static_cast<uint8_t>(Phase::IDLE)};
   std::vector<OnPhaseTrigger *> phase_triggers_;
+  std::vector<OnTranscriptTrigger *> transcript_triggers_;
   std::vector<OnRepeatedFailureTrigger *> repeated_failure_triggers_;
   std::vector<OnFollowupOpenedTrigger *> followup_opened_triggers_;
 

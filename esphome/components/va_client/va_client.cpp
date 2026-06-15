@@ -1,6 +1,7 @@
 #include "va_client.h"
 #include "automation.h"
 
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 #include "esphome/components/audio/audio.h"
 
@@ -44,6 +45,18 @@ static bool parse_uint_after_key(const std::string &msg, const char *key, uint32
   if (!any)
     return false;
   out = v;
+  return true;
+}
+
+static bool parse_string_after_key(const std::string &msg, const char *key, std::string &out) {
+  size_t p = msg.find(key);
+  if (p == std::string::npos)
+    return false;
+  p += std::strlen(key);
+  size_t end = msg.find('"', p);
+  if (end == std::string::npos)
+    return false;
+  out.assign(msg.data() + p, end - p);
   return true;
 }
 
@@ -550,6 +563,33 @@ void VaClient::handle_text_(const char *data, size_t len) {
     return;
   }
 
+  if (msg.find("\"type\":\"transcript\"") != std::string::npos) {
+    std::string role;
+    std::string text_b64;
+    if (!parse_string_after_key(msg, "\"role\":\"", role) ||
+        !parse_string_after_key(msg, "\"text_b64\":\"", text_b64)) {
+      ESP_LOGW(TAG, "transcript message missing role/text_b64");
+      return;
+    }
+    if (text_b64.size() > 1536) {
+      ESP_LOGW(TAG, "transcript too large (%u b64 bytes), dropping", (unsigned) text_b64.size());
+      return;
+    }
+    std::string text;
+    text.resize((text_b64.size() * 3u) / 4u + 4u);
+    size_t decoded = base64_decode(text_b64, reinterpret_cast<uint8_t *>(text.data()), text.size());
+    text.resize(decoded);
+    if (!text.empty()) {
+      this->fire_transcript_(role, text);
+    }
+    return;
+  }
+
+  if (msg.find("\"type\":\"thanks\"") != std::string::npos) {
+    this->set_phase_("thanks");
+    return;
+  }
+
   if (msg.find("\"type\":\"request_follow_up\"") != std::string::npos) {
     // Server's model called the request_follow_up tool — it asked a
     // question and wants the user to answer without saying a wake word.
@@ -568,7 +608,7 @@ void VaClient::handle_text_(const char *data, size_t len) {
 
   // Substring match on `"value":"<phase>"` — keeps us out of a JSON parser
   // until M3 needs richer payloads.
-  static const char *const kPhases[] = {"listening", "thinking", "replying", "idle"};
+  static const char *const kPhases[] = {"listening", "thinking", "replying", "thanks", "idle"};
   for (const char *p : kPhases) {
     std::string needle = std::string("\"value\":\"") + p + "\"";
     if (msg.find(needle) != std::string::npos) {
@@ -867,6 +907,8 @@ VaClient::Phase VaClient::phase_from_string_(const std::string &phase) {
     return Phase::THINKING;
   if (phase == "replying")
     return Phase::REPLYING;
+  if (phase == "thanks")
+    return Phase::THANKS;
   return Phase::IDLE;
 }
 
@@ -878,6 +920,8 @@ const char *VaClient::phase_name_(Phase p) {
       return "thinking";
     case Phase::REPLYING:
       return "replying";
+    case Phase::THANKS:
+      return "thanks";
     default:
       return "idle";
   }
@@ -1020,6 +1064,19 @@ void VaClient::set_phase_(const std::string &phase) {
     this->request_follow_up_pending_ = false;
     this->followup_armed_ = false;
     this->idle_emit_pending_ = false;  // new turn began, drop any held idle
+  } else if (phase == "thanks") {
+    // A short terminal UI state. No follow-up is allowed after a real goodbye.
+    this->set_streaming_(false);
+    this->followup_pending_ = false;
+    this->waiting_for_speaker_stop_ = false;
+    this->request_follow_up_pending_ = false;
+    this->followup_armed_ = false;
+    this->idle_emit_pending_ = false;
+    this->suppress_followup_ = true;
+    this->cancel_timeout("va_no_speech");
+    this->cancel_timeout("va_followup");
+    this->cancel_timeout("va_followup_open");
+    this->cancel_timeout("va_tts_tail");
   } else if (phase == "idle") {
     // Turn boundary: reset the WS-gap reference so the silence between THIS
     // reply and the NEXT turn's reply (~7 s across a follow-up exchange, where
@@ -1362,6 +1419,16 @@ void VaClient::fire_phase_led_(const std::string &phase) {
   this->defer([this, phase_copy]() {
     for (auto *t : this->phase_triggers_) {
       t->trigger(phase_copy);
+    }
+  });
+}
+
+void VaClient::fire_transcript_(const std::string &role, const std::string &text) {
+  std::string role_copy = role;
+  std::string text_copy = text;
+  this->defer([this, role_copy, text_copy]() {
+    for (auto *t : this->transcript_triggers_) {
+      t->trigger(role_copy, text_copy);
     }
   });
 }
