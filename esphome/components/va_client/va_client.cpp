@@ -112,6 +112,14 @@ void VaClient::setup() {
                   (unsigned) kPreRollMs, (unsigned) this->preroll_capacity_samples_);
   }
 
+  this->mic_tx_buf_ = static_cast<uint8_t *>(
+      heap_caps_malloc(kMicTxBufBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (this->mic_tx_buf_ == nullptr) {
+    ESP_LOGE(TAG, "Failed to allocate %u-byte mic uplink ring buffer in PSRAM", (unsigned) kMicTxBufBytes);
+  } else {
+    ESP_LOGCONFIG(TAG, "Allocated %u-byte mic uplink ring buffer in PSRAM", (unsigned) kMicTxBufBytes);
+  }
+
   // Tell the resampler what format we'll feed it. The resampler converts to
   // its yaml-configured output format (48k 16-bit) before passing to the
   // mixer → i2s leaf. Start the speaker task once so play() calls just push
@@ -128,6 +136,16 @@ void VaClient::setup() {
   if (task_ok != pdPASS) {
     this->audio_task_handle_ = nullptr;
     ESP_LOGE(TAG, "Failed to start realtime audio drain task");
+  }
+
+  if (this->mic_tx_buf_ != nullptr) {
+    task_ok = xTaskCreatePinnedToCore(
+        [](void *arg) { static_cast<VaClient *>(arg)->mic_tx_task_(); },
+        "va_mic_tx", 4096, this, 5, &this->mic_tx_task_handle_, tskNO_AFFINITY);
+    if (task_ok != pdPASS) {
+      this->mic_tx_task_handle_ = nullptr;
+      ESP_LOGE(TAG, "Failed to start realtime mic uplink task");
+    }
   }
 
   this->connect_();
@@ -217,6 +235,30 @@ bool VaClient::drain_audio_() {
     dbg_last = now;
   }
   return true;
+}
+
+void VaClient::mic_tx_task_() {
+  uint8_t chunk[kMicTxChunkBytes];
+  while (true) {
+    if (!this->streaming_ || !this->ws_connected_ || this->ws_handle_ == nullptr) {
+      this->mic_tx_clear_();
+      vTaskDelay(pdMS_TO_TICKS(20));
+      continue;
+    }
+
+    const size_t len = this->mic_tx_pop_(chunk, sizeof(chunk));
+    if (len == 0) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+
+    auto handle = static_cast<esp_websocket_client_handle_t>(this->ws_handle_);
+    const int sent = esp_websocket_client_send_bin(handle, reinterpret_cast<const char *>(chunk),
+                                                   static_cast<int>(len), 100 / portTICK_PERIOD_MS);
+    if (sent != static_cast<int>(len)) {
+      this->mic_send_failures_this_sec_++;
+    }
+  }
 }
 
 void VaClient::loop() {
@@ -682,8 +724,6 @@ void VaClient::on_mic_data_(const std::vector<uint8_t> &samples) {
     return;
   }
 
-  auto handle = static_cast<esp_websocket_client_handle_t>(this->ws_handle_);
-
   // First frame of a fresh session: DISCARD the pre-roll instead of replaying
   // it. The ring caught the wake chime leaking through the mic (XMOS AEC leaves
   // ~10x) during the chime + tail-delay window; replaying it fed the chime back
@@ -710,21 +750,24 @@ void VaClient::on_mic_data_(const std::vector<uint8_t> &samples) {
   this->mic_frames_this_sec_++;
   this->mic_bytes_this_sec_ += samples.size();
 
-  // 10ms timeout (~portTICK_PERIOD_MS): if WS task is briefly busy we wait
-  // a tick rather than dropping the frame and spamming "Could not lock"
-  // errors. If we're swamped, we accept dropping rather than blocking mic.
   const int len = static_cast<int>(mono_sample_count * sizeof(int16_t));
-  const int sent = esp_websocket_client_send_bin(handle, reinterpret_cast<const char *>(samples.data()),
-                                                 len, 10 / portTICK_PERIOD_MS);
-  if (sent != len)
-    this->mic_send_failures_this_sec_++;
+  this->mic_tx_push_(samples.data(), static_cast<size_t>(len));
 
   if (now_ms - this->mic_stats_last_ms_ >= 1000) {
-    ESP_LOGW(TAG, "mic uplink: frames=%u bytes=%u max_abs=%u send_failures=%u ws=%s",
+    size_t tx_queued = 0;
+    uint32_t tx_dropped = 0;
+    portENTER_CRITICAL(&this->mic_tx_mux_);
+    tx_queued = this->mic_tx_fill_;
+    tx_dropped = this->mic_tx_dropped_bytes_this_sec_;
+    this->mic_tx_dropped_bytes_this_sec_ = 0;
+    portEXIT_CRITICAL(&this->mic_tx_mux_);
+    ESP_LOGW(TAG, "mic uplink: frames=%u bytes=%u max_abs=%u send_failures=%u tx_queued=%u tx_dropped=%u ws=%s",
              (unsigned) this->mic_frames_this_sec_,
              (unsigned) this->mic_bytes_this_sec_,
              (unsigned) this->mic_max_abs_this_sec_,
              (unsigned) this->mic_send_failures_this_sec_,
+             (unsigned) tx_queued,
+             (unsigned) tx_dropped,
              this->ws_connected_ ? "yes" : "no");
     this->mic_stats_last_ms_ = now_ms;
     this->mic_frames_this_sec_ = 0;
@@ -732,6 +775,72 @@ void VaClient::on_mic_data_(const std::vector<uint8_t> &samples) {
     this->mic_send_failures_this_sec_ = 0;
     this->mic_max_abs_this_sec_ = 0;
   }
+}
+
+void VaClient::mic_tx_push_(const uint8_t *data, size_t len) {
+  if (this->mic_tx_buf_ == nullptr || data == nullptr || len == 0)
+    return;
+
+  if (len > kMicTxBufBytes) {
+    const size_t drop = len - kMicTxBufBytes;
+    data += drop;
+    len = kMicTxBufBytes;
+  }
+  len &= ~static_cast<size_t>(1);
+  if (len == 0)
+    return;
+
+  portENTER_CRITICAL(&this->mic_tx_mux_);
+  const size_t free_space = kMicTxBufBytes - this->mic_tx_fill_;
+  if (len > free_space) {
+    const size_t drop = len - free_space;
+    this->mic_tx_head_ = (this->mic_tx_head_ + drop) % kMicTxBufBytes;
+    this->mic_tx_fill_ -= drop;
+    this->mic_tx_dropped_bytes_this_sec_ += drop;
+  }
+
+  size_t tail = this->mic_tx_tail_;
+  const size_t first = std::min(len, kMicTxBufBytes - tail);
+  std::memcpy(this->mic_tx_buf_ + tail, data, first);
+  if (first < len) {
+    std::memcpy(this->mic_tx_buf_, data + first, len - first);
+  }
+  this->mic_tx_tail_ = (tail + len) % kMicTxBufBytes;
+  this->mic_tx_fill_ += len;
+  portEXIT_CRITICAL(&this->mic_tx_mux_);
+}
+
+size_t VaClient::mic_tx_pop_(uint8_t *out, size_t max_len) {
+  if (this->mic_tx_buf_ == nullptr || out == nullptr || max_len == 0)
+    return 0;
+
+  max_len &= ~static_cast<size_t>(1);
+  portENTER_CRITICAL(&this->mic_tx_mux_);
+  size_t len = std::min(max_len, this->mic_tx_fill_);
+  len &= ~static_cast<size_t>(1);
+  if (len == 0) {
+    portEXIT_CRITICAL(&this->mic_tx_mux_);
+    return 0;
+  }
+
+  size_t head = this->mic_tx_head_;
+  const size_t first = std::min(len, kMicTxBufBytes - head);
+  std::memcpy(out, this->mic_tx_buf_ + head, first);
+  if (first < len) {
+    std::memcpy(out + first, this->mic_tx_buf_, len - first);
+  }
+  this->mic_tx_head_ = (head + len) % kMicTxBufBytes;
+  this->mic_tx_fill_ -= len;
+  portEXIT_CRITICAL(&this->mic_tx_mux_);
+  return len;
+}
+
+void VaClient::mic_tx_clear_() {
+  portENTER_CRITICAL(&this->mic_tx_mux_);
+  this->mic_tx_head_ = 0;
+  this->mic_tx_tail_ = 0;
+  this->mic_tx_fill_ = 0;
+  portEXIT_CRITICAL(&this->mic_tx_mux_);
 }
 
 void VaClient::preroll_push_(const int16_t *data, size_t n) {
@@ -777,6 +886,7 @@ void VaClient::set_streaming_(bool enabled) {
   this->streaming_ = enabled;
   if (enabled) {
     const uint32_t now = millis();
+    this->mic_tx_clear_();
     this->mic_stream_started_ms_ = now;
     this->mic_last_frame_ms_ = 0;
     this->mic_no_frame_warn_ms_ = 0;
@@ -796,6 +906,7 @@ void VaClient::set_streaming_(bool enabled) {
     if (this->mic_source_ != nullptr) {
       this->mic_source_->stop();
     }
+    this->mic_tx_clear_();
     ESP_LOGI(TAG, "mic uplink closed");
   }
 }

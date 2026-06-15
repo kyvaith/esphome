@@ -82,6 +82,10 @@ class VaClient : public Component {
   void on_mic_data_(const std::vector<uint8_t> &samples);
   bool drain_audio_();
   void audio_task_();
+  void mic_tx_task_();
+  void mic_tx_push_(const uint8_t *data, size_t len);
+  size_t mic_tx_pop_(uint8_t *out, size_t max_len);
+  void mic_tx_clear_();
   // Tell the backend to drop any uncommitted mic audio NOW. Sent when the mic
   // gate closes mid-stream by TIMER (a follow-up window expiring) — a partial
   // utterance left in OpenAI's input buffer would otherwise be "completed" by a
@@ -112,6 +116,7 @@ class VaClient : public Component {
   microphone::MicrophoneSource *mic_source_{nullptr};
   speaker::Speaker *speaker_{nullptr};
   TaskHandle_t audio_task_handle_{nullptr};
+  TaskHandle_t mic_tx_task_handle_{nullptr};
 
   // esp_websocket_client_handle_t kept opaque to avoid leaking esp-idf into the header.
   void *ws_handle_{nullptr};
@@ -420,6 +425,19 @@ class VaClient : public Component {
   uint32_t mic_bytes_this_sec_{0};
   uint32_t mic_send_failures_this_sec_{0};
   uint32_t mic_max_abs_this_sec_{0};
+
+  // Microphone uplink staging ring. The microphone callback must never wait on
+  // Wi-Fi/websocket locks; it only copies PCM16 into this ring. A dedicated task
+  // drains it to esp_websocket_client, so brief network stalls don't cut holes
+  // in the post-AEC microphone stream.
+  uint8_t *mic_tx_buf_{nullptr};
+  static constexpr size_t kMicTxBufBytes = 128 * 1024;
+  static constexpr size_t kMicTxChunkBytes = 1280;  // 40 ms at 16 kHz mono PCM16
+  size_t mic_tx_head_{0};
+  size_t mic_tx_tail_{0};
+  size_t mic_tx_fill_{0};
+  uint32_t mic_tx_dropped_bytes_this_sec_{0};
+  portMUX_TYPE mic_tx_mux_ = portMUX_INITIALIZER_UNLOCKED;
 };
 
 }  // namespace va_client
