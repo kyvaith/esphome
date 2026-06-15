@@ -370,6 +370,9 @@ void VaClient::connect_() {
   cfg.uri = this->url_.c_str();
   cfg.disable_auto_reconnect = true;  // we drive reconnects ourselves with exponential backoff
   cfg.reconnect_timeout_ms = 5000;    // ignored because disable_auto_reconnect=true
+  cfg.ping_interval_sec = 60;
+  cfg.pingpong_timeout_sec = 180;
+  cfg.disable_pingpong_discon = true;
 
   esp_websocket_client_handle_t handle = esp_websocket_client_init(&cfg);
   if (handle == nullptr) {
@@ -1225,8 +1228,7 @@ void VaClient::start_session() {
   const bool residual_reply =
       this->audio_fill_ > 0 ||
       this->idle_emit_pending_ ||
-      phase_now == Phase::REPLYING ||
-      phase_now == Phase::THINKING;
+      (phase_now == Phase::REPLYING && this->turn_t_first_audio_out_ != 0);
   if (residual_reply) {
     ESP_LOGI(TAG, "start_session: interrupting residual reply (phase=%s, fill=%u)",
              phase_name_(phase_now), (unsigned) this->audio_fill_);
@@ -1276,11 +1278,7 @@ void VaClient::start_session() {
   this->set_timeout("va_no_speech", kNoSpeechTimeoutMs, [this]() {
     ESP_LOGI(TAG, "no speech detected for %u ms — aborting session",
              (unsigned) kNoSpeechTimeoutMs);
-    if (this->ws_connected_ && this->ws_handle_ != nullptr) {
-      const char m[] = "{\"type\":\"interrupt\"}";
-      auto handle = static_cast<esp_websocket_client_handle_t>(this->ws_handle_);
-      esp_websocket_client_send_text(handle, m, sizeof(m) - 1, portMAX_DELAY);
-    }
+    this->send_mic_flush_();
     this->set_streaming_(false);
     this->turn_t_wake_ = 0;
     // Force LED back to idle from yaml side.
