@@ -89,9 +89,11 @@ class JPEGFormat(Format):
         # Copy libjpeg-turbo as an IDF component into the build directory.
         # Skip if dest already exists and CMakeLists.txt mtimes match (avoid
         # redundant copies on incremental builds).
-        src_path = os.path.join(
-            os.path.dirname(__file__), "..", "libjpeg-turbo-esp32"
-        )
+        src_path = os.path.join(os.path.dirname(__file__), "libjpeg-turbo-esp32")
+        if not os.path.exists(os.path.join(src_path, "CMakeLists.txt")):
+            src_path = os.path.join(
+                os.path.dirname(__file__), "..", "libjpeg-turbo-esp32"
+            )
         dest_path = str(
             CORE.relative_build_path("components", "libjpeg-turbo-esp32")
         )
