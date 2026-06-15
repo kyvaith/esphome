@@ -267,9 +267,10 @@ class VaClient : public Component {
   // starts with a cushion and a network jitter gap (we see 100-340 ms gaps)
   // doesn't dry it out → audible crackle. Pushed from the backend `hello`
   // ("playback_prebuffer_ms":N) so it's tunable without reflashing; clamped to
-  // kPlaybackPrebufferMaxMs. 0 = disabled (play immediately, old behaviour).
+  // kPlaybackPrebufferMaxMs. Defaults to 300 ms; 0 from the backend disables it
+  // and plays immediately.
   // Re-armed whenever the ring drains to empty (reply start AND post-underflow).
-  uint32_t playback_prebuffer_ms_{0};
+  uint32_t playback_prebuffer_ms_{300};
   static constexpr uint32_t kPlaybackPrebufferMaxMs = 2000;
   static constexpr uint32_t kPlaybackSampleRate = 24000;  // incoming TTS PCM rate
   // True while we're accumulating the prebuffer cushion (holding playback).

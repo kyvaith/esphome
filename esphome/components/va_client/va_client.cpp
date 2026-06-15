@@ -98,20 +98,6 @@ void VaClient::setup() {
     ESP_LOGCONFIG(TAG, "Allocated %u-byte audio ring buffer in PSRAM", (unsigned) kAudioBufBytes);
   }
 
-  // Allocate the mic pre-roll ring in PSRAM (kPreRollMs of 16 kHz int16 mono).
-  this->preroll_capacity_samples_ = (size_t) kPreRollMs * (kMicSampleRate / 1000);
-  this->preroll_buf_ = static_cast<int16_t *>(
-      heap_caps_malloc(this->preroll_capacity_samples_ * sizeof(int16_t),
-                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (this->preroll_buf_ == nullptr) {
-    ESP_LOGE(TAG, "Failed to allocate %u-sample mic pre-roll buffer in PSRAM",
-             (unsigned) this->preroll_capacity_samples_);
-    this->preroll_capacity_samples_ = 0;
-  } else {
-    ESP_LOGCONFIG(TAG, "Allocated %u ms mic pre-roll buffer in PSRAM (%u samples)",
-                  (unsigned) kPreRollMs, (unsigned) this->preroll_capacity_samples_);
-  }
-
   this->mic_tx_buf_ = static_cast<uint8_t *>(
       heap_caps_malloc(kMicTxBufBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (this->mic_tx_buf_ == nullptr) {
@@ -141,7 +127,7 @@ void VaClient::setup() {
   if (this->mic_tx_buf_ != nullptr) {
     task_ok = xTaskCreatePinnedToCore(
         [](void *arg) { static_cast<VaClient *>(arg)->mic_tx_task_(); },
-        "va_mic_tx", 4096, this, 4, &this->mic_tx_task_handle_, tskNO_AFFINITY);
+        "va_mic_tx", 4096, this, 6, &this->mic_tx_task_handle_, tskNO_AFFINITY);
     if (task_ok != pdPASS) {
       this->mic_tx_task_handle_ = nullptr;
       ESP_LOGE(TAG, "Failed to start realtime mic uplink task");
@@ -648,21 +634,23 @@ void VaClient::handle_binary_(const uint8_t *data, size_t len) {
     // stops while mWW runs), whereas we're on the WS task. Sharing one vector
     // raced the two tasks (concurrent resize/realloc + interleaved writes),
     // putting mic samples / freed memory into the TTS ring — audible as hiss.
-    this->tts_buf_.resize(pairs);
     float vol = this->volume_;
     if (vol < 0.0f) vol = 0.0f;
     else if (vol > 1.0f) vol = 1.0f;
-    // Q15 fixed point so the inner loop stays integer-only.
-    int32_t scale = static_cast<int32_t>(vol * 32768.0f);
-    uint32_t clipped = 0;
-    for (size_t i = 0; i < pairs; i++) {
-      int32_t v = (static_cast<int32_t>(in[i]) * scale) >> 15;
-      if (v > 32767) { v = 32767; clipped++; }
-      else if (v < -32768) { v = -32768; clipped++; }
-      this->tts_buf_[i] = static_cast<int16_t>(v);
+    if (vol < 0.999f) {
+      this->tts_buf_.resize(pairs);
+      // Q15 fixed point so the inner loop stays integer-only.
+      int32_t scale = static_cast<int32_t>(vol * 32768.0f);
+      uint32_t clipped = 0;
+      for (size_t i = 0; i < pairs; i++) {
+        int32_t v = (static_cast<int32_t>(in[i]) * scale) >> 15;
+        if (v > 32767) { v = 32767; clipped++; }
+        else if (v < -32768) { v = -32768; clipped++; }
+        this->tts_buf_[i] = static_cast<int16_t>(v);
+      }
+      this->clipped_samples_ += clipped;
+      data = reinterpret_cast<const uint8_t *>(this->tts_buf_.data());
     }
-    this->clipped_samples_ += clipped;
-    data = reinterpret_cast<const uint8_t *>(this->tts_buf_.data());
     // len is unchanged (pairs * 2 == len rounded down; trailing odd byte ignored).
     len = pairs * 2;
   }
@@ -725,7 +713,6 @@ void VaClient::on_mic_data_(const std::vector<uint8_t> &samples) {
   // The session opens via start_session() (wake handler) and closes on
   // "phase":"idle" from the server (response.done).
   if (!this->streaming_) {
-    this->preroll_push_(mono_samples, mono_sample_count);
     return;
   }
 
@@ -744,7 +731,7 @@ void VaClient::on_mic_data_(const std::vector<uint8_t> &samples) {
   }
 
   uint32_t max_abs = 0;
-  for (size_t i = 0; i < mono_sample_count; i++) {
+  for (size_t i = 0; i < mono_sample_count; i += 4) {
     const int32_t sample = mono_samples[i];
     const uint32_t abs_sample = sample < 0 ? static_cast<uint32_t>(-sample) : static_cast<uint32_t>(sample);
     if (abs_sample > max_abs)
