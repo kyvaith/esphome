@@ -132,7 +132,7 @@ void VaClient::setup() {
 
   BaseType_t task_ok = xTaskCreatePinnedToCore(
       [](void *arg) { static_cast<VaClient *>(arg)->audio_task_(); },
-      "va_audio", 4096, this, 9, &this->audio_task_handle_, tskNO_AFFINITY);
+      "va_audio", 4096, this, 11, &this->audio_task_handle_, tskNO_AFFINITY);
   if (task_ok != pdPASS) {
     this->audio_task_handle_ = nullptr;
     ESP_LOGE(TAG, "Failed to start realtime audio drain task");
@@ -153,7 +153,12 @@ void VaClient::setup() {
 
 void VaClient::audio_task_() {
   while (true) {
-    const bool did_work = this->drain_audio_();
+    bool did_work = false;
+    for (uint8_t i = 0; i < 8; i++) {
+      if (!this->drain_audio_())
+        break;
+      did_work = true;
+    }
     vTaskDelay(pdMS_TO_TICKS(did_work ? 1 : 5));
   }
 }
