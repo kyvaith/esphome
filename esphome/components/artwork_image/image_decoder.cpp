@@ -89,6 +89,31 @@ void ImageDecoder::draw_rgb565_block(int x, int y, int w, int h, const uint8_t *
   }
 }
 
+bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int buffer_height, int content_width,
+                                       int content_height) {
+  if (buffer == nullptr || buffer_width <= 0 || buffer_height <= 0 || content_width <= 0 || content_height <= 0 ||
+      content_width > buffer_width || content_height > buffer_height || this->image_->get_bpp() != 16) {
+    this->failed_ = true;
+    return false;
+  }
+
+  this->image_->discard_decode_buffer_();
+  this->image_->decode_buffer_ = buffer;
+  this->image_->decode_buffer_width_ = buffer_width;
+  this->image_->decode_buffer_height_ = buffer_height;
+  this->image_->decode_content_width_ = content_width;
+  this->image_->decode_content_height_ = content_height;
+  this->image_->decode_offset_x_ = 0;
+  this->image_->decode_offset_y_ = 0;
+  this->x_offset_ = 0;
+  this->y_offset_ = 0;
+  this->x_scale_ = 1.0;
+  this->y_scale_ = 1.0;
+  ESP_LOGI(TAG, "Decoder adopted RGB565 buffer: content=%dx%d buffer=%dx%d", content_width, content_height,
+           buffer_width, buffer_height);
+  return true;
+}
+
 DownloadBuffer::DownloadBuffer(size_t size) : size_(size) {
   this->buffer_ = this->allocator_.allocate(size);
   this->reset();

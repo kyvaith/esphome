@@ -9,6 +9,8 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 
+#include <cstring>
+
 #include "artwork_image.h"
 static const char *const TAG = "artwork_image.jpeg";
 
@@ -138,10 +140,6 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
              (unsigned) info.height, (unsigned) frame_w, (unsigned) frame_h);
   }
 
-  if (!this->set_size(frame_w, frame_h)) {
-    return DECODE_ERROR_OUT_OF_MEMORY;
-  }
-
   const size_t aligned_w = (frame_w + 15u) & ~15u;
   const size_t aligned_h = (frame_h + 15u) & ~15u;
   const size_t output_size = aligned_w * aligned_h * 2u;
@@ -154,6 +152,7 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
     ESP_LOGW(TAG, "Hardware JPEG output allocation failed: %zu bytes", output_size);
     return 0;
   }
+  memset(output, 0, output_size);
 
   esp32_jpeg::DecodeConfig cfg = {
       .output_format = esp32_jpeg::PixelFormat::RGB565,
@@ -173,18 +172,15 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
     return 0;
   }
 
-  const size_t stride = aligned_w * 2u;
-  for (uint32_t y = 0; y < frame_h; y++) {
-    this->draw_rgb565_block(0, y, frame_w, 1, output + y * stride);
-    if ((y & 63u) == 0) {
-      App.feed_wdt();
-    }
+  if (!this->adopt_rgb565_buffer(output, aligned_w, aligned_h, frame_w, frame_h)) {
+    heap_caps_free(output);
+    return DECODE_ERROR_OUT_OF_MEMORY;
   }
 
-  heap_caps_free(output);
   this->decoded_bytes_ = size;
-  ESP_LOGI(TAG, "Hardware JPEG decode finished: %ux%u, %zu -> %zu bytes in %lluus", (unsigned) frame_w,
-           (unsigned) frame_h, size, written, (unsigned long long) elapsed_us);
+  ESP_LOGI(TAG, "Hardware JPEG decode finished: %ux%u into %zux%zu buffer, %zu -> %zu bytes in %lluus",
+           (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h, size, written,
+           (unsigned long long) elapsed_us);
   return size;
 #else
   return 0;

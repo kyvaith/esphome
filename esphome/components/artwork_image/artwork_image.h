@@ -253,6 +253,8 @@ class ArtworkImage : public PollingComponent,
   friend bool ImageDecoder::set_size(int width, int height);
   friend void ImageDecoder::draw(int x, int y, int w, int h, const Color &color);
   friend void ImageDecoder::draw_rgb565_block(int x, int y, int w, int h, const uint8_t *data);
+  friend bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int buffer_height,
+                                                int content_width, int content_height);
 };
 
 template<typename... Ts> class ArtworkImageSetUrlAction : public Action<Ts...> {
