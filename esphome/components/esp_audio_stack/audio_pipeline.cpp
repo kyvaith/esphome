@@ -828,6 +828,9 @@ void ESPAudioStack::process_rx_path_(AudioTaskCtx &ctx) {
   if (!this->rx_handle_)
     return;
 
+  if (!ctx.mic_running)
+    return;
+
   auto conversion_fail = [this](const char *stage) {
     ESP_LOGE(TAG, "%s failed; stopping audio session", stage);
     this->has_i2s_error_.store(true, std::memory_order_relaxed);
@@ -1531,7 +1534,7 @@ void ESPAudioStack::process_tx_path_(AudioTaskCtx &ctx) {
   }
 #endif
 #ifdef USE_ESP_AUDIO_STACK_RING_REF
-  if (this->aec_ref_ring_buffer_ && ctx.processor_enabled) {
+  if (this->aec_ref_ring_buffer_ && ctx.processor_enabled && ctx.mic_running) {
     if (full_frame && this->direct_aec_ref_ != nullptr) {
       // Decimate TX -> processor rate into direct_aec_ref_ scratch, then push
       // the converted frame into the ring. direct_aec_ref_ is sized for
@@ -1552,7 +1555,7 @@ void ESPAudioStack::process_tx_path_(AudioTaskCtx &ctx) {
   }
 #endif
 #ifdef USE_ESP_AUDIO_STACK_PREVIOUS_FRAME_REF
-  if (this->direct_aec_ref_ != nullptr && ctx.processor_enabled) {
+  if (this->direct_aec_ref_ != nullptr && ctx.processor_enabled && ctx.mic_running) {
     // Previous frame mode: convert TX once and keep the result for the next
     // AEC iteration. Only on a full frame, otherwise we keep the last good
     // direct_aec_ref_ to avoid feeding a zero-padded reference.
