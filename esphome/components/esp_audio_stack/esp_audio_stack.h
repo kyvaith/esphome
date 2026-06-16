@@ -270,7 +270,7 @@ class ESPAudioStack : public Component {
 
   // AEC setter
   void set_processor(AudioProcessor *aec);
-  void set_processor_enabled(bool enabled) { this->processor_enabled_.store(enabled, std::memory_order_relaxed); }
+  void set_processor_enabled(bool enabled);
   bool is_processor_enabled() const { return this->processor_enabled_.load(std::memory_order_relaxed); }
 
   // Mic gain control. Attenuation uses esp-audio-libs Q31 in the hot path;

@@ -397,6 +397,20 @@ void ESPAudioStack::set_processor(AudioProcessor *processor) {
   // the processor frame spec is known for the current audio session.
 }
 
+void ESPAudioStack::set_processor_enabled(bool enabled) {
+  const bool was_enabled = this->processor_enabled_.exchange(enabled, std::memory_order_relaxed);
+  if (this->processor_ == nullptr || was_enabled == enabled) {
+    return;
+  }
+
+  if (!this->has_mic_consumers_.load(std::memory_order_relaxed)) {
+    this->processor_->set_processing_active(false);
+    return;
+  }
+
+  this->processor_->set_processing_active(enabled);
+}
+
 void ESPAudioStack::sync_processor_background_consumer_() {
 #ifdef USE_AUDIO_PROCESSOR
   const bool want_background =
@@ -1154,6 +1168,7 @@ void ESPAudioStack::start() {
     ESP_LOGD(TAG, "TDM hardware reference - slot %u is echo ref", this->tdm_ref_slot_);
   }
   if (this->processor_ != nullptr &&
+      this->processor_enabled_.load(std::memory_order_relaxed) &&
       this->has_mic_consumers_.load(std::memory_order_relaxed)) {
     // GMF AFE pipeline_run() must not be called before the audio task can feed
     // the AFE input port. Start I2S and wake the realtime task first; otherwise
@@ -1285,7 +1300,8 @@ bool ESPAudioStack::register_mic_consumer(void *token) {
     // If the stack is already running, wake the processor immediately. If this
     // consumer is also starting the stack, start() will wake the audio task
     // first and then enable the processor so GMF has input frames available.
-    if (!needs_start && this->processor_ != nullptr) {
+    if (!needs_start && this->processor_ != nullptr &&
+        this->processor_enabled_.load(std::memory_order_relaxed)) {
       this->processor_->set_processing_active(true);
     }
   } else {
