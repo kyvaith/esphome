@@ -287,10 +287,19 @@ void VaClient::mic_tx_task_() {
       continue;
     }
 
-    const int sent = this->ws_send_bin_(reinterpret_cast<const char *>(chunk),
-                                        static_cast<int>(len), pdMS_TO_TICKS(100));
+    const int sent = this->ws_send_bin_(reinterpret_cast<const char *>(chunk), static_cast<int>(len),
+                                        kWsMicSendTimeout);
     if (sent != static_cast<int>(len)) {
       this->mic_send_failures_this_sec_++;
+      portENTER_CRITICAL(&this->mic_tx_mux_);
+      if (this->mic_tx_fill_ > kMicTxMaxQueuedBytes) {
+        const size_t drop = (this->mic_tx_fill_ - kMicTxMaxQueuedBytes) & ~static_cast<size_t>(1);
+        this->mic_tx_head_ = (this->mic_tx_head_ + drop) % kMicTxBufBytes;
+        this->mic_tx_fill_ -= drop;
+        this->mic_tx_dropped_bytes_this_sec_ += drop;
+      }
+      portEXIT_CRITICAL(&this->mic_tx_mux_);
+      vTaskDelay(pdMS_TO_TICKS(2));
     }
   }
 }
@@ -855,10 +864,10 @@ void VaClient::mic_tx_push_(const uint8_t *data, size_t len) {
   if (this->mic_tx_buf_ == nullptr || data == nullptr || len == 0)
     return;
 
-  if (len > kMicTxBufBytes) {
-    const size_t drop = len - kMicTxBufBytes;
+  if (len > kMicTxMaxQueuedBytes) {
+    const size_t drop = len - kMicTxMaxQueuedBytes;
     data += drop;
-    len = kMicTxBufBytes;
+    len = kMicTxMaxQueuedBytes;
   }
   len &= ~static_cast<size_t>(1);
   if (len == 0)
@@ -868,6 +877,12 @@ void VaClient::mic_tx_push_(const uint8_t *data, size_t len) {
   const size_t free_space = kMicTxBufBytes - this->mic_tx_fill_;
   if (len > free_space) {
     const size_t drop = len - free_space;
+    this->mic_tx_head_ = (this->mic_tx_head_ + drop) % kMicTxBufBytes;
+    this->mic_tx_fill_ -= drop;
+    this->mic_tx_dropped_bytes_this_sec_ += drop;
+  }
+  if (this->mic_tx_fill_ + len > kMicTxMaxQueuedBytes) {
+    const size_t drop = (this->mic_tx_fill_ + len - kMicTxMaxQueuedBytes) & ~static_cast<size_t>(1);
     this->mic_tx_head_ = (this->mic_tx_head_ + drop) % kMicTxBufBytes;
     this->mic_tx_fill_ -= drop;
     this->mic_tx_dropped_bytes_this_sec_ += drop;

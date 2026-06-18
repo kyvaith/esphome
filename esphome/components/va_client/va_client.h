@@ -119,6 +119,7 @@ class VaClient : public Component {
   int ws_send_bin_(const char *data, int len, TickType_t timeout);
 
   static constexpr TickType_t kWsControlSendTimeout = pdMS_TO_TICKS(250);
+  static constexpr TickType_t kWsMicSendTimeout = pdMS_TO_TICKS(10);
 
   std::string url_;
   microphone::MicrophoneSource *mic_source_{nullptr};
@@ -440,9 +441,11 @@ class VaClient : public Component {
   // Microphone uplink staging ring. The microphone callback must never wait on
   // Wi-Fi/websocket locks; it only copies PCM16 into this ring. A dedicated task
   // drains it to esp_websocket_client, so brief network stalls don't cut holes
-  // in the post-AEC microphone stream.
+  // in the post-AEC microphone stream. The producer still keeps the queued
+  // window small: realtime speech is more useful than seconds-old backlog.
   uint8_t *mic_tx_buf_{nullptr};
   static constexpr size_t kMicTxBufBytes = 128 * 1024;
+  static constexpr size_t kMicTxMaxQueuedBytes = 16 * 1024;
   static constexpr size_t kMicTxChunkBytes = 1280;  // 40 ms at 16 kHz mono PCM16
   size_t mic_tx_head_{0};
   size_t mic_tx_tail_{0};
