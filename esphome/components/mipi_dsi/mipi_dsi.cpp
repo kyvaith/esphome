@@ -15,8 +15,11 @@ namespace esphome::mipi_dsi {
 // Maximum bytes to log for init commands (truncated if larger)
 static constexpr size_t MIPI_DSI_MAX_CMD_LOG_BYTES = 64;
 static constexpr size_t DMA2D_SAFE_ALIGN_BYTES = 4;
+static volatile uint32_t dsi_underrun_count = 0;
 
 static bool is_aligned(uintptr_t value, size_t alignment) { return (value & (alignment - 1U)) == 0; }
+
+extern "C" void IRAM_ATTR esphome_mipi_dsi_note_underrun(void) { dsi_underrun_count++; }
 
 static bool IRAM_ATTR notify_color_trans_ready(esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_event_data_t *edata,
                                                void *user_ctx) {
@@ -455,6 +458,7 @@ void MipiDsi::consume_async_flush_perf(AsyncFlushPerfStats *stats) {
   if (stats == nullptr)
     return;
   stats->flushes = this->async_perf_flushes_;
+  stats->underruns = this->consume_underrun_count();
   stats->zero_copy_flushes = this->async_perf_zero_copy_flushes_;
   stats->staged_flushes = this->async_perf_staged_flushes_;
   stats->done_flushes = this->async_perf_done_flushes_;
@@ -487,6 +491,12 @@ void MipiDsi::consume_async_flush_perf(AsyncFlushPerfStats *stats) {
   this->async_perf_copy_max_us_ = 0;
   this->async_perf_submit_max_us_ = 0;
   this->async_perf_done_max_us_ = 0;
+}
+
+uint32_t MipiDsi::consume_underrun_count() {
+  const uint32_t count = dsi_underrun_count;
+  dsi_underrun_count = 0;
+  return count;
 }
 
 bool MipiDsi::present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end) {

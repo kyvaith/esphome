@@ -49,6 +49,7 @@ using AsyncFlushReadyCallback = void (*)(void *);
 
 struct AsyncFlushPerfStats {
   uint32_t flushes{};
+  uint32_t underruns{};
   uint32_t zero_copy_flushes{};
   uint32_t staged_flushes{};
   uint32_t done_flushes{};
@@ -111,6 +112,7 @@ class MipiDsi : public display::Display {
                             AsyncFlushReadyCallback ready_callback, void *ready_arg);
   bool present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end);
   void consume_async_flush_perf(AsyncFlushPerfStats *stats);
+  uint32_t consume_underrun_count();
 
   void draw_pixel_at(int x, int y, Color color) override;
   void fill(Color color) override;

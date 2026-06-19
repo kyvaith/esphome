@@ -32,10 +32,20 @@ def _read_idf_version(framework_dir: Path) -> tuple[int, int, int]:
 def _patch_idf5(framework_dir: Path) -> None:
     target = Path(framework_dir) / "components" / "esp_lcd" / "dsi" / "esp_lcd_panel_dpi.c"
     text = target.read_text(encoding="utf-8")
+    changed = False
 
     for include in ('#include "esp_memory_utils.h"', '#include "hal/cache_ll.h"', '#include "soc/soc_caps.h"'):
         if include not in text:
             text = text.replace('#include "esp_cache.h"\n', f'#include "esp_cache.h"\n{include}\n')
+            changed = True
+
+    hook_decl = "extern void esphome_mipi_dsi_note_underrun(void) __attribute__((weak));\n"
+    if "esphome_mipi_dsi_note_underrun" not in text:
+        anchor = "typedef struct esp_lcd_dpi_panel_t esp_lcd_dpi_panel_t;\n"
+        if anchor not in text:
+            raise RuntimeError("ESP-IDF DSI panel typedef not found; patch needs review")
+        text = text.replace(anchor, f"{anchor}\n{hook_decl}", 1)
+        changed = True
 
     helper = """
 static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
@@ -60,6 +70,24 @@ static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
         if anchor not in text:
             raise RuntimeError("ESP-IDF DSI draw_bitmap declaration not found; patch needs review")
         text = text.replace(anchor, f"{anchor}{helper}", 1)
+        changed = True
+
+    old_underrun = (
+        "    if (intr_status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN) {\n"
+        "        // when an underrun happens, the LCD display may already becomes blue\n"
+    )
+    new_underrun = (
+        "    if (intr_status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN) {\n"
+        "        if (esphome_mipi_dsi_note_underrun) {\n"
+        "            esphome_mipi_dsi_note_underrun();\n"
+        "        }\n"
+        "        // when an underrun happens, the LCD display may already becomes blue\n"
+    )
+    if "esphome_mipi_dsi_note_underrun();" not in text:
+        if old_underrun not in text:
+            raise RuntimeError("ESP-IDF DSI underrun interrupt block not found; patch needs review")
+        text = text.replace(old_underrun, new_underrun, 1)
+        changed = True
 
     old = (
         "        esp_cache_msync(draw_buffer, color_data_size, "
@@ -79,17 +107,21 @@ static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
     )
 
     if new in text:
-        print("MIPI DSI patch: ESP-IDF 5.x DMA2D internal-buffer cache sync guard already present")
-        return
-    if old_guard in text:
+        pass
+    elif old_guard in text:
         text = text.replace(old_guard, new)
+        changed = True
     elif old in text:
         text = text.replace(old, new)
+        changed = True
     else:
         raise RuntimeError("ESP-IDF DSI DMA2D cache sync line not found; patch needs review")
 
-    target.write_text(text, encoding="utf-8")
-    print("MIPI DSI patch: applied ESP-IDF 5.x DMA2D internal-buffer cache sync guard")
+    if changed:
+        target.write_text(text, encoding="utf-8")
+        print("MIPI DSI patch: applied ESP-IDF 5.x DMA2D/cache diagnostics patch")
+    else:
+        print("MIPI DSI patch: ESP-IDF 5.x DMA2D/cache diagnostics patch already present")
 
 
 def _patch_idf6_or_newer(framework_dir: Path) -> None:

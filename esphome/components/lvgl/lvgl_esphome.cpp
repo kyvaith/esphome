@@ -2805,6 +2805,7 @@ void LvglComponent::loop() {
 #else
       struct {
         uint32_t flushes{};
+        uint32_t underruns{};
         uint32_t zero_copy_flushes{};
         uint32_t staged_flushes{};
         uint32_t done_flushes{};
@@ -2822,12 +2823,21 @@ void LvglComponent::loop() {
         uint32_t done_max_us{};
       } dsi_stats;
 #endif
+      if (dsi_stats.underruns > 0) {
+        ESP_LOGW(TAG, "dsi underrun: count=%u free=%uK/%uK loop_max=%ums flush_max=%ums",
+                 (unsigned)dsi_stats.underruns,
+                 (unsigned)free_psram_kb,
+                 (unsigned)free_internal_kb,
+                 (unsigned)(this->perf_loop_max_us_ / 1000U),
+                 (unsigned)(this->perf_flush_max_us_ / 1000U));
+      }
       if (s_perf_logging_enabled) {
         ESP_LOGI(TAG,
-                 "perf1s: cpu=%u%% loop=%lluus flush=%lluus dsi_sync=%lluus max=%ums dsi_copy=%lluus/%u max=%ums dsi_submit=%lluus max=%ums dsi_done=%lluus/%u max=%ums zc=%u stage=%u/%u unsafe=%u/%u/%u %lluKB comp=%lluus ready=%lluus/%u jobs max_comp=%ums max_ready=%ums max_loop=%ums max_flush=%ums inv=%lu areas/%lu kpx flush_px=%llu kpx comp_px=%llu kpx free=%uK/%uK dir=%u ppa=%u/%u",
+                 "perf1s: cpu=%u%% loop=%lluus flush=%lluus dsi_under=%u dsi_sync=%lluus max=%ums dsi_copy=%lluus/%u max=%ums dsi_submit=%lluus max=%ums dsi_done=%lluus/%u max=%ums zc=%u stage=%u/%u unsafe=%u/%u/%u %lluKB comp=%lluus ready=%lluus/%u jobs max_comp=%ums max_ready=%ums max_loop=%ums max_flush=%ums inv=%lu areas/%lu kpx flush_px=%llu kpx comp_px=%llu kpx free=%uK/%uK dir=%u ppa=%u/%u",
                  (unsigned)cpu_pct,
                  (unsigned long long)cpu_us,
                  (unsigned long long)this->perf_flush_us_,
+                 (unsigned)dsi_stats.underruns,
                  (unsigned long long)dsi_stats.sync_us,
                  (unsigned)(dsi_stats.sync_max_us / 1000U),
                  (unsigned long long)dsi_stats.copy_us,
