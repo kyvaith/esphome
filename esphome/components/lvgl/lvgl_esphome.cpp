@@ -73,6 +73,9 @@ static void lvgl_cache_msync_external(const void *ptr, size_t len, int flags) {
   const uintptr_t end = (ptr_addr + len + CACHE_ALIGN - 1) & ~(CACHE_ALIGN - 1);
   if (end <= start)
     return;
+  if (!esp_ptr_external_ram(reinterpret_cast<const void *>(start)) ||
+      !esp_ptr_external_ram(reinterpret_cast<const void *>(end - 1)))
+    return;
 
   esp_cache_msync(reinterpret_cast<void *>(start), end - start, flags);
 }

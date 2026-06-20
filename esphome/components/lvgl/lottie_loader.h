@@ -86,6 +86,10 @@ inline void lottie_sync_canvas_buffer(LottieContext *ctx) {
     uintptr_t start = reinterpret_cast<uintptr_t>(data) & ~(LOTTIE_CACHE_ALIGN - 1);
     uintptr_t end = lottie_align_up(reinterpret_cast<uintptr_t>(data) + len, LOTTIE_CACHE_ALIGN);
     if (end <= start) return;
+    if (!esp_ptr_external_ram(reinterpret_cast<const void *>(start)) ||
+        !esp_ptr_external_ram(reinterpret_cast<const void *>(end - 1))) {
+        return;
+    }
 
     esp_cache_msync(reinterpret_cast<void *>(start), end - start,
                     ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
@@ -607,7 +611,6 @@ inline bool lottie_init(lv_obj_t *obj, const void *data, size_t data_size,
 
 #endif  // LV_USE_LOTTIE
 #endif  // USE_ESP32
-
 
 
 

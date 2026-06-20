@@ -91,6 +91,10 @@ static inline void lv_draw_ppa_cache_msync(const void * p, uint32_t size, int fl
     if(aligned_end <= aligned_start) {
         return;
     }
+    if(!esp_ptr_external_ram((const void *)aligned_start) ||
+       !esp_ptr_external_ram((const void *)(aligned_end - 1U))) {
+        return;
+    }
 
     esp_cache_msync((void *)aligned_start, aligned_end - aligned_start,
                     flags | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
