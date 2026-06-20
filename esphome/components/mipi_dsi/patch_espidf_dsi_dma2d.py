@@ -117,6 +117,33 @@ static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
     else:
         raise RuntimeError("ESP-IDF DSI DMA2D cache sync line not found; patch needs review")
 
+    old_fifo_tuning = (
+        "    mipi_dsi_brg_ll_set_underrun_discard_count(hal->bridge, panel_config->video_timing.h_size);\n"
+        "    mipi_dsi_brg_ll_set_input_color_format(hal->bridge, in_color_format);\n"
+        "    mipi_dsi_brg_ll_set_output_color_format(hal->bridge, out_color_format, 0);\n"
+        "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_DMA);\n"
+        "    mipi_dsi_brg_ll_set_multi_block_number(hal->bridge, DPI_PANEL_MIN_DMA_NODES_PER_LINK);\n"
+        "    mipi_dsi_brg_ll_set_burst_len(hal->bridge, 256);\n"
+        "    mipi_dsi_brg_ll_set_empty_threshold(hal->bridge, 1024 - 256);"
+    )
+    new_fifo_tuning = (
+        "    mipi_dsi_brg_ll_set_underrun_discard_count(hal->bridge, 1);\n"
+        "    mipi_dsi_brg_ll_set_input_color_format(hal->bridge, in_color_format);\n"
+        "    mipi_dsi_brg_ll_set_output_color_format(hal->bridge, out_color_format, 0);\n"
+        "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_DMA);\n"
+        "    mipi_dsi_brg_ll_set_multi_block_number(hal->bridge, DPI_PANEL_MIN_DMA_NODES_PER_LINK);\n"
+        "    hal->bridge->mem_clk_ctrl.dsi_bridge_mem_clk_force_on = 1;\n"
+        "    hal->bridge->mem_clk_ctrl.dsi_mem_clk_force_on = 1;\n"
+        "    mipi_dsi_brg_ll_set_burst_len(hal->bridge, 128);\n"
+        "    mipi_dsi_brg_ll_set_empty_threshold(hal->bridge, 1024 - 128);"
+    )
+    if new_fifo_tuning in text:
+        pass
+    elif old_fifo_tuning in text:
+        text = text.replace(old_fifo_tuning, new_fifo_tuning, 1)
+        changed = True
+    else:
+        raise RuntimeError("ESP-IDF DSI FIFO tuning block not found; patch needs review")
     if changed:
         target.write_text(text, encoding="utf-8")
         print("MIPI DSI patch: applied ESP-IDF 5.x DMA2D/cache diagnostics patch")
@@ -196,3 +223,4 @@ def main() -> None:
 
 if env is not None:
     main()
+
