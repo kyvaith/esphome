@@ -483,9 +483,11 @@ void lvgl_port_ppa_v9_init(lv_display_t *display)
 
     if (!s_handler_registered) {
         lv_draw_sw_register_blend_handler(&s_custom_handler_rgb565);
-        lv_draw_sw_register_blend_handler(&s_custom_handler_rgb888);
+        /* RGB888 PPA blend/fill can produce short horizontal artifacts on ESP32-P4
+         * with cached PSRAM draw buffers. Keep RGB565 accelerated and let RGB888
+         * fall back to LVGL software blending until that path is made cache-safe. */
         s_handler_registered = true;
-        ESP_LOGI(TAG, "PPA v9 blend handler registered for RGB565/RGB888");
+        ESP_LOGI(TAG, "PPA v9 blend handler registered for RGB565");
     }
 }
 
