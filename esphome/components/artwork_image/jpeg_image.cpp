@@ -150,6 +150,11 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
 
   const size_t aligned_w = (frame_w + 15u) & ~15u;
   const size_t aligned_h = (frame_h + 15u) & ~15u;
+  if (aligned_w != frame_w || aligned_h != frame_h) {
+    ESP_LOGD(TAG, "Hardware JPEG decode skipped: source %ux%u needs padded output %zux%zu",
+             (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h);
+    return 0;
+  }
   const size_t output_size = aligned_w * aligned_h * 2u;
   auto *output = static_cast<uint8_t *>(
       heap_caps_aligned_alloc(JPEG_DMA_ALIGNMENT, output_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
