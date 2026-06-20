@@ -117,6 +117,23 @@ static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
     else:
         raise RuntimeError("ESP-IDF DSI DMA2D cache sync line not found; patch needs review")
 
+    flow_replacements = (
+        (
+            "        .flow_controller = DW_GDMA_FLOW_CTRL_SELF, // DMA as the flow controller",
+            "        .flow_controller = DW_GDMA_FLOW_CTRL_DST, // DSI bridge as the flow controller",
+        ),
+        (
+            "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_DMA);",
+            "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_BRIDGE);",
+        ),
+    )
+    for old_line, new_line in flow_replacements:
+        if new_line in text:
+            continue
+        if old_line not in text:
+            raise RuntimeError("ESP-IDF DSI flow-controller line not found; patch needs review")
+        text = text.replace(old_line, new_line, 1)
+        changed = True
     fifo_replacements = (
         (
             "    mipi_dsi_brg_ll_set_underrun_discard_count(hal->bridge, panel_config->video_timing.h_size);",
@@ -139,6 +156,14 @@ static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
         if old_line not in text:
             raise RuntimeError("ESP-IDF DSI FIFO tuning line not found; patch needs review")
         text = text.replace(old_line, new_line, 1)
+        changed = True
+
+    credit_anchor = "    mipi_dsi_brg_ll_set_empty_threshold(hal->bridge, 1024 - 128);"
+    credit_reset = "    mipi_dsi_brg_ll_credit_reset(hal->bridge);"
+    if credit_reset not in text:
+        if credit_anchor not in text:
+            raise RuntimeError("ESP-IDF DSI credit reset anchor not found; patch needs review")
+        text = text.replace(credit_anchor, f"{credit_anchor}\n{credit_reset}", 1)
         changed = True
 
     if changed:
