@@ -174,13 +174,28 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   if (err != ESP_OK)
     return err;
 
+  size_t input_capacity = 0;
+  jpeg_encode_memory_alloc_cfg_t input_mem_cfg = {
+      .buffer_direction = JPEG_ENC_ALLOC_INPUT_BUFFER,
+  };
+  uint8_t *input_data =
+      static_cast<uint8_t *>(jpeg_alloc_encoder_mem(expected_input_size, &input_mem_cfg, &input_capacity));
+  if (input_data == nullptr || input_capacity < expected_input_size) {
+    if (input_data != nullptr)
+      heap_caps_free(input_data);
+    jpeg_del_encoder_engine(encoder);
+    return ESP_ERR_NO_MEM;
+  }
+  std::memcpy(input_data, input, expected_input_size);
+
   size_t output_capacity = 0;
-  jpeg_encode_memory_alloc_cfg_t mem_cfg = {
+  jpeg_encode_memory_alloc_cfg_t output_mem_cfg = {
       .buffer_direction = JPEG_ENC_ALLOC_OUTPUT_BUFFER,
   };
   uint8_t *output_data =
-      static_cast<uint8_t *>(jpeg_alloc_encoder_mem(expected_input_size, &mem_cfg, &output_capacity));
+      static_cast<uint8_t *>(jpeg_alloc_encoder_mem(expected_input_size, &output_mem_cfg, &output_capacity));
   if (output_data == nullptr) {
+    heap_caps_free(input_data);
     jpeg_del_encoder_engine(encoder);
     return ESP_ERR_NO_MEM;
   }
@@ -197,8 +212,9 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
 #endif
   };
   uint32_t encoded_size = 0;
-  err = jpeg_encoder_process(encoder, &encode_cfg, input, expected_input_size, output_data, output_capacity,
+  err = jpeg_encoder_process(encoder, &encode_cfg, input_data, expected_input_size, output_data, output_capacity,
                              &encoded_size);
+  heap_caps_free(input_data);
   jpeg_del_encoder_engine(encoder);
   if (err != ESP_OK || encoded_size == 0) {
     heap_caps_free(output_data);
@@ -240,16 +256,50 @@ esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_si
   if (err != ESP_OK)
     return err;
 
+  size_t input_capacity = 0;
+  jpeg_decode_memory_alloc_cfg_t input_mem_cfg = {
+      .buffer_direction = JPEG_DEC_ALLOC_INPUT_BUFFER,
+  };
+  uint8_t *input_data = static_cast<uint8_t *>(jpeg_alloc_decoder_mem(jpeg_size, &input_mem_cfg, &input_capacity));
+  if (input_data == nullptr || input_capacity < jpeg_size) {
+    if (input_data != nullptr)
+      heap_caps_free(input_data);
+    jpeg_del_decoder_engine(decoder);
+    return ESP_ERR_NO_MEM;
+  }
+  std::memcpy(input_data, jpeg, jpeg_size);
+
+  size_t decoded_capacity = 0;
+  jpeg_decode_memory_alloc_cfg_t output_mem_cfg = {
+      .buffer_direction = JPEG_DEC_ALLOC_OUTPUT_BUFFER,
+  };
+  uint8_t *decoded_data =
+      static_cast<uint8_t *>(jpeg_alloc_decoder_mem(output_size, &output_mem_cfg, &decoded_capacity));
+  if (decoded_data == nullptr) {
+    heap_caps_free(input_data);
+    jpeg_del_decoder_engine(decoder);
+    return ESP_ERR_NO_MEM;
+  }
+
   jpeg_decode_cfg_t decode_cfg = {
       .output_format = to_decode_format(config.output_format),
       .rgb_order = to_rgb_order(config.rgb_order),
       .conv_std = to_color_standard(config.color_conversion),
   };
   uint32_t decoded_size = 0;
-  err = jpeg_decoder_process(decoder, &decode_cfg, jpeg, jpeg_size, output, output_size, &decoded_size);
+  err = jpeg_decoder_process(decoder, &decode_cfg, input_data, jpeg_size, decoded_data, decoded_capacity, &decoded_size);
+  heap_caps_free(input_data);
   jpeg_del_decoder_engine(decoder);
-  if (err != ESP_OK)
+  if (err != ESP_OK) {
+    heap_caps_free(decoded_data);
     return err;
+  }
+  if (decoded_size > output_size) {
+    heap_caps_free(decoded_data);
+    return ESP_ERR_INVALID_SIZE;
+  }
+  std::memcpy(output, decoded_data, decoded_size);
+  heap_caps_free(decoded_data);
 
   if (written != nullptr)
     *written = decoded_size;
