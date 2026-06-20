@@ -245,7 +245,7 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
         if(buf != NULL && buf->data != NULL) {
             /* Flush CPU cache once before first PPA operation */
             if(!cache_synced) {
-                lv_draw_ppa_cache_sync(buf);
+                lv_draw_ppa_cache_sync_to_memory(buf);
                 cache_synced = true;
             }
 
@@ -285,7 +285,7 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
     if(task_count > 0) {
         /* Single cache invalidate after all PPA operations */
         if(cache_synced && buf != NULL) {
-            lv_draw_ppa_cache_sync(buf);
+            lv_draw_ppa_cache_sync_from_memory(buf);
         }
         lv_draw_dispatch_request();
         return 1;

@@ -25,7 +25,7 @@ void lv_draw_buf_ppa_init_handlers(void)
     /* Intentionally empty - see file header comment */
 }
 
-void lv_draw_ppa_cache_sync(lv_draw_buf_t * buf)
+static inline void lv_draw_ppa_cache_sync_buf(lv_draw_buf_t * buf, int flags)
 {
     if(buf == NULL || buf->data == NULL || buf->data_size == 0) return;
 
@@ -34,7 +34,17 @@ void lv_draw_ppa_cache_sync(lv_draw_buf_t * buf)
      * either be a no-op or could crash on non-cacheable regions. */
     if(!esp_ptr_external_ram(buf->data)) return;
 
-    lv_draw_ppa_cache_msync(buf->data, buf->data_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    lv_draw_ppa_cache_msync(buf->data, buf->data_size, flags);
+}
+
+void lv_draw_ppa_cache_sync_to_memory(lv_draw_buf_t * buf)
+{
+    lv_draw_ppa_cache_sync_buf(buf, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+}
+
+void lv_draw_ppa_cache_sync_from_memory(lv_draw_buf_t * buf)
+{
+    lv_draw_ppa_cache_sync_buf(buf, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
 }
 
 #endif /* CONFIG_SOC_PPA_SUPPORTED */

@@ -53,7 +53,8 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
                          const lv_area_t * coords);
 #endif
 
-void lv_draw_ppa_cache_sync(lv_draw_buf_t * buf);
+void lv_draw_ppa_cache_sync_to_memory(lv_draw_buf_t * buf);
+void lv_draw_ppa_cache_sync_from_memory(lv_draw_buf_t * buf);
 
 /**********************
  *      MACROS
