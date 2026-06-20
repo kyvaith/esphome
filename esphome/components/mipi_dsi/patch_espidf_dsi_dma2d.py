@@ -34,7 +34,12 @@ def _patch_idf5(framework_dir: Path) -> None:
     text = target.read_text(encoding="utf-8")
     changed = False
 
-    for include in ('#include "esp_memory_utils.h"', '#include "hal/cache_ll.h"', '#include "soc/soc_caps.h"'):
+    for include in (
+        '#include "esp_memory_utils.h"',
+        '#include "hal/axi_icm_ll.h"',
+        '#include "hal/cache_ll.h"',
+        '#include "soc/soc_caps.h"',
+    ):
         if include not in text:
             text = text.replace('#include "esp_cache.h"\n', f'#include "esp_cache.h"\n{include}\n')
             changed = True
@@ -50,6 +55,9 @@ def _patch_idf5(framework_dir: Path) -> None:
     helper = """
 static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
 {
+    if (draw_buffer == NULL) {
+        return true;
+    }
     if (esp_ptr_internal(draw_buffer)) {
         return true;
     }
@@ -59,6 +67,9 @@ static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
         return true;
     }
 #endif
+    if (!esp_ptr_external_ram(draw_buffer)) {
+        return true;
+    }
     return false;
 }
 """
@@ -70,6 +81,24 @@ static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
         if anchor not in text:
             raise RuntimeError("ESP-IDF DSI draw_bitmap declaration not found; patch needs review")
         text = text.replace(anchor, f"{anchor}{helper}", 1)
+        changed = True
+    elif "!esp_ptr_external_ram(draw_buffer)" not in text:
+        old_tail = (
+            "#endif\n"
+            "    return false;\n"
+            "}\n"
+        )
+        new_tail = (
+            "#endif\n"
+            "    if (!esp_ptr_external_ram(draw_buffer)) {\n"
+            "        return true;\n"
+            "    }\n"
+            "    return false;\n"
+            "}\n"
+        )
+        if old_tail not in text:
+            raise RuntimeError("ESP-IDF DSI cache sync helper tail not found; patch needs review")
+        text = text.replace(old_tail, new_tail, 1)
         changed = True
 
     old_underrun = (
@@ -131,6 +160,45 @@ static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
         if old_line in text:
             text = text.replace(old_line, new_line, 1)
             changed = True
+    gdma_qos_replacements = (
+        (
+            "            .num_outstanding_requests = 5,",
+            "            .num_outstanding_requests = 16,",
+        ),
+        (
+            "            .num_outstanding_requests = 2,",
+            "            .num_outstanding_requests = 4,",
+        ),
+        (
+            "        .chan_priority = 1,",
+            "        .chan_priority = 3,",
+        ),
+    )
+    for old_line, new_line in gdma_qos_replacements:
+        if new_line in text:
+            continue
+        if old_line not in text:
+            raise RuntimeError("ESP-IDF DSI GDMA priority line not found; patch needs review")
+        text = text.replace(old_line, new_line, 1)
+        changed = True
+
+    qos_anchor = '    ESP_RETURN_ON_ERROR(dw_gdma_new_channel(&dma_alloc_config, &dma_chan), TAG, "create DMA channel failed");\n'
+    qos_patch = (
+        qos_anchor +
+        "#if CONFIG_IDF_TARGET_ESP32P4\n"
+        "    // DSI scanout is a real-time PSRAM reader. Give DW-GDMA read traffic\n"
+        "    // higher AXI QoS than opportunistic DMA2D/JPEG copies to avoid rare\n"
+        "    // bridge FIFO underruns that otherwise show as a full-screen fallback\n"
+        "    // color flash.\n"
+        "    axi_icm_ll_set_dw_gdma_qos_arbiter_prio(0, 4, 15);\n"
+        "    axi_icm_ll_set_dw_gdma_qos_arbiter_prio(1, 4, 15);\n"
+        "#endif\n"
+    )
+    if qos_patch not in text:
+        if qos_anchor not in text:
+            raise RuntimeError("ESP-IDF DSI GDMA channel creation line not found; patch needs review")
+        text = text.replace(qos_anchor, qos_patch, 1)
+        changed = True
     fifo_replacements = (
         (
             "    mipi_dsi_brg_ll_set_underrun_discard_count(hal->bridge, panel_config->video_timing.h_size);",
@@ -178,6 +246,9 @@ def _patch_idf6_or_newer(framework_dir: Path) -> None:
     helper = """
 static bool async_fbcpy_skip_src_msync(const void *src_buffer)
 {
+    if (src_buffer == NULL) {
+        return true;
+    }
     if (esp_ptr_internal(src_buffer)) {
         return true;
     }
@@ -187,6 +258,9 @@ static bool async_fbcpy_skip_src_msync(const void *src_buffer)
         return true;
     }
 #endif
+    if (!esp_ptr_external_ram(src_buffer)) {
+        return true;
+    }
     return false;
 }
 """
@@ -195,6 +269,23 @@ static bool async_fbcpy_skip_src_msync(const void *src_buffer)
         if anchor not in text:
             raise RuntimeError("ESP-IDF async_fbcpy TAG declaration not found; patch needs review")
         text = text.replace(anchor, f"{anchor}{helper}", 1)
+    elif "!esp_ptr_external_ram(src_buffer)" not in text:
+        old_tail = (
+            "#endif\n"
+            "    return false;\n"
+            "}\n"
+        )
+        new_tail = (
+            "#endif\n"
+            "    if (!esp_ptr_external_ram(src_buffer)) {\n"
+            "        return true;\n"
+            "    }\n"
+            "    return false;\n"
+            "}\n"
+        )
+        if old_tail not in text:
+            raise RuntimeError("ESP-IDF async_fbcpy cache sync helper tail not found; patch needs review")
+        text = text.replace(old_tail, new_tail, 1)
 
     old = (
         "    ESP_RETURN_ON_ERROR(esp_cache_msync((void *)transaction->src_buffer + copy_head, copy_size, "
