@@ -72,6 +72,25 @@ static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
     }
     return false;
 }
+
+static esp_err_t dpi_panel_cache_msync(const void *buffer, size_t size)
+{
+    if (buffer == NULL || size == 0) {
+        return ESP_OK;
+    }
+    const uintptr_t buffer_addr = (uintptr_t)buffer;
+    const uintptr_t cache_align = 128;
+    const uintptr_t sync_start = buffer_addr & ~(cache_align - 1);
+    const uintptr_t sync_end = (buffer_addr + size + cache_align - 1) & ~(cache_align - 1);
+    if (sync_end <= sync_start) {
+        return ESP_OK;
+    }
+    if (!esp_ptr_external_ram((const void *)sync_start) ||
+        !esp_ptr_external_ram((const void *)(sync_end - 1))) {
+        return ESP_OK;
+    }
+    return esp_cache_msync((void *)sync_start, sync_end - sync_start, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+}
 """
     if "dpi_panel_skip_draw_buffer_msync" not in text:
         anchor = (
@@ -101,6 +120,38 @@ static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
         text = text.replace(old_tail, new_tail, 1)
         changed = True
 
+    if "dpi_panel_cache_msync" not in text:
+        helper_anchor = "static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)\n"
+        helper_start = text.find(helper_anchor)
+        if helper_start == -1:
+            raise RuntimeError("ESP-IDF DSI cache sync helper not found; patch needs review")
+        helper_end = text.find("\n}\n", helper_start)
+        if helper_end == -1:
+            raise RuntimeError("ESP-IDF DSI cache sync helper end not found; patch needs review")
+        helper_end += len("\n}\n")
+        cache_helper = """
+static esp_err_t dpi_panel_cache_msync(const void *buffer, size_t size)
+{
+    if (buffer == NULL || size == 0) {
+        return ESP_OK;
+    }
+    const uintptr_t buffer_addr = (uintptr_t)buffer;
+    const uintptr_t cache_align = 128;
+    const uintptr_t sync_start = buffer_addr & ~(cache_align - 1);
+    const uintptr_t sync_end = (buffer_addr + size + cache_align - 1) & ~(cache_align - 1);
+    if (sync_end <= sync_start) {
+        return ESP_OK;
+    }
+    if (!esp_ptr_external_ram((const void *)sync_start) ||
+        !esp_ptr_external_ram((const void *)(sync_end - 1))) {
+        return ESP_OK;
+    }
+    return esp_cache_msync((void *)sync_start, sync_end - sync_start, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+}
+"""
+        text = text[:helper_end] + cache_helper + text[helper_end:]
+        changed = True
+
     old_underrun = (
         "    if (intr_status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN) {\n"
         "        // when an underrun happens, the LCD display may already becomes blue\n"
@@ -118,6 +169,21 @@ static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
         text = text.replace(old_underrun, new_underrun, 1)
         changed = True
 
+    cache_sync_replacements = (
+        (
+            "esp_cache_msync(frame_buffer, fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED)",
+            "dpi_panel_cache_msync(frame_buffer, fb_size)",
+        ),
+        (
+            "esp_cache_msync(cache_sync_start, cache_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED)",
+            "dpi_panel_cache_msync(cache_sync_start, cache_sync_size)",
+        ),
+    )
+    for old_call, new_call in cache_sync_replacements:
+        if old_call in text:
+            text = text.replace(old_call, new_call)
+            changed = True
+
     old = (
         "        esp_cache_msync(draw_buffer, color_data_size, "
         "ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);"
@@ -130,8 +196,7 @@ static bool dpi_panel_skip_draw_buffer_msync(const void *draw_buffer)
     )
     new = (
         "        if (!dpi_panel_skip_draw_buffer_msync(draw_buffer)) {\n"
-        "            esp_cache_msync(draw_buffer, color_data_size, "
-        "ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);\n"
+        '            ESP_RETURN_ON_ERROR(dpi_panel_cache_msync(draw_buffer, color_data_size), TAG, "writeback draw buffer failed");\n'
         "        }"
     )
 
