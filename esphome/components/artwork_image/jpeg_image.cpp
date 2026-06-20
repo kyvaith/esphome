@@ -135,6 +135,14 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   if (frame_w == 0 || frame_h == 0) {
     return 0;
   }
+  const int target_w = this->image_->get_fixed_width();
+  const int target_h = this->image_->get_fixed_height();
+  if (target_w > 0 && target_h > 0 &&
+      (frame_w != static_cast<uint32_t>(target_w) || frame_h != static_cast<uint32_t>(target_h))) {
+    ESP_LOGD(TAG, "Hardware JPEG decode skipped: source %ux%u does not match fixed target %dx%d",
+             (unsigned) frame_w, (unsigned) frame_h, target_w, target_h);
+    return 0;
+  }
   if (err == ESP_OK && (info.width != frame_w || info.height != frame_h)) {
     ESP_LOGD(TAG, "Hardware JPEG parser size mismatch: esp-idf=%ux%u frame=%ux%u", (unsigned) info.width,
              (unsigned) info.height, (unsigned) frame_w, (unsigned) frame_h);
