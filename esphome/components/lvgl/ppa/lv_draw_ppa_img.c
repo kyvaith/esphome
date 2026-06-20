@@ -203,11 +203,7 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
         return;
     }
 
-    if(decoded->data != NULL && decoded->data_size > 0 && !esp_ptr_internal((void *)decoded->data)) {
-        esp_cache_msync((void *)decoded->data,
-                        lv_draw_ppa_align_size(decoded->data_size),
-                        ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
-    }
+    lv_draw_ppa_cache_msync(decoded->data, decoded->data_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
     uint32_t out_bpp = (dest_cf == LV_COLOR_FORMAT_RGB565) ? 2u :
                        (dest_cf == LV_COLOR_FORMAT_RGB888)  ? 3u : 4u;
@@ -240,8 +236,7 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
             return;
         }
         memcpy(aligned_out, dest_buf->data, raw_bytes);
-        esp_cache_msync(aligned_out, aligned_size,
-                        ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+        lv_draw_ppa_cache_msync(aligned_out, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
         out_ptr = aligned_out;
     }
 
@@ -274,8 +269,7 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
      * Fill it by duplicating the last rendered column/row. Invalidate CPU
      * cache first: PPA wrote via DMA, so CPU cache can be stale. */
     if(ret == ESP_OK && (gap_right || gap_bottom)) {
-        esp_cache_msync(out_ptr, aligned_size,
-                        ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+        lv_draw_ppa_cache_msync(out_ptr, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
 
         uint8_t *base = out_ptr;
         uint32_t stride = dest_buf->header.w * out_bpp;
@@ -297,14 +291,12 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
                       (uint32_t)clip_w * out_bpp);
         }
 
-        esp_cache_msync(out_ptr, aligned_size,
-                        ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+        lv_draw_ppa_cache_msync(out_ptr, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     }
 
     if(aligned_out) {
         if(ret == ESP_OK) {
-            esp_cache_msync(aligned_out, aligned_size,
-                            ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+            lv_draw_ppa_cache_msync(aligned_out, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
             memcpy(dest_buf->data, aligned_out, raw_bytes);
         }
         heap_caps_free(aligned_out);
@@ -384,11 +376,7 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
 
     /* Flush decoded source buffer for PPA DMA access. Align size to cache
      * line; _UNALIGNED flag is only a safety net for the address. */
-    if(decoded->data != NULL && decoded->data_size > 0 && !esp_ptr_internal((void *)decoded->data)) {
-        esp_cache_msync((void *)decoded->data,
-                        lv_draw_ppa_align_size(decoded->data_size),
-                        ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
-    }
+    lv_draw_ppa_cache_msync(decoded->data, decoded->data_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
     /* Configure PPA SRM operation */
     ppa_srm_oper_config_t cfg;
@@ -423,8 +411,7 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
             return;
         }
         memcpy(aligned_out_r, dest_buf->data, raw_bytes_r);
-        esp_cache_msync(aligned_out_r, aligned_size_r,
-                        ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+        lv_draw_ppa_cache_msync(aligned_out_r, aligned_size_r, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
         out_ptr_r = aligned_out_r;
     }
 
@@ -454,8 +441,7 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
 
     if(aligned_out_r) {
         if(ret == ESP_OK) {
-            esp_cache_msync(aligned_out_r, aligned_size_r,
-                            ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+            lv_draw_ppa_cache_msync(aligned_out_r, aligned_size_r, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
             memcpy(dest_buf->data, aligned_out_r, raw_bytes_r);
         }
         heap_caps_free(aligned_out_r);

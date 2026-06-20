@@ -34,17 +34,7 @@ void lv_draw_ppa_cache_sync(lv_draw_buf_t * buf)
      * either be a no-op or could crash on non-cacheable regions. */
     if(!esp_ptr_external_ram(buf->data)) return;
 
-    /* Fix for issue #9868 + LVGL PR #10107: esp_cache_msync() requires both
-     * address AND size to be aligned to the cache line size (64 B default,
-     * 128 B with CONFIG_CACHE_L2_CACHE_LINE_128B). Round size up AND pass
-     * ESP_CACHE_MSYNC_FLAG_UNALIGNED so partial leading/trailing lines from
-     * non-aligned buffer pointers (malloc()/user buffers) are handled by
-     * the kernel instead of triggering a rejection. */
-    uint32_t aligned_size = lv_draw_ppa_align_size(buf->data_size);
-
-    esp_cache_msync(buf->data, aligned_size,
-                    ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA |
-                    ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+    lv_draw_ppa_cache_msync(buf->data, buf->data_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 }
 
 #endif /* CONFIG_SOC_PPA_SUPPORTED */

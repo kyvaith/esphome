@@ -62,6 +62,22 @@ void lvgl_esphome_note_frame(void);
 namespace esphome::lvgl {
 static const char *const TAG = "lvgl";
 
+#ifdef USE_ESP32
+static void lvgl_cache_msync_external(const void *ptr, size_t len, int flags) {
+  if (ptr == nullptr || len == 0 || !esp_ptr_external_ram(ptr))
+    return;
+
+  constexpr uintptr_t CACHE_ALIGN = 128;
+  const uintptr_t ptr_addr = reinterpret_cast<uintptr_t>(ptr);
+  const uintptr_t start = ptr_addr & ~(CACHE_ALIGN - 1);
+  const uintptr_t end = (ptr_addr + len + CACHE_ALIGN - 1) & ~(CACHE_ALIGN - 1);
+  if (end <= start)
+    return;
+
+  esp_cache_msync(reinterpret_cast<void *>(start), end - start, flags);
+}
+#endif
+
 #ifdef USE_MIPI_DSI
 static void lvgl_mipi_async_flush_ready(void *arg) {
   lv_display_flush_ready(static_cast<lv_display_t *>(arg));
@@ -1224,9 +1240,7 @@ void LvglComponent::sync_direct_framebuffer_area_(const lv_area_t *area, uint8_t
 
   uint8_t *sync_start = framebuffer + (size_t) y1 * row_bytes;
   const size_t sync_size = (size_t) (y2 - y1 + 1) * row_bytes;
-  if (sync_start == nullptr || sync_size == 0 || esp_ptr_internal(sync_start))
-    return;
-  esp_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+  lvgl_cache_msync_external(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 #endif
 }
 
@@ -1237,7 +1251,6 @@ void LvglComponent::sync_direct_other_buffer_(const lv_area_t *area, uint8_t *co
 #else
   constexpr size_t BYTES_PER_PIXEL = LV_COLOR_DEPTH / 8;
 #endif
-  constexpr uintptr_t CACHE_ALIGN = 128;
   const int32_t x1 = std::max<int32_t>(0, area->x1);
   const int32_t y1 = std::max<int32_t>(0, area->y1);
   const int32_t x2 = std::min<int32_t>(this->width_ - 1, area->x2);
@@ -1248,13 +1261,7 @@ void LvglComponent::sync_direct_other_buffer_(const lv_area_t *area, uint8_t *co
     return;
 
   auto sync_range = [](uint8_t *ptr, size_t len) {
-    if (ptr == nullptr || len == 0 || esp_ptr_internal(ptr))
-      return;
-    uintptr_t start = reinterpret_cast<uintptr_t>(ptr) & ~(CACHE_ALIGN - 1);
-    uintptr_t end = (reinterpret_cast<uintptr_t>(ptr) + len + CACHE_ALIGN - 1) & ~(CACHE_ALIGN - 1);
-    if (end > start) {
-      esp_cache_msync(reinterpret_cast<void *>(start), end - start, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-    }
+    lvgl_cache_msync_external(ptr, len, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   };
 
   const size_t row_bytes = this->width_ * BYTES_PER_PIXEL;
@@ -1617,9 +1624,7 @@ void LvglComponent::partial_compositor_copy_area_(uint8_t *dst, const lv_area_t 
   }
   uint8_t *sync_start = dst + (size_t) y1 * row_bytes;
   const size_t sync_size = (size_t) (y2 - y1 + 1) * row_bytes;
-  if (sync_start == nullptr || sync_size == 0 || esp_ptr_internal(sync_start))
-    return;
-  esp_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+  lvgl_cache_msync_external(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 }
 
 void LvglComponent::partial_compositor_record_dirty_(const lv_area_t &area) {
@@ -1706,7 +1711,6 @@ bool LvglComponent::snapshot_swipe_direct_render(lv_draw_buf_t *current, lv_draw
     return false;
 
   constexpr size_t BYTES_PER_PIXEL = 3;
-  constexpr uintptr_t CACHE_ALIGN = 128;
   const size_t row_bytes = (size_t) this->width_ * BYTES_PER_PIXEL;
   const size_t fb_bytes = (size_t) this->width_ * this->height_ * BYTES_PER_PIXEL;
   uint8_t *target = this->next_snapshot_render_buffer_();
@@ -1714,12 +1718,7 @@ bool LvglComponent::snapshot_swipe_direct_render(lv_draw_buf_t *current, lv_draw
     return false;
 
   auto sync_range = [](uint8_t *ptr, size_t len) {
-    if (esp_ptr_internal(ptr))
-      return;
-    uintptr_t start = reinterpret_cast<uintptr_t>(ptr) & ~(CACHE_ALIGN - 1);
-    uintptr_t end = (reinterpret_cast<uintptr_t>(ptr) + len + CACHE_ALIGN - 1) & ~(CACHE_ALIGN - 1);
-    if (end > start)
-      esp_cache_msync(reinterpret_cast<void *>(start), end - start, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    lvgl_cache_msync_external(ptr, len, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   };
 
   auto copy_visible = [&](uint8_t *dst, const lv_draw_buf_t *src, int image_x) -> bool {
@@ -1925,7 +1924,6 @@ bool LvglComponent::snapshot_scroll_direct_render(lv_draw_buf_t *content, int sc
   scroll_y = std::clamp(scroll_y, 0, std::max(0, (int) content->header.h - viewport_h));
 
   constexpr size_t BYTES_PER_PIXEL = 3;
-  constexpr uintptr_t CACHE_ALIGN = 128;
   const size_t row_bytes = (size_t) viewport_w * BYTES_PER_PIXEL;
   const size_t fb_bytes = (size_t) viewport_w * viewport_h * BYTES_PER_PIXEL;
   uint8_t *target = this->next_snapshot_render_buffer_();
@@ -1976,10 +1974,7 @@ bool LvglComponent::snapshot_scroll_direct_render(lv_draw_buf_t *content, int sc
       src_row += content->header.stride;
       dst_row += row_bytes;
     }
-    uintptr_t start = reinterpret_cast<uintptr_t>(target) & ~(CACHE_ALIGN - 1);
-    uintptr_t end = (reinterpret_cast<uintptr_t>(target) + fb_bytes + CACHE_ALIGN - 1) & ~(CACHE_ALIGN - 1);
-    if (!esp_ptr_internal(target) && end > start)
-      esp_cache_msync(reinterpret_cast<void *>(start), end - start, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    lvgl_cache_msync_external(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   }
 
   if (!this->present_snapshot_render_buffer_(target))
@@ -2033,7 +2028,6 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
   }
 
   constexpr size_t BYTES_PER_PIXEL = 3;
-  constexpr uintptr_t CACHE_ALIGN = 128;
   const size_t row_bytes = (size_t) this->width_ * BYTES_PER_PIXEL;
   const size_t fb_bytes = row_bytes * (size_t) this->height_;
   uint8_t *target = this->next_snapshot_render_buffer_();
@@ -2042,20 +2036,10 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
 
   bool needs_sync = false;
   auto sync_range = [&](void *ptr, size_t len) {
-    if (ptr == nullptr || len == 0 || esp_ptr_internal(ptr))
-      return;
-    uintptr_t start = reinterpret_cast<uintptr_t>(ptr) & ~(CACHE_ALIGN - 1);
-    uintptr_t end = (reinterpret_cast<uintptr_t>(ptr) + len + CACHE_ALIGN - 1) & ~(CACHE_ALIGN - 1);
-    if (end > start)
-      esp_cache_msync(reinterpret_cast<void *>(start), end - start, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    lvgl_cache_msync_external(ptr, len, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   };
   auto sync_full = [&]() {
-    if (esp_ptr_internal(target))
-      return;
-    uintptr_t start = reinterpret_cast<uintptr_t>(target) & ~(CACHE_ALIGN - 1);
-    uintptr_t end = (reinterpret_cast<uintptr_t>(target) + fb_bytes + CACHE_ALIGN - 1) & ~(CACHE_ALIGN - 1);
-    if (end > start)
-      esp_cache_msync(reinterpret_cast<void *>(start), end - start, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    lvgl_cache_msync_external(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   };
 
   auto copy_full = [&](const lv_draw_buf_t *src) -> bool {
@@ -3336,7 +3320,7 @@ SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare(lv_obj_t *left_obj, 
     snapshot_swipe_copy_rgb888_scaled_row(right_row, dst_row + (size_t) scaled_width * BYTES_PER_PIXEL, scaled_width,
                                          scale);
   }
-  esp_cache_msync(panorama, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  lvgl_cache_msync_external(panorama, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
   slot->left = left_obj;
   slot->right = right_obj;
@@ -4057,13 +4041,9 @@ extern "C" bool lvgl_esphome_snapshot_scroll_begin(lv_obj_t *obj, int viewport_w
   }
 #if defined(USE_ESP32)
   {
-    constexpr uintptr_t CACHE_ALIGN = 128;
     const size_t content_size =
         content_buf->data_size != 0 ? content_buf->data_size : (size_t) content_buf->header.stride * content_buf->header.h;
-    uintptr_t start = reinterpret_cast<uintptr_t>(content_buf->data) & ~(CACHE_ALIGN - 1);
-    uintptr_t end = (reinterpret_cast<uintptr_t>(content_buf->data) + content_size + CACHE_ALIGN - 1) & ~(CACHE_ALIGN - 1);
-    if (end > start)
-      esp_cache_msync(reinterpret_cast<void *>(start), end - start, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    lvgl_cache_msync_external(content_buf->data, content_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   }
 #endif
 

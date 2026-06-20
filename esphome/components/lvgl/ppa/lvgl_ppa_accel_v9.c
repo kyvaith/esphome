@@ -135,18 +135,7 @@ static void ppa_cache_sync_region(const lv_area_t *area, const lv_area_t *buf_ar
 
     uint8_t *start = (uint8_t *)buf + ((size_t)off_y * buf_w + off_x) * px_size;
     size_t bytes = ((size_t)(height - 1) * (size_t)buf_w + (size_t)width) * px_size;
-    uintptr_t addr = (uintptr_t)start;
-    uintptr_t aligned_addr = addr & ~(align - 1);
-    size_t total = LVGL_PORT_PPA_ALIGN_UP(bytes + (addr - aligned_addr), align);
-
-    /* LVGL PR #10107: tolerate unaligned CPU-to-memory flushes. ESP-IDF does
-     * not allow ESP_CACHE_MSYNC_FLAG_UNALIGNED with memory-to-cache
-     * invalidation, so M2C uses the manually aligned region above. */
-    int msync_flags = flag | ESP_CACHE_MSYNC_FLAG_TYPE_DATA;
-    if ((flag & ESP_CACHE_MSYNC_FLAG_DIR_M2C) == 0) {
-        msync_flags |= ESP_CACHE_MSYNC_FLAG_UNALIGNED;
-    }
-    esp_cache_msync((void *)aligned_addr, total, msync_flags);
+    lv_draw_ppa_cache_msync(start, bytes, flag);
 }
 
 static void ppa_cache_invalidate(const lv_area_t *area, const lv_area_t *buf_area, void *buf, uint32_t px_size)
@@ -435,10 +424,7 @@ static void lv_draw_ppa_v9_handler(lv_draw_task_t *t, const lv_draw_sw_blend_dsc
                                ((size_t)(lv_area_get_height(&block_area) - 1) * src_stride +
                                 (size_t)lv_area_get_width(&block_area) * src_px_size) +
                                (src_addr - src_aligned), align);
-        if (esp_ptr_external_ram((void *)dsc->src_buf)) {
-            esp_cache_msync((void *)src_aligned, src_total,
-                            ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
-        }
+        lv_draw_ppa_cache_msync((void *)src_aligned, src_total, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
         uint16_t src_stride_px = src_stride / src_px_size;
         s_ppa_hw_blends++;

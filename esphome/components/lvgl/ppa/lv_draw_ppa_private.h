@@ -78,6 +78,24 @@ static inline bool lv_draw_ppa_buf_cache_aligned(const void * p)
     return ((uintptr_t)p % lv_draw_ppa_cache_align()) == 0;
 }
 
+static inline void lv_draw_ppa_cache_msync(const void * p, uint32_t size, int flags)
+{
+    if(p == NULL || size == 0 || !esp_ptr_external_ram(p)) {
+        return;
+    }
+
+    uint32_t alignment = lv_draw_ppa_cache_align();
+    uintptr_t start = (uintptr_t)p;
+    uintptr_t aligned_start = start & ~((uintptr_t)alignment - 1U);
+    uintptr_t aligned_end = (start + size + alignment - 1U) & ~((uintptr_t)alignment - 1U);
+    if(aligned_end <= aligned_start) {
+        return;
+    }
+
+    esp_cache_msync((void *)aligned_start, aligned_end - aligned_start,
+                    flags | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+}
+
 typedef struct lv_draw_ppa_unit {
     lv_draw_unit_t base_unit;
     lv_draw_task_t * task_act;
