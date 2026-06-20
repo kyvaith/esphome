@@ -31,6 +31,30 @@ ATOMIC_SHIM_TEXT = """#pragma once
 
 PROFILER_NULL_FUNC_PATCHED = 'const char * func = item->func ? item->func : "<null>";'
 
+PPA_CACHE_SYNC_HELPER = """
+static esp_err_t ppa_cache_msync_external_window(uint32_t window_start, uint32_t window_len,
+                                                 uint32_t alignment, int flags)
+{
+    if (window_start == 0 || window_len == 0 || alignment == 0) {
+        return ESP_OK;
+    }
+
+    uintptr_t sync_start = PPA_ALIGN_DOWN((uintptr_t)window_start, alignment);
+    uintptr_t sync_end = PPA_ALIGN_UP((uintptr_t)window_start + window_len, alignment);
+    if (sync_end <= sync_start) {
+        return ESP_OK;
+    }
+
+    if (!esp_ptr_external_ram((const void *)sync_start) ||
+        !esp_ptr_external_ram((const void *)(sync_end - 1U))) {
+        return ESP_OK;
+    }
+
+    return esp_cache_msync((void *)sync_start, sync_end - sync_start,
+                           flags & ~ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+}
+"""
+
 
 def write_atomic_shim(shim):
     shim = Path(shim)
@@ -88,6 +112,76 @@ def patch_profiler_builtin_source(src):
         print("Patched LVGL profiler null function guard:", src)
     except OSError as err:
         print("WARNING: failed to patch LVGL profiler source:", err)
+
+
+def patch_espidf_ppa_cache_sync_source(src):
+    src = Path(src)
+    if not src.exists():
+        return
+    try:
+        text = src.read_text(encoding="utf-8", errors="ignore")
+    except OSError as err:
+        print("WARNING: failed to read ESP-IDF PPA source:", err)
+        return
+
+    original = text
+    if "ppa_cache_msync_external_window" not in text:
+        text = text.replace(
+            'static const char *TAG = "ppa_',
+            PPA_CACHE_SYNC_HELPER + '\nstatic const char *TAG = "ppa_',
+            1,
+        )
+
+    replacements = {
+        "esp_cache_msync((void *)in_ext_window, in_ext_window_len, "
+        "ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);":
+            "ppa_cache_msync_external_window(in_ext_window, in_ext_window_len, "
+            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
+        "esp_cache_msync((void *)out_ext_window_aligned, "
+        "PPA_ALIGN_UP(out_ext_window_len + (out_ext_window - out_ext_window_aligned), "
+        "buf_alignment_size), ESP_CACHE_MSYNC_FLAG_DIR_M2C);":
+            "ppa_cache_msync_external_window(out_ext_window, out_ext_window_len, "
+            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);",
+        "esp_cache_msync((void *)in_bg_ext_window_aligned, "
+        "PPA_ALIGN_UP(in_bg_ext_window_len + (in_bg_ext_window - in_bg_ext_window_aligned), "
+        "buf_alignment_size), ESP_CACHE_MSYNC_FLAG_DIR_C2M);":
+            "ppa_cache_msync_external_window(in_bg_ext_window, in_bg_ext_window_len, "
+            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
+        "esp_cache_msync((void *)in_fg_ext_window_aligned, "
+        "PPA_ALIGN_UP(in_fg_ext_window_len + (in_fg_ext_window - in_fg_ext_window_aligned), "
+        "buf_alignment_size), ESP_CACHE_MSYNC_FLAG_DIR_C2M);":
+            "ppa_cache_msync_external_window(in_fg_ext_window, in_fg_ext_window_len, "
+            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
+        "esp_cache_msync((void *)out_ext_window_aligned, "
+        "PPA_ALIGN_UP(out_ext_window_len + (out_ext_window - out_ext_window_aligned), "
+        "buf_alignment_size), ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE);":
+            "ppa_cache_msync_external_window(out_ext_window, out_ext_window_len, "
+            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE);",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    if text == original:
+        return
+    try:
+        src.write_text(text, encoding="utf-8")
+        print("Patched ESP-IDF PPA cache sync guards:", src)
+    except OSError as err:
+        print("WARNING: failed to patch ESP-IDF PPA source:", err)
+
+
+def patch_espidf_ppa_cache_sync():
+    if env is None:
+        return
+    framework_dir = env.PioPlatform().get_package_dir("framework-espidf")
+    if not framework_dir:
+        return
+    ppa_src = Path(framework_dir) / "components" / "esp_driver_ppa" / "src"
+    for name in ("ppa_srm.c", "ppa_blend.c", "ppa_fill.c"):
+        patch_espidf_ppa_cache_sync_source(ppa_src / name)
+
+
+patch_espidf_ppa_cache_sync()
 
 # Parse build flags from ESPHome's __init__.py
 _build_flags = " ".join(env.get("BUILD_FLAGS", [])) if env is not None else ""
