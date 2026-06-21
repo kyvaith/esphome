@@ -1497,7 +1497,11 @@ void LvglComponent::partial_compositor_task_() {
 
 #ifdef USE_MIPI_DSI
       auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
-      mipi_display->present_frame_buffer(this->partial_compositor_back_buffer_, y_start, y_end);
+      // present_frame_buffer() hands an exposed full framebuffer back to the
+      // DPI driver. Passing a non-zero y_start with a pointer to the beginning
+      // of the full framebuffer can make the driver interpret the wrong row as
+      // the top of the update area, which shows up as intermittent line noise.
+      mipi_display->present_frame_buffer(this->partial_compositor_back_buffer_, 0, this->height_ - 1);
 #endif
       std::swap(this->partial_compositor_front_buffer_, this->partial_compositor_back_buffer_);
       this->partial_compositor_dirty_count_ = 0;
