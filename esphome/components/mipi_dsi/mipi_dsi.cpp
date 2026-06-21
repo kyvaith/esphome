@@ -19,6 +19,25 @@ static volatile uint32_t dsi_underrun_count = 0;
 
 static bool is_aligned(uintptr_t value, size_t alignment) { return (value & (alignment - 1U)) == 0; }
 
+static esp_err_t cache_writeback_external_for_dma(const void *ptr, size_t size) {
+  if (ptr == nullptr || size == 0 || !esp_ptr_external_ram(ptr))
+    return ESP_OK;
+
+  static constexpr size_t CACHE_SYNC_ALIGN_BYTES = 128;
+  uintptr_t start = reinterpret_cast<uintptr_t>(ptr);
+  uintptr_t aligned_start = start & ~(static_cast<uintptr_t>(CACHE_SYNC_ALIGN_BYTES) - 1U);
+  uintptr_t aligned_end = (start + size + CACHE_SYNC_ALIGN_BYTES - 1U) &
+                          ~(static_cast<uintptr_t>(CACHE_SYNC_ALIGN_BYTES) - 1U);
+  if (aligned_end <= aligned_start)
+    return ESP_OK;
+  if (!esp_ptr_external_ram(reinterpret_cast<const void *>(aligned_start)) ||
+      !esp_ptr_external_ram(reinterpret_cast<const void *>(aligned_end - 1U)))
+    return ESP_ERR_INVALID_ARG;
+
+  return esp_cache_msync(reinterpret_cast<void *>(aligned_start), aligned_end - aligned_start,
+                         ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+}
+
 extern "C" void IRAM_ATTR esphome_mipi_dsi_note_underrun(void) { dsi_underrun_count++; }
 
 static bool IRAM_ATTR notify_color_trans_ready(esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_event_data_t *edata,
@@ -381,16 +400,16 @@ bool MipiDsi::draw_pixels_at_async(int x_start, int y_start, int w, int h, const
   const bool unsafe_addr = !is_aligned(ptr_addr, DMA2D_SAFE_ALIGN_BYTES);
   const bool unsafe_row = !is_aligned(row_bytes, DMA2D_SAFE_ALIGN_BYTES);
   const bool unsafe_size = !is_aligned(payload_size, DMA2D_SAFE_ALIGN_BYTES);
-  const bool can_zero_copy = src_internal && !unsafe_addr && !unsafe_row && !unsafe_size;
+  const bool src_external = esp_ptr_external_ram(ptr);
+  const bool can_zero_copy = (src_internal || src_external) && !unsafe_addr && !unsafe_row && !unsafe_size;
   const uint8_t *flush_ptr = ptr;
   bool staged = false;
   uint32_t sync_us = 0;
   uint32_t copy_us = 0;
   if (can_zero_copy) {
-    if (esp_ptr_external_ram(ptr)) {
+    if (src_external) {
       const uint64_t sync_start_us = esp_timer_get_time();
-      esp_err_t sync_err = esp_cache_msync(const_cast<uint8_t *>(ptr), payload_size,
-                                           ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+      esp_err_t sync_err = cache_writeback_external_for_dma(ptr, payload_size);
       sync_us = (uint32_t) (esp_timer_get_time() - sync_start_us);
       if (sync_err != ESP_OK) {
         ESP_LOGW(TAG, "async zero-copy cache sync failed: %s ptr=%p size=%zu w=%d h=%d row=%zu",
@@ -398,13 +417,21 @@ bool MipiDsi::draw_pixels_at_async(int x_start, int y_start, int w, int h, const
         return false;
       }
     }
-  } else if (!esp_ptr_external_ram(ptr)) {
+  } else {
     if (!this->ensure_async_staging_buffer_(payload_size))
       return false;
     const uint64_t copy_start_us = esp_timer_get_time();
     memcpy(this->async_staging_buffer_, ptr, payload_size);
     __sync_synchronize();
     copy_us = (uint32_t) (esp_timer_get_time() - copy_start_us);
+    const uint64_t sync_start_us = esp_timer_get_time();
+    esp_err_t sync_err = cache_writeback_external_for_dma(this->async_staging_buffer_, payload_size);
+    sync_us = (uint32_t) (esp_timer_get_time() - sync_start_us);
+    if (sync_err != ESP_OK) {
+      ESP_LOGW(TAG, "async staging cache sync failed: %s size=%zu w=%d h=%d row=%zu",
+               esp_err_to_name(sync_err), payload_size, w, h, row_bytes);
+      return false;
+    }
     flush_ptr = this->async_staging_buffer_;
     staged = true;
   }
