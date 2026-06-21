@@ -1572,6 +1572,12 @@ void LvglComponent::partial_compositor_copy_area_(uint8_t *dst, const lv_area_t 
   const int32_t src_off_y = src_is_framebuffer ? y1 : (y1 - area.y1);
   const bool src_geometry_ok = src_pic_w > 0 && src_pic_h > 0 && src_off_x >= 0 && src_off_y >= 0 &&
                                (src_off_x + copy_w) <= src_pic_w && (src_off_y + copy_h) <= src_pic_h;
+  /* The compositor mostly copies short RGB888 spans from LVGL's partial draw
+   * buffer into a full DSI framebuffer. PPA SRM is excellent for full-frame
+   * snapshot motion, but the RGB888 partial-copy path has shown cache/stride
+   * line artifacts on ESP32-P4 panels. Keep this hot correctness path on a
+   * deterministic CPU row copy and leave PPA SRM for snapshot compositing. */
+#if LV_COLOR_DEPTH != 32
   const size_t align = s_compositor_srm_alignment == 0 ? 64 : s_compositor_srm_alignment;
   const bool out_aligned = (align != 0) && ((reinterpret_cast<uintptr_t>(dst) & (align - 1)) == 0) &&
                            ((framebuffer_bytes & (align - 1)) == 0);
@@ -1631,6 +1637,7 @@ void LvglComponent::partial_compositor_copy_area_(uint8_t *dst, const lv_area_t 
       ppa_warn_count++;
     }
   }
+#endif
 #endif
 
   const uint8_t *src_row = src_is_framebuffer
