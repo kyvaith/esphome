@@ -77,7 +77,14 @@ static void lvgl_cache_msync_external(const void *ptr, size_t len, int flags) {
       !esp_ptr_external_ram(reinterpret_cast<const void *>(end - 1)))
     return;
 
-  esp_cache_msync(reinterpret_cast<void *>(start), end - start, flags);
+  if ((flags & (ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_INVALIDATE)) != 0) {
+    esp_err_t err = esp_cache_msync(reinterpret_cast<void *>(start), end - start, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    if (err != ESP_OK)
+      return;
+  }
+
+  esp_cache_msync(reinterpret_cast<void *>(start), end - start,
+                  flags & ~ESP_CACHE_MSYNC_FLAG_UNALIGNED);
 }
 #endif
 
@@ -1600,8 +1607,12 @@ void LvglComponent::partial_compositor_copy_area_(uint8_t *dst, const lv_area_t 
     cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
     cfg.mode = PPA_TRANS_MODE_BLOCKING;
     esp_err_t ret = ppa_do_scale_rotate_mirror(s_compositor_srm_client, &cfg);
-    if (ret == ESP_OK)
+    if (ret == ESP_OK) {
+      uint8_t *sync_start = dst + (size_t) y1 * row_bytes;
+      const size_t sync_size = (size_t) (y2 - y1 + 1) * row_bytes;
+      lvgl_cache_msync_external(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
       return;
+    }
 
     static uint32_t ppa_warn_count = 0;
     if (ppa_warn_count < 8) {
