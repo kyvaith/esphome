@@ -367,8 +367,10 @@ static void lv_draw_ppa_v9_handler(lv_draw_task_t *t, const lv_draw_sw_blend_dsc
         return;
     }
 
-    if (dsc->mask_buf && dsc->mask_res != LV_DRAW_SW_MASK_RES_FULL_COVER &&
-            dsc->mask_res != LV_DRAW_SW_MASK_RES_UNKNOWN) {
+    if (dsc->mask_buf && dsc->mask_res != LV_DRAW_SW_MASK_RES_FULL_COVER) {
+        /* UNKNOWN can still carry an anti-aliased/rounded mask. The PPA fast path below
+         * does not consume mask_buf, so using it for masked blends corrupts short horizontal
+         * spans inside rounded widgets. Keep those operations on LVGL's software blender. */
         lv_draw_ppa_v9_sw_fallback(t, dsc);
         return;
     }
