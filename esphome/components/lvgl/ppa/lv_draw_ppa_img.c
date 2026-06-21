@@ -56,10 +56,16 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
     lv_area_copy(&dest_area, clipped_img_area);
     lv_area_move(&dest_area, -t->target_layer->buf_area.x1, -t->target_layer->buf_area.y1);
 
+    if(decoded == NULL || decoded->data == NULL)
+        return;
+
     const uint8_t * src_buf = decoded->data;
-    lv_color_format_t src_cf = (lv_color_format_t)draw_dsc->header.cf;
+    lv_color_format_t src_cf = (lv_color_format_t)decoded->header.cf;
     lv_color_format_t dest_cf = (lv_color_format_t)draw_buf->header.cf;
     uint8_t * dest_buf = draw_buf->data;
+    uint32_t block_w = (uint32_t)lv_area_get_width(&src_area);
+    uint32_t block_h = (uint32_t)lv_area_get_height(&src_area);
+    lv_draw_ppa_cache_msync(decoded->data, decoded->data_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
     /* Use field-by-field assignment for C++ compatibility
      * (C++ designated initializers must be in declaration order) */
@@ -68,10 +74,10 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
 
     /* Background input (source image) */
     cfg.in_bg.buffer         = (void *)src_buf;
-    cfg.in_bg.pic_w          = draw_dsc->header.w;
-    cfg.in_bg.pic_h          = draw_dsc->header.h;
-    cfg.in_bg.block_w        = (uint32_t)lv_area_get_width(clipped_img_area);
-    cfg.in_bg.block_h        = (uint32_t)lv_area_get_height(clipped_img_area);
+    cfg.in_bg.pic_w          = decoded->header.w;
+    cfg.in_bg.pic_h          = decoded->header.h;
+    cfg.in_bg.block_w        = block_w;
+    cfg.in_bg.block_h        = block_h;
     cfg.in_bg.block_offset_x = (uint32_t)src_area.x1;
     cfg.in_bg.block_offset_y = (uint32_t)src_area.y1;
     cfg.in_bg.blend_cm       = lv_color_format_to_ppa_blend(src_cf);
@@ -84,12 +90,12 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
 
     /* Foreground input */
     cfg.in_fg.buffer         = (void *)dest_buf;
-    cfg.in_fg.pic_w          = draw_dsc->header.w;
-    cfg.in_fg.pic_h          = draw_dsc->header.h;
-    cfg.in_fg.block_w        = (uint32_t)lv_area_get_width(clipped_img_area);
-    cfg.in_fg.block_h        = (uint32_t)lv_area_get_height(clipped_img_area);
-    cfg.in_fg.block_offset_x = (uint32_t)src_area.x1;
-    cfg.in_fg.block_offset_y = (uint32_t)src_area.y1;
+    cfg.in_fg.pic_w          = draw_buf->header.w;
+    cfg.in_fg.pic_h          = draw_buf->header.h;
+    cfg.in_fg.block_w        = block_w;
+    cfg.in_fg.block_h        = block_h;
+    cfg.in_fg.block_offset_x = (uint32_t)dest_area.x1;
+    cfg.in_fg.block_offset_y = (uint32_t)dest_area.y1;
     cfg.in_fg.blend_cm       = PPA_BLEND_COLOR_MODE_A8;
 
     cfg.fg_rgb_swap          = false;
