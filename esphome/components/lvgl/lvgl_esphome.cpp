@@ -1572,6 +1572,12 @@ void LvglComponent::partial_compositor_copy_area_(uint8_t *dst, const lv_area_t 
   const bool out_aligned = (align != 0) && ((reinterpret_cast<uintptr_t>(dst) & (align - 1)) == 0) &&
                            ((framebuffer_bytes & (align - 1)) == 0);
   const bool ppa_safe_memory = esp_ptr_external_ram(src) && esp_ptr_external_ram(dst);
+  uint8_t *dst_sync_start = dst + (size_t) y1 * row_bytes;
+  const size_t dst_sync_size = (size_t) (y2 - y1 + 1) * row_bytes;
+  const uint8_t *src_sync_start = src_is_framebuffer
+                                      ? src + (size_t) y1 * row_bytes
+                                      : src + (size_t) (y1 - area.y1) * src_stride;
+  const size_t src_sync_size = src_is_framebuffer ? dst_sync_size : (size_t) (y2 - y1 + 1) * src_stride;
   if (s_compositor_srm_client != nullptr && src_geometry_ok && out_aligned && ppa_safe_memory) {
 #if LV_COLOR_DEPTH == 32
     constexpr ppa_srm_color_mode_t PPA_CM = PPA_SRM_COLOR_MODE_RGB888;
@@ -1599,9 +1605,17 @@ void LvglComponent::partial_compositor_copy_area_(uint8_t *dst, const lv_area_t 
     cfg.scale_y = 1.0f;
     cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
     cfg.mode = PPA_TRANS_MODE_BLOCKING;
+
+    /* Source and destination are PSRAM buffers shared by the CPU, PPA and DSI.
+     * Write back before PPA so dirty CPU cache lines cannot overwrite adjacent
+     * bytes later; invalidate after PPA so the CPU never sees stale output. */
+    lvgl_cache_msync_external(src_sync_start, src_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    lvgl_cache_msync_external(dst_sync_start, dst_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     esp_err_t ret = ppa_do_scale_rotate_mirror(s_compositor_srm_client, &cfg);
-    if (ret == ESP_OK)
+    if (ret == ESP_OK) {
+      lvgl_cache_msync_external(dst_sync_start, dst_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
       return;
+    }
 
     static uint32_t ppa_warn_count = 0;
     if (ppa_warn_count < 8) {
