@@ -910,12 +910,19 @@ void LvglComponent::esphome_lvgl_init() {
   // Two PPA paths active at once for max coverage:
   //
   //   1) lv_draw_ppa unit (full draw unit, lv_draw_ppa_init)
-  //      currently disabled while isolating ESP32-P4 RGB888 artifacts
+  //      → accelerates IMAGE draw tasks (canvas widget, lv_image)
+  //      → critical for camera streaming through lv_canvas
   //
   //   2) lvgl_ppa_accel_v9 (SW-blend handler, lvgl_port_ppa_v9_init)
-  //      accelerates RGB565 fills/blends in the SW pipeline
-  //      catches what the draw unit rejects (radius != 0, opa < max,
+  //      → accelerates RGB565 fills/blends in the SW pipeline
+  //      → catches what the draw unit rejects (radius != 0, opa < max,
   //        gradients, etc.)
+  //
+  // Espressif's esp_lvgl_adapter only uses (2), but that leaves canvas/
+  // image draws going through the slow SW image renderer. With a 640x480
+  // RGB565 camera canvas, this added ~50 ms of LVGL overhead per frame.
+  // Enabling (1) brings image drawing back onto PPA hardware.
+  lv_draw_ppa_init();
 
   // Register a dedicated PPA SRM client for display framebuffer rotation.
   // This is independent of the LVGL draw pipeline and stays enabled.
