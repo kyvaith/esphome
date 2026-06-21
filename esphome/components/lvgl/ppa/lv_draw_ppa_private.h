@@ -96,8 +96,17 @@ static inline void lv_draw_ppa_cache_msync(const void * p, uint32_t size, int fl
         return;
     }
 
+    int sync_flags = flags | ESP_CACHE_MSYNC_FLAG_TYPE_DATA;
+    if((sync_flags & (ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_INVALIDATE)) != 0) {
+        esp_err_t err = esp_cache_msync((void *)aligned_start, aligned_end - aligned_start,
+                                        ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+        if(err != ESP_OK) {
+            return;
+        }
+    }
+
     esp_cache_msync((void *)aligned_start, aligned_end - aligned_start,
-                    flags | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+                    sync_flags);
 }
 
 typedef struct lv_draw_ppa_unit {

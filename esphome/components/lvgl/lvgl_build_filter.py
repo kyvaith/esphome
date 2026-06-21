@@ -50,10 +50,30 @@ static esp_err_t ppa_cache_msync_external_window(uint32_t window_start, uint32_t
         return ESP_OK;
     }
 
-    return esp_cache_msync((void *)sync_start, sync_end - sync_start,
-                           flags & ~ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+    int sync_flags = flags & ~ESP_CACHE_MSYNC_FLAG_UNALIGNED;
+    if ((sync_flags & (ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_INVALIDATE)) != 0) {
+        esp_err_t err = esp_cache_msync((void *)sync_start, sync_end - sync_start,
+                                        ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+
+    return esp_cache_msync((void *)sync_start, sync_end - sync_start, sync_flags);
 }
 """
+
+
+def replace_espidf_ppa_cache_sync_helper(text):
+    helper_start = text.find("static esp_err_t ppa_cache_msync_external_window(")
+    if helper_start == -1:
+        return text
+    tag_start = text.find('\nstatic const char *TAG = "ppa_', helper_start)
+    if tag_start == -1:
+        return text
+    return (
+        text[:helper_start] + PPA_CACHE_SYNC_HELPER.strip() + "\n" + text[tag_start:]
+    )
 
 
 def write_atomic_shim(shim):
@@ -131,6 +151,8 @@ def patch_espidf_ppa_cache_sync_source(src):
             PPA_CACHE_SYNC_HELPER + '\nstatic const char *TAG = "ppa_',
             1,
         )
+    else:
+        text = replace_espidf_ppa_cache_sync_helper(text)
 
     replacements = {
         "esp_cache_msync((void *)in_ext_window, in_ext_window_len, "
