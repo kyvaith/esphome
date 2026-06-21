@@ -26,9 +26,12 @@
 
 #include "driver/ppa.h"
 #include "esp_cache.h"
+#include "esp_heap_caps.h"
 #include "esp_private/esp_cache_private.h"
 #include "esp_memory_utils.h"
 #include "esp_log.h"
+
+#include <string.h>
 
 uint32_t lvgl_esphome_get_perf_logging_enabled(void);
 
@@ -85,6 +88,8 @@ static ppa_client_handle_t s_blend_handle = NULL;
 static ppa_client_handle_t s_fill_handle = NULL;
 static size_t s_cache_align = 0;
 static bool s_handler_registered = false;
+static uint8_t *s_stage_buf = NULL;
+static size_t s_stage_buf_size = 0;
 
 static void lv_draw_ppa_v9_handler(lv_draw_task_t *t, const lv_draw_sw_blend_dsc_t *dsc);
 
@@ -143,18 +148,55 @@ static void ppa_cache_invalidate(const lv_area_t *area, const lv_area_t *buf_are
     ppa_cache_sync_region(area, buf_area, buf, px_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
 }
 
-static bool ppa_area_covers_full_buffer_rows(const lv_area_t *area, const lv_area_t *buf_area)
+static bool ppa_stage_reserve(size_t bytes)
 {
-    if (!area || !buf_area) {
+    size_t align = ppa_align();
+    size_t aligned_bytes = LVGL_PORT_PPA_ALIGN_UP(bytes, align);
+    if (s_stage_buf != NULL && s_stage_buf_size >= aligned_bytes) {
+        return true;
+    }
+
+    uint8_t *new_buf = (uint8_t *)heap_caps_aligned_alloc(align, aligned_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (new_buf == NULL) {
+        new_buf = (uint8_t *)heap_caps_aligned_alloc(align, aligned_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    }
+    if (new_buf == NULL) {
+        ESP_LOGW(TAG_V9, "PPA RGB888 stage buffer allocation failed: %u bytes", (unsigned)aligned_bytes);
         return false;
     }
 
-    return area->x1 == buf_area->x1 && area->x2 == buf_area->x2;
+    if (s_stage_buf != NULL) {
+        heap_caps_free(s_stage_buf);
+    }
+    s_stage_buf = new_buf;
+    s_stage_buf_size = aligned_bytes;
+    return true;
 }
 
-static void ppa_blend(void *bg_buf, lv_color_format_t color_format, uint32_t px_size,
-                      const lv_area_t *bg_area, const void *fg_buf, const lv_area_t *fg_area,
-                      uint16_t fg_stride_px, const lv_area_t *block_area, lv_opa_t opa)
+static void ppa_copy_stage_to_bg(void *bg_buf, const lv_area_t *bg_area,
+                                 const lv_area_t *block_area, uint32_t px_size)
+{
+    int32_t bg_w = lv_area_get_width(bg_area);
+    int32_t block_w = lv_area_get_width(block_area);
+    int32_t block_h = lv_area_get_height(block_area);
+    int32_t bg_off_x = block_area->x1 - bg_area->x1;
+    int32_t bg_off_y = block_area->y1 - bg_area->y1;
+
+    uint8_t *dst = (uint8_t *)bg_buf + ((size_t)bg_off_y * bg_w + bg_off_x) * px_size;
+    const uint8_t *src = s_stage_buf;
+    size_t dst_stride = (size_t)bg_w * px_size;
+    size_t src_stride = (size_t)block_w * px_size;
+
+    for (int32_t y = 0; y < block_h; y++) {
+        memcpy(dst + (size_t)y * dst_stride, src + (size_t)y * src_stride, src_stride);
+    }
+}
+
+static bool ppa_blend_to(void *bg_buf, lv_color_format_t color_format, uint32_t px_size,
+                         const lv_area_t *bg_area, const void *fg_buf, const lv_area_t *fg_area,
+                         uint16_t fg_stride_px, const lv_area_t *block_area, lv_opa_t opa,
+                         void *out_buf, uint16_t out_w, uint16_t out_h,
+                         uint16_t out_off_x, uint16_t out_off_y)
 {
     uint16_t bg_w = lv_area_get_width(bg_area);
     uint16_t bg_h = lv_area_get_height(bg_area);
@@ -199,12 +241,12 @@ static void ppa_blend(void *bg_buf, lv_color_format_t color_format, uint32_t px_
             .blend_cm = ppa_cf,
         },
         .out = {
-            .buffer = bg_buf,
-            .buffer_size = LVGL_PORT_PPA_ALIGN_UP((size_t)px_size * bg_w * bg_h, align),
-            .pic_w = bg_w,
-            .pic_h = bg_h,
-            .block_offset_x = bg_off_x,
-            .block_offset_y = bg_off_y,
+            .buffer = out_buf,
+            .buffer_size = LVGL_PORT_PPA_ALIGN_UP((size_t)px_size * out_w * out_h, align),
+            .pic_w = out_w,
+            .pic_h = out_h,
+            .block_offset_x = out_off_x,
+            .block_offset_y = out_off_y,
             .blend_cm = ppa_cf,
         },
         .bg_rgb_swap = 0,
@@ -221,14 +263,28 @@ static void ppa_blend(void *bg_buf, lv_color_format_t color_format, uint32_t px_
     esp_err_t err = ppa_do_blend(s_blend_handle, &cfg);
     if (err != ESP_OK) {
         ESP_LOGW(TAG_V9, "ppa_do_blend failed: %d", err);
+        return false;
     }
+    return true;
 }
 
-static void ppa_fill(void *bg_buf, lv_color_format_t color_format, uint32_t px_size,
-                     const lv_area_t *bg_area, const lv_area_t *block_area, lv_color_t color)
+static bool ppa_blend(void *bg_buf, lv_color_format_t color_format, uint32_t px_size,
+                      const lv_area_t *bg_area, const void *fg_buf, const lv_area_t *fg_area,
+                      uint16_t fg_stride_px, const lv_area_t *block_area, lv_opa_t opa)
 {
     uint16_t bg_w = lv_area_get_width(bg_area);
     uint16_t bg_h = lv_area_get_height(bg_area);
+    uint16_t bg_off_x = block_area->x1 - bg_area->x1;
+    uint16_t bg_off_y = block_area->y1 - bg_area->y1;
+
+    return ppa_blend_to(bg_buf, color_format, px_size, bg_area, fg_buf, fg_area, fg_stride_px, block_area, opa,
+                        bg_buf, bg_w, bg_h, bg_off_x, bg_off_y);
+}
+
+static bool ppa_fill_to(void *out_buf, lv_color_format_t color_format, uint32_t px_size,
+                        uint16_t out_w, uint16_t out_h, uint16_t out_off_x, uint16_t out_off_y,
+                        uint16_t fill_w, uint16_t fill_h, lv_color_t color)
+{
     size_t align = ppa_align();
     ppa_fill_color_mode_t ppa_cf = lv_color_format_to_ppa_fill(color_format);
 
@@ -238,16 +294,16 @@ static void ppa_fill(void *bg_buf, lv_color_format_t color_format, uint32_t px_s
 
     ppa_fill_oper_config_t cfg = {
         .out = {
-            .buffer = bg_buf,
-            .buffer_size = LVGL_PORT_PPA_ALIGN_UP((size_t)px_size * bg_w * bg_h, align),
-            .pic_w = bg_w,
-            .pic_h = bg_h,
-            .block_offset_x = (uint32_t)(block_area->x1 - bg_area->x1),
-            .block_offset_y = (uint32_t)(block_area->y1 - bg_area->y1),
+            .buffer = out_buf,
+            .buffer_size = LVGL_PORT_PPA_ALIGN_UP((size_t)px_size * out_w * out_h, align),
+            .pic_w = out_w,
+            .pic_h = out_h,
+            .block_offset_x = out_off_x,
+            .block_offset_y = out_off_y,
             .fill_cm = ppa_cf,
         },
-        .fill_block_w = (uint32_t)lv_area_get_width(block_area),
-        .fill_block_h = (uint32_t)lv_area_get_height(block_area),
+        .fill_block_w = fill_w,
+        .fill_block_h = fill_h,
         .mode = PPA_TRANS_MODE_BLOCKING,
     };
     cfg.fill_argb_color.val = argb;
@@ -255,7 +311,21 @@ static void ppa_fill(void *bg_buf, lv_color_format_t color_format, uint32_t px_s
     esp_err_t err = ppa_do_fill(s_fill_handle, &cfg);
     if (err != ESP_OK) {
         ESP_LOGW(TAG_V9, "ppa_do_fill failed: %d", err);
+        return false;
     }
+    return true;
+}
+
+static bool ppa_fill(void *bg_buf, lv_color_format_t color_format, uint32_t px_size,
+                     const lv_area_t *bg_area, const lv_area_t *block_area, lv_color_t color)
+{
+    uint16_t bg_w = lv_area_get_width(bg_area);
+    uint16_t bg_h = lv_area_get_height(bg_area);
+    uint16_t bg_off_x = block_area->x1 - bg_area->x1;
+    uint16_t bg_off_y = block_area->y1 - bg_area->y1;
+
+    return ppa_fill_to(bg_buf, color_format, px_size, bg_w, bg_h, bg_off_x, bg_off_y,
+                       lv_area_get_width(block_area), lv_area_get_height(block_area), color);
 }
 
 static void lv_draw_ppa_v9_sw_fallback(lv_draw_task_t *t, const lv_draw_sw_blend_dsc_t *dsc)
@@ -400,13 +470,75 @@ static void lv_draw_ppa_v9_handler(lv_draw_task_t *t, const lv_draw_sw_blend_dsc
         return;
     }
 
-    /* RGB888 is 3 bytes per pixel, so cache-line aligned M2C invalidation around
-     * a narrow PPA write can include neighbouring pixels that the CPU renderer
-     * just produced in the same row. Keep the fast path only for full-row spans;
-     * partial-row RGB888 blend/fill falls back to the LVGL software renderer.
-     */
-    if (layer->color_format == LV_COLOR_FORMAT_RGB888 &&
-            !ppa_area_covers_full_buffer_rows(&block_area, &layer->buf_area)) {
+    if (layer->color_format == LV_COLOR_FORMAT_RGB888) {
+        uint16_t block_w = lv_area_get_width(&block_area);
+        uint16_t block_h = lv_area_get_height(&block_area);
+        size_t stage_bytes = (size_t)block_w * block_h * dst_px_size;
+        if (!ppa_stage_reserve(stage_bytes)) {
+            lv_draw_ppa_v9_sw_fallback(t, dsc);
+            return;
+        }
+
+        if (dsc->src_buf) {
+            if (dsc->src_color_format != layer->color_format) {
+                lv_draw_ppa_v9_sw_fallback(t, dsc);
+                return;
+            }
+
+            const lv_area_t *src_area = dsc->src_area ? dsc->src_area : dsc->blend_area;
+            uint32_t src_px_size = lv_color_format_get_size(dsc->src_color_format);
+            size_t src_stride = dsc->src_stride ? dsc->src_stride : (lv_area_get_width(src_area) * src_px_size);
+
+            if (src_px_size == 0 || (src_stride % src_px_size) != 0) {
+                lv_draw_ppa_v9_sw_fallback(t, dsc);
+                return;
+            }
+
+            int32_t src_off_x = block_area.x1 - src_area->x1;
+            int32_t src_off_y = block_area.y1 - src_area->y1;
+            if (src_off_x < 0 || src_off_y < 0) {
+                lv_draw_ppa_v9_sw_fallback(t, dsc);
+                return;
+            }
+
+            ppa_cache_sync_region(&block_area, &layer->buf_area, bg_buf, dst_px_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+
+            const uint8_t *src_ptr8 = (const uint8_t *)dsc->src_buf +
+                                      (size_t)src_off_y * src_stride +
+                                      (size_t)src_off_x * src_px_size;
+            uintptr_t src_addr = (uintptr_t)src_ptr8;
+            uintptr_t src_aligned = src_addr & ~(align - 1);
+            size_t src_total = LVGL_PORT_PPA_ALIGN_UP(
+                                   ((size_t)(lv_area_get_height(&block_area) - 1) * src_stride +
+                                    (size_t)lv_area_get_width(&block_area) * src_px_size) +
+                                   (src_addr - src_aligned), align);
+            lv_draw_ppa_cache_msync((void *)src_aligned, src_total, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+
+            uint16_t src_stride_px = src_stride / src_px_size;
+            if (!ppa_blend_to(bg_buf, layer->color_format, dst_px_size, &layer->buf_area, dsc->src_buf,
+                              src_area, src_stride_px, &block_area, dsc->opa,
+                              s_stage_buf, block_w, block_h, 0, 0)) {
+                lv_draw_ppa_v9_sw_fallback(t, dsc);
+                return;
+            }
+            s_ppa_hw_blends++;
+            lv_draw_ppa_cache_msync(s_stage_buf, stage_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+            ppa_copy_stage_to_bg(bg_buf, &layer->buf_area, &block_area, dst_px_size);
+            return;
+        }
+
+        if (dsc->opa >= LV_OPA_MAX) {
+            if (!ppa_fill_to(s_stage_buf, layer->color_format, dst_px_size, block_w, block_h, 0, 0,
+                             block_w, block_h, dsc->color)) {
+                lv_draw_ppa_v9_sw_fallback(t, dsc);
+                return;
+            }
+            s_ppa_hw_fills++;
+            lv_draw_ppa_cache_msync(s_stage_buf, stage_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+            ppa_copy_stage_to_bg(bg_buf, &layer->buf_area, &block_area, dst_px_size);
+            return;
+        }
+
         lv_draw_ppa_v9_sw_fallback(t, dsc);
         return;
     }
@@ -448,8 +580,11 @@ static void lv_draw_ppa_v9_handler(lv_draw_task_t *t, const lv_draw_sw_blend_dsc
 
         uint16_t src_stride_px = src_stride / src_px_size;
         s_ppa_hw_blends++;
-        ppa_blend(bg_buf, layer->color_format, dst_px_size, &layer->buf_area, dsc->src_buf,
-                  src_area, src_stride_px, &block_area, dsc->opa);
+        if (!ppa_blend(bg_buf, layer->color_format, dst_px_size, &layer->buf_area, dsc->src_buf,
+                       src_area, src_stride_px, &block_area, dsc->opa)) {
+            lv_draw_ppa_v9_sw_fallback(t, dsc);
+            return;
+        }
 
         ppa_cache_invalidate(&block_area, &layer->buf_area, bg_buf, dst_px_size);
         return;
@@ -457,7 +592,10 @@ static void lv_draw_ppa_v9_handler(lv_draw_task_t *t, const lv_draw_sw_blend_dsc
 
     if (dsc->opa >= LV_OPA_MAX) {
         s_ppa_hw_fills++;
-        ppa_fill(bg_buf, layer->color_format, dst_px_size, &layer->buf_area, &block_area, dsc->color);
+        if (!ppa_fill(bg_buf, layer->color_format, dst_px_size, &layer->buf_area, &block_area, dsc->color)) {
+            lv_draw_ppa_v9_sw_fallback(t, dsc);
+            return;
+        }
         ppa_cache_invalidate(&block_area, &layer->buf_area, bg_buf, dst_px_size);
         return;
     }
