@@ -143,15 +143,6 @@ static void ppa_cache_invalidate(const lv_area_t *area, const lv_area_t *buf_are
     ppa_cache_sync_region(area, buf_area, buf, px_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
 }
 
-static bool ppa_area_covers_full_buffer_rows(const lv_area_t *area, const lv_area_t *buf_area)
-{
-    if (!area || !buf_area) {
-        return false;
-    }
-
-    return area->x1 == buf_area->x1 && area->x2 == buf_area->x2;
-}
-
 static void ppa_blend(void *bg_buf, lv_color_format_t color_format, uint32_t px_size,
                       const lv_area_t *bg_area, const void *fg_buf, const lv_area_t *fg_area,
                       uint16_t fg_stride_px, const lv_area_t *block_area, lv_opa_t opa)
@@ -396,17 +387,6 @@ static void lv_draw_ppa_v9_handler(lv_draw_task_t *t, const lv_draw_sw_blend_dsc
 
     if (block_area.x1 < layer->buf_area.x1 || block_area.y1 < layer->buf_area.y1 ||
             block_area.x2 > layer->buf_area.x2 || block_area.y2 > layer->buf_area.y2) {
-        lv_draw_ppa_v9_sw_fallback(t, dsc);
-        return;
-    }
-
-    /* RGB888 is 3 bytes per pixel, so cache-line aligned M2C invalidation around
-     * a narrow PPA write can include neighbouring pixels that the CPU renderer
-     * just produced in the same row. Keep the fast path only for full-row spans;
-     * partial-row RGB888 blend/fill falls back to the LVGL software renderer.
-     */
-    if (layer->color_format == LV_COLOR_FORMAT_RGB888 &&
-            !ppa_area_covers_full_buffer_rows(&block_area, &layer->buf_area)) {
         lv_draw_ppa_v9_sw_fallback(t, dsc);
         return;
     }
