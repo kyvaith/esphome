@@ -104,6 +104,10 @@ size_t ESPAudioStackSpeaker::play(const uint8_t *data, size_t length,
     return 0;
   }
 
+  if (this->parent_->has_i2s_error() && millis() < this->next_start_retry_ms_) {
+    return 0;
+  }
+
   if (this->state_ != speaker::STATE_RUNNING && this->state_ != speaker::STATE_STARTING) {
     this->start();
   }
@@ -183,10 +187,11 @@ void ESPAudioStackSpeaker::set_pause_state(bool pause_state) {
 }
 
 void ESPAudioStackSpeaker::loop() {
-  // Propagate I2S errors from parent audio task
-  if (this->parent_->has_i2s_error() && !this->status_has_error()) {
-    ESP_LOGE(TAG, "I2S error detected in audio task");
-    this->status_set_error(LOG_STR("I2S write error in audio task"));
+  // Keep parent I2S failures retryable. A transient start failure should not
+  // permanently poison the speaker entity or turn every incoming audio chunk
+  // into another immediate start attempt.
+  if (this->parent_->has_i2s_error() && millis() < this->next_start_retry_ms_) {
+    return;
   }
 
   UBaseType_t count = uxSemaphoreGetCount(this->active_listeners_semaphore_);
@@ -211,6 +216,7 @@ void ESPAudioStackSpeaker::loop() {
       this->parent_->start_speaker();
       if (!this->parent_->is_running()) {
         ESP_LOGW(TAG, "Parent audio stack failed to start; aborting speaker start");
+        this->next_start_retry_ms_ = millis() + 2000;
         this->stop();
         this->state_ = speaker::STATE_STOPPED;
         break;

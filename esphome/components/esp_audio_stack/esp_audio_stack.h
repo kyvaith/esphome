@@ -163,12 +163,10 @@ class ESPAudioStack : public Component {
   void setup() override;
   void loop() override;
   void dump_config() override;
-  // PROCESSOR (=400) is the ESPHome tier for audio pipeline components;
-  // HARDWARE (=800) is the I2C/SPI bus tier and runs too early. The
-  // companion processors (esp_aec/esp_afe) also use PROCESSOR, so the
-  // component-internal pointers (set_processor) are wired up before any
-  // setup() touches the audio path.
-  float get_setup_priority() const override { return setup_priority::PROCESSOR; }
+  // Run just before companion processors at PROCESSOR priority so the I2S DMA
+  // buffers can be reserved before AFE setup consumes/fragment internal memory.
+  // HARDWARE (=800) is still too early for codec buses.
+  float get_setup_priority() const override { return setup_priority::PROCESSOR + 1.0f; }
 
   // Pin setters
   void set_lrclk_pin(int pin) { this->lrclk_pin_ = pin; }

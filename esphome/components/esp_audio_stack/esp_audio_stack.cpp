@@ -380,6 +380,13 @@ void ESPAudioStack::setup() {
     return;
   }
 
+  // Reserve I2S DMA while internal memory is still contiguous. start() will
+  // only open/enable the already prepared channels.
+  if (!this->prepare_i2s_channels_()) {
+    ESP_LOGW(TAG, "Early I2S DMA reservation failed; will retry on first audio start");
+    this->deinit_i2s_();
+  }
+
   // Reserve the hot-path RX/TX/processor buffers as early as the real frame
   // shape allows. The allocation itself runs on the parked audio task, so this
   // does not move heavy heap work into the ESPHome setup thread. If processor
@@ -1007,8 +1014,8 @@ bool ESPAudioStack::enable_i2s_channels_() {
     return true;
   }
   if (state == I2SHardwareState::ERROR) {
-    ESP_LOGE(TAG, "Cannot enable I2S from error state");
-    return false;
+    ESP_LOGW(TAG, "Recovering I2S from error state before restart");
+    this->deinit_i2s_();
   }
   if (!this->prepare_i2s_channels_()) {
     return false;
@@ -1143,7 +1150,9 @@ void ESPAudioStack::start() {
   // I2S allocation happens here, not in setup(): start() owns both driver
   // channel creation and GMF IO open while stop() tears the bus back down.
   this->request_audio_preallocation_();
+  this->has_i2s_error_.store(false, std::memory_order_relaxed);
   if (!this->enable_i2s_channels_()) {
+    this->has_i2s_error_.store(true, std::memory_order_relaxed);
     ESP_LOGE(TAG, "Failed to start I2S");
     return;
   }
