@@ -67,6 +67,22 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
     uint32_t block_h = (uint32_t)lv_area_get_height(&src_area);
     lv_draw_ppa_cache_msync(decoded->data, decoded->data_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
+    uint32_t src_px_size = lv_color_format_get_size(src_cf);
+    uint32_t dest_px_size = lv_color_format_get_size(dest_cf);
+    uint32_t src_stride = decoded->header.stride ? decoded->header.stride : (decoded->header.w * src_px_size);
+    uint32_t dest_stride = draw_buf->header.stride ? draw_buf->header.stride : (draw_buf->header.w * dest_px_size);
+    if(src_px_size == 0 || dest_px_size == 0 ||
+       (src_stride % src_px_size) != 0 ||
+       (dest_stride % dest_px_size) != 0) {
+        LV_LOG_WARN("PPA image skipped: invalid stride src=%u/%u dest=%u/%u",
+                    (unsigned)src_stride, (unsigned)src_px_size,
+                    (unsigned)dest_stride, (unsigned)dest_px_size);
+        return;
+    }
+    uint32_t src_stride_px = src_stride / src_px_size;
+    uint32_t dest_stride_px = dest_stride / dest_px_size;
+    uint32_t dest_buffer_size = lv_draw_ppa_align_size((size_t)dest_stride * draw_buf->header.h);
+
     /* Use field-by-field assignment for C++ compatibility
      * (C++ designated initializers must be in declaration order) */
     ppa_blend_oper_config_t cfg;
@@ -74,7 +90,7 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
 
     /* Background input (source image) */
     cfg.in_bg.buffer         = (void *)src_buf;
-    cfg.in_bg.pic_w          = decoded->header.w;
+    cfg.in_bg.pic_w          = src_stride_px;
     cfg.in_bg.pic_h          = decoded->header.h;
     cfg.in_bg.block_w        = block_w;
     cfg.in_bg.block_h        = block_h;
@@ -90,7 +106,7 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
 
     /* Foreground input */
     cfg.in_fg.buffer         = (void *)dest_buf;
-    cfg.in_fg.pic_w          = draw_buf->header.w;
+    cfg.in_fg.pic_w          = dest_stride_px;
     cfg.in_fg.pic_h          = draw_buf->header.h;
     cfg.in_fg.block_w        = block_w;
     cfg.in_fg.block_h        = block_h;
@@ -107,8 +123,8 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
     /* Output */
     cfg.out.buffer           = dest_buf;
     /* PPA hardware rejects unaligned out.buffer_size (issue #9868). */
-    cfg.out.buffer_size      = lv_draw_ppa_align_size(draw_buf->data_size);
-    cfg.out.pic_w            = draw_buf->header.w;
+    cfg.out.buffer_size      = dest_buffer_size;
+    cfg.out.pic_w            = dest_stride_px;
     cfg.out.pic_h            = draw_buf->header.h;
     cfg.out.block_offset_x   = (uint32_t)dest_area.x1;
     cfg.out.block_offset_y   = (uint32_t)dest_area.y1;
@@ -213,14 +229,31 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
 
     uint32_t out_bpp = (dest_cf == LV_COLOR_FORMAT_RGB565) ? 2u :
                        (dest_cf == LV_COLOR_FORMAT_RGB888)  ? 3u : 4u;
-    uint32_t raw_bytes    = (uint32_t)dest_buf->header.w * dest_buf->header.h * out_bpp;
+    uint32_t src_bpp = lv_color_format_get_size(src_cf);
+    uint32_t src_stride = decoded->header.stride ? decoded->header.stride : (src_w * src_bpp);
+    if(src_bpp == 0 || (src_stride % src_bpp) != 0) {
+        LV_LOG_WARN("PPA SRM scale skipped: invalid src stride=%u px=%u",
+                    (unsigned)src_stride, (unsigned)src_bpp);
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    uint32_t src_stride_px = src_stride / src_bpp;
+    uint32_t dest_stride = dest_buf->header.stride ? dest_buf->header.stride : (dest_buf->header.w * out_bpp);
+    if(out_bpp == 0 || (dest_stride % out_bpp) != 0) {
+        LV_LOG_WARN("PPA SRM scale skipped: invalid dest stride=%u px=%u",
+                    (unsigned)dest_stride, (unsigned)out_bpp);
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    uint32_t dest_stride_px = dest_stride / out_bpp;
+    uint32_t raw_bytes    = dest_stride * dest_buf->header.h;
     uint32_t aligned_size = lv_draw_ppa_align_size(raw_bytes);
 
     ppa_srm_oper_config_t cfg;
     lv_memzero(&cfg, sizeof(cfg));
 
     cfg.in.buffer         = (void *)decoded->data;
-    cfg.in.pic_w          = src_w;
+    cfg.in.pic_w          = src_stride_px;
     cfg.in.pic_h          = src_h;
     cfg.in.block_w        = src_bw;
     cfg.in.block_h        = src_bh;
@@ -248,7 +281,7 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
 
     cfg.out.buffer         = out_ptr;
     cfg.out.buffer_size    = aligned_size;
-    cfg.out.pic_w          = dest_buf->header.w;
+    cfg.out.pic_w          = dest_stride_px;
     cfg.out.pic_h          = dest_buf->header.h;
     cfg.out.block_offset_x = (uint32_t)dest_area.x1;
     cfg.out.block_offset_y = (uint32_t)dest_area.y1;
@@ -278,7 +311,7 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
         lv_draw_ppa_cache_msync(out_ptr, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
 
         uint8_t *base = out_ptr;
-        uint32_t stride = dest_buf->header.w * out_bpp;
+        uint32_t stride = dest_stride;
 
         if(gap_right && clip_w >= 2) {
             uint32_t col = dest_area.x1 + (uint32_t)clip_w - 1;
@@ -389,8 +422,17 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     lv_memzero(&cfg, sizeof(cfg));
 
     /* Input: full source image block */
+    uint32_t src_bpp_r = lv_color_format_get_size(src_cf);
+    uint32_t src_stride_r = decoded->header.stride ? decoded->header.stride : (src_w * src_bpp_r);
+    if(src_bpp_r == 0 || (src_stride_r % src_bpp_r) != 0) {
+        LV_LOG_WARN("PPA SRM rotate skipped: invalid src stride=%u px=%u",
+                    (unsigned)src_stride_r, (unsigned)src_bpp_r);
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    uint32_t src_stride_px_r = src_stride_r / src_bpp_r;
     cfg.in.buffer         = (void *)decoded->data;
-    cfg.in.pic_w          = src_w;
+    cfg.in.pic_w          = src_stride_px_r;
     cfg.in.pic_h          = src_h;
     cfg.in.block_w        = src_w;
     cfg.in.block_h        = src_h;
@@ -400,7 +442,15 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
 
     uint32_t out_bpp_r = (dest_cf == LV_COLOR_FORMAT_RGB565) ? 2u :
                          (dest_cf == LV_COLOR_FORMAT_RGB888)  ? 3u : 4u;
-    uint32_t raw_bytes_r    = (uint32_t)dest_buf->header.w * dest_buf->header.h * out_bpp_r;
+    uint32_t dest_stride_r = dest_buf->header.stride ? dest_buf->header.stride : (dest_buf->header.w * out_bpp_r);
+    if(out_bpp_r == 0 || (dest_stride_r % out_bpp_r) != 0) {
+        LV_LOG_WARN("PPA SRM rotate skipped: invalid dest stride=%u px=%u",
+                    (unsigned)dest_stride_r, (unsigned)out_bpp_r);
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    uint32_t dest_stride_px_r = dest_stride_r / out_bpp_r;
+    uint32_t raw_bytes_r    = dest_stride_r * dest_buf->header.h;
     uint32_t aligned_size_r = lv_draw_ppa_align_size(raw_bytes_r);
 
     uint8_t * aligned_out_r = NULL;
@@ -423,7 +473,7 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
 
     cfg.out.buffer         = out_ptr_r;
     cfg.out.buffer_size    = aligned_size_r;
-    cfg.out.pic_w          = dest_buf->header.w;
+    cfg.out.pic_w          = dest_stride_px_r;
     cfg.out.pic_h          = dest_buf->header.h;
     cfg.out.block_offset_x = (uint32_t)dest_area.x1;
     cfg.out.block_offset_y = (uint32_t)dest_area.y1;

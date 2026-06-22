@@ -31,6 +31,14 @@ void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
 
     ppa_fill_oper_config_t fill_cfg;
     lv_memzero(&fill_cfg, sizeof(fill_cfg));
+    lv_color_format_t dest_cf = (lv_color_format_t)draw_buf->header.cf;
+    uint32_t dest_px_size = lv_color_format_get_size(dest_cf);
+    uint32_t dest_stride = draw_buf->header.stride ? draw_buf->header.stride : (draw_buf->header.w * dest_px_size);
+    if(dest_px_size == 0 || (dest_stride % dest_px_size) != 0) {
+        LV_LOG_WARN("PPA fill skipped: invalid stride=%u px=%u", (unsigned)dest_stride, (unsigned)dest_px_size);
+        return;
+    }
+    uint32_t dest_stride_px = dest_stride / dest_px_size;
 
     fill_cfg.fill_argb_color.val = lv_color_to_u32(dsc->color);
     fill_cfg.out.block_offset_x  = (uint32_t)blend_area.x1;
@@ -40,8 +48,8 @@ void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
     fill_cfg.fill_block_h        = (uint32_t)lv_area_get_height(&blend_area);
     fill_cfg.out.buffer          = draw_buf->data;
     /* PPA hardware rejects unaligned out.buffer_size (issue #9868). */
-    fill_cfg.out.buffer_size     = lv_draw_ppa_align_size(draw_buf->data_size);
-    fill_cfg.out.pic_w           = draw_buf->header.w;
+    fill_cfg.out.buffer_size     = lv_draw_ppa_align_size((size_t)dest_stride * draw_buf->header.h);
+    fill_cfg.out.pic_w           = dest_stride_px;
     fill_cfg.out.pic_h           = draw_buf->header.h;
     fill_cfg.mode                = PPA_TRANS_MODE_BLOCKING;
 

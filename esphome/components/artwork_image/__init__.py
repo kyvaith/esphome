@@ -2,7 +2,7 @@ import logging
 import os
 
 from esphome import automation
-from esphome.components import esp32
+from esphome.components import esp32, sendspin
 import esphome.codegen as cg
 from esphome.components.const import CONF_BYTE_ORDER, CONF_REQUEST_HEADERS
 from esphome.components.http_request import CONF_HTTP_REQUEST_ID, HttpRequestComponent
@@ -49,6 +49,8 @@ CONF_ALLOW_INSECURE_LOCAL_URLS = "allow_insecure_local_urls"
 CONF_PLACEHOLDER = "placeholder"
 CONF_TRANSPARENCY = "transparency"
 CONF_UPDATE = "update"
+CONF_SENDSPIN_SLOT = "sendspin_slot"
+CONF_IMMEDIATE = "immediate"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -178,6 +180,8 @@ ARTWORK_IMAGE_SCHEMA = (
             cv.Optional(CONF_PLACEHOLDER): cv.use_id(Image_),
             cv.Optional(CONF_BUFFER_SIZE, default=65536): cv.int_range(256, 524288),
             cv.Optional(CONF_ALLOW_INSECURE_LOCAL_URLS, default=False): cv.boolean,
+            cv.Optional(sendspin.CONF_SENDSPIN_ID): cv.use_id(sendspin.SendspinHub),
+            cv.Optional(CONF_SENDSPIN_SLOT, default=0): cv.int_range(0, 3),
             cv.Optional(CONF_ON_DOWNLOAD_FINISHED): automation.validate_automation({}),
             cv.Optional(CONF_ON_ERROR): automation.validate_automation({}),
         }
@@ -200,9 +204,18 @@ def _consume_sockets(config):
     return config
 
 
+def _request_sendspin_artwork(config):
+    """Request binary artwork negotiation when this image is bound to a Sendspin hub."""
+    if sendspin.CONF_SENDSPIN_ID in config:
+        width, height = config.get(CONF_RESIZE, (300, 300))
+        sendspin.request_artwork_support(width, height)
+    return config
+
+
 CONFIG_SCHEMA = cv.Schema(
     cv.All(
         ARTWORK_IMAGE_SCHEMA,
+        _request_sendspin_artwork,
         _consume_sockets,
         cv.require_framework_version(
             # esp8266 not supported yet; if enabled in the future, minimum version of 2.7.0 is needed
@@ -227,6 +240,7 @@ SET_URL_SCHEMA = cv.Schema(
 RELEASE_IMAGE_SCHEMA = automation.maybe_simple_id(
     {
         cv.GenerateID(): cv.use_id(ArtworkImage),
+        cv.Optional(CONF_IMMEDIATE, default=False): cv.templatable(cv.boolean),
     }
 )
 
@@ -255,6 +269,9 @@ async def artwork_image_action_to_code(config, action_id, template_arg, args):
     if CONF_UPDATE in config:
         template_ = await cg.templatable(config[CONF_UPDATE], args, bool)
         cg.add(var.set_update(template_))
+    if CONF_IMMEDIATE in config:
+        template_ = await cg.templatable(config[CONF_IMMEDIATE], args, bool)
+        cg.add(var.set_immediate(template_))
     return var
 
 
@@ -276,6 +293,7 @@ async def to_code(config):
     if lvgl_defines is not None:
         lvgl_defines.add_define("LV_DRAW_SW_SUPPORT_RGB565", "1")
         lvgl_defines.add_define("LV_DRAW_SW_SUPPORT_RGB565A8", "1")
+        lvgl_defines.add_define("LV_DRAW_SW_SUPPORT_RGB888", "1")
 
     url = config[CONF_URL]
     width, height = config.get(CONF_RESIZE, (0, 0))
@@ -297,7 +315,7 @@ async def to_code(config):
         get_image_type_enum(config[CONF_TYPE]),
         transparent,
         config[CONF_BUFFER_SIZE],
-        config.get(CONF_BYTE_ORDER) != "LITTLE_ENDIAN",
+        config.get(CONF_BYTE_ORDER, "LITTLE_ENDIAN") != "LITTLE_ENDIAN",
         config[CONF_ALLOW_INSECURE_LOCAL_URLS],
     )
     await cg.register_component(var, config)
@@ -313,5 +331,10 @@ async def to_code(config):
     if placeholder_id := config.get(CONF_PLACEHOLDER):
         placeholder = await cg.get_variable(placeholder_id)
         cg.add(var.set_placeholder(placeholder))
+
+    if sendspin_id := config.get(sendspin.CONF_SENDSPIN_ID):
+        hub = await cg.get_variable(sendspin_id)
+        cg.add(var.set_sendspin_hub(hub))
+        cg.add(var.set_sendspin_slot(config[CONF_SENDSPIN_SLOT]))
 
     await automation.build_callback_automations(var, config, _CALLBACK_AUTOMATIONS)

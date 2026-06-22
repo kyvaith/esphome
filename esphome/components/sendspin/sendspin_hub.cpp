@@ -38,6 +38,16 @@ void SendspinHub::setup() {
   this->client_->set_network_provider(this);
   this->client_->set_persistence_provider(this);
 
+#ifdef USE_SENDSPIN_ARTWORK
+  sendspin::ArtworkRoleConfig artwork_config;
+  artwork_config.preferred_formats = {
+      {0, sendspin::SendspinImageSource::ALBUM, sendspin::SendspinImageFormat::JPEG, this->artwork_width_,
+       this->artwork_height_},
+  };
+  this->artwork_role_ = &this->client_->add_artwork(std::move(artwork_config));
+  this->artwork_role_->set_listener(this);
+#endif
+
 #ifdef USE_SENDSPIN_CONTROLLER
   this->controller_role_ = &this->client_->add_controller();
   this->controller_role_->set_listener(this);
@@ -184,6 +194,42 @@ std::optional<uint32_t> SendspinHub::load_last_server_hash() {
 }
 
 // --- Sendspin role specific methods/overrides ---
+
+#ifdef USE_SENDSPIN_ARTWORK
+// THREAD CONTEXT: Sendspin artwork decode task.
+void SendspinHub::on_image_decode(uint8_t slot, const uint8_t *data, size_t length,
+                                  sendspin::SendspinImageFormat format) {
+  if (slot >= 4 || data == nullptr || length == 0) {
+    return;
+  }
+  auto &target = this->artwork_slots_[slot];
+  target.data.clear();
+  target.format = format;
+  target.ready = true;
+  ESP_LOGD(TAG, "Artwork slot %u received: %zu bytes", slot, length);
+  this->artwork_image_callbacks_.call(slot, data, length, format);
+}
+
+// THREAD CONTEXT: Main loop (ArtworkRoleListener override, fired from client_->loop()).
+void SendspinHub::on_image_display(uint8_t slot) {
+  if (slot >= 4) {
+    return;
+  }
+  if (!this->artwork_slots_[slot].ready) {
+    return;
+  }
+  this->artwork_display_callbacks_.call(slot);
+}
+
+// THREAD CONTEXT: Main loop (ArtworkRoleListener override, fired from client_->loop()).
+void SendspinHub::on_image_clear(uint8_t slot) {
+  if (slot < 4) {
+    this->artwork_slots_[slot].ready = false;
+    this->artwork_slots_[slot].data.clear();
+  }
+  this->artwork_clear_callbacks_.call(slot);
+}
+#endif
 
 #ifdef USE_SENDSPIN_CONTROLLER
 // THREAD CONTEXT: Main loop (invoked from ESPHome actions / other components)

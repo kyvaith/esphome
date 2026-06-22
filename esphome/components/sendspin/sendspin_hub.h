@@ -13,6 +13,9 @@
 #include <sendspin/config.h>
 #include <sendspin/types.h>
 
+#ifdef USE_SENDSPIN_ARTWORK
+#include <sendspin/artwork_role.h>
+#endif
 #ifdef USE_SENDSPIN_CONTROLLER
 #include <sendspin/controller_role.h>
 #endif
@@ -26,6 +29,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace esphome::sendspin_ {
 
@@ -69,6 +73,9 @@ struct StaticDelayPref {
 ///    (for services the library pulls; e.g., persistence, network readiness).
 ///  - User -> library communication uses exposed functions on the client and role objects that the user calls.
 class SendspinHub final : public Component,
+#ifdef USE_SENDSPIN_ARTWORK
+                          public sendspin::ArtworkRoleListener,
+#endif
 #ifdef USE_SENDSPIN_CONTROLLER
                           public sendspin::ControllerRoleListener,
 #endif
@@ -121,6 +128,25 @@ class SendspinHub final : public Component,
 
   // --- Sendspin role specific methods ---
 
+#ifdef USE_SENDSPIN_ARTWORK
+  void set_artwork_size(uint16_t width, uint16_t height) {
+    this->artwork_width_ = width;
+    this->artwork_height_ = height;
+  }
+
+  template<typename F> void add_artwork_image_callback(F &&callback) {
+    this->artwork_image_callbacks_.add(std::forward<F>(callback));
+  }
+
+  template<typename F> void add_artwork_display_callback(F &&callback) {
+    this->artwork_display_callbacks_.add(std::forward<F>(callback));
+  }
+
+  template<typename F> void add_artwork_clear_callback(F &&callback) {
+    this->artwork_clear_callbacks_.add(std::forward<F>(callback));
+  }
+#endif
+
 #ifdef USE_SENDSPIN_CONTROLLER
   void send_client_command(sendspin::SendspinControllerCommand command, std::optional<uint8_t> volume = std::nullopt,
                            std::optional<bool> mute = std::nullopt);
@@ -170,6 +196,27 @@ class SendspinHub final : public Component,
   std::optional<uint32_t> load_last_server_hash() override;
 
   // --- Sendspin role specific methods/overrides/member variables ---
+
+#ifdef USE_SENDSPIN_ARTWORK
+  struct ArtworkSlotData {
+    std::vector<uint8_t> data;
+    sendspin::SendspinImageFormat format{sendspin::SendspinImageFormat::JPEG};
+    bool ready{false};
+  };
+
+  sendspin::ArtworkRole *artwork_role_{nullptr};
+  uint16_t artwork_width_{300};
+  uint16_t artwork_height_{300};
+  ArtworkSlotData artwork_slots_[4]{};
+
+  void on_image_decode(uint8_t slot, const uint8_t *data, size_t length, sendspin::SendspinImageFormat format) override;
+  void on_image_display(uint8_t slot) override;
+  void on_image_clear(uint8_t slot) override;
+
+  CallbackManager<void(uint8_t, const uint8_t *, size_t, sendspin::SendspinImageFormat)> artwork_image_callbacks_{};
+  CallbackManager<void(uint8_t)> artwork_display_callbacks_{};
+  CallbackManager<void(uint8_t)> artwork_clear_callbacks_{};
+#endif
 
 #ifdef USE_SENDSPIN_CONTROLLER
   sendspin::ControllerRole *controller_role_{nullptr};

@@ -25,7 +25,7 @@ static const size_t RING_BUFFER_SIZE = RING_BUFFER_SAMPLES * sizeof(int16_t);
 static const size_t SEND_BUFFER_SAMPLES = 32 * SAMPLE_RATE_HZ / 1000;  // 32ms * 16kHz / 1000ms
 static const size_t SEND_BUFFER_SIZE = SEND_BUFFER_SAMPLES * sizeof(int16_t);
 static const size_t RECEIVE_SIZE = 1024;
-static const size_t SPEAKER_BUFFER_SIZE = 16 * RECEIVE_SIZE;
+static const size_t SPEAKER_BUFFER_SIZE = 64 * RECEIVE_SIZE;
 
 // If one microphone channel keeps producing audio while another configured channel produces none for this
 // long, treat the silent channel as failed and stop the stream. A working microphone exposes a chunk every
@@ -184,6 +184,7 @@ void VoiceAssistant::clear_buffers_() {
     this->speaker_buffer_size_ = 0;
     this->speaker_buffer_index_ = 0;
     this->speaker_bytes_received_ = 0;
+    this->accept_speaker_stream_ = false;
   }
 #endif
 }
@@ -504,6 +505,7 @@ void VoiceAssistant::loop() {
 
         this->clear_buffers_();
 
+        this->accept_speaker_stream_ = false;
         this->wait_for_stream_end_ = false;
         this->stream_ended_ = false;
 
@@ -513,6 +515,7 @@ void VoiceAssistant::loop() {
       if (this->continue_conversation_) {
         this->set_state_(State::START_MICROPHONE, State::START_PIPELINE);
       } else {
+        this->continuous_ = false;
         this->set_state_(State::IDLE, State::IDLE);
       }
       break;
@@ -525,8 +528,8 @@ void VoiceAssistant::loop() {
 #ifdef USE_SPEAKER
 void VoiceAssistant::write_speaker_() {
   if ((this->speaker_ != nullptr) && (this->speaker_buffer_ != nullptr)) {
-    if (this->speaker_buffer_size_ > 0) {
-      size_t write_chunk = std::min<size_t>(this->speaker_buffer_size_, 4 * 1024);
+    for (uint8_t attempts = 0; attempts < 4 && this->speaker_buffer_size_ > 0; attempts++) {
+      size_t write_chunk = std::min<size_t>(this->speaker_buffer_size_, 8 * 1024);
       size_t written = this->speaker_->play(this->speaker_buffer_, write_chunk);
       if (written > 0) {
         memmove(this->speaker_buffer_, this->speaker_buffer_ + written, this->speaker_buffer_size_ - written);
@@ -535,6 +538,7 @@ void VoiceAssistant::write_speaker_() {
         this->set_timeout("speaker-timeout", 5000, [this]() { this->speaker_->stop(); });
       } else {
         ESP_LOGV(TAG, "Speaker buffer full, trying again next loop");
+        break;
       }
     }
   }
@@ -725,6 +729,21 @@ void VoiceAssistant::request_stop() {
       if (this->started_streaming_tts_) {
         // Haven't reached the TTS_END stage, so send the stop signal to HA.
         this->signal_stop_();
+      }
+#endif
+#ifdef USE_SPEAKER
+      if (this->speaker_ != nullptr) {
+        // Stop the live TTS stream and discard any buffered audio so a barge-in can start a new turn immediately.
+        this->signal_stop_();
+        this->speaker_->stop();
+        this->cancel_timeout("speaker-timeout");
+        this->cancel_timeout("playing");
+        this->clear_buffers_();
+        this->accept_speaker_stream_ = false;
+        this->wait_for_stream_end_ = false;
+        this->stream_ended_ = false;
+        this->tts_stream_end_trigger_.trigger();
+        this->set_state_(State::IDLE, State::IDLE);
       }
 #endif
       break;
@@ -944,6 +963,7 @@ void VoiceAssistant::on_event(const api::VoiceAssistantEventResponse &msg) {
     case api::enums::VOICE_ASSISTANT_TTS_STREAM_START: {
 #ifdef USE_SPEAKER
       if (this->speaker_ != nullptr) {
+        this->accept_speaker_stream_ = true;
         this->wait_for_stream_end_ = true;
         ESP_LOGD(TAG, "TTS stream start");
         this->defer([this] { this->tts_stream_start_trigger_.trigger(); });
@@ -954,6 +974,7 @@ void VoiceAssistant::on_event(const api::VoiceAssistantEventResponse &msg) {
     case api::enums::VOICE_ASSISTANT_TTS_STREAM_END: {
 #ifdef USE_SPEAKER
       if (this->speaker_ != nullptr) {
+        this->accept_speaker_stream_ = false;
         this->stream_ended_ = true;
         ESP_LOGD(TAG, "TTS stream end");
       }
@@ -978,6 +999,10 @@ void VoiceAssistant::on_event(const api::VoiceAssistantEventResponse &msg) {
 void VoiceAssistant::on_audio(const api::VoiceAssistantAudio &msg) {
 #ifdef USE_SPEAKER  // We should never get to this function if there is no speaker anyway
   if ((this->speaker_ != nullptr) && (this->speaker_buffer_ != nullptr)) {
+    if (!this->accept_speaker_stream_) {
+      ESP_LOGV(TAG, "Dropping audio for inactive speaker stream");
+      return;
+    }
     if (this->speaker_buffer_index_ + msg.data_len < SPEAKER_BUFFER_SIZE) {
       memcpy(this->speaker_buffer_ + this->speaker_buffer_index_, msg.data, msg.data_len);
       this->speaker_buffer_index_ += msg.data_len;

@@ -240,6 +240,10 @@ size_t ResamplerSpeaker::play(const uint8_t *data, size_t length, TickType_t tic
 }
 
 void ResamplerSpeaker::send_command_(uint32_t command_bit, bool wake_loop) {
+  if (this->event_group_ == nullptr) {
+    ESP_LOGV(TAG, "Ignoring command before setup");
+    return;
+  }
   this->enable_loop_soon_any_context();
   uint32_t event_bits = xEventGroupGetBits(this->event_group_);
   if (!(event_bits & command_bit)) {

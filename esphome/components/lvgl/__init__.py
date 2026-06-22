@@ -135,6 +135,8 @@ CODEOWNERS = ["@clydebarrow"]  # LVGL 9.5.0 implementation with ThorVG enabled b
 HELLO_WORLD_FILE = "hello_world.yaml"
 CONF_USE_PPA = "use_ppa"
 CONF_USE_PPA_IMG = "use_ppa_img"
+CONF_USE_PPA_DRAW = "use_ppa_draw"
+CONF_USE_PPA_BLEND = "use_ppa_blend"
 CONF_FPS_BENCHMARK = "fps_benchmark"
 CONF_PERF_MONITOR = "perf_monitor"
 CONF_PROFILER = "profiler"
@@ -366,9 +368,17 @@ async def to_code(configs):
     df.add_define("LV_DRAW_BUF_ALIGN", "4")
     use_ppa = config_0.get(CONF_USE_PPA, False)
     use_ppa_img = config_0.get(CONF_USE_PPA_IMG, False)
-    # use_ppa_img implies use_ppa (SRM client needs PPA init)
+    use_ppa_draw = config_0.get(CONF_USE_PPA_DRAW, False)
+    use_ppa_blend = config_0.get(CONF_USE_PPA_BLEND, False)
+
+    # Image acceleration is implemented by the PPA draw unit.
     if use_ppa_img:
+        use_ppa_draw = True
+
+    # Any PPA sub-path needs the common PPA client code.
+    if use_ppa_img or use_ppa_draw or use_ppa_blend:
         use_ppa = True
+
     if use_ppa:
         # LVGL 9.5 includes the PPA fix (PR #9162) natively.
         # We keep our custom PPA files as a fallback option.
@@ -377,6 +387,10 @@ async def to_code(configs):
         cg.add_define("USE_LVGL_PPA")
         ppa_dir = Path(__file__).parent / "ppa"
         cg.add_build_flag(f"-I{ppa_dir.as_posix()}")
+    if use_ppa_draw:
+        cg.add_define("USE_LVGL_PPA_DRAW_UNIT")
+    if use_ppa_blend:
+        cg.add_define("USE_LVGL_PPA_BLEND_HANDLER")
     if use_ppa_img:
         # Enable PPA SRM hardware rotation for images (0/90/180/270 degrees)
         cg.add_define("LV_USE_PPA_IMG")
@@ -923,6 +937,8 @@ LVGL_SCHEMA = cv.All(
                 cv.Optional(df.CONF_RESUME_ON_INPUT, default=True): cv.boolean,
                 cv.Optional(CONF_USE_PPA, default=False): cv.boolean,
                 cv.Optional(CONF_USE_PPA_IMG, default=False): cv.boolean,
+                cv.Optional(CONF_USE_PPA_DRAW, default=False): cv.boolean,
+                cv.Optional(CONF_USE_PPA_BLEND, default=False): cv.boolean,
                 cv.Optional(CONF_FPS_BENCHMARK, default=False): cv.boolean,
                 cv.Optional(CONF_PERF_MONITOR, default=False): cv.boolean,
                 cv.Optional(CONF_PROFILER, default=False): cv.boolean,

@@ -87,6 +87,7 @@ class ImageDecoder {
    */
   void draw_rgb565_block(int x, int y, int w, int h, const uint8_t *data);
   bool adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int buffer_height, int content_width, int content_height);
+  bool adopt_rgb_buffer(uint8_t *buffer, int buffer_width, int buffer_height, int content_width, int content_height);
 
   bool is_finished() const { return this->download_size_ > 0 && this->decoded_bytes_ >= this->download_size_; }
   bool has_unknown_download_size() const { return this->download_size_ == 0; }

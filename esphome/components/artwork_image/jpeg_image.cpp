@@ -108,7 +108,9 @@ static bool read_jpeg_frame_info(const uint8_t *buffer, size_t size, uint32_t *w
 
 int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
 #ifdef USE_ESP32_JPEG
-  if (this->image_->image_type() != image::ImageType::IMAGE_TYPE_RGB565) {
+  const bool output_rgb565 = this->image_->image_type() == image::ImageType::IMAGE_TYPE_RGB565;
+  const bool output_rgb888 = this->image_->image_type() == image::ImageType::IMAGE_TYPE_RGB;
+  if (!output_rgb565 && !output_rgb888) {
     return 0;
   }
 
@@ -135,14 +137,6 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   if (frame_w == 0 || frame_h == 0) {
     return 0;
   }
-  const int target_w = this->image_->get_fixed_width();
-  const int target_h = this->image_->get_fixed_height();
-  if (target_w > 0 && target_h > 0 &&
-      (frame_w != static_cast<uint32_t>(target_w) || frame_h != static_cast<uint32_t>(target_h))) {
-    ESP_LOGD(TAG, "Hardware JPEG decode skipped: source %ux%u does not match fixed target %dx%d",
-             (unsigned) frame_w, (unsigned) frame_h, target_w, target_h);
-    return 0;
-  }
   if (err == ESP_OK && (info.width != frame_w || info.height != frame_h)) {
     ESP_LOGD(TAG, "Hardware JPEG parser size mismatch: esp-idf=%ux%u frame=%ux%u", (unsigned) info.width,
              (unsigned) info.height, (unsigned) frame_w, (unsigned) frame_h);
@@ -150,27 +144,33 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
 
   const size_t aligned_w = (frame_w + 15u) & ~15u;
   const size_t aligned_h = (frame_h + 15u) & ~15u;
-  if (aligned_w != frame_w || aligned_h != frame_h) {
-    ESP_LOGD(TAG, "Hardware JPEG decode skipped: source %ux%u needs padded output %zux%zu",
-             (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h);
-    return 0;
-  }
-  const size_t output_size = aligned_w * aligned_h * 2u;
+  const size_t bytes_per_pixel = output_rgb565 ? 2u : 3u;
+  const size_t output_size = aligned_w * aligned_h * bytes_per_pixel;
+  bool output_owned = true;
   auto *output = static_cast<uint8_t *>(
       heap_caps_aligned_alloc(JPEG_DMA_ALIGNMENT, output_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (output == nullptr) {
     output = static_cast<uint8_t *>(heap_caps_aligned_alloc(JPEG_DMA_ALIGNMENT, output_size, MALLOC_CAP_8BIT));
   }
   if (output == nullptr) {
+    output = this->image_->try_reuse_active_buffer_for_decode(aligned_w, aligned_h, frame_w, frame_h);
+    output_owned = false;
+  }
+  if (output == nullptr) {
     ESP_LOGW(TAG, "Hardware JPEG output allocation failed: %zu bytes", output_size);
     return 0;
   }
-  memset(output, 0, output_size);
+  if (output_owned) {
+    memset(output, 0, output_size);
+  }
 
   esp32_jpeg::DecodeConfig cfg = {
-      .output_format = esp32_jpeg::PixelFormat::RGB565,
-      .rgb_order = esp32_jpeg::RgbElementOrder::RGB,
+      .output_format = output_rgb565 ? esp32_jpeg::PixelFormat::RGB565 : esp32_jpeg::PixelFormat::RGB888,
+      .rgb_order = output_rgb565 ? (this->image_->is_big_endian() ? esp32_jpeg::RgbElementOrder::RGB
+                                                                  : esp32_jpeg::RgbElementOrder::BGR)
+                                 : esp32_jpeg::RgbElementOrder::BGR,
       .color_conversion = esp32_jpeg::ColorConversionStandard::BT601,
+      .direct_output = true,
       .timeout_ms = 180,
   };
 
@@ -181,12 +181,22 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   if (err != ESP_OK || written == 0) {
     ESP_LOGW(TAG, "Hardware JPEG decode failed err=%d written=%zu jpeg=%zu in %lluus", (int) err, written, size,
              (unsigned long long) elapsed_us);
-    heap_caps_free(output);
+    if (output_owned) {
+      heap_caps_free(output);
+    } else {
+      this->image_->cancel_reused_active_buffer_decode();
+    }
     return 0;
   }
 
-  if (!this->adopt_rgb565_buffer(output, aligned_w, aligned_h, frame_w, frame_h)) {
-    heap_caps_free(output);
+  const bool adopted = output_rgb565 ? this->adopt_rgb565_buffer(output, aligned_w, aligned_h, frame_w, frame_h)
+                                     : this->adopt_rgb_buffer(output, aligned_w, aligned_h, frame_w, frame_h);
+  if (!adopted) {
+    if (output_owned) {
+      heap_caps_free(output);
+    } else {
+      this->image_->cancel_reused_active_buffer_decode();
+    }
     return DECODE_ERROR_OUT_OF_MEMORY;
   }
 
@@ -261,6 +271,12 @@ int HOT JpegDecoder::decode(uint8_t *buffer, size_t size) {
   ESP_LOGD(TAG, "JPEG header: %dx%d, components=%d, progressive=%s",
            src_w, src_h, cinfo.num_components,
            cinfo.progressive_mode ? "yes" : "no");
+  if (cinfo.progressive_mode && static_cast<uint32_t>(src_w) * static_cast<uint32_t>(src_h) > 360000u) {
+    ESP_LOGW(TAG, "Progressive JPEG %dx%d is too expensive for software decode; keeping previous artwork", src_w,
+             src_h);
+    jpeg_destroy_decompress(&cinfo);
+    return DECODE_ERROR_UNSUPPORTED_FORMAT;
+  }
   // Request RGB output regardless of input colorspace
   cinfo.out_color_space = JCS_RGB;
   // Use fast integer IDCT — slightly lower quality but faster on ESP32

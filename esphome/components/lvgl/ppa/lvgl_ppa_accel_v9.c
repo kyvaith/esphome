@@ -110,7 +110,7 @@ static size_t ppa_align(void)
 }
 
 static void ppa_cache_sync_region(const lv_area_t *area, const lv_area_t *buf_area,
-                                  void *buf, uint32_t px_size, int flag)
+                                  void *buf, uint32_t stride_px, uint32_t px_size, int flag)
 {
     if (!area || !buf_area || !buf || !esp_ptr_external_ram(buf)) {
         return;
@@ -119,16 +119,16 @@ static void ppa_cache_sync_region(const lv_area_t *area, const lv_area_t *buf_ar
     size_t align = ppa_align();
     int32_t width = lv_area_get_width(area);
     int32_t height = lv_area_get_height(area);
-    int32_t buf_w = lv_area_get_width(buf_area);
+    int32_t buf_w = (int32_t)stride_px;
     int32_t buf_h = lv_area_get_height(buf_area);
 
-    if (width <= 0 || height <= 0 || buf_w <= 0 || buf_h <= 0 || px_size == 0) {
+    if (width <= 0 || height <= 0 || buf_w <= 0 || buf_h <= 0 || px_size == 0 ||
+        buf_w < lv_area_get_width(buf_area)) {
         return;
     }
 
     int32_t off_x = area->x1 - buf_area->x1;
     int32_t off_y = area->y1 - buf_area->y1;
-
     if (off_x < 0 || off_y < 0 || (off_x + width) > buf_w || (off_y + height) > buf_h) {
         return;
     }
@@ -140,15 +140,16 @@ static void ppa_cache_sync_region(const lv_area_t *area, const lv_area_t *buf_ar
 
 static void ppa_cache_invalidate(const lv_area_t *area, const lv_area_t *buf_area, void *buf, uint32_t px_size)
 {
-    ppa_cache_sync_region(area, buf_area, buf, px_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    uint32_t stride_px = (uint32_t)lv_area_get_width(buf_area);
+    ppa_cache_sync_region(area, buf_area, buf, stride_px, px_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
 }
 
 static void ppa_blend(void *bg_buf, lv_color_format_t color_format, uint32_t px_size,
                       const lv_area_t *bg_area, const void *fg_buf, const lv_area_t *fg_area,
-                      uint16_t fg_stride_px, const lv_area_t *block_area, lv_opa_t opa)
+                      uint32_t bg_stride_px, uint32_t fg_stride_px, const lv_area_t *block_area, lv_opa_t opa)
 {
-    uint16_t bg_w = lv_area_get_width(bg_area);
-    uint16_t bg_h = lv_area_get_height(bg_area);
+    uint32_t bg_w = bg_stride_px;
+    uint32_t bg_h = lv_area_get_height(bg_area);
     uint16_t bg_off_x = block_area->x1 - bg_area->x1;
     uint16_t bg_off_y = block_area->y1 - bg_area->y1;
 
@@ -191,7 +192,7 @@ static void ppa_blend(void *bg_buf, lv_color_format_t color_format, uint32_t px_
         },
         .out = {
             .buffer = bg_buf,
-            .buffer_size = LVGL_PORT_PPA_ALIGN_UP((size_t)px_size * bg_w * bg_h, align),
+            .buffer_size = LVGL_PORT_PPA_ALIGN_UP((size_t)px_size * bg_stride_px * bg_h, align),
             .pic_w = bg_w,
             .pic_h = bg_h,
             .block_offset_x = bg_off_x,
@@ -216,10 +217,10 @@ static void ppa_blend(void *bg_buf, lv_color_format_t color_format, uint32_t px_
 }
 
 static void ppa_fill(void *bg_buf, lv_color_format_t color_format, uint32_t px_size,
-                     const lv_area_t *bg_area, const lv_area_t *block_area, lv_color_t color)
+                     const lv_area_t *bg_area, uint32_t bg_stride_px, const lv_area_t *block_area, lv_color_t color)
 {
-    uint16_t bg_w = lv_area_get_width(bg_area);
-    uint16_t bg_h = lv_area_get_height(bg_area);
+    uint32_t bg_w = bg_stride_px;
+    uint32_t bg_h = lv_area_get_height(bg_area);
     size_t align = ppa_align();
     ppa_fill_color_mode_t ppa_cf = lv_color_format_to_ppa_fill(color_format);
 
@@ -230,7 +231,7 @@ static void ppa_fill(void *bg_buf, lv_color_format_t color_format, uint32_t px_s
     ppa_fill_oper_config_t cfg = {
         .out = {
             .buffer = bg_buf,
-            .buffer_size = LVGL_PORT_PPA_ALIGN_UP((size_t)px_size * bg_w * bg_h, align),
+            .buffer_size = LVGL_PORT_PPA_ALIGN_UP((size_t)px_size * bg_stride_px * bg_h, align),
             .pic_w = bg_w,
             .pic_h = bg_h,
             .block_offset_x = (uint32_t)(block_area->x1 - bg_area->x1),
@@ -362,6 +363,14 @@ static void lv_draw_ppa_v9_handler(lv_draw_task_t *t, const lv_draw_sw_blend_dsc
         return;
     }
 
+    uint32_t dst_stride = layer->draw_buf->header.stride;
+    if (dst_stride == 0 || (dst_stride % dst_px_size) != 0) {
+        lv_draw_ppa_v9_sw_fallback(t, dsc);
+        return;
+    }
+    uint32_t dst_stride_px = dst_stride / dst_px_size;
+    uint32_t dst_area_w = (uint32_t)lv_area_get_width(&layer->buf_area);
+
     lv_area_t block_area;
     if (!_lv_area_intersect(&block_area, dsc->blend_area, &t->clip_area)) {
         return;
@@ -387,13 +396,19 @@ static void lv_draw_ppa_v9_handler(lv_draw_task_t *t, const lv_draw_sw_blend_dsc
         return;
     }
 
+    if (dst_stride_px < dst_area_w) {
+        lv_draw_ppa_v9_sw_fallback(t, dsc);
+        return;
+    }
+
     if (block_area.x1 < layer->buf_area.x1 || block_area.y1 < layer->buf_area.y1 ||
             block_area.x2 > layer->buf_area.x2 || block_area.y2 > layer->buf_area.y2) {
         lv_draw_ppa_v9_sw_fallback(t, dsc);
         return;
     }
 
-    ppa_cache_sync_region(&block_area, &layer->buf_area, bg_buf, dst_px_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    ppa_cache_sync_region(&block_area, &layer->buf_area, bg_buf, dst_stride_px, dst_px_size,
+                          ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
     if (dsc->src_buf) {
         if (dsc->src_color_format != layer->color_format) {
@@ -428,19 +443,21 @@ static void lv_draw_ppa_v9_handler(lv_draw_task_t *t, const lv_draw_sw_blend_dsc
                                (src_addr - src_aligned), align);
         lv_draw_ppa_cache_msync((void *)src_aligned, src_total, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
-        uint16_t src_stride_px = src_stride / src_px_size;
+        uint32_t src_stride_px = src_stride / src_px_size;
         s_ppa_hw_blends++;
         ppa_blend(bg_buf, layer->color_format, dst_px_size, &layer->buf_area, dsc->src_buf,
-                  src_area, src_stride_px, &block_area, dsc->opa);
+                  src_area, dst_stride_px, src_stride_px, &block_area, dsc->opa);
 
-        ppa_cache_invalidate(&block_area, &layer->buf_area, bg_buf, dst_px_size);
+        ppa_cache_sync_region(&block_area, &layer->buf_area, bg_buf, dst_stride_px, dst_px_size,
+                              ESP_CACHE_MSYNC_FLAG_DIR_M2C);
         return;
     }
 
     if (dsc->opa >= LV_OPA_MAX) {
         s_ppa_hw_fills++;
-        ppa_fill(bg_buf, layer->color_format, dst_px_size, &layer->buf_area, &block_area, dsc->color);
-        ppa_cache_invalidate(&block_area, &layer->buf_area, bg_buf, dst_px_size);
+        ppa_fill(bg_buf, layer->color_format, dst_px_size, &layer->buf_area, dst_stride_px, &block_area, dsc->color);
+        ppa_cache_sync_region(&block_area, &layer->buf_area, bg_buf, dst_stride_px, dst_px_size,
+                              ESP_CACHE_MSYNC_FLAG_DIR_M2C);
         return;
     }
 
@@ -485,9 +502,11 @@ void lvgl_port_ppa_v9_init(lv_display_t *display)
 
     if (!s_handler_registered) {
         lv_draw_sw_register_blend_handler(&s_custom_handler_rgb565);
-        lv_draw_sw_register_blend_handler(&s_custom_handler_rgb888);
+        /* RGB888 PPA blend/fill can produce short horizontal artifacts on ESP32-P4
+         * with cached PSRAM draw buffers. Keep RGB565 accelerated and let RGB888
+         * fall back to LVGL software blending until that path is made cache-safe. */
         s_handler_registered = true;
-        ESP_LOGI(TAG, "PPA v9 blend handler registered for RGB565/RGB888");
+        ESP_LOGI(TAG, "PPA v9 blend handler registered for RGB565");
     }
 }
 

@@ -692,21 +692,21 @@ async def to_code(config):
             add_idf_sdkconfig_option("CONFIG_ESP_WIFI_RX_BA_WIN", 32)
         else:
             _LOGGER.info(
-                "Applying optimized WiFi settings: 64 RX buffers, 64 TX buffers"
+                "Applying balanced WiFi settings: 32 RX buffers, 32 TX buffers"
             )
-            # PSRAM not guaranteed - use more conservative, but still optimized settings
-            # Based on https://github.com/espressif/esp-idf/blob/release/v5.4/examples/wifi/iperf/sdkconfig.defaults.esp32
+            # Keep the high-performance networking path, but do not starve
+            # DMA-capable internal memory on audio-heavy builds.
 
             # Standard buffer counts
-            add_idf_sdkconfig_option("CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM", 16)
-            add_idf_sdkconfig_option("CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM", 64)
-            add_idf_sdkconfig_option("CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM", 64)
+            add_idf_sdkconfig_option("CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM", 8)
+            add_idf_sdkconfig_option("CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM", 32)
+            add_idf_sdkconfig_option("CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM", 32)
 
             # Standard AMPDU settings
             add_idf_sdkconfig_option("CONFIG_ESP_WIFI_AMPDU_TX_ENABLED", True)
-            add_idf_sdkconfig_option("CONFIG_ESP_WIFI_TX_BA_WIN", 32)
+            add_idf_sdkconfig_option("CONFIG_ESP_WIFI_TX_BA_WIN", 16)
             add_idf_sdkconfig_option("CONFIG_ESP_WIFI_AMPDU_RX_ENABLED", True)
-            add_idf_sdkconfig_option("CONFIG_ESP_WIFI_RX_BA_WIN", 32)
+            add_idf_sdkconfig_option("CONFIG_ESP_WIFI_RX_BA_WIN", 16)
 
     cg.add_define("USE_WIFI")
 

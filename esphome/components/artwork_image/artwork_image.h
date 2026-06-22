@@ -9,6 +9,12 @@
 #include "artwork_url.h"
 #include "image_decoder.h"
 
+#ifdef USE_SENDSPIN_ARTWORK
+#include "esphome/components/sendspin/sendspin_hub.h"
+#include <sendspin/config.h>
+#include <atomic>
+#endif
+
 namespace esphome {
 namespace artwork_image {
 
@@ -56,6 +62,7 @@ class ArtworkImage : public PollingComponent,
               image::Transparency transparency, uint32_t buffer_size, bool is_big_endian,
               bool allow_insecure_local_urls);
 
+  void setup() override;
   void draw(int x, int y, display::Display *display, Color color_on, Color color_off) override;
 
   void update() override;
@@ -84,11 +91,23 @@ class ArtworkImage : public PollingComponent,
    */
   void set_placeholder(image::Image *placeholder) { this->placeholder_ = placeholder; }
 
+#ifdef USE_SENDSPIN_ARTWORK
+  void set_sendspin_hub(sendspin_::SendspinHub *hub) { this->sendspin_hub_ = hub; }
+  void set_sendspin_slot(uint8_t slot) { this->sendspin_slot_ = slot; }
+#endif
+
   /**
    * Release the buffer storing the image. The image will need to be downloaded again
    * to be able to be displayed.
    */
-  void release();
+  void release(bool immediate = false);
+
+  /**
+   * Reuse the currently displayed full-size image buffer as the next decode target.
+   * This avoids a second full-frame allocation for fixed-size artwork updates.
+   */
+  uint8_t *try_reuse_active_buffer_for_decode(int width, int height, int content_width, int content_height);
+  void cancel_reused_active_buffer_decode();
 
   /**
    * Resize the download buffer
@@ -158,6 +177,7 @@ class ArtworkImage : public PollingComponent,
   void retire_active_buffer_();
   void cleanup_retired_buffers_(bool force);
   bool ensure_download_buffer_capacity_();
+  bool decode_encoded_image_(ImageFormat format, const uint8_t *data, size_t length, bool finish_on_decode = true);
   bool decode_buffered_data_();
   void finish_download_();
   void fail_download_();
@@ -185,6 +205,7 @@ class ArtworkImage : public PollingComponent,
 
   uint8_t *buffer_;
   uint8_t *decode_buffer_{nullptr};
+  bool decode_buffer_reuses_active_{false};
   DownloadBuffer download_buffer_;
   /**
    * This is the *initial* size of the download buffer, not the current size.
@@ -248,6 +269,12 @@ class ArtworkImage : public PollingComponent,
   uint32_t last_data_millis_{0};
   bool update_pending_{false};
   std::string pending_url_{""};
+#ifdef USE_SENDSPIN_ARTWORK
+  sendspin_::SendspinHub *sendspin_hub_{nullptr};
+  uint8_t sendspin_slot_{0};
+  std::atomic<bool> sendspin_decode_ready_{false};
+  std::atomic<bool> sendspin_decode_failed_{false};
+#endif
   static constexpr uint32_t DOWNLOAD_STALL_TIMEOUT_MS = 10000;
 
   friend bool ImageDecoder::set_size(int width, int height);
@@ -255,6 +282,8 @@ class ArtworkImage : public PollingComponent,
   friend void ImageDecoder::draw_rgb565_block(int x, int y, int w, int h, const uint8_t *data);
   friend bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int buffer_height,
                                                 int content_width, int content_height);
+  friend bool ImageDecoder::adopt_rgb_buffer(uint8_t *buffer, int buffer_width, int buffer_height,
+                                             int content_width, int content_height);
 };
 
 template<typename... Ts> class ArtworkImageSetUrlAction : public Action<Ts...> {
@@ -278,7 +307,8 @@ template<typename... Ts> class ArtworkImageSetUrlAction : public Action<Ts...> {
 template<typename... Ts> class ArtworkImageReleaseAction : public Action<Ts...> {
  public:
   ArtworkImageReleaseAction(ArtworkImage *parent) : parent_(parent) {}
-  void play(const Ts &...x) override { this->parent_->release(); }
+  TEMPLATABLE_VALUE(bool, immediate)
+  void play(const Ts &...x) override { this->parent_->release(this->immediate_.value(x...)); }
 
  protected:
   ArtworkImage *parent_;

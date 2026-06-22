@@ -884,8 +884,16 @@ void LvglComponent::dump_config() {
 #ifdef USE_LVGL_PPA
   ESP_LOGCONFIG(TAG, "  PPA SRM (display rotation): %s",
                 s_display_srm_client != nullptr ? "registered (HW)" : "failed (SW fallback)");
-  ESP_LOGCONFIG(TAG, "  PPA SW-blend handler (v9):  registered (RGB565 fills/blends → HW)");
-  ESP_LOGCONFIG(TAG, "  PPA draw unit:              registered (canvas/image → HW)");
+#ifdef USE_LVGL_PPA_DRAW_UNIT
+  ESP_LOGCONFIG(TAG, "  PPA draw unit:              registered (fill/image → HW)");
+#else
+  ESP_LOGCONFIG(TAG, "  PPA draw unit:              disabled");
+#endif
+#ifdef USE_LVGL_PPA_BLEND_HANDLER
+  ESP_LOGCONFIG(TAG, "  PPA SW-blend handler (v9):  registered (fills/blends → HW)");
+#else
+  ESP_LOGCONFIG(TAG, "  PPA SW-blend handler (v9):  disabled");
+#endif
 #else
   ESP_LOGCONFIG(TAG, "  PPA acceleration: disabled (use_ppa: false)");
 #endif
@@ -907,6 +915,7 @@ void LvglComponent::set_paused(bool paused, bool show_snow) {
 void LvglComponent::esphome_lvgl_init() {
   lv_init();
 #ifdef USE_LVGL_PPA
+#ifdef USE_LVGL_PPA_DRAW_UNIT
   // Two PPA paths active at once for max coverage:
   //
   //   1) lv_draw_ppa unit (full draw unit, lv_draw_ppa_init)
@@ -923,6 +932,7 @@ void LvglComponent::esphome_lvgl_init() {
   // RGB565 camera canvas, this added ~50 ms of LVGL overhead per frame.
   // Enabling (1) brings image drawing back onto PPA hardware.
   lv_draw_ppa_init();
+#endif
 
   // Register a dedicated PPA SRM client for display framebuffer rotation.
   // This is independent of the LVGL draw pipeline and stays enabled.
@@ -1445,6 +1455,16 @@ bool LvglComponent::partial_compositor_flush_(lv_display_t *disp_drv, const lv_a
   job.color_p = color_p;
   job.last = lv_display_flush_is_last(disp_drv);
   job.t0 = t0;
+#if LV_COLOR_DEPTH == 32
+  constexpr size_t BYTES_PER_PIXEL = 3;
+#else
+  constexpr size_t BYTES_PER_PIXEL = LV_COLOR_DEPTH / 8;
+#endif
+  const size_t src_bytes = (size_t) lv_area_get_width(area) * (size_t) lv_area_get_height(area) * BYTES_PER_PIXEL;
+  /* The worker task runs on another core. If LVGL rendered the partial buffer
+   * in cached PSRAM, write it back before handing the pointer to the worker. */
+  lvgl_cache_msync_external(color_p, src_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  __sync_synchronize();
   if (xQueueSend(this->partial_compositor_queue_, &job, pdMS_TO_TICKS(20)) != pdTRUE) {
     ESP_LOGW(TAG, "LVGL partial framebuffer compositor queue full; falling back to synchronous flush");
     return false;
@@ -1509,15 +1529,6 @@ void LvglComponent::partial_compositor_task_() {
       frame_presented = true;
     }
 
-    const uint32_t ready_dt_us = (uint32_t) (esp_timer_get_time() - start_us);
-    this->perf_compositor_ready_us_ += ready_dt_us;
-    this->perf_compositor_jobs_++;
-    if (ready_dt_us > this->perf_compositor_ready_max_us_)
-      this->perf_compositor_ready_max_us_ = ready_dt_us;
-    const uint32_t px = (uint32_t) lv_area_get_width(&job.area) * (uint32_t) lv_area_get_height(&job.area);
-    this->perf_compositor_px_ += px;
-    lv_display_flush_ready(job.disp);
-
     if (frame_presented) {
       if (sync_full_dirty) {
         lv_area_t full{};
@@ -1534,6 +1545,15 @@ void LvglComponent::partial_compositor_task_() {
         }
       }
     }
+
+    const uint32_t ready_dt_us = (uint32_t) (esp_timer_get_time() - start_us);
+    this->perf_compositor_ready_us_ += ready_dt_us;
+    this->perf_compositor_jobs_++;
+    if (ready_dt_us > this->perf_compositor_ready_max_us_)
+      this->perf_compositor_ready_max_us_ = ready_dt_us;
+    const uint32_t px = (uint32_t) lv_area_get_width(&job.area) * (uint32_t) lv_area_get_height(&job.area);
+    this->perf_compositor_px_ += px;
+    lv_display_flush_ready(job.disp);
 
     const uint32_t dt_us = (uint32_t) (esp_timer_get_time() - start_us);
     this->perf_compositor_us_ += dt_us;
@@ -2703,11 +2723,13 @@ void LvglComponent::setup() {
                                                                          : LV_DISPLAY_RENDER_MODE_PARTIAL));
   this->buffers_configured_ = true;
 
-#ifdef USE_LVGL_PPA
+#if defined(USE_LVGL_PPA) && defined(USE_LVGL_PPA_BLEND_HANDLER)
   // Espressif esp-iot-solution PPA SW blend handler — accelerates all
   // RGB565 SW blend paths (text, gradients post-rasterize, partial blends).
   // Complements the higher-level PPA draw unit in lv_draw_ppa.c.
   lvgl_port_ppa_v9_init(this->disp_);
+#elif defined(USE_LVGL_PPA)
+  ESP_LOGI(TAG, "PPA SRM enabled; LVGL SW-blend PPA registration disabled");
 #endif
 
 #ifdef USE_LVGL_FPS_BENCHMARK

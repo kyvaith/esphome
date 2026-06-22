@@ -43,6 +43,15 @@ static inline bool ppa_buf_usable(lv_draw_buf_t * buf)
 {
     if(buf == NULL || buf->data == NULL || buf->data_size == 0) return false;
     if(((uintptr_t)buf->data) % PPA_BUF_ALIGN != 0) return false;
+    uint32_t px_size = lv_color_format_get_size((lv_color_format_t)buf->header.cf);
+    if(px_size == 0 || buf->header.w == 0 || buf->header.h == 0) return false;
+
+    uint32_t stride = buf->header.stride ? buf->header.stride : (buf->header.w * px_size);
+    if(stride < (buf->header.w * px_size)) return false;
+    if((stride % px_size) != 0) return false;
+
+    size_t required_size = (size_t)stride * buf->header.h;
+    if(required_size > buf->data_size && !esp_ptr_external_ram(buf->data)) return false;
     return true;
 }
 
@@ -132,7 +141,12 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
 
             lv_draw_buf_t * draw_buf = t->target_layer->draw_buf;
             if(!ppa_buf_usable(draw_buf)) return 0;
-            if(!ppa_dest_cf_supported((lv_color_format_t)draw_buf->header.cf)) return 0;
+            lv_color_format_t dest_cf = (lv_color_format_t)draw_buf->header.cf;
+            if(!ppa_dest_cf_supported(dest_cf)) return 0;
+            /* ESP32-P4 PPA fill corrupts RGB888 LVGL buffers with short horizontal
+             * artifacts. Keep PPA fill for other formats, and let LVGL's software
+             * renderer handle RGB888 fills while image/SRM acceleration stays on. */
+            if(dest_cf == LV_COLOR_FORMAT_RGB888) return 0;
 
             if(t->preference_score > 40) {
                 t->preference_score = 40;
@@ -190,19 +204,12 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
 #else
             if(dsc->scale_x != LV_SCALE_NONE || dsc->scale_y != LV_SCALE_NONE) return 0;
 #endif
-            if(dsc->opa < (lv_opa_t)LV_OPA_MAX) return 0;
-            if(dsc->blend_mode != LV_BLEND_MODE_NORMAL) return 0;
-            if(!ppa_src_cf_supported((lv_color_format_t)dsc->header.cf)) return 0;
-
-            lv_draw_buf_t * dest_buf = t->target_layer->draw_buf;
-            if(!ppa_buf_usable(dest_buf)) return 0;
-            if(!ppa_dest_cf_supported((lv_color_format_t)dest_buf->header.cf)) return 0;
-
-            if(t->preference_score > 30) {
-                t->preference_score = 30;
-                t->preferred_draw_unit_id = draw_unit->idx;
-            }
-            return 1;
+            /* The non-transformed image path uses PPA blend with the target buffer
+             * as both input and output. On cached PSRAM RGB888 layers this can
+             * leave short horizontal artifacts in glyphs, icons, and artwork.
+             * Keep SRM acceleration for transformed images and let LVGL's
+             * software renderer handle plain image copies/blends. */
+            return 0;
         }
 
         default:
@@ -228,7 +235,6 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
 
     lv_layer_t * target = NULL;
     lv_draw_buf_t * buf = NULL;
-    bool cache_synced = false;
     int32_t task_count = 0;
 
     /* Process all available PPA tasks in one dispatch call */
@@ -243,10 +249,10 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
         buf = (target) ? target->draw_buf : NULL;
 
         if(buf != NULL && buf->data != NULL) {
-            /* Flush CPU cache once before first PPA operation */
-            if(!cache_synced) {
-                lv_draw_ppa_cache_sync_to_memory(buf);
-                cache_synced = true;
+            lv_area_t sync_area;
+            bool has_sync_area = lv_area_intersect(&sync_area, &t->area, &t->clip_area);
+            if(has_sync_area) {
+                lv_draw_ppa_cache_sync_area_to_memory(buf, &target->buf_area, &sync_area);
             }
 
             switch(t->type) {
@@ -272,6 +278,10 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
                 default:
                     break;
             }
+
+            if(has_sync_area) {
+                lv_draw_ppa_cache_sync_area_from_memory(buf, &target->buf_area, &sync_area);
+            }
         }
 
         t->state = LV_DRAW_TASK_STATE_FINISHED;
@@ -283,10 +293,6 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
     }
 
     if(task_count > 0) {
-        /* Single cache invalidate after all PPA operations */
-        if(cache_synced && buf != NULL) {
-            lv_draw_ppa_cache_sync_from_memory(buf);
-        }
         lv_draw_dispatch_request();
         return 1;
     }

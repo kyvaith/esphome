@@ -296,6 +296,7 @@ class VoiceAssistant : public Component {
   size_t speaker_buffer_index_{0};
   size_t speaker_buffer_size_{0};
   size_t speaker_bytes_received_{0};
+  bool accept_speaker_stream_{false};
   bool wait_for_stream_end_{false};
   bool stream_ended_{false};
 #endif

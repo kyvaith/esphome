@@ -3,6 +3,9 @@
 
 #include "esphome/core/log.h"
 
+#include <algorithm>
+#include <cstring>
+
 namespace esphome {
 namespace artwork_image {
 
@@ -97,8 +100,73 @@ bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int bu
     return false;
   }
 
-  this->image_->discard_decode_buffer_();
-  this->image_->decode_buffer_ = buffer;
+  const int target_width = this->image_->fixed_width_;
+  const int target_height = this->image_->fixed_height_;
+  if (target_width > 0 && target_height > 0 &&
+      (buffer_width != target_width || buffer_height != target_height || content_width != target_width ||
+       content_height != target_height)) {
+    double scale = std::min(static_cast<double>(target_width) / content_width,
+                            static_cast<double>(target_height) / content_height);
+    int scaled_width = std::max(1, static_cast<int>(content_width * scale));
+    int scaled_height = std::max(1, static_cast<int>(content_height * scale));
+    if (scaled_width > target_width) {
+      scaled_width = target_width;
+    }
+    if (scaled_height > target_height) {
+      scaled_height = target_height;
+    }
+    const int offset_x = (target_width - scaled_width) / 2;
+    const int offset_y = (target_height - scaled_height) / 2;
+    const size_t target_size = target_width * target_height * 2u;
+    uint8_t *target = this->image_->allocator_.allocate(target_size);
+    if (target == nullptr) {
+      ESP_LOGW(TAG, "RGB565 artwork fit allocation failed: %zu bytes", target_size);
+      this->failed_ = true;
+      return false;
+    }
+    memset(target, 0, target_size);
+
+    const uint32_t x_step = (static_cast<uint32_t>(content_width) << 16) / scaled_width;
+    const uint32_t y_step = (static_cast<uint32_t>(content_height) << 16) / scaled_height;
+    uint32_t y_acc = 0;
+    for (int y = 0; y < scaled_height; y++) {
+      const int sy = static_cast<int>(y_acc >> 16);
+      const uint8_t *src_row = buffer + (sy * buffer_width * 2);
+      uint8_t *dst = target + (((offset_y + y) * target_width + offset_x) * 2);
+      uint32_t x_acc = 0;
+      for (int x = 0; x < scaled_width; x++) {
+        const int sx = static_cast<int>(x_acc >> 16);
+        const uint8_t *src = src_row + sx * 2;
+        dst[x * 2 + 0] = src[0];
+        dst[x * 2 + 1] = src[1];
+        x_acc += x_step;
+      }
+      y_acc += y_step;
+    }
+
+    this->image_->allocator_.deallocate(buffer, buffer_width * buffer_height * 2u);
+    this->image_->discard_decode_buffer_();
+    this->image_->decode_buffer_ = target;
+    this->image_->decode_buffer_width_ = target_width;
+    this->image_->decode_buffer_height_ = target_height;
+    this->image_->decode_content_width_ = scaled_width;
+    this->image_->decode_content_height_ = scaled_height;
+    this->image_->decode_offset_x_ = offset_x;
+    this->image_->decode_offset_y_ = offset_y;
+    this->x_offset_ = offset_x;
+    this->y_offset_ = offset_y;
+    this->x_scale_ = static_cast<double>(scaled_width) / content_width;
+    this->y_scale_ = static_cast<double>(scaled_height) / content_height;
+    ESP_LOGI(TAG, "Decoder fitted RGB565 buffer: source=%dx%d target=%dx%d content=%dx%d offset=%d,%d",
+             content_width, content_height, target_width, target_height, scaled_width, scaled_height, offset_x,
+             offset_y);
+    return true;
+  }
+
+  if (this->image_->decode_buffer_ != buffer) {
+    this->image_->discard_decode_buffer_();
+    this->image_->decode_buffer_ = buffer;
+  }
   this->image_->decode_buffer_width_ = buffer_width;
   this->image_->decode_buffer_height_ = buffer_height;
   this->image_->decode_content_width_ = content_width;
@@ -110,6 +178,33 @@ bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int bu
   this->x_scale_ = 1.0;
   this->y_scale_ = 1.0;
   ESP_LOGI(TAG, "Decoder adopted RGB565 buffer: content=%dx%d buffer=%dx%d", content_width, content_height,
+           buffer_width, buffer_height);
+  return true;
+}
+
+bool ImageDecoder::adopt_rgb_buffer(uint8_t *buffer, int buffer_width, int buffer_height, int content_width,
+                                    int content_height) {
+  if (buffer == nullptr || buffer_width <= 0 || buffer_height <= 0 || content_width <= 0 || content_height <= 0 ||
+      content_width > buffer_width || content_height > buffer_height || this->image_->get_bpp() != 24) {
+    this->failed_ = true;
+    return false;
+  }
+
+  if (this->image_->decode_buffer_ != buffer) {
+    this->image_->discard_decode_buffer_();
+    this->image_->decode_buffer_ = buffer;
+  }
+  this->image_->decode_buffer_width_ = buffer_width;
+  this->image_->decode_buffer_height_ = buffer_height;
+  this->image_->decode_content_width_ = content_width;
+  this->image_->decode_content_height_ = content_height;
+  this->image_->decode_offset_x_ = 0;
+  this->image_->decode_offset_y_ = 0;
+  this->x_offset_ = 0;
+  this->y_offset_ = 0;
+  this->x_scale_ = 1.0;
+  this->y_scale_ = 1.0;
+  ESP_LOGI(TAG, "Decoder adopted RGB buffer: content=%dx%d buffer=%dx%d", content_width, content_height,
            buffer_width, buffer_height);
   return true;
 }

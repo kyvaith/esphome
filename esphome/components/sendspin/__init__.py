@@ -71,6 +71,8 @@ SendspinSwitchCommandAction = sendspin_ns.class_(
 @dataclass
 class SendspinConfiguration:
     artwork_support: bool = False
+    artwork_width: int = 300
+    artwork_height: int = 300
     controller_support: bool = False
     metadata_support: bool = False
     player_support: bool = False
@@ -85,9 +87,14 @@ def _get_data() -> SendspinConfiguration:
     return CORE.data[DOMAIN]
 
 
-def request_artwork_support() -> None:
+def request_artwork_support(width: int = 300, height: int = 300) -> None:
     """Request artwork role support for Sendspin."""
-    _get_data().artwork_support = True
+    data = _get_data()
+    data.artwork_support = True
+    if width > 0:
+        data.artwork_width = max(data.artwork_width, width)
+    if height > 0:
+        data.artwork_height = max(data.artwork_height, height)
 
 
 def request_controller_support() -> None:
@@ -214,6 +221,7 @@ async def to_code(config: ConfigType) -> None:
     # and disable building unused code paths in the sendspin-cpp library (IDF SDKConfig via CONFIG_SENDSPIN_ENABLE_*).
     if data.artwork_support:
         cg.add_define("USE_SENDSPIN_ARTWORK", True)
+        cg.add(var.set_artwork_size(data.artwork_width, data.artwork_height))
     else:
         esp32.add_idf_sdkconfig_option("CONFIG_SENDSPIN_ENABLE_ARTWORK", False)
 
