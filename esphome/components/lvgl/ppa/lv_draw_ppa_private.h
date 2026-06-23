@@ -144,6 +144,7 @@ typedef struct lv_draw_ppa_unit {
     ppa_client_handle_t fill_client;
     ppa_client_handle_t blend_client;
     uint8_t * buf;
+    uint32_t buf_size;
 } lv_draw_ppa_unit_t;
 
 /**********************

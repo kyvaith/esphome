@@ -20,6 +20,27 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
                                  const lv_image_decoder_dsc_t * decoder_dsc, lv_draw_image_sup_t * sup,
                                  const lv_area_t * img_coords, const lv_area_t * clipped_img_area);
 
+static uint8_t * lv_draw_ppa_get_scratch(lv_draw_ppa_unit_t * u, uint32_t size)
+{
+    if(u == NULL || size == 0) return NULL;
+
+    uint32_t aligned_size = lv_draw_ppa_align_size(size);
+    if(u->buf != NULL && u->buf_size >= aligned_size) return u->buf;
+
+    if(u->buf != NULL) {
+        heap_caps_free(u->buf);
+        u->buf = NULL;
+        u->buf_size = 0;
+    }
+
+    u->buf = (uint8_t *)heap_caps_aligned_alloc(PPA_CACHE_LINE_SIZE, aligned_size,
+                                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if(u->buf != NULL) {
+        u->buf_size = aligned_size;
+    }
+    return u->buf;
+}
+
 
 void lv_draw_ppa_img(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
                      const lv_area_t * coords)
@@ -205,6 +226,7 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     lv_area_t dest_area;
     lv_area_copy(&dest_area, &visible_area);
     lv_area_move(&dest_area, -layer->buf_area.x1, -layer->buf_area.y1);
+    bool use_staging_out = (dest_cf == LV_COLOR_FORMAT_RGB888) && esp_ptr_external_ram(dest_buf->data);
 
     /* Map visible tile top-left back into source image space */
     int32_t src_bx = (int32_t)(((float)visible_area.x1 - virt_x) / sx);
@@ -215,8 +237,8 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     uint32_t src_bw = (uint32_t)ceilf((float)clip_w / sx);
     uint32_t src_bh = (uint32_t)ceilf((float)clip_h / sy);
 
-    uint32_t avail_w = (uint32_t)(dest_buf->header.w - dest_area.x1);
-    uint32_t avail_h = (uint32_t)(dest_buf->header.h - dest_area.y1);
+    uint32_t avail_w = use_staging_out ? (uint32_t)clip_w : (uint32_t)(dest_buf->header.w - dest_area.x1);
+    uint32_t avail_h = use_staging_out ? (uint32_t)clip_h : (uint32_t)(dest_buf->header.h - dest_area.y1);
     uint32_t max_src_bw = (uint32_t)floorf((float)avail_w / sx);
     uint32_t max_src_bh = (uint32_t)floorf((float)avail_h / sy);
     bool gap_right  = (src_bw > max_src_bw);
@@ -273,10 +295,40 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     cfg.in.srm_cm         = lv_color_format_to_ppa_srm(src_cf);
 
     uint8_t * aligned_out = NULL;
+    uint8_t * staging_out = NULL;
     uint8_t * out_ptr     = dest_buf->data;
+    uint32_t out_buffer_size = aligned_size;
+    uint32_t out_pic_w = dest_stride_px;
+    uint32_t out_pic_h = dest_buf->header.h;
+    uint32_t out_offset_x = (uint32_t)dest_area.x1;
+    uint32_t out_offset_y = (uint32_t)dest_area.y1;
+    uint32_t staging_stride = 0;
+    uint32_t staging_size = 0;
 
-    if(esp_ptr_external_ram(dest_buf->data) &&
-       !lv_draw_ppa_buf_cache_aligned(dest_buf->data)) {
+    /* On ESP32-P4, direct PPA SRM writes into cached RGB888 PSRAM LVGL
+     * draw buffers can leave delayed horizontal artifacts after later small
+     * redraws. Render RGB888 PSRAM image bands into a reusable aligned
+     * scratch buffer and copy the finished rows into the LVGL draw buffer
+     * with the CPU. PPA still performs the expensive source read/scale/copy,
+     * but it no longer DMA-writes into LVGL's active target buffer. */
+    if(use_staging_out) {
+        staging_stride = (uint32_t)clip_w * out_bpp;
+        staging_size = lv_draw_ppa_align_size(staging_stride * (uint32_t)clip_h);
+        staging_out = lv_draw_ppa_get_scratch(u, staging_size);
+        if(staging_out == NULL) {
+            LV_LOG_ERROR("PPA SRM: staging alloc failed (%u B)", (unsigned)staging_size);
+            lv_image_decoder_close(&decoder_dsc);
+            return;
+        }
+        out_ptr = staging_out;
+        out_buffer_size = staging_size;
+        out_pic_w = (uint32_t)clip_w;
+        out_pic_h = (uint32_t)clip_h;
+        out_offset_x = 0;
+        out_offset_y = 0;
+    }
+    else if(esp_ptr_external_ram(dest_buf->data) &&
+            !lv_draw_ppa_buf_cache_aligned(dest_buf->data)) {
         aligned_out = (uint8_t *)heap_caps_aligned_alloc(
             PPA_CACHE_LINE_SIZE, aligned_size,
             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -291,11 +343,11 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     }
 
     cfg.out.buffer         = out_ptr;
-    cfg.out.buffer_size    = aligned_size;
-    cfg.out.pic_w          = dest_stride_px;
-    cfg.out.pic_h          = dest_buf->header.h;
-    cfg.out.block_offset_x = (uint32_t)dest_area.x1;
-    cfg.out.block_offset_y = (uint32_t)dest_area.y1;
+    cfg.out.buffer_size    = out_buffer_size;
+    cfg.out.pic_w          = out_pic_w;
+    cfg.out.pic_h          = out_pic_h;
+    cfg.out.block_offset_x = out_offset_x;
+    cfg.out.block_offset_y = out_offset_y;
     cfg.out.srm_cm         = lv_color_format_to_ppa_srm(dest_cf);
 
     cfg.rotation_angle    = PPA_SRM_ROTATION_ANGLE_0;
@@ -314,8 +366,8 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
      * spans are not cache-line aligned, so a row-level contract preserves
      * neighbouring software-rendered pixels and prevents delayed horizontal
      * artifacts when later redraws hit the same cache lines. */
-    uint8_t * sync_start = out_ptr + (size_t)dest_area.y1 * dest_stride;
-    uint32_t sync_size = dest_stride * (uint32_t)clip_h;
+    uint8_t * sync_start = use_staging_out ? out_ptr : out_ptr + (size_t)dest_area.y1 * dest_stride;
+    uint32_t sync_size = use_staging_out ? out_buffer_size : dest_stride * (uint32_t)clip_h;
     lv_draw_ppa_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
     esp_err_t ret = ppa_do_scale_rotate_mirror(u->srm_client, &cfg);
@@ -331,29 +383,48 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
      * Fill it by duplicating the last rendered column/row. Invalidate CPU
      * cache first: PPA wrote via DMA, so CPU cache can be stale. */
     if(ret == ESP_OK && (gap_right || gap_bottom)) {
-        lv_draw_ppa_cache_msync_after_dma_write(out_ptr, aligned_size);
+        lv_draw_ppa_cache_msync_after_dma_write(out_ptr, out_buffer_size);
 
         uint8_t *base = out_ptr;
-        uint32_t stride = dest_stride;
+        uint32_t stride = use_staging_out ? staging_stride : dest_stride;
+        uint32_t local_x = use_staging_out ? 0U : (uint32_t)dest_area.x1;
+        uint32_t local_y = use_staging_out ? 0U : (uint32_t)dest_area.y1;
 
         if(gap_right && clip_w >= 2) {
-            uint32_t col = dest_area.x1 + (uint32_t)clip_w - 1;
+            uint32_t col = local_x + (uint32_t)clip_w - 1;
             uint32_t col_prev = col - 1;
             for(int32_t y = 0; y < clip_h; y++) {
-                uint32_t row_off = (dest_area.y1 + (uint32_t)y) * stride;
+                uint32_t row_off = (local_y + (uint32_t)y) * stride;
                 lv_memcpy(base + row_off + col * out_bpp,
                           base + row_off + col_prev * out_bpp, out_bpp);
             }
         }
         if(gap_bottom && clip_h >= 2) {
-            uint32_t row = dest_area.y1 + (uint32_t)clip_h - 1;
+            uint32_t row = local_y + (uint32_t)clip_h - 1;
             uint32_t row_prev = row - 1;
-            lv_memcpy(base + row * stride + dest_area.x1 * out_bpp,
-                      base + row_prev * stride + dest_area.x1 * out_bpp,
+            lv_memcpy(base + row * stride + local_x * out_bpp,
+                      base + row_prev * stride + local_x * out_bpp,
                       (uint32_t)clip_w * out_bpp);
         }
 
-        lv_draw_ppa_cache_msync(out_ptr, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        lv_draw_ppa_cache_msync(out_ptr, out_buffer_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    }
+
+    if(staging_out != NULL) {
+        if(ret == ESP_OK) {
+            lv_draw_ppa_cache_msync_after_dma_write(staging_out, staging_size);
+            const uint32_t row_copy_bytes = (uint32_t)clip_w * out_bpp;
+            uint8_t *dst_row = dest_buf->data + (size_t)dest_area.y1 * dest_stride +
+                               (size_t)dest_area.x1 * out_bpp;
+            uint8_t *src_row = staging_out;
+            for(int32_t y = 0; y < clip_h; y++) {
+                lv_draw_ppa_cache_msync(dst_row, row_copy_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+                lv_memcpy(dst_row, src_row, row_copy_bytes);
+                lv_draw_ppa_cache_msync(dst_row, row_copy_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+                dst_row += dest_stride;
+                src_row += staging_stride;
+            }
+        }
     }
 
     if(aligned_out) {
