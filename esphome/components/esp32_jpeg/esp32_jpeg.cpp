@@ -134,7 +134,11 @@ jpeg_yuv_rgb_conv_std_t to_color_standard(ColorConversionStandard standard) {
 
 }  // namespace
 
-void Esp32JpegComponent::setup() { preallocate_decoder(this->decoder_timeout_ms_); }
+void Esp32JpegComponent::setup() {
+  // Keep the hardware block free at boot. The decoder is created on demand so
+  // the encoder used by LVGL snapshot compression can still acquire the JPEG
+  // peripheral when it needs to compact snapshots into PSRAM-friendly storage.
+}
 
 void Esp32JpegComponent::dump_config() { ESP_LOGCONFIG(TAG, "ESP32 JPEG hardware accelerator"); }
 
