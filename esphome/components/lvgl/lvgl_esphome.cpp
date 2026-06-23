@@ -3036,7 +3036,17 @@ struct SnapshotPanoramaCacheEntry {
   uint8_t *buf{nullptr};
   size_t size{0};
   int width{0};
+  int height{0};
   int scale{1};
+};
+
+struct SnapshotPanoramaPageSource {
+  const uint8_t *data{nullptr};
+  size_t stride{0};
+  int width{0};
+  int height{0};
+  int source_scale{1};
+  SnapshotPanoramaCacheEntry *owner{nullptr};
 };
 
 SnapshotSwipeState snapshot_swipe_state;
@@ -3269,6 +3279,7 @@ void snapshot_panorama_free_entry(SnapshotPanoramaCacheEntry &entry) {
   entry.right = nullptr;
   entry.size = 0;
   entry.width = 0;
+  entry.height = 0;
   entry.scale = 1;
 }
 
@@ -3358,43 +3369,103 @@ SnapshotPanoramaCacheEntry *snapshot_panorama_cache_find(lv_obj_t *left, lv_obj_
   return nullptr;
 }
 
-SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare_from_buffers(lv_obj_t *left_obj, lv_obj_t *right_obj,
-                                                                         lv_draw_buf_t *left, lv_draw_buf_t *right,
+SnapshotPanoramaCacheEntry *snapshot_panorama_cache_alloc_slot(SnapshotPanoramaCacheEntry *protect_a,
+                                                               SnapshotPanoramaCacheEntry *protect_b) {
+  for (auto &entry : snapshot_panorama_cache) {
+    if (&entry != protect_a && &entry != protect_b && entry.buf == nullptr)
+      return &entry;
+  }
+  for (auto &entry : snapshot_panorama_cache) {
+    if (&entry != protect_a && &entry != protect_b)
+      return &entry;
+  }
+  return nullptr;
+}
+
+bool snapshot_panorama_source_from_buffer(lv_draw_buf_t *buf, int source_scale, SnapshotPanoramaPageSource *source) {
+  if (buf == nullptr || buf->data == nullptr || source == nullptr)
+    return false;
+  if (buf->header.cf != LV_COLOR_FORMAT_RGB888 || source_scale <= 0)
+    return false;
+  source->data = static_cast<const uint8_t *>(buf->data);
+  source->stride = buf->header.stride;
+  source->width = buf->header.w;
+  source->height = buf->header.h;
+  source->source_scale = source_scale;
+  source->owner = nullptr;
+  return true;
+}
+
+bool snapshot_panorama_source_from_cache(lv_obj_t *obj, int width, int scale, SnapshotPanoramaPageSource *source) {
+#if defined(USE_ESP32) && LV_COLOR_DEPTH == 32
+  if (obj == nullptr || width <= 0 || scale <= 0 || source == nullptr)
+    return false;
+  if ((width % scale) != 0)
+    return false;
+  const int scaled_width = width / scale;
+  const size_t page_bytes = (size_t) scaled_width * 3;
+  const size_t panorama_stride = page_bytes * 2;
+  for (auto &entry : snapshot_panorama_cache) {
+    if (entry.buf == nullptr || entry.width != width || entry.scale != scale || entry.height <= 0)
+      continue;
+    size_t offset = 0;
+    if (entry.left == obj) {
+      offset = 0;
+    } else if (entry.right == obj) {
+      offset = page_bytes;
+    } else {
+      continue;
+    }
+    source->data = entry.buf + offset;
+    source->stride = panorama_stride;
+    source->width = scaled_width;
+    source->height = entry.height;
+    source->source_scale = 1;
+    source->owner = &entry;
+    return true;
+  }
+#endif
+  return false;
+}
+
+static inline void snapshot_panorama_copy_source_row(const SnapshotPanoramaPageSource &source, int y, uint8_t *dst,
+                                                    int width) {
+  const uint8_t *src_row = source.data + (size_t) (y * source.source_scale) * source.stride;
+  snapshot_swipe_copy_rgb888_scaled_row(src_row, dst, width, source.source_scale);
+}
+
+SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare_from_sources(lv_obj_t *left_obj, lv_obj_t *right_obj,
+                                                                         const SnapshotPanoramaPageSource &left,
+                                                                         const SnapshotPanoramaPageSource &right,
                                                                          int width) {
 #if defined(USE_ESP32) && LV_COLOR_DEPTH == 32
   constexpr int scale = SNAPSHOT_PANORAMA_SCALE;
   if (left_obj == nullptr || right_obj == nullptr || width <= 0)
     return nullptr;
-  if (left == nullptr || right == nullptr)
+  if (left.data == nullptr || right.data == nullptr)
     return nullptr;
-  if (left->data == nullptr || right->data == nullptr)
-    return nullptr;
-  if (left->header.cf != LV_COLOR_FORMAT_RGB888 || right->header.cf != LV_COLOR_FORMAT_RGB888)
-    return nullptr;
-  const int height = left->header.h;
-  if (left->header.w < width || right->header.w < width || right->header.h < height)
-    return nullptr;
-  if ((width % scale) != 0 || (height % scale) != 0)
+  if ((width % scale) != 0 || left.source_scale <= 0 || right.source_scale <= 0)
     return nullptr;
 
   constexpr size_t CACHE_ALIGN = 128;
   constexpr size_t BYTES_PER_PIXEL = 3;
   const int scaled_width = width / scale;
-  const int scaled_height = height / scale;
+  const int scaled_height = left.height / left.source_scale;
+  const int right_scaled_height = right.height / right.source_scale;
+  if (scaled_height <= 0 || right_scaled_height < scaled_height)
+    return nullptr;
+  if (left.width < scaled_width * left.source_scale || right.width < scaled_width * right.source_scale)
+    return nullptr;
+  if (left.height < scaled_height * left.source_scale || right.height < scaled_height * right.source_scale)
+    return nullptr;
   const int panorama_width = scaled_width * 2;
   const size_t panorama_stride = (size_t) panorama_width * BYTES_PER_PIXEL;
   const size_t panorama_size = panorama_stride * scaled_height;
   const size_t aligned_size = (panorama_size + CACHE_ALIGN - 1) & ~(CACHE_ALIGN - 1);
 
-  SnapshotPanoramaCacheEntry *slot = nullptr;
-  for (auto &entry : snapshot_panorama_cache) {
-    if (entry.buf == nullptr) {
-      slot = &entry;
-      break;
-    }
-  }
+  auto *slot = snapshot_panorama_cache_alloc_slot(left.owner, right.owner);
   if (slot == nullptr)
-    slot = &snapshot_panorama_cache[0];
+    return nullptr;
   snapshot_panorama_free_entry(*slot);
 
   auto *panorama = static_cast<uint8_t *>(
@@ -3407,13 +3478,9 @@ SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare_from_buffers(lv_obj_
 
   const uint64_t t0 = snapshot_diag_now_us_();
   for (int y = 0; y < scaled_height; y++) {
-    const int src_y = y * scale;
-    const uint8_t *left_row = left->data + (size_t) src_y * left->header.stride;
-    const uint8_t *right_row = right->data + (size_t) src_y * right->header.stride;
     uint8_t *dst_row = panorama + (size_t) y * panorama_stride;
-    snapshot_swipe_copy_rgb888_scaled_row(left_row, dst_row, scaled_width, scale);
-    snapshot_swipe_copy_rgb888_scaled_row(right_row, dst_row + (size_t) scaled_width * BYTES_PER_PIXEL, scaled_width,
-                                         scale);
+    snapshot_panorama_copy_source_row(left, y, dst_row, scaled_width);
+    snapshot_panorama_copy_source_row(right, y, dst_row + (size_t) scaled_width * BYTES_PER_PIXEL, scaled_width);
   }
   lvgl_cache_msync_external(panorama, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
@@ -3422,6 +3489,7 @@ SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare_from_buffers(lv_obj_
   slot->buf = panorama;
   slot->size = aligned_size;
   slot->width = width;
+  slot->height = scaled_height;
   slot->scale = scale;
   if (s_swipe_logging_enabled) {
     ESP_LOGI(TAG, "snapshot panorama: cached RGB888 %dx%d scale=%dx (%u KB) in %lluus", panorama_width,
@@ -3429,6 +3497,23 @@ SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare_from_buffers(lv_obj_
              (unsigned long long) (esp_timer_get_time() - t0));
   }
   return slot;
+#else
+  return nullptr;
+#endif
+}
+
+SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare_from_buffers(lv_obj_t *left_obj, lv_obj_t *right_obj,
+                                                                         lv_draw_buf_t *left, lv_draw_buf_t *right,
+                                                                         int width) {
+#if defined(USE_ESP32) && LV_COLOR_DEPTH == 32
+  constexpr int scale = SNAPSHOT_PANORAMA_SCALE;
+  SnapshotPanoramaPageSource left_source;
+  SnapshotPanoramaPageSource right_source;
+  if (!snapshot_panorama_source_from_buffer(left, scale, &left_source) ||
+      !snapshot_panorama_source_from_buffer(right, scale, &right_source)) {
+    return nullptr;
+  }
+  return snapshot_panorama_cache_prepare_from_sources(left_obj, right_obj, left_source, right_source, width);
 #else
   return nullptr;
 #endif
@@ -3882,31 +3967,64 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
 
   snapshot_log_heap_("cache_pair begin", left, false);
   const uint64_t t0 = snapshot_diag_now_us_();
-  auto *left_buf = snapshot_take_centered(left);
-  if (left_buf == nullptr) {
-    ESP_LOGW(TAG, "snapshot diag: cache_pair failed left=%p right=%p width=%d stage=left", left, right, width);
-    snapshot_log_heap_("cache_pair left failed", left, true);
-    return false;
+  SnapshotPanoramaPageSource left_source;
+  SnapshotPanoramaPageSource right_source;
+  const bool left_from_cache = snapshot_panorama_source_from_cache(left, width, scale, &left_source);
+  const bool right_from_cache = snapshot_panorama_source_from_cache(right, width, scale, &right_source);
+
+  lv_draw_buf_t *left_buf = nullptr;
+  lv_draw_buf_t *right_buf = nullptr;
+  uint64_t left_snapshot_us = 0;
+  uint64_t right_snapshot_us = 0;
+
+  if (!left_from_cache) {
+    const uint64_t left_t0 = snapshot_diag_now_us_();
+    left_buf = snapshot_take_centered(left);
+    left_snapshot_us = snapshot_diag_now_us_() - left_t0;
+    if (left_buf == nullptr || !snapshot_panorama_source_from_buffer(left_buf, scale, &left_source)) {
+      if (left_buf != nullptr)
+        lv_draw_buf_destroy(left_buf);
+      ESP_LOGW(TAG, "snapshot diag: cache_pair failed left=%p right=%p width=%d stage=left", left, right, width);
+      snapshot_log_heap_("cache_pair left failed", left, true);
+      return false;
+    }
   }
 
-  auto *right_buf = snapshot_take_centered(right);
-  if (right_buf == nullptr) {
+  if (!right_from_cache) {
+    const uint64_t right_t0 = snapshot_diag_now_us_();
+    right_buf = snapshot_take_centered(right);
+    right_snapshot_us = snapshot_diag_now_us_() - right_t0;
+    if (right_buf == nullptr || !snapshot_panorama_source_from_buffer(right_buf, scale, &right_source)) {
+      if (right_buf != nullptr)
+        lv_draw_buf_destroy(right_buf);
+      if (left_buf != nullptr)
+        lv_draw_buf_destroy(left_buf);
+      ESP_LOGW(TAG, "snapshot diag: cache_pair failed left=%p right=%p width=%d stage=right", left, right, width);
+      snapshot_log_heap_("cache_pair right failed", right, true);
+      return false;
+    }
+  }
+
+  const uint64_t panorama_t0 = snapshot_diag_now_us_();
+  const bool prepared =
+      snapshot_panorama_cache_prepare_from_sources(left, right, left_source, right_source, width) != nullptr;
+  const uint64_t panorama_us = snapshot_diag_now_us_() - panorama_t0;
+  if (left_buf != nullptr)
     lv_draw_buf_destroy(left_buf);
-    ESP_LOGW(TAG, "snapshot diag: cache_pair failed left=%p right=%p width=%d stage=right", left, right, width);
-    snapshot_log_heap_("cache_pair right failed", right, true);
-    return false;
-  }
-
-  const bool prepared = snapshot_panorama_cache_prepare_from_buffers(left, right, left_buf, right_buf, width) != nullptr;
-  lv_draw_buf_destroy(left_buf);
-  lv_draw_buf_destroy(right_buf);
+  if (right_buf != nullptr)
+    lv_draw_buf_destroy(right_buf);
   if (!prepared) {
     snapshot_log_heap_("cache_pair panorama failed", left, true);
   }
   const uint64_t elapsed_us = snapshot_diag_now_us_() - t0;
   if (!prepared || elapsed_us > 50000 || snapshot_diag_budget > 0) {
-    ESP_LOGW(TAG, "snapshot diag: cache_pair left=%p right=%p width=%d prepared=%u took=%lluus",
-             left, right, width, (unsigned) prepared, (unsigned long long) elapsed_us);
+    ESP_LOGW(TAG,
+             "snapshot diag: cache_pair left=%p right=%p width=%d prepared=%u took=%lluus panorama=%lluus "
+             "left_snapshot=%lluus right_snapshot=%lluus left_src=%s right_src=%s",
+             left, right, width, (unsigned) prepared, (unsigned long long) elapsed_us,
+             (unsigned long long) panorama_us, (unsigned long long) left_snapshot_us,
+             (unsigned long long) right_snapshot_us, left_from_cache ? "cache" : "snapshot",
+             right_from_cache ? "cache" : "snapshot");
   }
   return prepared;
 #else
