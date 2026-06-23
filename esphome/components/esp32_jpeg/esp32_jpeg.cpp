@@ -28,6 +28,8 @@ uint32_t align_up(uint32_t value, uint32_t alignment) { return (value + alignmen
 jpeg_decoder_handle_t preallocated_decoder = nullptr;
 StaticSemaphore_t jpeg_codec_mutex_buffer;
 SemaphoreHandle_t jpeg_codec_mutex = nullptr;
+constexpr size_t MIN_ENCODER_INTERNAL_DMA_LARGEST = 64 * 1024;
+bool encoder_dma_guard_logged = false;
 
 void ensure_jpeg_codec_mutex_() {
   if (jpeg_codec_mutex == nullptr)
@@ -62,6 +64,23 @@ void log_decoder_allocation_failure_(esp_err_t err) {
            heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
            heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL),
            heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+}
+
+bool has_encoder_dma_budget_() {
+  const size_t dma_largest = heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+  if (dma_largest >= MIN_ENCODER_INTERNAL_DMA_LARGEST)
+    return true;
+
+  if (!encoder_dma_guard_logged) {
+    encoder_dma_guard_logged = true;
+    ESP_LOGW(TAG,
+             "Skipping JPEG encoder: internal DMA heap too fragmented internal_free=%zu internal_largest=%zu "
+             "dma_free=%zu dma_largest=%zu min_largest=%zu",
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL), dma_largest,
+             MIN_ENCODER_INTERNAL_DMA_LARGEST);
+  }
+  return false;
 }
 
 void release_preallocated_decoder_() {
@@ -237,6 +256,8 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   // occasionally needs the encoder; release the idle decoder before creating
   // the encoder to avoid the IDF driver tearing down a half-created handle.
   release_preallocated_decoder_();
+  if (!has_encoder_dma_budget_())
+    return ESP_ERR_NO_MEM;
 
   jpeg_encoder_handle_t encoder = nullptr;
   jpeg_encode_engine_cfg_t engine_cfg = {
