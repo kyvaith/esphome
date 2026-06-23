@@ -3917,6 +3917,9 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
 extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t *page1, lv_obj_t *page2, lv_obj_t *page3,
                                                         lv_obj_t *page4, int current_page, int width) {
 #if LV_USE_SNAPSHOT
+  if (s_snapshot_direct_active || s_snapshot_swipe_active || snapshot_app_state.active)
+    return false;
+
   lv_obj_t *pages[] = {page1, page2, page3, page4};
   if (current_page < 1 || current_page > 4 || width <= 0)
     return false;
@@ -3971,6 +3974,10 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t *page1, lv_obj_
 #else
   return false;
 #endif
+}
+
+extern "C" bool lvgl_esphome_snapshot_is_active(void) {
+  return s_snapshot_direct_active || s_snapshot_swipe_active || snapshot_app_state.active;
 }
 
 extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *background, int width,
