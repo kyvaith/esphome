@@ -46,14 +46,21 @@ static inline uint32_t ppa_area_px(const lv_area_t * area)
     return (uint32_t)w * (uint32_t)h;
 }
 
-static inline bool ppa_task_area_fully_visible(const lv_draw_task_t * t)
+static inline bool ppa_task_large_visible_band(const lv_draw_task_t * t)
 {
     lv_area_t visible_area;
     if(!lv_area_intersect(&visible_area, &t->area, &t->clip_area)) return false;
-    return visible_area.x1 == t->area.x1 &&
-           visible_area.y1 == t->area.y1 &&
-           visible_area.x2 == t->area.x2 &&
-           visible_area.y2 == t->area.y2;
+    if(t->target_layer != NULL) {
+        if(!lv_area_intersect(&visible_area, &visible_area, &t->target_layer->buf_area)) return false;
+    }
+
+    /* LVGL partial rendering splits full-screen images into wide horizontal
+     * bands. Those are exactly the expensive image draws PPA SRM should handle.
+     * Small clipped redraws over cached RGB888 PSRAM (for example a clock tick
+     * over album artwork) are the cases that produced delayed horizontal line
+     * artifacts, so keep them on the software renderer. */
+    return lv_area_get_width(&visible_area) >= 320 &&
+           ppa_area_px(&visible_area) >= (128U * 128U);
 }
 
 /* Check if a draw buffer is suitable for PPA (non-NULL, aligned, has data) */
@@ -209,7 +216,7 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
             if(dsc->scale_x != LV_SCALE_NONE || dsc->scale_y != LV_SCALE_NONE) {
                 if(dsc->opa < (lv_opa_t)LV_OPA_MAX) return 0;
                 if(dsc->blend_mode != LV_BLEND_MODE_NORMAL) return 0;
-                if(!ppa_task_area_fully_visible(t)) return 0;
+                if(!ppa_task_large_visible_band(t)) return 0;
                 if(!ppa_src_cf_supported((lv_color_format_t)dsc->header.cf)) return 0;
                 lv_draw_buf_t * scale_dest = t->target_layer->draw_buf;
                 if(!ppa_buf_usable(scale_dest)) return 0;
@@ -230,8 +237,7 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
              * interactions have shown horizontal corruption on RGB888 layers. */
             if(dsc->opa < (lv_opa_t)LV_OPA_MAX) return 0;
             if(dsc->blend_mode != LV_BLEND_MODE_NORMAL) return 0;
-            if(!ppa_task_area_fully_visible(t)) return 0;
-            if(ppa_area_px(&t->area) < (128U * 128U)) return 0;
+            if(!ppa_task_large_visible_band(t)) return 0;
             lv_color_format_t src_cf = (lv_color_format_t)dsc->header.cf;
             if(src_cf == LV_COLOR_FORMAT_ARGB8888) return 0;
             if(!ppa_src_cf_supported(src_cf)) return 0;
