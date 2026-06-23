@@ -150,10 +150,16 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     lv_layer_t * layer        = t->target_layer;
     lv_draw_buf_t * dest_buf  = layer->draw_buf;
 
-    /* coords = image rect at 1:1 scale (may extend off-screen).
-     * Intersect with the render tile to get the actual visible clip. */
+    /* coords is the draw task area. On partial redraws it can be much larger
+     * than the dirty region, so clip it before mapping destination pixels back
+     * into the source image. The source origin must stay anchored to
+     * dsc->image_area; otherwise a small redraw such as a 1 Hz clock update can
+     * copy the top rows of the image into the clipped area. */
+    lv_area_t clipped_area;
+    if(!lv_area_intersect(&clipped_area, coords, &t->clip_area)) return;
+
     lv_area_t visible_area;
-    if(!lv_area_intersect(&visible_area, coords, &layer->buf_area)) return;
+    if(!lv_area_intersect(&visible_area, &clipped_area, &layer->buf_area)) return;
 
     lv_image_decoder_dsc_t decoder_dsc;
     lv_image_decoder_args_t dec_args;
@@ -182,10 +188,15 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     uint32_t src_w = decoded->header.w;
     uint32_t src_h = decoded->header.h;
 
+    const lv_area_t * image_area = &dsc->image_area;
+    if(lv_area_get_width(image_area) <= 0 || lv_area_get_height(image_area) <= 0) {
+        image_area = coords;
+    }
+
     /* Virtual image origin: pivot stays fixed on screen as scale changes.
-     * coords->x1/y1 = image top-left at 1:1 scale. */
-    float virt_x = (float)coords->x1 + (float)dsc->pivot.x * (1.0f - sx);
-    float virt_y = (float)coords->y1 + (float)dsc->pivot.y * (1.0f - sy);
+     * image_area->x1/y1 is the full image top-left, independent of clipping. */
+    float virt_x = (float)image_area->x1 + (float)dsc->pivot.x * (1.0f - sx);
+    float virt_y = (float)image_area->y1 + (float)dsc->pivot.y * (1.0f - sy);
 
     /* Visible clip dimensions and buffer-local destination (always non-negative) */
     int32_t clip_w = lv_area_get_width(&visible_area);
