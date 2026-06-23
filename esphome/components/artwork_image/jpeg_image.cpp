@@ -123,22 +123,18 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
     return 0;
   }
 
-  esp32_jpeg::PictureInfo info = {};
-  esp_err_t err = esp32_jpeg::get_info(buffer, size, &info);
-  if (err != ESP_OK && !frame_info_valid) {
-    return 0;
-  }
-
+  esp_err_t err = ESP_OK;
   if (!frame_info_valid) {
+    esp32_jpeg::PictureInfo info = {};
+    err = esp32_jpeg::get_info(buffer, size, &info);
+    if (err != ESP_OK) {
+      return 0;
+    }
     frame_w = info.width;
     frame_h = info.height;
-  }
-  if (frame_w == 0 || frame_h == 0) {
-    return 0;
-  }
-  if (err == ESP_OK && (info.width != frame_w || info.height != frame_h)) {
-    ESP_LOGD(TAG, "Hardware JPEG parser size mismatch: esp-idf=%ux%u frame=%ux%u", (unsigned) info.width,
-             (unsigned) info.height, (unsigned) frame_w, (unsigned) frame_h);
+    if (frame_w == 0 || frame_h == 0) {
+      return 0;
+    }
   }
 
   const size_t aligned_w = (frame_w + 15u) & ~15u;
