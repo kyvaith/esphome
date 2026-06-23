@@ -1672,12 +1672,11 @@ void LvglComponent::partial_compositor_copy_area_(uint8_t *dst, const lv_area_t 
                                      ((size_t) (x1 - area.x1) * BYTES_PER_PIXEL);
   uint8_t *dst_row = dst + ((size_t) y1 * row_bytes) + ((size_t) x1 * BYTES_PER_PIXEL);
   for (int32_t y = y1; y <= y2; y++) {
-    /* The framebuffer lives in cached PSRAM.  A partial CPU write can share
-     * cache lines with pixels outside the copied rectangle.  Pull the current
+    /* The framebuffer lives in cached PSRAM. A partial CPU write can share
+     * cache lines with pixels outside the copied rectangle. Pull only the
      * destination span from memory before modifying it, then write back only
-     * that span; flushing whole rows here can restore stale cache lines as
-     * horizontal artifacts next to small invalidated widgets such as clocks. */
-    lvgl_cache_msync_external(src_row, copy_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+     * that span; the source buffer is owned by LVGL/the presented framebuffer
+     * and invalidating it here can race unrelated readers. */
     lvgl_cache_msync_external(dst_row, copy_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
     memcpy(dst_row, src_row, copy_bytes);
     lvgl_cache_msync_external(dst_row, copy_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
