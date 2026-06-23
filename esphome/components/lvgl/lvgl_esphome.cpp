@@ -3002,6 +3002,7 @@ struct SnapshotAppState {
   lv_draw_buf_t *app_buf{nullptr};
   lv_draw_buf_t *background_buf{nullptr};
   bool owns_app_buf{false};
+  bool owns_background_buf{false};
   bool active{false};
   bool opening{true};
   uint64_t anim_start_us{0};
@@ -3280,7 +3281,7 @@ void snapshot_panorama_cache_invalidate(lv_obj_t *obj) {
   }
 }
 
-void snapshot_cache_store(lv_obj_t *obj, lv_draw_buf_t *buf) {
+void snapshot_cache_store_impl(lv_obj_t *obj, lv_draw_buf_t *buf, bool keep_raw_fallback) {
   SnapshotCacheEntry *slot = nullptr;
   for (auto &entry : snapshot_cache) {
     if (entry.obj == obj) {
@@ -3291,7 +3292,12 @@ void snapshot_cache_store(lv_obj_t *obj, lv_draw_buf_t *buf) {
         lv_draw_buf_destroy(buf);
       } else {
         snapshot_cache_destroy_jpeg(entry);
-        entry.buf = buf;
+        if (keep_raw_fallback) {
+          entry.buf = buf;
+        } else {
+          snapshot_cache_free_entry(entry);
+          lv_draw_buf_destroy(buf);
+        }
       }
       return;
     }
@@ -3307,8 +3313,19 @@ void snapshot_cache_store(lv_obj_t *obj, lv_draw_buf_t *buf) {
   if (snapshot_cache_encode_jpeg(*slot, buf)) {
     lv_draw_buf_destroy(buf);
   } else {
-    slot->buf = buf;
+    if (keep_raw_fallback) {
+      slot->buf = buf;
+    } else {
+      snapshot_cache_free_entry(*slot);
+      lv_draw_buf_destroy(buf);
+    }
   }
+}
+
+void snapshot_cache_store(lv_obj_t *obj, lv_draw_buf_t *buf) { snapshot_cache_store_impl(obj, buf, true); }
+
+void snapshot_cache_store_compressed_only(lv_obj_t *obj, lv_draw_buf_t *buf) {
+  snapshot_cache_store_impl(obj, buf, false);
 }
 
 void snapshot_swipe_clear_panorama() {
@@ -3341,16 +3358,13 @@ SnapshotPanoramaCacheEntry *snapshot_panorama_cache_find(lv_obj_t *left, lv_obj_
   return nullptr;
 }
 
-SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare(lv_obj_t *left_obj, lv_obj_t *right_obj, int width) {
+SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare_from_buffers(lv_obj_t *left_obj, lv_obj_t *right_obj,
+                                                                         lv_draw_buf_t *left, lv_draw_buf_t *right,
+                                                                         int width) {
 #if defined(USE_ESP32) && LV_COLOR_DEPTH == 32
+  constexpr int scale = SNAPSHOT_PANORAMA_SCALE;
   if (left_obj == nullptr || right_obj == nullptr || width <= 0)
     return nullptr;
-  constexpr int scale = SNAPSHOT_PANORAMA_SCALE;
-  if (auto *cached = snapshot_panorama_cache_find(left_obj, right_obj, width, scale))
-    return cached;
-
-  auto *left = snapshot_cache_find(left_obj);
-  auto *right = snapshot_cache_find(right_obj);
   if (left == nullptr || right == nullptr)
     return nullptr;
   if (left->data == nullptr || right->data == nullptr)
@@ -3415,6 +3429,22 @@ SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare(lv_obj_t *left_obj, 
              (unsigned long long) (esp_timer_get_time() - t0));
   }
   return slot;
+#else
+  return nullptr;
+#endif
+}
+
+SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare(lv_obj_t *left_obj, lv_obj_t *right_obj, int width) {
+#if defined(USE_ESP32) && LV_COLOR_DEPTH == 32
+  if (left_obj == nullptr || right_obj == nullptr || width <= 0)
+    return nullptr;
+  constexpr int scale = SNAPSHOT_PANORAMA_SCALE;
+  if (auto *cached = snapshot_panorama_cache_find(left_obj, right_obj, width, scale))
+    return cached;
+
+  auto *left = snapshot_cache_find(left_obj);
+  auto *right = snapshot_cache_find(right_obj);
+  return snapshot_panorama_cache_prepare_from_buffers(left_obj, right_obj, left, right, width);
 #else
   return nullptr;
 #endif
@@ -3533,6 +3563,9 @@ void snapshot_app_cleanup() {
   if (snapshot_app_state.owns_app_buf && snapshot_app_state.app_buf != nullptr) {
     lv_draw_buf_destroy(snapshot_app_state.app_buf);
   }
+  if (snapshot_app_state.owns_background_buf && snapshot_app_state.background_buf != nullptr) {
+    lv_draw_buf_destroy(snapshot_app_state.background_buf);
+  }
   snapshot_app_state = {};
 }
 
@@ -3558,6 +3591,25 @@ lv_draw_buf_t *snapshot_app_take_fresh(lv_obj_t *obj) {
   return buf;
 }
 
+lv_draw_buf_t *snapshot_take_centered(lv_obj_t *obj) {
+  if (obj == nullptr)
+    return nullptr;
+  const bool was_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  const lv_coord_t old_x = lv_obj_get_x(obj);
+  const lv_coord_t old_y = lv_obj_get_y(obj);
+
+  lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_align(obj, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_update_layout(lv_obj_get_parent(obj) == nullptr ? obj : lv_obj_get_parent(obj));
+
+  auto *buf = lv_snapshot_take(obj, SNAPSHOT_CF);
+  lv_obj_set_pos(obj, old_x, old_y);
+  lv_obj_update_layout(lv_obj_get_parent(obj) == nullptr ? obj : lv_obj_get_parent(obj));
+  if (was_hidden)
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  return buf;
+}
+
 lv_draw_buf_t *snapshot_app_cached_or_take(lv_obj_t *obj, bool force_fresh, bool *owns) {
   if (owns != nullptr)
     *owns = false;
@@ -3566,9 +3618,6 @@ lv_draw_buf_t *snapshot_app_cached_or_take(lv_obj_t *obj, bool force_fresh, bool
   if (!force_fresh) {
     if (auto *cached = snapshot_cache_find(obj))
       return cached;
-    if (lvgl_esphome_snapshot_cache_page(obj)) {
-      return snapshot_cache_find(obj);
-    }
   }
   auto *buf = snapshot_app_take_fresh(obj);
   if (buf != nullptr && owns != nullptr)
@@ -3602,9 +3651,12 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
       snapshot_app_clear_prepared_close();
     app_buf = snapshot_app_cached_or_take(app, !opening, &owns_app);
   }
-  auto *background_buf = snapshot_app_cached_or_take(background, false, nullptr);
+  bool owns_background = false;
+  auto *background_buf = snapshot_app_cached_or_take(background, false, &owns_background);
   if (app_buf == nullptr) {
     ESP_LOGW(TAG, "snapshot app: failed to capture app=%p", app);
+    if (owns_background && background_buf != nullptr)
+      lv_draw_buf_destroy(background_buf);
     return false;
   }
 
@@ -3613,6 +3665,7 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
   snapshot_app_state.app_buf = app_buf;
   snapshot_app_state.background_buf = background_buf;
   snapshot_app_state.owns_app_buf = owns_app;
+  snapshot_app_state.owns_background_buf = owns_background;
   snapshot_app_state.active = true;
   snapshot_app_state.opening = opening;
   snapshot_app_state.anim_start_us = esp_timer_get_time();
@@ -3649,8 +3702,11 @@ bool snapshot_app_direct_anim_tick() {
   if (elapsed_ms >= duration_ms) {
     state.component->wait_for_direct_frame_presented(50);
     state.component->realign_direct_buffer_after_manual_present();
+    if (state.opening && state.app_root != nullptr) {
+      snapshot_cache_release_decoded_if_compressed(state.app_root);
+    }
     if (!state.opening && state.owns_app_buf && state.app_root != nullptr && state.app_buf != nullptr) {
-      snapshot_cache_store(state.app_root, state.app_buf);
+      snapshot_cache_store_compressed_only(state.app_root, state.app_buf);
       state.app_buf = nullptr;
       state.owns_app_buf = false;
     }
@@ -3796,18 +3852,7 @@ extern "C" bool lvgl_esphome_snapshot_cache_page(lv_obj_t *obj) {
   snapshot_log_heap_("cache_page begin", obj, false);
   const uint64_t t0 = snapshot_diag_now_us_();
   const bool was_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
-  const lv_coord_t old_x = lv_obj_get_x(obj);
-  const lv_coord_t old_y = lv_obj_get_y(obj);
-
-  lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_align(obj, LV_ALIGN_CENTER, 0, 0);
-  lv_obj_update_layout(lv_obj_get_parent(obj));
-
-  auto *buf = lv_snapshot_take(obj, SNAPSHOT_CF);
-  lv_obj_set_pos(obj, old_x, old_y);
-  lv_obj_update_layout(lv_obj_get_parent(obj) == nullptr ? obj : lv_obj_get_parent(obj));
-  if (was_hidden)
-    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  auto *buf = snapshot_take_centered(obj);
   if (buf == nullptr) {
     ESP_LOGW(TAG, "snapshot cache: failed for obj=%p", obj);
     snapshot_log_heap_("cache_page failed", obj, true);
@@ -3831,23 +3876,31 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
 #if LV_USE_SNAPSHOT
   if (left == nullptr || right == nullptr)
     return false;
+  constexpr int scale = SNAPSHOT_PANORAMA_SCALE;
+  if (snapshot_panorama_cache_find(left, right, width, scale) != nullptr)
+    return true;
+
   snapshot_log_heap_("cache_pair begin", left, false);
   const uint64_t t0 = snapshot_diag_now_us_();
-  if (snapshot_cache_find(left) == nullptr && !lvgl_esphome_snapshot_cache_page(left)) {
+  auto *left_buf = snapshot_take_centered(left);
+  if (left_buf == nullptr) {
     ESP_LOGW(TAG, "snapshot diag: cache_pair failed left=%p right=%p width=%d stage=left", left, right, width);
     snapshot_log_heap_("cache_pair left failed", left, true);
     return false;
   }
-  if (snapshot_cache_find(right) == nullptr && !lvgl_esphome_snapshot_cache_page(right)) {
+
+  auto *right_buf = snapshot_take_centered(right);
+  if (right_buf == nullptr) {
+    lv_draw_buf_destroy(left_buf);
     ESP_LOGW(TAG, "snapshot diag: cache_pair failed left=%p right=%p width=%d stage=right", left, right, width);
     snapshot_log_heap_("cache_pair right failed", right, true);
     return false;
   }
-  const bool prepared = snapshot_panorama_cache_prepare(left, right, width) != nullptr;
-  if (prepared) {
-    snapshot_cache_release_decoded_if_compressed(left);
-    snapshot_cache_release_decoded_if_compressed(right);
-  } else {
+
+  const bool prepared = snapshot_panorama_cache_prepare_from_buffers(left, right, left_buf, right_buf, width) != nullptr;
+  lv_draw_buf_destroy(left_buf);
+  lv_draw_buf_destroy(right_buf);
+  if (!prepared) {
     snapshot_log_heap_("cache_pair panorama failed", left, true);
   }
   const uint64_t elapsed_us = snapshot_diag_now_us_() - t0;
@@ -3902,15 +3955,12 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t *page1, lv_obj_
       snapshot_panorama_free_entry(entry);
   }
 
-  bool prepared = true;
-  for (int page = first_page; page <= last_page; page++) {
-    lv_obj_t *obj = pages[page - 1];
-    auto *entry = snapshot_cache_find_entry(obj);
-    if (entry == nullptr || (entry->buf == nullptr && entry->jpeg.empty())) {
-      prepared = lvgl_esphome_snapshot_cache_page(obj) && prepared;
-    }
+  for (auto &entry : snapshot_cache) {
+    if (page_index(entry.obj) != 0)
+      snapshot_cache_free_entry(entry);
   }
 
+  bool prepared = true;
   if (current_page > 1) {
     prepared = lvgl_esphome_snapshot_cache_pair(pages[current_page - 2], pages[current_page - 1], width) && prepared;
   }
@@ -3972,6 +4022,32 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
   lv_obj_align(next, LV_ALIGN_CENTER, next_x, 0);
   lv_obj_update_layout(parent);
 
+  auto *disp = lv_obj_get_display(current);
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  if (component != nullptr && SNAPSHOT_DIRECT_COMPOSITOR_ENABLED) {
+    lv_obj_t *left_obj = next_x > 0 ? current : next;
+    lv_obj_t *right_obj = next_x > 0 ? next : current;
+    if (auto *panorama = snapshot_panorama_cache_prepare(left_obj, right_obj, width)) {
+      snapshot_swipe_state.width = width;
+      snapshot_swipe_state.current_x = 0;
+      snapshot_swipe_state.next_x = next_x;
+      snapshot_swipe_state.component = component;
+      snapshot_swipe_state.panorama_buf = panorama->buf;
+      snapshot_swipe_state.panorama_size = panorama->size;
+      snapshot_swipe_state.panorama_scale = panorama->scale;
+      snapshot_swipe_state.panorama_next_x = next_x;
+      snapshot_swipe_state.panorama_render = true;
+      snapshot_swipe_state.direct_render = true;
+      s_snapshot_direct_active = true;
+      lv_obj_add_flag(current, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(next, LV_OBJ_FLAG_HIDDEN);
+      if (s_swipe_logging_enabled) {
+        ESP_LOGI(TAG, "snapshot swipe: direct framebuffer compositor active (RGB888 panorama), next_x=%d", next_x);
+      }
+      return true;
+    }
+  }
+
   snapshot_swipe_state.current_buf = snapshot_cache_find(current);
   snapshot_swipe_state.next_buf = snapshot_cache_find(next);
   if (snapshot_swipe_state.current_buf == nullptr) {
@@ -3991,8 +4067,6 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
   snapshot_swipe_state.width = width;
   snapshot_swipe_state.current_x = 0;
   snapshot_swipe_state.next_x = next_x;
-  auto *disp = lv_obj_get_display(current);
-  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
   if (component != nullptr && SNAPSHOT_DIRECT_COMPOSITOR_ENABLED) {
     snapshot_swipe_state.component = component;
     lv_obj_t *left_obj = next_x > 0 ? current : next;
