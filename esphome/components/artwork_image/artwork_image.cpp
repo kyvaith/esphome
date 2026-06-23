@@ -1277,15 +1277,18 @@ bool ArtworkImage::decode_buffered_data_() {
 }
 
 void ArtworkImage::finish_download_() {
+  uint32_t stage_start = millis();
   if (!this->promote_decode_buffer_()) {
     this->fail_download_();
     return;
   }
+  log_slow_artwork_stage("finish-promote", stage_start);
   this->log_state_("download-complete");
   ESP_LOGD(TAG, "Image fully downloaded, read %zu bytes, width/height = %d/%d",
            this->downloader_ ? this->downloader_->get_bytes_read() : 0, this->width_, this->height_);
   ESP_LOGD(TAG, "Total time: %" PRIu32 "s", (uint32_t) (::time(nullptr) - this->start_time_));
   App.feed_wdt();
+  stage_start = millis();
 #ifdef USE_LVGL
 #if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 4, 0)
   this->get_lv_image_dsc();
@@ -1293,14 +1296,23 @@ void ArtworkImage::finish_download_() {
   this->get_lv_img_dsc();
 #endif
 #endif
+  log_slow_artwork_stage("finish-lvgl-descriptor", stage_start);
   this->log_state_("lvgl-descriptor-ready");
+  stage_start = millis();
   this->log_memory_summary_("ready");
+  log_slow_artwork_stage("finish-memory-log", stage_start);
   App.feed_wdt();
+  stage_start = millis();
   this->end_connection_();
+  log_slow_artwork_stage("finish-end-connection", stage_start);
+  stage_start = millis();
   this->download_finished_callback_.call(false);
+  log_slow_artwork_stage("finish-callback", stage_start);
   App.feed_wdt();
   this->log_state_("download-callback-finished");
+  stage_start = millis();
   this->start_pending_update_();
+  log_slow_artwork_stage("finish-start-pending", stage_start);
 }
 
 void ArtworkImage::fail_download_() {
