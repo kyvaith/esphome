@@ -145,24 +145,6 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   const size_t aligned_h = (frame_h + 15u) & ~15u;
   const size_t bytes_per_pixel = output_rgb565 ? 2u : 3u;
   const size_t output_size = aligned_w * aligned_h * bytes_per_pixel;
-  bool output_owned = true;
-  auto *output = static_cast<uint8_t *>(
-      heap_caps_aligned_alloc(JPEG_DMA_ALIGNMENT, output_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (output == nullptr) {
-    output = static_cast<uint8_t *>(heap_caps_aligned_alloc(JPEG_DMA_ALIGNMENT, output_size, MALLOC_CAP_8BIT));
-  }
-  if (output == nullptr) {
-    output = this->image_->try_reuse_active_buffer_for_decode(aligned_w, aligned_h, frame_w, frame_h);
-    output_owned = false;
-  }
-  if (output == nullptr) {
-    ESP_LOGW(TAG, "Hardware JPEG output allocation failed: %zu bytes", output_size);
-    return 0;
-  }
-  if (output_owned) {
-    memset(output, 0, output_size);
-  }
-
   esp32_jpeg::DecodeConfig cfg = {
       .output_format = output_rgb565 ? esp32_jpeg::PixelFormat::RGB565 : esp32_jpeg::PixelFormat::RGB888,
       .rgb_order = output_rgb565 ? (this->image_->is_big_endian() ? esp32_jpeg::RgbElementOrder::RGB
@@ -173,34 +155,57 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
       .timeout_ms = 180,
   };
 
+  uint8_t *output = nullptr;
+  bool output_reuses_active = false;
   size_t written = 0;
   const uint64_t start_us = esp_timer_get_time();
-  err = esp32_jpeg::decode(cfg, buffer, size, output, output_size, &written);
-  const uint64_t elapsed_us = esp_timer_get_time() - start_us;
+  err = esp32_jpeg::decode_allocated(cfg, buffer, size, output_size, &output, &written);
+  uint64_t elapsed_us = esp_timer_get_time() - start_us;
   if (err != ESP_OK || written == 0) {
-    ESP_LOGW(TAG, "Hardware JPEG decode failed err=%d written=%zu jpeg=%zu in %lluus", (int) err, written, size,
+    ESP_LOGW(TAG, "Hardware JPEG allocated decode failed err=%d written=%zu jpeg=%zu in %lluus", (int) err, written, size,
              (unsigned long long) elapsed_us);
-    if (output_owned) {
-      heap_caps_free(output);
-    } else {
-      this->image_->cancel_reused_active_buffer_decode();
+    uint8_t *reuse_output = this->image_->try_reuse_active_buffer_for_decode(aligned_w, aligned_h, frame_w, frame_h);
+    if (reuse_output != nullptr) {
+      written = 0;
+      const uint64_t retry_start_us = esp_timer_get_time();
+      err = esp32_jpeg::decode(cfg, buffer, size, reuse_output, output_size, &written);
+      const uint64_t retry_elapsed_us = esp_timer_get_time() - retry_start_us;
+      if (err == ESP_OK && written != 0) {
+        output = reuse_output;
+        output_reuses_active = true;
+        elapsed_us = retry_elapsed_us;
+        ESP_LOGW(TAG, "Hardware JPEG direct reuse decode finished: %ux%u into %zux%zu buffer, %zu -> %zu bytes in %lluus",
+                 (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h, size, written,
+                 (unsigned long long) retry_elapsed_us);
+      } else {
+        this->image_->cancel_reused_active_buffer_decode();
+        ESP_LOGW(TAG, "Hardware JPEG direct reuse decode failed err=%d written=%zu jpeg=%zu in %lluus", (int) err,
+                 written, size, (unsigned long long) retry_elapsed_us);
+      }
     }
-    return 0;
+    if (output == nullptr) {
+      if (static_cast<uint64_t>(frame_w) * static_cast<uint64_t>(frame_h) > 360000u) {
+        ESP_LOGW(TAG, "Skipping software JPEG decode for large artwork %ux%u after hardware failure",
+                 (unsigned) frame_w, (unsigned) frame_h);
+        return DECODE_ERROR_UNSUPPORTED_FORMAT;
+      }
+      return 0;
+    }
   }
 
   const bool adopted = output_rgb565 ? this->adopt_rgb565_buffer(output, aligned_w, aligned_h, frame_w, frame_h)
                                      : this->adopt_rgb_buffer(output, aligned_w, aligned_h, frame_w, frame_h);
   if (!adopted) {
-    if (output_owned) {
-      heap_caps_free(output);
-    } else {
+    if (output_reuses_active) {
       this->image_->cancel_reused_active_buffer_decode();
+    } else {
+      heap_caps_free(output);
     }
     return DECODE_ERROR_OUT_OF_MEMORY;
   }
 
   this->decoded_bytes_ = size;
-  ESP_LOGI(TAG, "Hardware JPEG decode finished: %ux%u into %zux%zu buffer, %zu -> %zu bytes in %lluus",
+  ESP_LOGW(TAG, "Hardware JPEG allocated decode finished: %ux%u into %zux%zu buffer, %zu -> %zu bytes in %lluus",
            (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h, size, written,
            (unsigned long long) elapsed_us);
   return size;

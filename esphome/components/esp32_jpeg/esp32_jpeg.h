@@ -104,6 +104,8 @@ esp_err_t get_info(const uint8_t *jpeg, size_t jpeg_size, PictureInfo *info);
 esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_size, JpegBuffer *output);
 esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_size, uint8_t *output, size_t output_size,
                  size_t *written = nullptr);
+esp_err_t decode_allocated(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_size, size_t output_size,
+                           uint8_t **output, size_t *written = nullptr);
 esp_err_t preallocate_decoder(int timeout_ms);
 
 }  // namespace esphome::esp32_jpeg
