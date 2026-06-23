@@ -201,6 +201,24 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
                 }
                 return 1;
             }
+
+            /* Plain opaque RGB images are also just a scale=1 SRM copy. This
+             * avoids the slow software full-screen path for dynamic artwork
+             * without using the older PPA blend path that corrupted RGB888
+             * cached PSRAM layers with short horizontal artifacts. */
+            if(dsc->opa < (lv_opa_t)LV_OPA_MAX) return 0;
+            if(dsc->blend_mode != LV_BLEND_MODE_NORMAL) return 0;
+            lv_color_format_t src_cf = (lv_color_format_t)dsc->header.cf;
+            if(src_cf == LV_COLOR_FORMAT_ARGB8888) return 0;
+            if(!ppa_src_cf_supported(src_cf)) return 0;
+            lv_draw_buf_t * plain_dest = t->target_layer->draw_buf;
+            if(!ppa_buf_usable(plain_dest)) return 0;
+            if(!ppa_dest_cf_supported((lv_color_format_t)plain_dest->header.cf)) return 0;
+            if(t->preference_score > 50) {
+                t->preference_score = 50;
+                t->preferred_draw_unit_id = draw_unit->idx;
+            }
+            return 1;
 #else
             if(dsc->scale_x != LV_SCALE_NONE || dsc->scale_y != LV_SCALE_NONE) return 0;
 #endif
@@ -266,7 +284,8 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
 #ifdef LV_USE_PPA_IMG
                     if(img_dsc->rotation != 0) {
                         lv_draw_ppa_img_rotate(t, img_dsc, &t->area);
-                    } else if(img_dsc->scale_x != LV_SCALE_NONE || img_dsc->scale_y != LV_SCALE_NONE) {
+                    } else if(img_dsc->scale_x != LV_SCALE_NONE || img_dsc->scale_y != LV_SCALE_NONE ||
+                              img_dsc->opa >= (lv_opa_t)LV_OPA_MAX) {
                         lv_draw_ppa_img_srm(t, img_dsc, &t->area);
                     } else
 #endif
