@@ -109,6 +109,7 @@ class ArtworkImage : public PollingComponent,
    */
   uint8_t *try_reuse_active_buffer_for_decode(int width, int height, int content_width, int content_height);
   void cancel_reused_active_buffer_decode();
+  void mark_decode_buffer_written_by_dma() { this->decode_buffer_written_by_dma_ = true; }
 
   /**
    * Resize the download buffer
@@ -260,6 +261,7 @@ class ArtworkImage : public PollingComponent,
   int decode_content_height_{0};
   int decode_offset_x_{0};
   int decode_offset_y_{0};
+  bool decode_buffer_written_by_dma_{false};
   int buffer_content_width_{0};
   int buffer_content_height_{0};
   int buffer_offset_x_{0};

@@ -12,6 +12,7 @@
 #include "esp_cache.h"
 #include "esp_heap_caps.h"
 #include "esp_memory_utils.h"
+#include "esp_timer.h"
 #endif
 
 #ifdef USE_ESP_IDF
@@ -67,7 +68,7 @@ void ArtworkImage::log_memory_summary_(const char *stage) const {
 #endif
 }
 
-static void sync_artwork_buffer_for_dma(const void *ptr, size_t size) {
+static void sync_artwork_buffer_for_dma(const void *ptr, size_t size, bool written_by_dma) {
 #if defined(USE_ESP32) && defined(USE_ESP_IDF)
   if (ptr == nullptr || size == 0 || !esp_ptr_external_ram(ptr)) {
     return;
@@ -80,11 +81,20 @@ static void sync_artwork_buffer_for_dma(const void *ptr, size_t size) {
       !esp_ptr_external_ram(reinterpret_cast<const void *>(aligned_end - 1U))) {
     return;
   }
+  const uint64_t start_us = esp_timer_get_time();
+  const uint32_t direction = written_by_dma ? ESP_CACHE_MSYNC_FLAG_DIR_M2C : ESP_CACHE_MSYNC_FLAG_DIR_C2M;
   esp_cache_msync(reinterpret_cast<void *>(aligned_start), aligned_end - aligned_start,
-                  ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+                  direction | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+  const uint64_t elapsed_us = esp_timer_get_time() - start_us;
+  if (elapsed_us > 30000) {
+    ESP_LOGW(TAG, "Artwork cache sync %s took %lluus size=%zu aligned=%zu",
+             written_by_dma ? "M2C" : "C2M", (unsigned long long) elapsed_us, size,
+             aligned_end - aligned_start);
+  }
 #else
   (void) ptr;
   (void) size;
+  (void) written_by_dma;
 #endif
 }
 
@@ -365,6 +375,7 @@ uint8_t *ArtworkImage::try_reuse_active_buffer_for_decode(int width, int height,
   this->decode_content_height_ = content_height;
   this->decode_offset_x_ = 0;
   this->decode_offset_y_ = 0;
+  this->decode_buffer_written_by_dma_ = false;
   ESP_LOGW(TAG, "Reusing active artwork buffer for %dx%d decode to avoid full-frame allocation", width, height);
   return this->decode_buffer_;
 }
@@ -381,6 +392,7 @@ void ArtworkImage::cancel_reused_active_buffer_decode() {
   this->decode_content_height_ = 0;
   this->decode_offset_x_ = 0;
   this->decode_offset_y_ = 0;
+  this->decode_buffer_written_by_dma_ = false;
 }
 
 size_t ArtworkImage::resize_(int width_in, int height_in) {
@@ -418,6 +430,7 @@ size_t ArtworkImage::resize_(int width_in, int height_in) {
       this->decode_content_height_ = content_height;
       this->decode_offset_x_ = offset_x;
       this->decode_offset_y_ = offset_y;
+      this->decode_buffer_written_by_dma_ = false;
       memset(this->decode_buffer_, 0, new_size);
       ESP_LOGI(TAG, "Artwork fit: source=%dx%d target=%dx%d content=%dx%d offset=%d,%d",
                width_in, height_in, width, height, content_width, content_height, offset_x, offset_y);
@@ -431,6 +444,7 @@ size_t ArtworkImage::resize_(int width_in, int height_in) {
     this->decode_content_height_ = 0;
     this->decode_offset_x_ = 0;
     this->decode_offset_y_ = 0;
+    this->decode_buffer_written_by_dma_ = false;
   }
   ESP_LOGD(TAG, "Allocating decode buffer of %zu bytes", new_size);
   this->decode_buffer_ = this->allocator_.allocate(new_size);
@@ -451,6 +465,7 @@ size_t ArtworkImage::resize_(int width_in, int height_in) {
   this->decode_content_height_ = content_height;
   this->decode_offset_x_ = offset_x;
   this->decode_offset_y_ = offset_y;
+  this->decode_buffer_written_by_dma_ = false;
   memset(this->decode_buffer_, 0, new_size);
   ESP_LOGI(TAG, "Artwork fit: source=%dx%d target=%dx%d content=%dx%d offset=%d,%d",
            width_in, height_in, width, height, content_width, content_height, offset_x, offset_y);
@@ -1087,6 +1102,7 @@ void ArtworkImage::discard_decode_buffer_() {
   this->decode_content_height_ = 0;
   this->decode_offset_x_ = 0;
   this->decode_offset_y_ = 0;
+  this->decode_buffer_written_by_dma_ = false;
 }
 
 bool ArtworkImage::promote_decode_buffer_() {
@@ -1101,6 +1117,7 @@ bool ArtworkImage::promote_decode_buffer_() {
   }
 
   const bool reused_active_buffer = this->decode_buffer_reuses_active_;
+  const bool written_by_dma = this->decode_buffer_written_by_dma_;
   if (!reused_active_buffer) {
     this->retire_active_buffer_();
   }
@@ -1122,11 +1139,12 @@ bool ArtworkImage::promote_decode_buffer_() {
   this->decode_content_height_ = 0;
   this->decode_offset_x_ = 0;
   this->decode_offset_y_ = 0;
+  this->decode_buffer_written_by_dma_ = false;
 
   this->data_start_ = this->buffer_;
   this->width_ = this->buffer_width_;
   this->height_ = this->buffer_height_;
-  sync_artwork_buffer_for_dma(this->buffer_, this->get_buffer_size_());
+  sync_artwork_buffer_for_dma(this->buffer_, this->get_buffer_size_(), written_by_dma);
 #ifdef USE_LVGL
   memset(&this->dsc_, 0, sizeof(this->dsc_));
 #endif
