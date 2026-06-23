@@ -20,8 +20,8 @@
 
 static const char *const TAG = "artwork_image";
 static const char *const CONTENT_TYPE_HEADER_NAME = "content-type";
-static constexpr uint32_t RETIRED_BUFFER_GRACE_MS = 1000;
-static constexpr size_t MAX_RETIRED_BUFFERS = 2;
+static constexpr uint32_t RETIRED_BUFFER_GRACE_MS = 250;
+static constexpr size_t MAX_RETIRED_BUFFERS = 1;
 static constexpr size_t MAX_DOWNLOAD_BUFFER_SIZE = 2 * 1024 * 1024;
 static constexpr size_t MAX_READ_CHUNK_SIZE = 8 * 1024;
 static constexpr int LOCAL_ARTWORK_HTTP_CONNECT_TIMEOUT_MS = 2500;
@@ -50,6 +50,21 @@ static void log_slow_artwork_stage(const char *stage, uint32_t start_ms) {
   if (elapsed > SLOW_ARTWORK_STAGE_MS) {
     ESP_LOGW(TAG, "Artwork slow stage: %s took %" PRIu32 "ms", stage, elapsed);
   }
+}
+
+void ArtworkImage::log_memory_summary_(const char *stage) const {
+#ifdef USE_ESP32
+  ESP_LOGW(TAG,
+           "Artwork memory %s: image=%dx%d buffer=%uKB retired=%zu psram=%uK/%uK internal=%uK/%uK",
+           stage, this->buffer_width_, this->buffer_height_, (unsigned) (this->get_buffer_size_() / 1024),
+           this->retired_buffers_.size(), (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+           (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024),
+           (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+           (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
+#else
+  ESP_LOGW(TAG, "Artwork memory %s: image=%dx%d buffer=%uKB retired=%zu", stage, this->buffer_width_,
+           this->buffer_height_, (unsigned) (this->get_buffer_size_() / 1024), this->retired_buffers_.size());
+#endif
 }
 
 static void sync_artwork_buffer_for_dma(const void *ptr, size_t size) {
@@ -1261,6 +1276,7 @@ void ArtworkImage::finish_download_() {
 #endif
 #endif
   this->log_state_("lvgl-descriptor-ready");
+  this->log_memory_summary_("ready");
   App.feed_wdt();
   this->end_connection_();
   this->download_finished_callback_.call(false);

@@ -148,6 +148,7 @@ class ArtworkImage : public PollingComponent,
   void queue_pending_update_(const std::string &url);
   void start_pending_update_();
   void log_state_(const char *stage);
+  void log_memory_summary_(const char *stage) const;
 
   RAMAllocator<uint8_t> allocator_{};
 
