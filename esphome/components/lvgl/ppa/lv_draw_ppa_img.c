@@ -309,7 +309,19 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     cfg.mode              = PPA_TRANS_MODE_BLOCKING;
     cfg.user_data         = u;
 
+    /* SRM writes through DMA while LVGL's draw buffer is cacheable PSRAM.
+     * Synchronize whole touched rows, not just the visible rectangle: RGB888
+     * spans are not cache-line aligned, so a row-level contract preserves
+     * neighbouring software-rendered pixels and prevents delayed horizontal
+     * artifacts when later redraws hit the same cache lines. */
+    uint8_t * sync_start = out_ptr + (size_t)dest_area.y1 * dest_stride;
+    uint32_t sync_size = dest_stride * (uint32_t)clip_h;
+    lv_draw_ppa_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+
     esp_err_t ret = ppa_do_scale_rotate_mirror(u->srm_client, &cfg);
+    if(ret == ESP_OK) {
+        lv_draw_ppa_cache_msync_after_dma_write(sync_start, sync_size);
+    }
     if(ret != ESP_OK) {
         LV_LOG_ERROR("PPA SRM scale failed: %d (src %ux%u scale %.2f/%.2f)",
                      (int)ret, src_w, src_h, (double)sx, (double)sy);
