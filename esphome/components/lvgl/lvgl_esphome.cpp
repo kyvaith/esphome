@@ -3344,6 +3344,60 @@ void snapshot_cache_store_compressed_only(lv_obj_t *obj, lv_draw_buf_t *buf) {
   snapshot_cache_store_impl(obj, buf, false);
 }
 
+void snapshot_cache_store_raw_only(lv_obj_t *obj, lv_draw_buf_t *buf) {
+  if (obj == nullptr || buf == nullptr)
+    return;
+  SnapshotCacheEntry *slot = snapshot_cache_find_entry(obj);
+  if (slot == nullptr) {
+    for (auto &entry : snapshot_cache) {
+      if (entry.obj == nullptr) {
+        slot = &entry;
+        break;
+      }
+    }
+  }
+  if (slot == nullptr)
+    slot = &snapshot_cache[0];
+
+  snapshot_panorama_cache_invalidate(slot->obj);
+  snapshot_cache_free_entry(*slot);
+  slot->obj = obj;
+  slot->big_endian = snapshot_cache_obj_big_endian(obj);
+  slot->buf = buf;
+  slot->cf = buf->header.cf;
+  slot->width = buf->header.w;
+  slot->height = buf->header.h;
+  slot->stride = buf->header.stride;
+}
+
+bool snapshot_cache_prepare_raw_page(lv_obj_t *obj) {
+#if LV_USE_SNAPSHOT
+  if (obj == nullptr)
+    return false;
+  auto *entry = snapshot_cache_find_entry(obj);
+  if (entry != nullptr && entry->buf != nullptr)
+    return true;
+
+  const uint64_t t0 = snapshot_diag_now_us_();
+  auto *buf = snapshot_take_centered(obj);
+  if (buf == nullptr) {
+    ESP_LOGW(TAG, "snapshot diag: raw page cache failed obj=%p", obj);
+    snapshot_log_heap_("raw page cache failed", obj, true);
+    return false;
+  }
+  const uint64_t take_us = snapshot_diag_now_us_() - t0;
+  snapshot_cache_store_raw_only(obj, buf);
+  if (take_us > 50000 || snapshot_diag_budget > 0) {
+    ESP_LOGW(TAG, "snapshot diag: raw page cache obj=%p took=%lluus size=%uKB cf=%u stride=%u", obj,
+             (unsigned long long) take_us, (unsigned) (buf->data_size / 1024), (unsigned) buf->header.cf,
+             (unsigned) buf->header.stride);
+  }
+  return true;
+#else
+  return false;
+#endif
+}
+
 void snapshot_swipe_clear_panorama() {
   snapshot_swipe_state.panorama_buf = nullptr;
   snapshot_swipe_state.panorama_size = 0;
@@ -4116,6 +4170,11 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t *page1, lv_obj_
   const int first_page = std::max(1, current_page - 1);
   const int last_page = std::min(4, current_page + 1);
 
+  for (auto &entry : snapshot_panorama_cache) {
+    if (entry.buf != nullptr)
+      snapshot_panorama_free_entry(entry);
+  }
+
   for (auto &entry : snapshot_cache) {
     const int idx = page_index(entry.obj);
     if (idx != 0 && (idx < first_page || idx > last_page)) {
@@ -4124,33 +4183,9 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t *page1, lv_obj_
     }
   }
 
-  auto pair_needed = [&](lv_obj_t *left, lv_obj_t *right) -> bool {
-    const int li = page_index(left);
-    const int ri = page_index(right);
-    if (li == 0 || ri == 0)
-      return false;
-    const int a = std::min(li, ri);
-    const int b = std::max(li, ri);
-    return (current_page > 1 && a == current_page - 1 && b == current_page) ||
-           (current_page < 4 && a == current_page && b == current_page + 1);
-  };
-
-  for (auto &entry : snapshot_panorama_cache) {
-    if (entry.buf != nullptr && !pair_needed(entry.left, entry.right))
-      snapshot_panorama_free_entry(entry);
-  }
-
-  for (auto &entry : snapshot_cache) {
-    if (page_index(entry.obj) != 0)
-      snapshot_cache_free_entry(entry);
-  }
-
   bool prepared = true;
-  if (current_page > 1) {
-    prepared = lvgl_esphome_snapshot_cache_pair(pages[current_page - 2], pages[current_page - 1], width) && prepared;
-  }
-  if (current_page < 4) {
-    prepared = lvgl_esphome_snapshot_cache_pair(pages[current_page - 1], pages[current_page], width) && prepared;
+  for (int page = first_page; page <= last_page; page++) {
+    prepared = snapshot_cache_prepare_raw_page(pages[page - 1]) && prepared;
   }
   return prepared;
 #else
@@ -4214,9 +4249,10 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
   auto *disp = lv_obj_get_display(current);
   auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
   if (component != nullptr && SNAPSHOT_DIRECT_COMPOSITOR_ENABLED) {
+    constexpr int scale = SNAPSHOT_PANORAMA_SCALE;
     lv_obj_t *left_obj = next_x > 0 ? current : next;
     lv_obj_t *right_obj = next_x > 0 ? next : current;
-    if (auto *panorama = snapshot_panorama_cache_prepare(left_obj, right_obj, width)) {
+    if (auto *panorama = snapshot_panorama_cache_find(left_obj, right_obj, width, scale)) {
       snapshot_swipe_state.width = width;
       snapshot_swipe_state.current_x = 0;
       snapshot_swipe_state.next_x = next_x;
@@ -4258,9 +4294,10 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
   snapshot_swipe_state.next_x = next_x;
   if (component != nullptr && SNAPSHOT_DIRECT_COMPOSITOR_ENABLED) {
     snapshot_swipe_state.component = component;
+    constexpr int scale = SNAPSHOT_PANORAMA_SCALE;
     lv_obj_t *left_obj = next_x > 0 ? current : next;
     lv_obj_t *right_obj = next_x > 0 ? next : current;
-    if (auto *panorama = snapshot_panorama_cache_prepare(left_obj, right_obj, width)) {
+    if (auto *panorama = snapshot_panorama_cache_find(left_obj, right_obj, width, scale)) {
       snapshot_swipe_state.panorama_buf = panorama->buf;
       snapshot_swipe_state.panorama_size = panorama->size;
       snapshot_swipe_state.panorama_scale = panorama->scale;
