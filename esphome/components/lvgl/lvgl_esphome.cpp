@@ -3051,6 +3051,36 @@ constexpr int SNAPSHOT_PANORAMA_SCALE = 1;
 constexpr bool SNAPSHOT_DIRECT_COMPOSITOR_ENABLED = true;
 constexpr bool SNAPSHOT_JPEG_CACHE_ENABLED = false;
 constexpr uint32_t SNAPSHOT_JPEG_QUALITY = 100;
+uint32_t snapshot_diag_budget = 24;
+
+#ifdef USE_ESP32
+uint64_t snapshot_diag_now_us_() { return esp_timer_get_time(); }
+
+void snapshot_log_heap_(const char *stage, const void *obj, bool force) {
+  if (!force && snapshot_diag_budget == 0)
+    return;
+  if (!force)
+    snapshot_diag_budget--;
+  ESP_LOGW(TAG,
+           "snapshot diag: %s obj=%p internal=%uK/%uK psram=%uK/%uK direct=%u active=%u",
+           stage, obj,
+           (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+           (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+           (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+           (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024),
+           (unsigned) s_direct_mode_active, (unsigned) s_snapshot_direct_active);
+}
+#else
+uint64_t snapshot_diag_now_us_() { return 0; }
+
+void snapshot_log_heap_(const char *stage, const void *obj, bool force) {
+  if (!force && snapshot_diag_budget == 0)
+    return;
+  if (!force)
+    snapshot_diag_budget--;
+  ESP_LOGW(TAG, "snapshot diag: %s obj=%p", stage, obj);
+}
+#endif
 
 SnapshotCacheEntry *snapshot_cache_find_entry(lv_obj_t *obj) {
   for (auto &entry : snapshot_cache) {
@@ -3118,9 +3148,9 @@ bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf) {
       .timeout_ms = 120,
   };
   esp32_jpeg::JpegBuffer out;
-  const uint64_t t0 = esp_timer_get_time();
+  const uint64_t t0 = snapshot_diag_now_us_();
   const esp_err_t err = esp32_jpeg::encode(encode_cfg, static_cast<const uint8_t *>(buf->data), raw_size, &out);
-  const uint64_t elapsed_us = esp_timer_get_time() - t0;
+  const uint64_t elapsed_us = snapshot_diag_now_us_() - t0;
 
   bool stored = false;
   if (err == ESP_OK && out.size() > 0 && out.size() < raw_size) {
@@ -3180,10 +3210,10 @@ lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
       .timeout_ms = 120,
   };
   size_t out_size = 0;
-  const uint64_t t0 = esp_timer_get_time();
+  const uint64_t t0 = snapshot_diag_now_us_();
   const esp_err_t err = esp32_jpeg::decode(decode_cfg, entry.jpeg.data(), entry.jpeg.size(),
                                            static_cast<uint8_t *>(decoded->data), decoded->data_size, &out_size);
-  const uint64_t elapsed_us = esp_timer_get_time() - t0;
+  const uint64_t elapsed_us = snapshot_diag_now_us_() - t0;
 
   if (err != ESP_OK || out_size == 0) {
     if (s_swipe_logging_enabled) {
@@ -3357,10 +3387,11 @@ SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare(lv_obj_t *left_obj, 
       heap_caps_aligned_alloc(CACHE_ALIGN, aligned_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (panorama == nullptr) {
     ESP_LOGW(TAG, "snapshot panorama: allocation failed (%u bytes)", (unsigned) aligned_size);
+    snapshot_log_heap_("panorama alloc failed", left_obj, true);
     return nullptr;
   }
 
-  const uint64_t t0 = esp_timer_get_time();
+  const uint64_t t0 = snapshot_diag_now_us_();
   for (int y = 0; y < scaled_height; y++) {
     const int src_y = y * scale;
     const uint8_t *left_row = left->data + (size_t) src_y * left->header.stride;
@@ -3762,6 +3793,8 @@ extern "C" bool lvgl_esphome_snapshot_cache_page(lv_obj_t *obj) {
 #if LV_USE_SNAPSHOT
   if (obj == nullptr)
     return false;
+  snapshot_log_heap_("cache_page begin", obj, false);
+  const uint64_t t0 = snapshot_diag_now_us_();
   const bool was_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
   const lv_coord_t old_x = lv_obj_get_x(obj);
   const lv_coord_t old_y = lv_obj_get_y(obj);
@@ -3777,10 +3810,17 @@ extern "C" bool lvgl_esphome_snapshot_cache_page(lv_obj_t *obj) {
     lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
   if (buf == nullptr) {
     ESP_LOGW(TAG, "snapshot cache: failed for obj=%p", obj);
+    snapshot_log_heap_("cache_page failed", obj, true);
     return false;
   }
+  const uint64_t take_us = snapshot_diag_now_us_() - t0;
+  if (take_us > 50000 || snapshot_diag_budget > 0) {
+    ESP_LOGW(TAG, "snapshot diag: cache_page took=%lluus obj=%p size=%uKB cf=%u stride=%u hidden=%u",
+             (unsigned long long) take_us, obj, (unsigned) (buf->data_size / 1024), (unsigned) buf->header.cf,
+             (unsigned) buf->header.stride, (unsigned) was_hidden);
+  }
   snapshot_cache_store(obj, buf);
-  ESP_LOGD(TAG, "snapshot cache: stored obj=%p", obj);
+  snapshot_log_heap_("cache_page stored", obj, false);
   return true;
 #else
   return false;
@@ -3791,14 +3831,29 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
 #if LV_USE_SNAPSHOT
   if (left == nullptr || right == nullptr)
     return false;
-  if (snapshot_cache_find(left) == nullptr && !lvgl_esphome_snapshot_cache_page(left))
+  snapshot_log_heap_("cache_pair begin", left, false);
+  const uint64_t t0 = snapshot_diag_now_us_();
+  if (snapshot_cache_find(left) == nullptr && !lvgl_esphome_snapshot_cache_page(left)) {
+    ESP_LOGW(TAG, "snapshot diag: cache_pair failed left=%p right=%p width=%d stage=left", left, right, width);
+    snapshot_log_heap_("cache_pair left failed", left, true);
     return false;
-  if (snapshot_cache_find(right) == nullptr && !lvgl_esphome_snapshot_cache_page(right))
+  }
+  if (snapshot_cache_find(right) == nullptr && !lvgl_esphome_snapshot_cache_page(right)) {
+    ESP_LOGW(TAG, "snapshot diag: cache_pair failed left=%p right=%p width=%d stage=right", left, right, width);
+    snapshot_log_heap_("cache_pair right failed", right, true);
     return false;
+  }
   const bool prepared = snapshot_panorama_cache_prepare(left, right, width) != nullptr;
   if (prepared) {
     snapshot_cache_release_decoded_if_compressed(left);
     snapshot_cache_release_decoded_if_compressed(right);
+  } else {
+    snapshot_log_heap_("cache_pair panorama failed", left, true);
+  }
+  const uint64_t elapsed_us = snapshot_diag_now_us_() - t0;
+  if (!prepared || elapsed_us > 50000 || snapshot_diag_budget > 0) {
+    ESP_LOGW(TAG, "snapshot diag: cache_pair left=%p right=%p width=%d prepared=%u took=%lluus",
+             left, right, width, (unsigned) prepared, (unsigned long long) elapsed_us);
   }
   return prepared;
 #else
