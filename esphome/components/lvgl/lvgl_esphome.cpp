@@ -4089,21 +4089,33 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
   const uint64_t t0 = snapshot_diag_now_us_();
   SnapshotPanoramaPageSource left_source;
   SnapshotPanoramaPageSource right_source;
-  const bool left_from_cache = snapshot_panorama_source_from_cache(left, width, scale, &left_source);
-  const bool right_from_cache = snapshot_panorama_source_from_cache(right, width, scale, &right_source);
+  bool left_from_cache = snapshot_panorama_source_from_cache(left, width, scale, &left_source);
+  bool right_from_cache = snapshot_panorama_source_from_cache(right, width, scale, &right_source);
+  bool left_from_page_cache = false;
+  bool right_from_page_cache = false;
 
   lv_draw_buf_t *left_buf = nullptr;
   lv_draw_buf_t *right_buf = nullptr;
+  bool left_owns_buf = false;
+  bool right_owns_buf = false;
   uint64_t left_snapshot_us = 0;
   uint64_t right_snapshot_us = 0;
 
   if (!left_from_cache) {
-    const uint64_t left_t0 = snapshot_diag_now_us_();
-    left_buf = snapshot_take_centered(left);
-    left_snapshot_us = snapshot_diag_now_us_() - left_t0;
+    left_buf = snapshot_cache_find(left);
+    if (left_buf != nullptr && snapshot_panorama_source_from_buffer(left_buf, scale, &left_source)) {
+      left_from_page_cache = true;
+    } else {
+      const uint64_t left_t0 = snapshot_diag_now_us_();
+      left_buf = snapshot_take_centered(left);
+      left_snapshot_us = snapshot_diag_now_us_() - left_t0;
+      left_owns_buf = true;
+    }
     if (left_buf == nullptr || !snapshot_panorama_source_from_buffer(left_buf, scale, &left_source)) {
-      if (left_buf != nullptr)
+      if (left_owns_buf && left_buf != nullptr)
         lv_draw_buf_destroy(left_buf);
+      if (left_from_page_cache)
+        snapshot_cache_release_decoded_if_compressed(left);
       ESP_LOGW(TAG, "snapshot diag: cache_pair failed left=%p right=%p width=%d stage=left", left, right, width);
       snapshot_log_heap_("cache_pair left failed", left, true);
       return false;
@@ -4111,14 +4123,24 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
   }
 
   if (!right_from_cache) {
-    const uint64_t right_t0 = snapshot_diag_now_us_();
-    right_buf = snapshot_take_centered(right);
-    right_snapshot_us = snapshot_diag_now_us_() - right_t0;
+    right_buf = snapshot_cache_find(right);
+    if (right_buf != nullptr && snapshot_panorama_source_from_buffer(right_buf, scale, &right_source)) {
+      right_from_page_cache = true;
+    } else {
+      const uint64_t right_t0 = snapshot_diag_now_us_();
+      right_buf = snapshot_take_centered(right);
+      right_snapshot_us = snapshot_diag_now_us_() - right_t0;
+      right_owns_buf = true;
+    }
     if (right_buf == nullptr || !snapshot_panorama_source_from_buffer(right_buf, scale, &right_source)) {
-      if (right_buf != nullptr)
+      if (right_owns_buf && right_buf != nullptr)
         lv_draw_buf_destroy(right_buf);
-      if (left_buf != nullptr)
+      if (right_from_page_cache)
+        snapshot_cache_release_decoded_if_compressed(right);
+      if (left_owns_buf && left_buf != nullptr)
         lv_draw_buf_destroy(left_buf);
+      if (left_from_page_cache)
+        snapshot_cache_release_decoded_if_compressed(left);
       ESP_LOGW(TAG, "snapshot diag: cache_pair failed left=%p right=%p width=%d stage=right", left, right, width);
       snapshot_log_heap_("cache_pair right failed", right, true);
       return false;
@@ -4129,10 +4151,14 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
   const bool prepared =
       snapshot_panorama_cache_prepare_from_sources(left, right, left_source, right_source, width) != nullptr;
   const uint64_t panorama_us = snapshot_diag_now_us_() - panorama_t0;
-  if (left_buf != nullptr)
+  if (left_owns_buf && left_buf != nullptr)
     lv_draw_buf_destroy(left_buf);
-  if (right_buf != nullptr)
+  if (right_owns_buf && right_buf != nullptr)
     lv_draw_buf_destroy(right_buf);
+  if (left_from_page_cache)
+    snapshot_cache_release_decoded_if_compressed(left);
+  if (right_from_page_cache)
+    snapshot_cache_release_decoded_if_compressed(right);
   if (!prepared) {
     snapshot_log_heap_("cache_pair panorama failed", left, true);
   }
@@ -4143,8 +4169,9 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
              "left_snapshot=%lluus right_snapshot=%lluus left_src=%s right_src=%s",
              left, right, width, (unsigned) prepared, (unsigned long long) elapsed_us,
              (unsigned long long) panorama_us, (unsigned long long) left_snapshot_us,
-             (unsigned long long) right_snapshot_us, left_from_cache ? "cache" : "snapshot",
-             right_from_cache ? "cache" : "snapshot");
+             (unsigned long long) right_snapshot_us,
+             left_from_cache ? "panorama" : (left_from_page_cache ? "page_cache" : "snapshot"),
+             right_from_cache ? "panorama" : (right_from_page_cache ? "page_cache" : "snapshot"));
   }
   return prepared;
 #else
