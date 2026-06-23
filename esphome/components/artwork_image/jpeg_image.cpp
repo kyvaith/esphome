@@ -32,8 +32,6 @@ static void jpeg_error_exit(j_common_ptr cinfo) {
 
 static constexpr size_t MAX_JPEG_DOWNLOAD_SIZE = 2 * 1024 * 1024;  // 2 MB
 static constexpr size_t JPEG_DMA_ALIGNMENT = 128;
-static constexpr size_t MIN_HARDWARE_JPEG_DMA_LARGEST = 64 * 1024;
-
 static bool is_sof_marker(uint8_t marker) {
   switch (marker) {
     case 0xC0:  // Baseline DCT
@@ -107,14 +105,6 @@ static bool read_jpeg_frame_info(const uint8_t *buffer, size_t size, uint32_t *w
   return false;
 }
 
-static bool has_hardware_jpeg_dma_budget() {
-#ifdef USE_ESP32
-  return heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL) >= MIN_HARDWARE_JPEG_DMA_LARGEST;
-#else
-  return true;
-#endif
-}
-
 int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
 #ifdef USE_ESP32_JPEG
   const bool output_rgb565 = this->image_->image_type() == image::ImageType::IMAGE_TYPE_RGB565;
@@ -149,11 +139,6 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   if (err == ESP_OK && (info.width != frame_w || info.height != frame_h)) {
     ESP_LOGD(TAG, "Hardware JPEG parser size mismatch: esp-idf=%ux%u frame=%ux%u", (unsigned) info.width,
              (unsigned) info.height, (unsigned) frame_w, (unsigned) frame_h);
-  }
-
-  if (!has_hardware_jpeg_dma_budget()) {
-    ESP_LOGD(TAG, "Hardware JPEG decode skipped: internal DMA heap too small");
-    return 0;
   }
 
   const size_t aligned_w = (frame_w + 15u) & ~15u;
