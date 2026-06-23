@@ -1204,8 +1204,11 @@ void LvglComponent::flush_cb_(lv_display_t *disp_drv, const lv_area_t *area, uin
         // otherwise fast animated widgets can occasionally race the scanout and
         // show short horizontal artifacts.
         this->wait_for_direct_frame_presented(20);
+        this->sync_direct_other_buffer_(area, color_p);
       } else {
-        this->sync_direct_framebuffer_area_(area, color_p);
+        if (!this->sync_direct_other_buffer_(area, color_p)) {
+          this->sync_direct_framebuffer_area_(area, color_p);
+        }
       }
     } else {
       this->draw_buffer_(area, reinterpret_cast<lv_color_data *>(color_p));
@@ -1257,7 +1260,7 @@ void LvglComponent::sync_direct_framebuffer_area_(const lv_area_t *area, uint8_t
 #endif
 }
 
-void LvglComponent::sync_direct_other_buffer_(const lv_area_t *area, uint8_t *color_p) {
+bool LvglComponent::sync_direct_other_buffer_(const lv_area_t *area, uint8_t *color_p) {
 #ifdef USE_ESP32
 #if LV_COLOR_DEPTH == 32
   constexpr size_t BYTES_PER_PIXEL = 3;
@@ -1269,9 +1272,9 @@ void LvglComponent::sync_direct_other_buffer_(const lv_area_t *area, uint8_t *co
   const int32_t x2 = std::min<int32_t>(this->width_ - 1, area->x2);
   const int32_t y2 = std::min<int32_t>(this->height_ - 1, area->y2);
   if (x2 < x1 || y2 < y1)
-    return;
+    return false;
   if (this->draw_buf_ == nullptr || this->draw_buf2_ == nullptr)
-    return;
+    return false;
 
   auto sync_range = [](uint8_t *ptr, size_t len) {
     lvgl_cache_msync_external(ptr, len, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
@@ -1289,7 +1292,7 @@ void LvglComponent::sync_direct_other_buffer_(const lv_area_t *area, uint8_t *co
     src = this->draw_buf2_;
     dst = this->draw_buf_;
   } else {
-    return;
+    return false;
   }
 
   if (x1 == 0 && area_width_bytes == row_bytes) {
@@ -1308,6 +1311,9 @@ void LvglComponent::sync_direct_other_buffer_(const lv_area_t *area, uint8_t *co
       sync_range(dst_line, area_width_bytes);
     }
   }
+  return true;
+#else
+  return false;
 #endif
 }
 

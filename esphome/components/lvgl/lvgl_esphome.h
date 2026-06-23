@@ -343,7 +343,7 @@ class LvglComponent : public PollingComponent {
   void write_random_();
   void draw_buffer_(const lv_area_t *area, lv_color_data *ptr);
   void sync_direct_framebuffer_area_(const lv_area_t *area, uint8_t *color_p);
-  void sync_direct_other_buffer_(const lv_area_t *area, uint8_t *color_p);
+  bool sync_direct_other_buffer_(const lv_area_t *area, uint8_t *color_p);
   uint8_t *next_direct_render_buffer_() const;
   void present_direct_render_buffer_(uint8_t *buffer);
   uint8_t *next_snapshot_render_buffer_();
