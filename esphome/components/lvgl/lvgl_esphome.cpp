@@ -3344,6 +3344,8 @@ void snapshot_cache_store_compressed_only(lv_obj_t *obj, lv_draw_buf_t *buf) {
   snapshot_cache_store_impl(obj, buf, false);
 }
 
+lv_draw_buf_t *snapshot_take_centered(lv_obj_t *obj);
+
 void snapshot_cache_store_raw_only(lv_obj_t *obj, lv_draw_buf_t *buf) {
   if (obj == nullptr || buf == nullptr)
     return;
@@ -3364,7 +3366,7 @@ void snapshot_cache_store_raw_only(lv_obj_t *obj, lv_draw_buf_t *buf) {
   slot->obj = obj;
   slot->big_endian = snapshot_cache_obj_big_endian(obj);
   slot->buf = buf;
-  slot->cf = buf->header.cf;
+  slot->cf = static_cast<lv_color_format_t>(buf->header.cf);
   slot->width = buf->header.w;
   slot->height = buf->header.h;
   slot->stride = buf->header.stride;
