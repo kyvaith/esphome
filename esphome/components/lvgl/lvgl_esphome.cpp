@@ -3924,7 +3924,7 @@ bool snapshot_app_direct_anim_tick() {
       snapshot_cache_release_decoded_if_compressed(state.app_root);
     }
     if (!state.opening && state.owns_app_buf && state.app_root != nullptr && state.app_buf != nullptr) {
-      snapshot_cache_store_raw_only(state.app_root, state.app_buf);
+      snapshot_cache_store_compressed_only(state.app_root, state.app_buf);
       state.app_buf = nullptr;
       state.owns_app_buf = false;
     }
@@ -4085,6 +4085,33 @@ extern "C" bool lvgl_esphome_snapshot_cache_page(lv_obj_t *obj) {
   snapshot_cache_store(obj, buf);
   snapshot_log_heap_("cache_page stored", obj, false);
   return true;
+#else
+  return false;
+#endif
+}
+
+extern "C" bool lvgl_esphome_snapshot_cache_compressed_page(lv_obj_t *obj) {
+#if LV_USE_SNAPSHOT
+  if (obj == nullptr)
+    return false;
+  snapshot_log_heap_("cache_compressed_page begin", obj, false);
+  const uint64_t t0 = snapshot_diag_now_us_();
+  const bool was_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  auto *buf = snapshot_take_centered(obj);
+  if (buf == nullptr) {
+    ESP_LOGW(TAG, "snapshot compressed cache: failed for obj=%p", obj);
+    snapshot_log_heap_("cache_compressed_page failed", obj, true);
+    return false;
+  }
+  const uint64_t take_us = snapshot_diag_now_us_() - t0;
+  if (take_us > 50000 || snapshot_diag_budget > 0) {
+    ESP_LOGW(TAG, "snapshot diag: cache_compressed_page took=%lluus obj=%p size=%uKB cf=%u stride=%u hidden=%u",
+             (unsigned long long) take_us, obj, (unsigned) (buf->data_size / 1024), (unsigned) buf->header.cf,
+             (unsigned) buf->header.stride, (unsigned) was_hidden);
+  }
+  snapshot_cache_store_compressed_only(obj, buf);
+  snapshot_log_heap_("cache_compressed_page stored", obj, false);
+  return snapshot_cache_find_entry(obj) != nullptr;
 #else
   return false;
 #endif

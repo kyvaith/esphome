@@ -47,6 +47,7 @@ extern "C" void lvgl_esphome_set_profiler_enabled(bool enabled);
 extern "C" void lvgl_esphome_profiler_flush(void);
 extern "C" void lvgl_esphome_profiler_mark(const char *name);
 extern "C" bool lvgl_esphome_snapshot_cache_page(lv_obj_t *obj);
+extern "C" bool lvgl_esphome_snapshot_cache_compressed_page(lv_obj_t *obj);
 extern "C" bool lvgl_esphome_snapshot_cache_raw_page(lv_obj_t *obj);
 extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right, int width);
 extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t *page1, lv_obj_t *page2, lv_obj_t *page3,
