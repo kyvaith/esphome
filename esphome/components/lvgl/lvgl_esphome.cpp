@@ -4077,6 +4077,14 @@ extern "C" bool lvgl_esphome_snapshot_cache_page(lv_obj_t *obj) {
 #endif
 }
 
+extern "C" bool lvgl_esphome_snapshot_cache_raw_page(lv_obj_t *obj) {
+#if LV_USE_SNAPSHOT
+  return snapshot_cache_prepare_raw_page(obj);
+#else
+  return false;
+#endif
+}
+
 extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right, int width) {
 #if LV_USE_SNAPSHOT
   if (left == nullptr || right == nullptr)
