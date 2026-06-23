@@ -29,7 +29,9 @@ jpeg_decoder_handle_t preallocated_decoder = nullptr;
 StaticSemaphore_t jpeg_codec_mutex_buffer;
 SemaphoreHandle_t jpeg_codec_mutex = nullptr;
 constexpr size_t MIN_ENCODER_INTERNAL_DMA_LARGEST = 56 * 1024;
+constexpr size_t MIN_DECODER_INTERNAL_DMA_LARGEST = 56 * 1024;
 bool encoder_dma_guard_logged = false;
+bool decoder_dma_guard_logged = false;
 
 void ensure_jpeg_codec_mutex_() {
   if (jpeg_codec_mutex == nullptr)
@@ -79,6 +81,23 @@ bool has_encoder_dma_budget_() {
              heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
              heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL), dma_largest,
              MIN_ENCODER_INTERNAL_DMA_LARGEST);
+  }
+  return false;
+}
+
+bool has_decoder_dma_budget_() {
+  const size_t dma_largest = heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+  if (dma_largest >= MIN_DECODER_INTERNAL_DMA_LARGEST)
+    return true;
+
+  if (!decoder_dma_guard_logged) {
+    decoder_dma_guard_logged = true;
+    ESP_LOGW(TAG,
+             "Skipping JPEG decoder: internal DMA heap too fragmented internal_free=%zu internal_largest=%zu "
+             "dma_free=%zu dma_largest=%zu min_largest=%zu",
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL), dma_largest,
+             MIN_DECODER_INTERNAL_DMA_LARGEST);
   }
   return false;
 }
@@ -348,6 +367,8 @@ esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_si
   jpeg_decoder_handle_t decoder = preallocated_decoder;
   bool owns_decoder = false;
   if (decoder == nullptr) {
+    if (!has_decoder_dma_budget_())
+      return ESP_ERR_NO_MEM;
     jpeg_decode_engine_cfg_t engine_cfg = {
         .intr_priority = 0,
         .timeout_ms = config.timeout_ms,
@@ -446,6 +467,9 @@ esp_err_t preallocate_decoder(int timeout_ms) {
   JpegCodecLock lock(timeout_ms);
   if (!lock.locked())
     return ESP_ERR_TIMEOUT;
+
+  if (!has_decoder_dma_budget_())
+    return ESP_ERR_NO_MEM;
 
   jpeg_decode_engine_cfg_t engine_cfg = {
       .intr_priority = 0,
