@@ -351,12 +351,7 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
 
 static int32_t ppa_delete(lv_draw_unit_t * draw_unit)
 {
-    lv_draw_ppa_unit_t * u = (lv_draw_ppa_unit_t *)draw_unit;
-    if(u->buf != NULL) {
-        heap_caps_free(u->buf);
-        u->buf = NULL;
-        u->buf_size = 0;
-    }
+    LV_UNUSED(draw_unit);
     return 0;
 }
 
