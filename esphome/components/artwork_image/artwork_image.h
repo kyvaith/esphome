@@ -94,6 +94,7 @@ class ArtworkImage : public PollingComponent,
 #ifdef USE_SENDSPIN_ARTWORK
   void set_sendspin_hub(sendspin_::SendspinHub *hub) { this->sendspin_hub_ = hub; }
   void set_sendspin_slot(uint8_t slot) { this->sendspin_slot_ = slot; }
+  void set_sendspin_paused(bool paused);
 #endif
 
   /**
@@ -181,6 +182,9 @@ class ArtworkImage : public PollingComponent,
   bool decode_buffered_data_();
   void finish_download_();
   void fail_download_();
+#ifdef USE_SENDSPIN_ARTWORK
+  void process_pending_sendspin_();
+#endif
 
   /**
    * @brief Draw a pixel into the buffer.
@@ -274,6 +278,13 @@ class ArtworkImage : public PollingComponent,
   uint8_t sendspin_slot_{0};
   std::atomic<bool> sendspin_decode_ready_{false};
   std::atomic<bool> sendspin_decode_failed_{false};
+  Mutex sendspin_pending_lock_{};
+  bool sendspin_paused_{false};
+  std::vector<uint8_t> pending_sendspin_data_{};
+  sendspin::SendspinImageFormat pending_sendspin_format_{sendspin::SendspinImageFormat::JPEG};
+  bool pending_sendspin_image_{false};
+  bool pending_sendspin_display_{false};
+  bool pending_sendspin_clear_{false};
 #endif
   static constexpr uint32_t DOWNLOAD_STALL_TIMEOUT_MS = 10000;
 

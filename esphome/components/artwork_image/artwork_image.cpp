@@ -164,6 +164,17 @@ void ArtworkImage::setup() {
         if (slot != this->sendspin_slot_) {
           return;
         }
+        {
+          LockGuard guard(this->sendspin_pending_lock_);
+          if (this->sendspin_paused_) {
+            this->pending_sendspin_data_.assign(data, data + length);
+            this->pending_sendspin_format_ = format;
+            this->pending_sendspin_image_ = true;
+            this->pending_sendspin_clear_ = false;
+            this->sendspin_decode_failed_.store(false, std::memory_order_release);
+            return;
+          }
+        }
         ImageFormat image_format = ImageFormat::AUTO;
         switch (format) {
           case sendspin::SendspinImageFormat::JPEG:
@@ -185,12 +196,29 @@ void ArtworkImage::setup() {
     if (slot != this->sendspin_slot_) {
       return;
     }
+    {
+      LockGuard guard(this->sendspin_pending_lock_);
+      if (this->sendspin_paused_) {
+        this->pending_sendspin_data_.clear();
+        this->pending_sendspin_image_ = false;
+        this->pending_sendspin_display_ = false;
+        this->pending_sendspin_clear_ = true;
+        return;
+      }
+    }
     this->release();
     this->download_error_callback_.call();
   });
   this->sendspin_hub_->add_artwork_display_callback([this](uint8_t slot) {
     if (slot != this->sendspin_slot_) {
       return;
+    }
+    {
+      LockGuard guard(this->sendspin_pending_lock_);
+      if (this->sendspin_paused_) {
+        this->pending_sendspin_display_ = true;
+        return;
+      }
     }
     if (this->sendspin_decode_failed_.exchange(false, std::memory_order_acq_rel)) {
       this->download_error_callback_.call();
@@ -203,6 +231,82 @@ void ArtworkImage::setup() {
   });
 #endif
 }
+
+#ifdef USE_SENDSPIN_ARTWORK
+void ArtworkImage::set_sendspin_paused(bool paused) {
+  bool resume = false;
+  {
+    LockGuard guard(this->sendspin_pending_lock_);
+    if (this->sendspin_paused_ == paused) {
+      return;
+    }
+    this->sendspin_paused_ = paused;
+    resume = !paused;
+  }
+  if (resume) {
+    this->process_pending_sendspin_();
+  }
+}
+
+void ArtworkImage::process_pending_sendspin_() {
+  std::vector<uint8_t> data;
+  sendspin::SendspinImageFormat format{sendspin::SendspinImageFormat::JPEG};
+  bool has_image = false;
+  bool display = false;
+  bool clear = false;
+
+  {
+    LockGuard guard(this->sendspin_pending_lock_);
+    if (this->sendspin_paused_) {
+      return;
+    }
+    data = std::move(this->pending_sendspin_data_);
+    format = this->pending_sendspin_format_;
+    has_image = this->pending_sendspin_image_;
+    display = this->pending_sendspin_display_;
+    clear = this->pending_sendspin_clear_;
+    this->pending_sendspin_image_ = false;
+    this->pending_sendspin_display_ = false;
+    this->pending_sendspin_clear_ = false;
+  }
+
+  if (clear) {
+    this->release();
+    this->download_error_callback_.call();
+    return;
+  }
+
+  if (has_image && !data.empty()) {
+    ImageFormat image_format = ImageFormat::AUTO;
+    switch (format) {
+      case sendspin::SendspinImageFormat::JPEG:
+        image_format = ImageFormat::JPEG;
+        break;
+      case sendspin::SendspinImageFormat::PNG:
+        image_format = ImageFormat::PNG;
+        break;
+      case sendspin::SendspinImageFormat::BMP:
+        image_format = ImageFormat::BMP;
+        break;
+    }
+    this->sendspin_decode_failed_.store(false, std::memory_order_release);
+    if (!this->decode_encoded_image_(image_format, data.data(), data.size(), false)) {
+      this->sendspin_decode_failed_.store(true, std::memory_order_release);
+    }
+  }
+
+  if (!display) {
+    return;
+  }
+  if (this->sendspin_decode_failed_.exchange(false, std::memory_order_acq_rel)) {
+    this->download_error_callback_.call();
+    return;
+  }
+  if (this->sendspin_decode_ready_.exchange(false, std::memory_order_acq_rel)) {
+    this->finish_download_();
+  }
+}
+#endif
 
 void ArtworkImage::draw(int x, int y, display::Display *display, Color color_on, Color color_off) {
   if (this->data_start_) {

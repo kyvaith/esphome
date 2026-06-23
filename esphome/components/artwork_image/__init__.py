@@ -50,6 +50,7 @@ CONF_PLACEHOLDER = "placeholder"
 CONF_TRANSPARENCY = "transparency"
 CONF_UPDATE = "update"
 CONF_SENDSPIN_SLOT = "sendspin_slot"
+CONF_SENDSPIN_PAUSED = "sendspin_paused"
 CONF_IMMEDIATE = "immediate"
 
 _LOGGER = logging.getLogger(__name__)
@@ -182,6 +183,7 @@ ARTWORK_IMAGE_SCHEMA = (
             cv.Optional(CONF_ALLOW_INSECURE_LOCAL_URLS, default=False): cv.boolean,
             cv.Optional(sendspin.CONF_SENDSPIN_ID): cv.use_id(sendspin.SendspinHub),
             cv.Optional(CONF_SENDSPIN_SLOT, default=0): cv.int_range(0, 3),
+            cv.Optional(CONF_SENDSPIN_PAUSED, default=False): cv.boolean,
             cv.Optional(CONF_ON_DOWNLOAD_FINISHED): automation.validate_automation({}),
             cv.Optional(CONF_ON_ERROR): automation.validate_automation({}),
         }
@@ -336,5 +338,6 @@ async def to_code(config):
         hub = await cg.get_variable(sendspin_id)
         cg.add(var.set_sendspin_hub(hub))
         cg.add(var.set_sendspin_slot(config[CONF_SENDSPIN_SLOT]))
+        cg.add(var.set_sendspin_paused(config[CONF_SENDSPIN_PAUSED]))
 
     await automation.build_callback_automations(var, config, _CALLBACK_AUTOMATIONS)
