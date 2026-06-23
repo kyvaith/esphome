@@ -45,11 +45,21 @@ def _patch_idf5(framework_dir: Path) -> None:
             changed = True
 
     hook_decl = "extern void esphome_mipi_dsi_note_underrun(void) __attribute__((weak));\n"
+    status_hook_decl = (
+        "extern void esphome_mipi_dsi_note_status(uint32_t bridge_status, uint32_t bridge_raw,\n"
+        "                                            uint32_t fifo_depth, uint32_t host_status0,\n"
+        "                                            uint32_t host_status1) __attribute__((weak));\n"
+    )
     if "esphome_mipi_dsi_note_underrun" not in text:
         anchor = "typedef struct esp_lcd_dpi_panel_t esp_lcd_dpi_panel_t;\n"
         if anchor not in text:
             raise RuntimeError("ESP-IDF DSI panel typedef not found; patch needs review")
-        text = text.replace(anchor, f"{anchor}\n{hook_decl}", 1)
+        text = text.replace(anchor, f"{anchor}\n{hook_decl}{status_hook_decl}", 1)
+        changed = True
+    elif "esphome_mipi_dsi_note_status" not in text:
+        if hook_decl not in text:
+            raise RuntimeError("ESP-IDF DSI underrun hook declaration not found; patch needs review")
+        text = text.replace(hook_decl, f"{hook_decl}{status_hook_decl}", 1)
         changed = True
 
     helper = """
@@ -167,6 +177,21 @@ static esp_err_t dpi_panel_cache_msync(const void *buffer, size_t size)
         if old_underrun not in text:
             raise RuntimeError("ESP-IDF DSI underrun interrupt block not found; patch needs review")
         text = text.replace(old_underrun, new_underrun, 1)
+        changed = True
+
+    status_anchor = "    uint32_t intr_status = mipi_dsi_brg_ll_get_interrupt_status(hal->bridge);\n"
+    status_call = (
+        status_anchor +
+        "    if (esphome_mipi_dsi_note_status) {\n"
+        "        esphome_mipi_dsi_note_status(intr_status, hal->bridge->int_raw.val,\n"
+        "                                      hal->bridge->fifo_flow_status.raw_buf_depth,\n"
+        "                                      hal->host->int_st0.val, hal->host->int_st1.val);\n"
+        "    }\n"
+    )
+    if "esphome_mipi_dsi_note_status(intr_status" not in text:
+        if status_anchor not in text:
+            raise RuntimeError("ESP-IDF DSI interrupt status line not found; patch needs review")
+        text = text.replace(status_anchor, status_call, 1)
         changed = True
 
     cache_sync_replacements = (

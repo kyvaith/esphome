@@ -67,6 +67,15 @@ struct AsyncFlushPerfStats {
   uint32_t done_max_us{};
 };
 
+struct DsiDiagnosticEvent {
+  uint32_t tick{};
+  uint32_t bridge_status{};
+  uint32_t bridge_raw{};
+  uint32_t fifo_depth{};
+  uint32_t host_status0{};
+  uint32_t host_status1{};
+};
+
 class MipiDsi : public display::Display {
  public:
   MipiDsi(size_t width, size_t height, display::ColorBitness color_depth, uint8_t pixel_mode)
@@ -104,6 +113,7 @@ class MipiDsi : public display::Display {
   void update() override;
 
   void setup() override;
+  void loop() override;
 
   void draw_pixels_at(int x_start, int y_start, int w, int h, const uint8_t *ptr, display::ColorOrder order,
                       display::ColorBitness bitness, bool big_endian, int x_offset, int y_offset, int x_pad) override;
@@ -122,6 +132,7 @@ class MipiDsi : public display::Display {
   void dump_config() override;
 
  protected:
+  void log_dsi_diagnostics_();
   void write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,
                          int x_pad);
   void start_async_flush_task_();
@@ -183,6 +194,8 @@ class MipiDsi : public display::Display {
   uint32_t async_perf_copy_max_us_{0};
   uint32_t async_perf_submit_max_us_{0};
   uint32_t async_perf_done_max_us_{0};
+  uint32_t last_diag_event_count_{0};
+  uint32_t last_diag_log_ms_{0};
   uint8_t *frame_buffers_[2]{nullptr, nullptr};
   uint8_t *buffer_{nullptr};
   uint16_t x_low_{1};

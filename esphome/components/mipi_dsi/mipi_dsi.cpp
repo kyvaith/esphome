@@ -1,5 +1,6 @@
 #ifdef USE_ESP32_VARIANT_ESP32P4
 #include <algorithm>
+#include <cinttypes>
 #include <cstring>
 #include <utility>
 #include "mipi_dsi.h"
@@ -15,7 +16,17 @@ namespace esphome::mipi_dsi {
 // Maximum bytes to log for init commands (truncated if larger)
 static constexpr size_t MIPI_DSI_MAX_CMD_LOG_BYTES = 64;
 static constexpr size_t DMA2D_SAFE_ALIGN_BYTES = 4;
+static constexpr size_t DSI_DIAG_EVENT_COUNT = 8;
+static constexpr uint32_t DSI_DIAG_HOST_DPI_BUFF_PLD_UNDER = 1UL << 19;
+static constexpr uint32_t DSI_DIAG_LOG_INTERVAL_MS = 250;
 static volatile uint32_t dsi_underrun_count = 0;
+static volatile uint32_t dsi_diag_event_count = 0;
+static volatile uint32_t dsi_diag_write_index = 0;
+static volatile uint32_t dsi_diag_same_status_suppressed = 0;
+static volatile uint32_t dsi_diag_last_bridge_status = 0;
+static volatile uint32_t dsi_diag_last_host_status0 = 0;
+static volatile uint32_t dsi_diag_last_host_status1 = 0;
+static volatile DsiDiagnosticEvent dsi_diag_events[DSI_DIAG_EVENT_COUNT];
 
 static bool is_aligned(uintptr_t value, size_t alignment) { return (value & (alignment - 1U)) == 0; }
 
@@ -39,6 +50,35 @@ static esp_err_t cache_writeback_external_for_dma(const void *ptr, size_t size) 
 }
 
 extern "C" void IRAM_ATTR esphome_mipi_dsi_note_underrun(void) { dsi_underrun_count++; }
+
+extern "C" void IRAM_ATTR esphome_mipi_dsi_note_status(uint32_t bridge_status, uint32_t bridge_raw,
+                                                        uint32_t fifo_depth, uint32_t host_status0,
+                                                        uint32_t host_status1) {
+  const bool bridge_underrun = (bridge_status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN) != 0;
+  const bool host_status = host_status0 != 0 || host_status1 != 0;
+  if (!bridge_underrun && !host_status)
+    return;
+
+  if (!bridge_underrun && bridge_status == dsi_diag_last_bridge_status &&
+      host_status0 == dsi_diag_last_host_status0 && host_status1 == dsi_diag_last_host_status1) {
+    dsi_diag_same_status_suppressed++;
+    return;
+  }
+
+  dsi_diag_last_bridge_status = bridge_status;
+  dsi_diag_last_host_status0 = host_status0;
+  dsi_diag_last_host_status1 = host_status1;
+
+  const uint32_t index = dsi_diag_write_index % DSI_DIAG_EVENT_COUNT;
+  dsi_diag_write_index++;
+  dsi_diag_events[index].tick = static_cast<uint32_t>(xTaskGetTickCountFromISR());
+  dsi_diag_events[index].bridge_status = bridge_status;
+  dsi_diag_events[index].bridge_raw = bridge_raw;
+  dsi_diag_events[index].fifo_depth = fifo_depth;
+  dsi_diag_events[index].host_status0 = host_status0;
+  dsi_diag_events[index].host_status1 = host_status1;
+  dsi_diag_event_count++;
+}
 
 static bool IRAM_ATTR notify_color_trans_ready(esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_event_data_t *edata,
                                                void *user_ctx) {
@@ -361,6 +401,38 @@ void MipiDsi::update() {
   this->y_low_ = this->height_;
   this->x_high_ = 0;
   this->y_high_ = 0;
+}
+
+void MipiDsi::loop() { this->log_dsi_diagnostics_(); }
+
+void MipiDsi::log_dsi_diagnostics_() {
+  const uint32_t count = dsi_diag_event_count;
+  if (count == this->last_diag_event_count_)
+    return;
+
+  const uint32_t now = millis();
+  if (this->last_diag_log_ms_ != 0 && now - this->last_diag_log_ms_ < DSI_DIAG_LOG_INTERVAL_MS)
+    return;
+
+  const uint32_t index = (count - 1) % DSI_DIAG_EVENT_COUNT;
+  DsiDiagnosticEvent event{};
+  event.tick = dsi_diag_events[index].tick;
+  event.bridge_status = dsi_diag_events[index].bridge_status;
+  event.bridge_raw = dsi_diag_events[index].bridge_raw;
+  event.fifo_depth = dsi_diag_events[index].fifo_depth;
+  event.host_status0 = dsi_diag_events[index].host_status0;
+  event.host_status1 = dsi_diag_events[index].host_status1;
+
+  ESP_LOGW(TAG,
+           "dsi diag: events=%" PRIu32 " (+%" PRIu32 ") suppressed=%" PRIu32 " tick=%" PRIu32
+           " brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32 " host0=0x%08" PRIx32
+           " host1=0x%08" PRIx32 " dpi_under=%s",
+           count, count - this->last_diag_event_count_, dsi_diag_same_status_suppressed, event.tick,
+           event.bridge_status, event.bridge_raw, event.fifo_depth, event.host_status0, event.host_status1,
+           YESNO((event.host_status1 & DSI_DIAG_HOST_DPI_BUFF_PLD_UNDER) != 0));
+
+  this->last_diag_event_count_ = count;
+  this->last_diag_log_ms_ = now;
 }
 
 void MipiDsi::draw_pixels_at(int x_start, int y_start, int w, int h, const uint8_t *ptr, display::ColorOrder order,
