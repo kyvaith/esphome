@@ -3854,6 +3854,9 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
   if (component == nullptr || !SNAPSHOT_DIRECT_COMPOSITOR_ENABLED)
     return false;
 
+  const bool previous_direct_active = s_snapshot_direct_active;
+  s_snapshot_direct_active = true;
+
   bool owns_app = false;
   lv_draw_buf_t *app_buf = nullptr;
   if (!opening && snapshot_app_prepared_close_obj == app && snapshot_app_prepared_close_buf != nullptr) {
@@ -3872,6 +3875,7 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
     ESP_LOGW(TAG, "snapshot app: failed to capture app=%p", app);
     if (owns_background && background_buf != nullptr)
       lv_draw_buf_destroy(background_buf);
+    s_snapshot_direct_active = previous_direct_active;
     return false;
   }
 
@@ -3893,7 +3897,6 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
   snapshot_app_state.end_center_y = end_center_y;
   snapshot_app_state.component = component;
   snapshot_app_render_buffers_reset(opening);
-  s_snapshot_direct_active = true;
   snapshot_app_direct_anim_tick();
   return true;
 #else
