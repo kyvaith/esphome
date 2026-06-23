@@ -38,6 +38,24 @@ static const char * TAG = "ppa_draw";
 static uint32_t s_ppa_fill_tasks = 0;
 static uint32_t s_ppa_img_tasks = 0;
 
+static inline uint32_t ppa_area_px(const lv_area_t * area)
+{
+    int32_t w = lv_area_get_width(area);
+    int32_t h = lv_area_get_height(area);
+    if(w <= 0 || h <= 0) return 0;
+    return (uint32_t)w * (uint32_t)h;
+}
+
+static inline bool ppa_task_area_fully_visible(const lv_draw_task_t * t)
+{
+    lv_area_t visible_area;
+    if(!lv_area_intersect(&visible_area, &t->area, &t->clip_area)) return false;
+    return visible_area.x1 == t->area.x1 &&
+           visible_area.y1 == t->area.y1 &&
+           visible_area.x2 == t->area.x2 &&
+           visible_area.y2 == t->area.y2;
+}
+
 /* Check if a draw buffer is suitable for PPA (non-NULL, aligned, has data) */
 static inline bool ppa_buf_usable(lv_draw_buf_t * buf)
 {
@@ -191,6 +209,7 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
             if(dsc->scale_x != LV_SCALE_NONE || dsc->scale_y != LV_SCALE_NONE) {
                 if(dsc->opa < (lv_opa_t)LV_OPA_MAX) return 0;
                 if(dsc->blend_mode != LV_BLEND_MODE_NORMAL) return 0;
+                if(!ppa_task_area_fully_visible(t)) return 0;
                 if(!ppa_src_cf_supported((lv_color_format_t)dsc->header.cf)) return 0;
                 lv_draw_buf_t * scale_dest = t->target_layer->draw_buf;
                 if(!ppa_buf_usable(scale_dest)) return 0;
@@ -205,9 +224,14 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
             /* Plain opaque RGB images are also just a scale=1 SRM copy. This
              * avoids the slow software full-screen path for dynamic artwork
              * without using the older PPA blend path that corrupted RGB888
-             * cached PSRAM layers with short horizontal artifacts. */
+             * cached PSRAM layers with short horizontal artifacts. Restrict it
+             * to large, fully-visible tasks: small clipped redraws (for example
+             * a 1 Hz clock update over album artwork) are where SRM/cache-line
+             * interactions have shown horizontal corruption on RGB888 layers. */
             if(dsc->opa < (lv_opa_t)LV_OPA_MAX) return 0;
             if(dsc->blend_mode != LV_BLEND_MODE_NORMAL) return 0;
+            if(!ppa_task_area_fully_visible(t)) return 0;
+            if(ppa_area_px(&t->area) < (128U * 128U)) return 0;
             lv_color_format_t src_cf = (lv_color_format_t)dsc->header.cf;
             if(src_cf == LV_COLOR_FORMAT_ARGB8888) return 0;
             if(!ppa_src_cf_supported(src_cf)) return 0;
