@@ -109,6 +109,34 @@ static inline void lv_draw_ppa_cache_msync(const void * p, uint32_t size, int fl
                     sync_flags);
 }
 
+static inline void lv_draw_ppa_cache_msync_after_dma_write(const void * p, uint32_t size)
+{
+    if(p == NULL || size == 0 || !esp_ptr_external_ram(p)) {
+        return;
+    }
+
+    uint32_t alignment = lv_draw_ppa_cache_align();
+    uintptr_t start = (uintptr_t)p;
+    uintptr_t aligned_start = start & ~((uintptr_t)alignment - 1U);
+    uintptr_t aligned_end = (start + size + alignment - 1U) & ~((uintptr_t)alignment - 1U);
+    if(aligned_end <= aligned_start) {
+        return;
+    }
+    if(!esp_ptr_external_ram((const void *)aligned_start) ||
+       !esp_ptr_external_ram((const void *)(aligned_end - 1U))) {
+        return;
+    }
+
+    /* PPA/DMA wrote memory directly.  Do not write back CPU cache here:
+     * doing so after the transfer can restore stale cache lines over the
+     * fresh DMA result.  The draw unit already performs C2M before handing
+     * a destination window to PPA, so a plain M2C invalidation is the safe
+     * post-DMA operation.
+     */
+    esp_cache_msync((void *)aligned_start, aligned_end - aligned_start,
+                    ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+}
+
 typedef struct lv_draw_ppa_unit {
     lv_draw_unit_t base_unit;
     lv_draw_task_t * task_act;

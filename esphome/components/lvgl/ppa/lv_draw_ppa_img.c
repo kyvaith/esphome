@@ -308,7 +308,7 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
      * Fill it by duplicating the last rendered column/row. Invalidate CPU
      * cache first: PPA wrote via DMA, so CPU cache can be stale. */
     if(ret == ESP_OK && (gap_right || gap_bottom)) {
-        lv_draw_ppa_cache_msync(out_ptr, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+        lv_draw_ppa_cache_msync_after_dma_write(out_ptr, aligned_size);
 
         uint8_t *base = out_ptr;
         uint32_t stride = dest_stride;
@@ -335,8 +335,9 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
 
     if(aligned_out) {
         if(ret == ESP_OK) {
-            lv_draw_ppa_cache_msync(aligned_out, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+            lv_draw_ppa_cache_msync_after_dma_write(aligned_out, aligned_size);
             memcpy(dest_buf->data, aligned_out, raw_bytes);
+            lv_draw_ppa_cache_msync(dest_buf->data, raw_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
         }
         heap_caps_free(aligned_out);
     }
@@ -497,8 +498,9 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
 
     if(aligned_out_r) {
         if(ret == ESP_OK) {
-            lv_draw_ppa_cache_msync(aligned_out_r, aligned_size_r, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+            lv_draw_ppa_cache_msync_after_dma_write(aligned_out_r, aligned_size_r);
             memcpy(dest_buf->data, aligned_out_r, raw_bytes_r);
+            lv_draw_ppa_cache_msync(dest_buf->data, raw_bytes_r, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
         }
         heap_caps_free(aligned_out_r);
     }
