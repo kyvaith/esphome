@@ -2071,7 +2071,7 @@ bool LvglComponent::snapshot_scroll_direct_render(lv_draw_buf_t *content, int sc
 }
 
 bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_draw_buf_t *app, int center_x,
-                                               int center_y, int width, int height, bool use_live_background) {
+                                               int center_y, int width, int height) {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32)
   if (app == nullptr || app->data == nullptr)
     return false;
@@ -2100,16 +2100,15 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     lvgl_cache_msync_external(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   };
 
-  auto copy_full_from_data = [&](const uint8_t *src_data, uint32_t src_width, uint32_t src_height,
-                                 uint32_t src_stride) -> bool {
-    if (src_data == nullptr || src_width < this->width_ || src_height < this->height_)
+  auto copy_full = [&](const lv_draw_buf_t *src) -> bool {
+    if (src == nullptr)
       return false;
 #ifdef USE_LVGL_PPA
     if (s_display_srm_client != nullptr) {
       ppa_srm_oper_config_t cfg = {};
-      cfg.in.buffer = src_data;
-      cfg.in.pic_w = src_width;
-      cfg.in.pic_h = src_height;
+      cfg.in.buffer = src->data;
+      cfg.in.pic_w = src->header.w;
+      cfg.in.pic_h = src->header.h;
       cfg.in.block_w = this->width_;
       cfg.in.block_h = this->height_;
       cfg.in.block_offset_x = 0;
@@ -2131,30 +2130,15 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
         return true;
     }
 #endif
-    const uint8_t *src_row = src_data;
+    const uint8_t *src_row = src->data;
     uint8_t *dst_row = target;
     for (int y = 0; y < this->height_; y++) {
       memcpy(dst_row, src_row, row_bytes);
-      src_row += src_stride;
+      src_row += src->header.stride;
       dst_row += row_bytes;
     }
     needs_sync = true;
     return true;
-  };
-
-  auto copy_full = [&](const lv_draw_buf_t *src) -> bool {
-    if (src == nullptr)
-      return false;
-    return copy_full_from_data(static_cast<const uint8_t *>(src->data), src->header.w, src->header.h,
-                               src->header.stride);
-  };
-
-  auto copy_live_background = [&]() -> bool {
-    if (!use_live_background || !this->direct_mode_active_ || this->direct_last_flushed_buf_ == nullptr)
-      return false;
-    if (this->direct_last_flushed_buf_ == target)
-      return false;
-    return copy_full_from_data(this->direct_last_flushed_buf_, this->width_, this->height_, row_bytes);
   };
 
   SnapshotAppRenderBufferState *buffer_state = nullptr;
@@ -2184,7 +2168,7 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
   }
 
   if (!buffer_state->initialized) {
-    if (!copy_live_background() && !copy_full(background)) {
+    if (!copy_full(background)) {
       memset(target, 0, fb_bytes);
       needs_sync = true;
     }
@@ -2231,7 +2215,7 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
 
   if (s_snapshot_app_render_opening) {
     if (buffer_state->center_x != center_x || buffer_state->center_y != center_y) {
-      if (!copy_live_background() && !copy_full(background)) {
+      if (!copy_full(background)) {
         memset(target, 0, fb_bytes);
         needs_sync = true;
       }
@@ -3031,7 +3015,6 @@ struct SnapshotAppState {
   bool owns_background_buf{false};
   bool active{false};
   bool opening{true};
-  bool use_live_background{false};
   uint64_t anim_start_us{0};
   uint32_t anim_duration_ms{0};
   int start_size{1};
@@ -3904,7 +3887,6 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
   snapshot_app_state.owns_background_buf = owns_background;
   snapshot_app_state.active = true;
   snapshot_app_state.opening = opening;
-  snapshot_app_state.use_live_background = opening;
   snapshot_app_state.anim_start_us = esp_timer_get_time();
   snapshot_app_state.anim_duration_ms = duration_ms == 0 ? 1 : duration_ms;
   snapshot_app_state.start_size = opening ? 1 : width;
@@ -3934,8 +3916,7 @@ bool snapshot_app_direct_anim_tick() {
   const int center_x = snapshot_swipe_ease_out(state.start_center_x, state.end_center_x, elapsed_ms, duration_ms);
   const int center_y = snapshot_swipe_ease_out(state.start_center_y, state.end_center_y, elapsed_ms, duration_ms);
 
-  state.component->snapshot_app_direct_render(state.background_buf, state.app_buf, center_x, center_y, size, size,
-                                              state.use_live_background);
+  state.component->snapshot_app_direct_render(state.background_buf, state.app_buf, center_x, center_y, size, size);
   if (elapsed_ms >= duration_ms) {
     state.component->wait_for_direct_frame_presented(50);
     state.component->realign_direct_buffer_after_manual_present();
