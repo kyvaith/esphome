@@ -467,8 +467,12 @@ static dma2d_csc_rx_option_t jpeg_dec_select_rgb_csc(jpeg_down_sampling_type_t s
 
 
 def _patch_dma2d_yuv2rgb_full_range(framework_dir: Path) -> None:
-    target = framework_dir / "components" / "esp_hal_dma" / "include" / "hal" / "dma2d_types.h"
-    if not target.exists():
+    candidates = (
+        framework_dir / "components" / "esp_hal_dma" / "include" / "hal" / "dma2d_types.h",
+        framework_dir / "components" / "hal" / "include" / "hal" / "dma2d_types.h",
+    )
+    target = next((candidate for candidate in candidates if candidate.exists()), None)
+    if target is None:
         print("MIPI DSI patch: ESP-IDF DMA2D types header not found; skipping full-range YUV->RGB patch")
         return
 
