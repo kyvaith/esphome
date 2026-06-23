@@ -48,6 +48,8 @@ extern "C" void lvgl_esphome_profiler_flush(void);
 extern "C" void lvgl_esphome_profiler_mark(const char *name);
 extern "C" bool lvgl_esphome_snapshot_cache_page(lv_obj_t *obj);
 extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right, int width);
+extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t *page1, lv_obj_t *page2, lv_obj_t *page3,
+                                                        lv_obj_t *page4, int current_page, int width);
 extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *background, int width, uint32_t duration_ms);
 extern "C" bool lvgl_esphome_snapshot_app_close(lv_obj_t *app, lv_obj_t *background, int width, int target_center_x,
                                                 int target_center_y, uint32_t duration_ms);

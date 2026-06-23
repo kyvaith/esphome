@@ -3861,6 +3861,68 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
 #endif
 }
 
+extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t *page1, lv_obj_t *page2, lv_obj_t *page3,
+                                                        lv_obj_t *page4, int current_page, int width) {
+#if LV_USE_SNAPSHOT
+  lv_obj_t *pages[] = {page1, page2, page3, page4};
+  if (current_page < 1 || current_page > 4 || width <= 0)
+    return false;
+
+  auto page_index = [&](lv_obj_t *obj) -> int {
+    for (int i = 0; i < 4; i++) {
+      if (pages[i] == obj)
+        return i + 1;
+    }
+    return 0;
+  };
+  const int first_page = std::max(1, current_page - 1);
+  const int last_page = std::min(4, current_page + 1);
+
+  for (auto &entry : snapshot_cache) {
+    const int idx = page_index(entry.obj);
+    if (idx != 0 && (idx < first_page || idx > last_page)) {
+      snapshot_panorama_cache_invalidate(entry.obj);
+      snapshot_cache_free_entry(entry);
+    }
+  }
+
+  auto pair_needed = [&](lv_obj_t *left, lv_obj_t *right) -> bool {
+    const int li = page_index(left);
+    const int ri = page_index(right);
+    if (li == 0 || ri == 0)
+      return false;
+    const int a = std::min(li, ri);
+    const int b = std::max(li, ri);
+    return (current_page > 1 && a == current_page - 1 && b == current_page) ||
+           (current_page < 4 && a == current_page && b == current_page + 1);
+  };
+
+  for (auto &entry : snapshot_panorama_cache) {
+    if (entry.buf != nullptr && !pair_needed(entry.left, entry.right))
+      snapshot_panorama_free_entry(entry);
+  }
+
+  bool prepared = true;
+  for (int page = first_page; page <= last_page; page++) {
+    lv_obj_t *obj = pages[page - 1];
+    auto *entry = snapshot_cache_find_entry(obj);
+    if (entry == nullptr || (entry->buf == nullptr && entry->jpeg.empty())) {
+      prepared = lvgl_esphome_snapshot_cache_page(obj) && prepared;
+    }
+  }
+
+  if (current_page > 1) {
+    prepared = lvgl_esphome_snapshot_cache_pair(pages[current_page - 2], pages[current_page - 1], width) && prepared;
+  }
+  if (current_page < 4) {
+    prepared = lvgl_esphome_snapshot_cache_pair(pages[current_page - 1], pages[current_page], width) && prepared;
+  }
+  return prepared;
+#else
+  return false;
+#endif
+}
+
 extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *background, int width,
                                                uint32_t duration_ms) {
   return snapshot_app_begin(app, background, width, width / 2, width / 2, duration_ms, true);

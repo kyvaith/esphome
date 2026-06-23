@@ -64,6 +64,13 @@ void log_decoder_allocation_failure_(esp_err_t err) {
            heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
 }
 
+void release_preallocated_decoder_() {
+  if (preallocated_decoder != nullptr) {
+    jpeg_del_decoder_engine(preallocated_decoder);
+    preallocated_decoder = nullptr;
+  }
+}
+
 jpeg_enc_input_format_t to_encode_format(PixelFormat format) {
   switch (format) {
     case PixelFormat::RGB565:
@@ -220,6 +227,12 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   JpegCodecLock lock(config.timeout_ms);
   if (!lock.locked())
     return ESP_ERR_TIMEOUT;
+
+  // The ESP32-P4 JPEG block is shared by the decoder and encoder. Keeping a
+  // decoder engine preallocated is useful for artwork, but snapshot caching
+  // occasionally needs the encoder; release the idle decoder before creating
+  // the encoder to avoid the IDF driver tearing down a half-created handle.
+  release_preallocated_decoder_();
 
   jpeg_encoder_handle_t encoder = nullptr;
   jpeg_encode_engine_cfg_t engine_cfg = {
