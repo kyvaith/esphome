@@ -3044,12 +3044,12 @@ SnapshotAppState snapshot_app_state;
 lv_obj_t *snapshot_app_prepared_close_obj = nullptr;
 lv_draw_buf_t *snapshot_app_prepared_close_buf = nullptr;
 SnapshotCacheEntry snapshot_cache[8];
-SnapshotPanoramaCacheEntry snapshot_panorama_cache[4];
+SnapshotPanoramaCacheEntry snapshot_panorama_cache[1];
 
 constexpr lv_color_format_t SNAPSHOT_CF = LV_COLOR_FORMAT_RGB888;
 constexpr int SNAPSHOT_PANORAMA_SCALE = 1;
 constexpr bool SNAPSHOT_DIRECT_COMPOSITOR_ENABLED = true;
-constexpr bool SNAPSHOT_JPEG_CACHE_ENABLED = false;
+constexpr bool SNAPSHOT_JPEG_CACHE_ENABLED = true;
 constexpr uint32_t SNAPSHOT_JPEG_QUALITY = 100;
 uint32_t snapshot_diag_budget = 24;
 
