@@ -13,6 +13,8 @@
 #if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
 #include "driver/jpeg_decode.h"
 #include "driver/jpeg_encode.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #endif
 
 namespace esphome::esp32_jpeg {
@@ -24,6 +26,41 @@ uint32_t align_up(uint32_t value, uint32_t alignment) { return (value + alignmen
 
 #if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
 jpeg_decoder_handle_t preallocated_decoder = nullptr;
+StaticSemaphore_t jpeg_codec_mutex_buffer;
+SemaphoreHandle_t jpeg_codec_mutex = nullptr;
+
+void ensure_jpeg_codec_mutex_() {
+  if (jpeg_codec_mutex == nullptr)
+    jpeg_codec_mutex = xSemaphoreCreateMutexStatic(&jpeg_codec_mutex_buffer);
+}
+
+class JpegCodecLock {
+ public:
+  explicit JpegCodecLock(int timeout_ms) {
+    ensure_jpeg_codec_mutex_();
+    if (jpeg_codec_mutex == nullptr)
+      return;
+    const TickType_t timeout = timeout_ms <= 0 ? pdMS_TO_TICKS(1000) : pdMS_TO_TICKS(timeout_ms);
+    this->locked_ = xSemaphoreTake(jpeg_codec_mutex, timeout) == pdTRUE;
+  }
+
+  ~JpegCodecLock() {
+    if (this->locked_)
+      xSemaphoreGive(jpeg_codec_mutex);
+  }
+
+  bool locked() const { return this->locked_; }
+
+ protected:
+  bool locked_{false};
+};
+
+void release_preallocated_decoder_() {
+  if (preallocated_decoder == nullptr)
+    return;
+  jpeg_del_decoder_engine(preallocated_decoder);
+  preallocated_decoder = nullptr;
+}
 
 void log_decoder_allocation_failure_(esp_err_t err) {
   ESP_LOGW(TAG, "JPEG decoder engine allocation failed err=%d internal_free=%zu internal_largest=%zu dma_free=%zu "
@@ -160,6 +197,10 @@ esp_err_t get_info(const uint8_t *jpeg, size_t jpeg_size, PictureInfo *info) {
   if (jpeg == nullptr || jpeg_size == 0 || info == nullptr)
     return ESP_ERR_INVALID_ARG;
 
+  JpegCodecLock lock(1000);
+  if (!lock.locked())
+    return ESP_ERR_TIMEOUT;
+
   jpeg_decode_picture_info_t picture_info = {};
   esp_err_t err = jpeg_decoder_get_info(jpeg, jpeg_size, &picture_info);
   if (err != ESP_OK)
@@ -182,6 +223,12 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   const size_t expected_input_size = raw_image_size(config.width, config.height, config.input_format);
   if (input_size < expected_input_size)
     return ESP_ERR_INVALID_SIZE;
+
+  JpegCodecLock lock(config.timeout_ms);
+  if (!lock.locked())
+    return ESP_ERR_TIMEOUT;
+
+  release_preallocated_decoder_();
 
   jpeg_encoder_handle_t encoder = nullptr;
   jpeg_encode_engine_cfg_t engine_cfg = {
@@ -264,6 +311,10 @@ esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_si
 
   if (written != nullptr)
     *written = 0;
+
+  JpegCodecLock lock(config.timeout_ms);
+  if (!lock.locked())
+    return ESP_ERR_TIMEOUT;
 
   jpeg_decoder_handle_t decoder = preallocated_decoder;
   bool owns_decoder = false;
@@ -362,6 +413,10 @@ esp_err_t preallocate_decoder(int timeout_ms) {
 #if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
   if (preallocated_decoder != nullptr)
     return ESP_OK;
+
+  JpegCodecLock lock(timeout_ms);
+  if (!lock.locked())
+    return ESP_ERR_TIMEOUT;
 
   jpeg_decode_engine_cfg_t engine_cfg = {
       .intr_priority = 0,
