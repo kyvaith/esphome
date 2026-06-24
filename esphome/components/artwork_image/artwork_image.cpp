@@ -13,8 +13,6 @@
 #include "esp_heap_caps.h"
 #include "esp_memory_utils.h"
 #include "esp_timer.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #endif
 
 #ifdef USE_ESP_IDF
@@ -85,16 +83,8 @@ static void sync_artwork_buffer_for_dma(const void *ptr, size_t size, bool writt
   }
   const uint64_t start_us = esp_timer_get_time();
   const uint32_t direction = written_by_dma ? ESP_CACHE_MSYNC_FLAG_DIR_M2C : ESP_CACHE_MSYNC_FLAG_DIR_C2M;
-  constexpr size_t chunk_size = 32 * 1024;
-  const uint32_t flags = direction | ESP_CACHE_MSYNC_FLAG_TYPE_DATA;
-  for (uintptr_t pos = aligned_start; pos < aligned_end;) {
-    const size_t len = std::min(chunk_size, static_cast<size_t>(aligned_end - pos));
-    esp_cache_msync(reinterpret_cast<void *>(pos), len, flags);
-    pos += len;
-    if (pos < aligned_end) {
-      taskYIELD();
-    }
-  }
+  esp_cache_msync(reinterpret_cast<void *>(aligned_start), aligned_end - aligned_start,
+                  direction | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
   const uint64_t elapsed_us = esp_timer_get_time() - start_us;
   if (elapsed_us > 30000) {
     ESP_LOGW(TAG, "Artwork cache sync %s took %lluus size=%zu aligned=%zu",
