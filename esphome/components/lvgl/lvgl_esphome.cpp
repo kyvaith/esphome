@@ -3922,9 +3922,9 @@ bool snapshot_app_direct_anim_tick() {
   if (elapsed_ms >= duration_ms) {
     state.component->wait_for_direct_frame_presented(50);
     state.component->realign_direct_buffer_after_manual_present();
-    if (state.opening && state.app_root != nullptr) {
-      snapshot_cache_release_decoded_if_compressed(state.app_root);
-    }
+    // Keep app snapshots decoded after opening. Decoding the compressed snapshot
+    // during the next tap can stall the DSI scanout before the open animation
+    // has a chance to present its first frame.
     if (!state.opening && state.owns_app_buf && state.app_root != nullptr && state.app_buf != nullptr) {
       snapshot_cache_store_compressed_only(state.app_root, state.app_buf);
       state.app_buf = nullptr;
@@ -4113,6 +4113,14 @@ extern "C" bool lvgl_esphome_snapshot_cache_compressed_page(lv_obj_t *obj) {
   }
   snapshot_cache_store_compressed_only(obj, buf);
   snapshot_log_heap_("cache_compressed_page stored", obj, false);
+  // Predecode while the boot/cache sequence is in progress. The app-open path
+  // needs a raw buffer immediately; doing this lazily at tap time competes with
+  // DSI reads from PSRAM and shows up as a visible pre-animation flash.
+  if (snapshot_cache_find(obj) == nullptr) {
+    snapshot_log_heap_("cache_compressed_page predecode failed", obj, true);
+    return false;
+  }
+  snapshot_log_heap_("cache_compressed_page predecoded", obj, false);
   return snapshot_cache_find_entry(obj) != nullptr;
 #else
   return false;
