@@ -2177,14 +2177,6 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     return true;
   };
 
-  auto copy_current_frame = [&]() -> bool {
-    if (this->direct_last_flushed_buf_ == nullptr || this->direct_last_flushed_buf_ == target)
-      return false;
-    memcpy(target, this->direct_last_flushed_buf_, fb_bytes);
-    needs_sync = true;
-    return true;
-  };
-
   SnapshotAppRenderBufferState *buffer_state = nullptr;
   for (auto &state : s_snapshot_app_render_buffers) {
     if (state.buffer == target) {
@@ -2211,19 +2203,11 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     buffer_state->opening = s_snapshot_app_render_opening;
   }
 
-  const bool background_only_frame = width == 0 || height == 0;
+  if (width == 0 || height == 0)
+    return false;
+
   if (!buffer_state->initialized) {
-    if (background_only_frame && copy_current_frame()) {
-      // Present the exact frame currently visible on the panel before the
-      // first reveal tick. This avoids a full-screen blink without showing a
-      // one-pixel dot from the app snapshot.
-    } else if (background_only_frame && copy_full(background)) {
-      // Fall back to the cached background if there is no known current frame.
-    } else if (s_snapshot_app_render_opening && copy_current_frame()) {
-      // Opening starts from the exact frame currently visible on the panel. This
-      // avoids a transient blank frame if the cached home snapshot is unavailable
-      // or slower than the first manual-present frame.
-    } else if (!copy_full(background)) {
+    if (!copy_full(background)) {
       memset(target, 0, fb_bytes);
       needs_sync = true;
     }
@@ -2231,16 +2215,6 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     buffer_state->center_x = center_x;
     buffer_state->center_y = center_y;
     buffer_state->initialized = true;
-  }
-  if (background_only_frame) {
-    if (needs_sync)
-      sync_full();
-    if (!this->present_snapshot_render_buffer_(target))
-      return false;
-#ifdef USE_LVGL_FPS_BENCHMARK
-    lvgl_esphome_note_frame();
-#endif
-    return true;
   }
 
   const int diameter = std::clamp<int>(std::max(width, height), 1, std::max(this->width_, this->height_));
@@ -3990,17 +3964,19 @@ bool snapshot_app_direct_anim_tick() {
   if (elapsed_ms >= duration_ms) {
     state.component->wait_for_direct_frame_presented(50);
     state.component->realign_direct_buffer_after_manual_present();
-    if (state.opening && state.app_root != nullptr) {
+    const bool opening = state.opening;
+    if (opening && state.app_root != nullptr) {
       snapshot_cache_release_decoded_if_compressed(state.app_root);
     }
-    if (!state.opening && state.owns_app_buf && state.app_root != nullptr && state.app_buf != nullptr) {
+    if (!opening && state.owns_app_buf && state.app_root != nullptr && state.app_buf != nullptr) {
       snapshot_cache_store_raw_only(state.app_root, state.app_buf);
       state.app_buf = nullptr;
       state.owns_app_buf = false;
     }
     snapshot_app_cleanup();
     s_snapshot_direct_active = false;
-    lv_obj_invalidate(lv_screen_active());
+    if (!opening)
+      lv_obj_invalidate(lv_screen_active());
   }
   return true;
 }
