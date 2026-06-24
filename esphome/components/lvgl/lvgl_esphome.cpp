@@ -100,6 +100,7 @@ static volatile uint32_t s_perf_logging_enabled = 0;
 static volatile uint32_t s_swipe_logging_enabled = 0;
 static volatile bool s_snapshot_swipe_active = false;
 static volatile bool s_snapshot_direct_active = false;
+static bool s_snapshot_app_open_frame_held = false;
 
 struct SnapshotAppRenderBufferState {
   uint8_t *buffer{nullptr};
@@ -3884,6 +3885,7 @@ lv_draw_buf_t *snapshot_app_cached_or_take(lv_obj_t *obj, bool force_fresh, bool
 bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_center_x, int end_center_y,
                         uint32_t duration_ms, bool opening) {
 #if LV_USE_SNAPSHOT
+  s_snapshot_app_open_frame_held = false;
   snapshot_swipe_cleanup();
   snapshot_scroll_cleanup();
   snapshot_app_cleanup();
@@ -3974,9 +3976,17 @@ bool snapshot_app_direct_anim_tick() {
       state.owns_app_buf = false;
     }
     snapshot_app_cleanup();
-    s_snapshot_direct_active = false;
-    if (!opening)
+    if (opening) {
+      // Keep the final app reveal frame on the DSI buffers until YAML has loaded
+      // the real LVGL page. Releasing direct mode here gives LVGL one loop tick
+      // to redraw the old home screen between the animation and page.show.
+      s_snapshot_app_open_frame_held = true;
+      s_snapshot_direct_active = true;
+    } else {
+      s_snapshot_app_open_frame_held = false;
+      s_snapshot_direct_active = false;
       lv_obj_invalidate(lv_screen_active());
+    }
   }
   return true;
 }
@@ -4317,12 +4327,23 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t *page1, lv_obj_
 }
 
 extern "C" bool lvgl_esphome_snapshot_is_active(void) {
-  return s_snapshot_direct_active || s_snapshot_swipe_active || snapshot_app_state.active;
+  return s_snapshot_swipe_active || snapshot_app_state.active ||
+         (s_snapshot_direct_active && !s_snapshot_app_open_frame_held);
 }
 
 extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *background, int width,
                                                uint32_t duration_ms) {
   return snapshot_app_begin(app, background, width, width / 2, width / 2, duration_ms, true);
+}
+
+extern "C" void lvgl_esphome_snapshot_app_release_open_hold(void) {
+#if LV_USE_SNAPSHOT
+  if (!s_snapshot_app_open_frame_held)
+    return;
+  s_snapshot_app_open_frame_held = false;
+  s_snapshot_direct_active = false;
+  lv_obj_invalidate(lv_screen_active());
+#endif
 }
 
 extern "C" bool lvgl_esphome_snapshot_app_close(lv_obj_t *app, lv_obj_t *background, int width, int target_center_x,

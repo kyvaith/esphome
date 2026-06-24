@@ -54,6 +54,7 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t *page1, lv_obj_
                                                         lv_obj_t *page4, int current_page, int width);
 extern "C" bool lvgl_esphome_snapshot_is_active(void);
 extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *background, int width, uint32_t duration_ms);
+extern "C" void lvgl_esphome_snapshot_app_release_open_hold(void);
 extern "C" bool lvgl_esphome_snapshot_app_close(lv_obj_t *app, lv_obj_t *background, int width, int target_center_x,
                                                 int target_center_y, uint32_t duration_ms);
 extern "C" bool lvgl_esphome_snapshot_app_prepare_close(lv_obj_t *app);
