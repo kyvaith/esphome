@@ -3,13 +3,8 @@
 
 #include "esphome/core/log.h"
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
 #include <algorithm>
 #include <cstring>
-#include <memory>
-#include <new>
 
 namespace esphome {
 namespace artwork_image {
@@ -129,61 +124,24 @@ bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int bu
       this->failed_ = true;
       return false;
     }
-    const bool covers_target = offset_x == 0 && offset_y == 0 && scaled_width == target_width &&
-                               scaled_height == target_height;
-    if (!covers_target) {
-      memset(target, 0, target_size);
-    }
+    memset(target, 0, target_size);
 
     const uint32_t x_step = (static_cast<uint32_t>(content_width) << 16) / scaled_width;
     const uint32_t y_step = (static_cast<uint32_t>(content_height) << 16) / scaled_height;
-    const bool exact_2x_full = covers_target && scaled_width == content_width * 2 &&
-                               scaled_height == content_height * 2;
-    bool copied = false;
-    if (exact_2x_full) {
-      const size_t row_bytes = static_cast<size_t>(scaled_width) * 2u;
-      std::unique_ptr<uint8_t[]> expanded_row(new (std::nothrow) uint8_t[row_bytes]);
-      if (expanded_row) {
-        for (int sy = 0; sy < content_height; sy++) {
-          const uint8_t *src = buffer + (sy * buffer_width * 2);
-          uint8_t *row = expanded_row.get();
-          for (int x = 0; x < content_width; x++) {
-            const uint8_t lo = src[x * 2 + 0];
-            const uint8_t hi = src[x * 2 + 1];
-            row[x * 4 + 0] = lo;
-            row[x * 4 + 1] = hi;
-            row[x * 4 + 2] = lo;
-            row[x * 4 + 3] = hi;
-          }
-          uint8_t *dst = target + (static_cast<size_t>(sy) * 2u * target_width * 2u);
-          memcpy(dst, row, row_bytes);
-          memcpy(dst + row_bytes, row, row_bytes);
-          if ((sy & 0x0F) == 0x0F) {
-            taskYIELD();
-          }
-        }
-        copied = true;
+    uint32_t y_acc = 0;
+    for (int y = 0; y < scaled_height; y++) {
+      const int sy = static_cast<int>(y_acc >> 16);
+      const uint8_t *src_row = buffer + (sy * buffer_width * 2);
+      uint8_t *dst = target + (((offset_y + y) * target_width + offset_x) * 2);
+      uint32_t x_acc = 0;
+      for (int x = 0; x < scaled_width; x++) {
+        const int sx = static_cast<int>(x_acc >> 16);
+        const uint8_t *src = src_row + sx * 2;
+        dst[x * 2 + 0] = src[0];
+        dst[x * 2 + 1] = src[1];
+        x_acc += x_step;
       }
-    }
-    if (!copied) {
-      uint32_t y_acc = 0;
-      for (int y = 0; y < scaled_height; y++) {
-        const int sy = static_cast<int>(y_acc >> 16);
-        const uint8_t *src_row = buffer + (sy * buffer_width * 2);
-        uint8_t *dst = target + (((offset_y + y) * target_width + offset_x) * 2);
-        uint32_t x_acc = 0;
-        for (int x = 0; x < scaled_width; x++) {
-          const int sx = static_cast<int>(x_acc >> 16);
-          const uint8_t *src = src_row + sx * 2;
-          dst[x * 2 + 0] = src[0];
-          dst[x * 2 + 1] = src[1];
-          x_acc += x_step;
-        }
-        y_acc += y_step;
-        if ((y & 0x1F) == 0x1F) {
-          taskYIELD();
-        }
-      }
+      y_acc += y_step;
     }
 
     this->image_->allocator_.deallocate(buffer, buffer_width * buffer_height * 2u);
