@@ -194,6 +194,7 @@ class ArtworkImage : public PollingComponent,
   void fail_download_();
 #ifdef USE_SENDSPIN_ARTWORK
   void process_pending_sendspin_();
+  void queue_sendspin_finish_();
 #endif
 
   /**
@@ -296,6 +297,7 @@ class ArtworkImage : public PollingComponent,
   uint8_t sendspin_slot_{0};
   std::atomic<bool> sendspin_decode_ready_{false};
   std::atomic<bool> sendspin_decode_failed_{false};
+  std::atomic<bool> sendspin_finish_queued_{false};
   Mutex sendspin_pending_lock_{};
   bool sendspin_paused_{false};
   std::vector<uint8_t> pending_sendspin_data_{};
