@@ -2213,10 +2213,12 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
 
   const bool background_only_frame = width == 0 || height == 0;
   if (!buffer_state->initialized) {
-    if (background_only_frame && copy_full(background)) {
-      // Present the stable home/background frame immediately before the first
-      // reveal tick. This avoids a full-screen blink without showing a
+    if (background_only_frame && copy_current_frame()) {
+      // Present the exact frame currently visible on the panel before the
+      // first reveal tick. This avoids a full-screen blink without showing a
       // one-pixel dot from the app snapshot.
+    } else if (background_only_frame && copy_full(background)) {
+      // Fall back to the cached background if there is no known current frame.
     } else if (s_snapshot_app_render_opening && copy_current_frame()) {
       // Opening starts from the exact frame currently visible on the panel. This
       // avoids a transient blank frame if the cached home snapshot is unavailable
@@ -3919,7 +3921,6 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
     return false;
 
   const bool previous_direct_active = s_snapshot_direct_active;
-  s_snapshot_direct_active = true;
 
   bool owns_app = false;
   lv_draw_buf_t *app_buf = nullptr;
