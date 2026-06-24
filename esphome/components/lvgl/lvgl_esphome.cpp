@@ -2106,7 +2106,7 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32)
   if (app == nullptr || app->data == nullptr)
     return false;
-  if (this->width_ <= 0 || this->height_ <= 0 || width <= 0 || height <= 0)
+  if (this->width_ <= 0 || this->height_ <= 0 || width < 0 || height < 0)
     return false;
   if (app->header.cf != LV_COLOR_FORMAT_RGB888 || app->header.w < this->width_ || app->header.h < this->height_)
     return false;
@@ -2211,8 +2211,13 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     buffer_state->opening = s_snapshot_app_render_opening;
   }
 
+  const bool background_only_frame = width == 0 || height == 0;
   if (!buffer_state->initialized) {
-    if (s_snapshot_app_render_opening && copy_current_frame()) {
+    if (background_only_frame && copy_full(background)) {
+      // Present the stable home/background frame immediately before the first
+      // reveal tick. This avoids a full-screen blink without showing a
+      // one-pixel dot from the app snapshot.
+    } else if (s_snapshot_app_render_opening && copy_current_frame()) {
       // Opening starts from the exact frame currently visible on the panel. This
       // avoids a transient blank frame if the cached home snapshot is unavailable
       // or slower than the first manual-present frame.
@@ -2224,6 +2229,16 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     buffer_state->center_x = center_x;
     buffer_state->center_y = center_y;
     buffer_state->initialized = true;
+  }
+  if (background_only_frame) {
+    if (needs_sync)
+      sync_full();
+    if (!this->present_snapshot_render_buffer_(target))
+      return false;
+#ifdef USE_LVGL_FPS_BENCHMARK
+    lvgl_esphome_note_frame();
+#endif
+    return true;
   }
 
   const int diameter = std::clamp<int>(std::max(width, height), 1, std::max(this->width_, this->height_));
@@ -3904,12 +3919,7 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
     return false;
 
   const bool previous_direct_active = s_snapshot_direct_active;
-  if (!opening) {
-    s_snapshot_direct_active = true;
-  } else {
-    s_snapshot_direct_active = true;
-    component->snapshot_present_current_frame();
-  }
+  s_snapshot_direct_active = true;
 
   bool owns_app = false;
   lv_draw_buf_t *app_buf = nullptr;
@@ -3952,6 +3962,10 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
   snapshot_app_state.component = component;
   snapshot_app_render_buffers_reset(opening);
   s_snapshot_direct_active = true;
+  if (opening)
+    snapshot_app_state.component->snapshot_app_direct_render(snapshot_app_state.background_buf, snapshot_app_state.app_buf,
+                                                            snapshot_app_state.start_center_x,
+                                                            snapshot_app_state.start_center_y, 0, 0);
   return true;
 #else
   return false;
