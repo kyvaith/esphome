@@ -255,11 +255,14 @@ void ArtworkImage::setup() {
         return;
       }
     }
-    if (!this->sendspin_decode_failed_.load(std::memory_order_acquire) &&
-        !this->sendspin_decode_ready_.load(std::memory_order_acquire)) {
+    if (this->sendspin_decode_failed_.exchange(false, std::memory_order_acq_rel)) {
+      this->download_error_callback_.call();
       return;
     }
-    this->queue_sendspin_finish_();
+    if (!this->sendspin_decode_ready_.exchange(false, std::memory_order_acq_rel)) {
+      return;
+    }
+    this->finish_download_();
   });
 #endif
 }
@@ -330,26 +333,13 @@ void ArtworkImage::process_pending_sendspin_() {
   if (!display) {
     return;
   }
-  if (this->sendspin_decode_failed_.load(std::memory_order_acquire) ||
-      this->sendspin_decode_ready_.load(std::memory_order_acquire)) {
-    this->queue_sendspin_finish_();
-  }
-}
-
-void ArtworkImage::queue_sendspin_finish_() {
-  if (this->sendspin_finish_queued_.exchange(true, std::memory_order_acq_rel)) {
+  if (this->sendspin_decode_failed_.exchange(false, std::memory_order_acq_rel)) {
+    this->download_error_callback_.call();
     return;
   }
-  this->defer([this]() {
-    this->sendspin_finish_queued_.store(false, std::memory_order_release);
-    if (this->sendspin_decode_failed_.exchange(false, std::memory_order_acq_rel)) {
-      this->download_error_callback_.call();
-      return;
-    }
-    if (this->sendspin_decode_ready_.exchange(false, std::memory_order_acq_rel)) {
-      this->finish_download_();
-    }
-  });
+  if (this->sendspin_decode_ready_.exchange(false, std::memory_order_acq_rel)) {
+    this->finish_download_();
+  }
 }
 #endif
 
