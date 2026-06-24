@@ -1984,8 +1984,9 @@ bool LvglComponent::snapshot_swipe_direct_render_edge(lv_draw_buf_t *current, in
 
   bool needs_sync = false;
   auto clear_visible = [&](int x1, int x2) {
-    x1 = std::clamp(x1, 0, this->width_);
-    x2 = std::clamp(x2, 0, this->width_);
+    const int screen_w = (int) this->width_;
+    x1 = std::clamp(x1, 0, screen_w);
+    x2 = std::clamp(x2, 0, screen_w);
     if (x2 <= x1)
       return;
     const size_t clear_bytes = (size_t) (x2 - x1) * BYTES_PER_PIXEL;
