@@ -137,6 +137,7 @@ CONF_USE_PPA = "use_ppa"
 CONF_USE_PPA_IMG = "use_ppa_img"
 CONF_USE_PPA_DRAW = "use_ppa_draw"
 CONF_USE_PPA_BLEND = "use_ppa_blend"
+CONF_PPA_BURST_LENGTH = "ppa_burst_length"
 CONF_FPS_BENCHMARK = "fps_benchmark"
 CONF_PERF_MONITOR = "perf_monitor"
 CONF_PROFILER = "profiler"
@@ -383,7 +384,7 @@ async def to_code(configs):
         # LVGL 9.5 includes the PPA fix (PR #9162) natively.
         # We keep our custom PPA files as a fallback option.
         # PPA evaluate checks buffer alignment at runtime before claiming tasks.
-        df.add_define("LV_PPA_BURST_LENGTH", "128")
+        df.add_define("LV_PPA_BURST_LENGTH", str(config_0[CONF_PPA_BURST_LENGTH]))
         cg.add_define("USE_LVGL_PPA")
         ppa_dir = Path(__file__).parent / "ppa"
         cg.add_build_flag(f"-I{ppa_dir.as_posix()}")
@@ -939,6 +940,9 @@ LVGL_SCHEMA = cv.All(
                 cv.Optional(CONF_USE_PPA_IMG, default=False): cv.boolean,
                 cv.Optional(CONF_USE_PPA_DRAW, default=False): cv.boolean,
                 cv.Optional(CONF_USE_PPA_BLEND, default=False): cv.boolean,
+                cv.Optional(CONF_PPA_BURST_LENGTH, default=128): cv.one_of(
+                    8, 16, 32, 64, 128
+                ),
                 cv.Optional(CONF_FPS_BENCHMARK, default=False): cv.boolean,
                 cv.Optional(CONF_PERF_MONITOR, default=False): cv.boolean,
                 cv.Optional(CONF_PROFILER, default=False): cv.boolean,

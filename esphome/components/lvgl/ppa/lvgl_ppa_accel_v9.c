@@ -477,12 +477,12 @@ void lvgl_port_ppa_v9_init(lv_display_t *display)
         ppa_client_config_t blend_cfg = {
             .oper_type = PPA_OPERATION_BLEND,
             .max_pending_trans_num = 1,
-            .data_burst_length = PPA_DATA_BURST_LENGTH_128,
+            .data_burst_length = LV_DRAW_PPA_DATA_BURST_LENGTH,
         };
         ppa_client_config_t fill_cfg = {
             .oper_type = PPA_OPERATION_FILL,
             .max_pending_trans_num = 1,
-            .data_burst_length = PPA_DATA_BURST_LENGTH_128,
+            .data_burst_length = LV_DRAW_PPA_DATA_BURST_LENGTH,
         };
         esp_err_t err = ppa_register_client(&blend_cfg, &s_blend_handle);
         if (err != ESP_OK) {

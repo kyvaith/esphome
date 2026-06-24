@@ -11,24 +11,6 @@
 #include "lv_draw_ppa_private.h"
 #include "lv_draw_ppa.h"
 
-#ifndef LV_PPA_BURST_LENGTH
-#define LV_PPA_BURST_LENGTH (128)
-#endif
-
-#if LV_PPA_BURST_LENGTH == 128
-#define LV_DRAW_PPA_DATA_BURST_LENGTH PPA_DATA_BURST_LENGTH_128
-#elif LV_PPA_BURST_LENGTH == 64
-#define LV_DRAW_PPA_DATA_BURST_LENGTH PPA_DATA_BURST_LENGTH_64
-#elif LV_PPA_BURST_LENGTH == 32
-#define LV_DRAW_PPA_DATA_BURST_LENGTH PPA_DATA_BURST_LENGTH_32
-#elif LV_PPA_BURST_LENGTH == 16
-#define LV_DRAW_PPA_DATA_BURST_LENGTH PPA_DATA_BURST_LENGTH_16
-#elif LV_PPA_BURST_LENGTH == 8
-#define LV_DRAW_PPA_DATA_BURST_LENGTH PPA_DATA_BURST_LENGTH_8
-#else
-#error "LV_PPA_BURST_LENGTH must be 8, 16, 32, 64 or 128"
-#endif
-
 /*********************
  *      DEFINES
  *********************/
