@@ -3994,7 +3994,7 @@ bool snapshot_app_direct_anim_tick() {
       snapshot_cache_release_decoded_if_compressed(state.app_root);
     }
     if (!state.opening && state.owns_app_buf && state.app_root != nullptr && state.app_buf != nullptr) {
-      snapshot_cache_store_compressed_only(state.app_root, state.app_buf);
+      snapshot_cache_store_raw_only(state.app_root, state.app_buf);
       state.app_buf = nullptr;
       state.owns_app_buf = false;
     }
