@@ -611,6 +611,11 @@ bool MipiDsi::present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end
   y_end = std::min<int>(this->height_ - 1, y_end);
   if (y_end < y_start)
     return false;
+  if (this->refresh_lock_ != nullptr) {
+    while (xSemaphoreTake(this->refresh_lock_, 0) == pdTRUE) {
+    }
+    xSemaphoreTake(this->refresh_lock_, pdMS_TO_TICKS(20));
+  }
   esp_err_t err = esp_lcd_panel_draw_bitmap(this->handle_, 0, y_start, this->width_, y_end + 1, frame_buffer);
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "present_frame_buffer failed: %s", esp_err_to_name(err));
