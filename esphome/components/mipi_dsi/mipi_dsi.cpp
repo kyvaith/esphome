@@ -633,12 +633,25 @@ void MipiDsi::write_to_display_(int x_start, int y_start, int w, int h, const ui
   ptr += y_offset * stride + x_offset * bytes_per_pixel;  // skip to the first pixel
   // x_ and y_offset are offsets into the source buffer, unrelated to our own offsets into the display.
   if (x_offset == 0 && x_pad == 0) {
+    const size_t payload_size = static_cast<size_t>(w) * static_cast<size_t>(h) * bytes_per_pixel;
+    esp_err_t sync_err = cache_writeback_external_for_dma(ptr, payload_size);
+    if (sync_err != ESP_OK) {
+      ESP_LOGW(TAG, "draw_bitmap cache sync failed: %s ptr=%p size=%zu w=%d h=%d", esp_err_to_name(sync_err), ptr,
+               payload_size, w, h);
+      return;
+    }
     err = esp_lcd_panel_draw_bitmap(this->handle_, x_start, y_start, x_start + w, y_start + h, ptr);
     xSemaphoreTake(this->io_lock_, portMAX_DELAY);
 
   } else {
     // draw line by line
     for (int y = 0; y != h; y++) {
+      esp_err_t sync_err = cache_writeback_external_for_dma(ptr, static_cast<size_t>(w) * bytes_per_pixel);
+      if (sync_err != ESP_OK) {
+        ESP_LOGW(TAG, "draw_bitmap line cache sync failed: %s ptr=%p w=%d y=%d", esp_err_to_name(sync_err), ptr, w,
+                 y);
+        return;
+      }
       err = esp_lcd_panel_draw_bitmap(this->handle_, x_start, y + y_start, x_start + w, y + y_start + 1, ptr);
       if (err != ESP_OK)
         break;
