@@ -3143,6 +3143,7 @@ constexpr bool SNAPSHOT_DIRECT_COMPOSITOR_ENABLED = true;
 constexpr bool SNAPSHOT_JPEG_CACHE_ENABLED = true;
 constexpr uint32_t SNAPSHOT_JPEG_QUALITY = 100;
 constexpr int SNAPSHOT_APP_OPEN_START_SIZE = 1;
+constexpr uint32_t SNAPSHOT_APP_OPEN_FIRST_FRAME_ADVANCE_MS = 16;
 uint32_t snapshot_diag_budget = 24;
 
 #ifdef USE_ESP32
@@ -3952,7 +3953,9 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
   snapshot_app_state.owns_background_buf = owns_background;
   snapshot_app_state.active = true;
   snapshot_app_state.opening = opening;
-  snapshot_app_state.anim_start_us = esp_timer_get_time();
+  const uint64_t now_us = esp_timer_get_time();
+  snapshot_app_state.anim_start_us =
+      opening ? now_us - (uint64_t) SNAPSHOT_APP_OPEN_FIRST_FRAME_ADVANCE_MS * 1000ULL : now_us;
   snapshot_app_state.anim_duration_ms = duration_ms == 0 ? 1 : duration_ms;
   snapshot_app_state.start_size = opening ? std::min(width, SNAPSHOT_APP_OPEN_START_SIZE) : width;
   snapshot_app_state.end_size = opening ? width : 1;
@@ -3964,9 +3967,7 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
   snapshot_app_render_buffers_reset(opening);
   s_snapshot_direct_active = true;
   if (opening)
-    snapshot_app_state.component->snapshot_app_direct_render(snapshot_app_state.background_buf, snapshot_app_state.app_buf,
-                                                            snapshot_app_state.start_center_x,
-                                                            snapshot_app_state.start_center_y, 0, 0);
+    snapshot_app_direct_anim_tick();
   return true;
 #else
   return false;
