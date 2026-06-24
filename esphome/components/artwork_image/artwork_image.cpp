@@ -1371,20 +1371,24 @@ void ArtworkImage::finish_download_() {
   stage_start = millis();
   this->end_connection_();
   log_slow_artwork_stage("finish-end-connection", stage_start);
-  stage_start = millis();
-  this->download_finished_callback_.call(false);
-  log_slow_artwork_stage("finish-callback", stage_start);
-  App.feed_wdt();
-  this->log_state_("download-callback-finished");
-  stage_start = millis();
-  this->start_pending_update_();
-  log_slow_artwork_stage("finish-start-pending", stage_start);
+  this->defer([this]() {
+    uint32_t stage_start = millis();
+    this->download_finished_callback_.call(false);
+    log_slow_artwork_stage("finish-callback", stage_start);
+    App.feed_wdt();
+    this->log_state_("download-callback-finished");
+    stage_start = millis();
+    this->start_pending_update_();
+    log_slow_artwork_stage("finish-start-pending", stage_start);
+  });
 }
 
 void ArtworkImage::fail_download_() {
   this->end_connection_();
-  this->download_error_callback_.call();
-  this->start_pending_update_();
+  this->defer([this]() {
+    this->download_error_callback_.call();
+    this->start_pending_update_();
+  });
 }
 
 void ArtworkImage::queue_pending_update_(const std::string &url) {
