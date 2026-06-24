@@ -332,6 +332,7 @@ class LvglComponent : public PollingComponent {
   bool snapshot_scroll_direct_render(lv_draw_buf_t *content, int scroll_y, int viewport_w, int viewport_h);
   bool snapshot_app_direct_render(lv_draw_buf_t *background, lv_draw_buf_t *app, int center_x, int center_y, int width,
                                   int height);
+  bool snapshot_present_current_frame();
   bool wait_for_direct_frame_presented(uint32_t timeout_ms);
   void realign_direct_buffer_after_manual_present();
 

@@ -1388,6 +1388,28 @@ bool LvglComponent::present_snapshot_render_buffer_(uint8_t *buffer) {
   return true;
 }
 
+bool LvglComponent::snapshot_present_current_frame() {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32)
+  if (this->width_ <= 0 || this->height_ <= 0 || this->direct_last_flushed_buf_ == nullptr)
+    return false;
+  constexpr size_t BYTES_PER_PIXEL = 3;
+  const size_t fb_bytes = (size_t) this->width_ * (size_t) this->height_ * BYTES_PER_PIXEL;
+  uint8_t *target = this->next_snapshot_render_buffer_();
+  if (target == nullptr)
+    return false;
+  if (target != this->direct_last_flushed_buf_) {
+    memcpy(target, this->direct_last_flushed_buf_, fb_bytes);
+    lvgl_cache_msync_external(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  }
+  if (!this->present_snapshot_render_buffer_(target))
+    return false;
+  this->wait_for_direct_frame_presented(20);
+  return true;
+#else
+  return false;
+#endif
+}
+
 #ifdef USE_ESP32
 bool LvglComponent::start_partial_compositor_() {
 #ifdef USE_MIPI_DSI
@@ -3882,8 +3904,12 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
     return false;
 
   const bool previous_direct_active = s_snapshot_direct_active;
-  if (!opening)
+  if (!opening) {
     s_snapshot_direct_active = true;
+  } else {
+    s_snapshot_direct_active = true;
+    component->snapshot_present_current_frame();
+  }
 
   bool owns_app = false;
   lv_draw_buf_t *app_buf = nullptr;
