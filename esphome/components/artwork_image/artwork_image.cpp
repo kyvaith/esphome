@@ -30,7 +30,6 @@ static constexpr size_t MAX_READ_CHUNK_SIZE = 8 * 1024;
 static constexpr int LOCAL_ARTWORK_HTTP_CONNECT_TIMEOUT_MS = 2500;
 static constexpr int LOCAL_ARTWORK_HTTP_READ_TIMEOUT_MS = 15;
 static constexpr uint32_t SLOW_ARTWORK_STAGE_MS = 30;
-static constexpr uint32_t SENDSPIN_ARTWORK_PROCESS_DELAY_MS = 250;
 
 #include "image_decoder.h"
 
@@ -200,50 +199,67 @@ void ArtworkImage::setup() {
         if (slot != this->sendspin_slot_) {
           return;
         }
-        bool paused = false;
         {
           LockGuard guard(this->sendspin_pending_lock_);
-          this->pending_sendspin_data_.assign(data, data + length);
-          this->pending_sendspin_format_ = format;
-          this->pending_sendspin_image_ = true;
-          this->pending_sendspin_clear_ = false;
-          this->sendspin_decode_failed_.store(false, std::memory_order_release);
-          paused = this->sendspin_paused_;
+          if (this->sendspin_paused_) {
+            this->pending_sendspin_data_.assign(data, data + length);
+            this->pending_sendspin_format_ = format;
+            this->pending_sendspin_image_ = true;
+            this->pending_sendspin_clear_ = false;
+            this->sendspin_decode_failed_.store(false, std::memory_order_release);
+            return;
+          }
         }
-        if (!paused) {
-          this->queue_sendspin_process_();
+        ImageFormat image_format = ImageFormat::AUTO;
+        switch (format) {
+          case sendspin::SendspinImageFormat::JPEG:
+            image_format = ImageFormat::JPEG;
+            break;
+          case sendspin::SendspinImageFormat::PNG:
+            image_format = ImageFormat::PNG;
+            break;
+          case sendspin::SendspinImageFormat::BMP:
+            image_format = ImageFormat::BMP;
+            break;
+        }
+        this->sendspin_decode_failed_.store(false, std::memory_order_release);
+        if (!this->decode_encoded_image_(image_format, data, length, false)) {
+          this->sendspin_decode_failed_.store(true, std::memory_order_release);
         }
       });
   this->sendspin_hub_->add_artwork_clear_callback([this](uint8_t slot) {
     if (slot != this->sendspin_slot_) {
       return;
     }
-    bool paused = false;
     {
       LockGuard guard(this->sendspin_pending_lock_);
-      this->pending_sendspin_data_.clear();
-      this->pending_sendspin_image_ = false;
-      this->pending_sendspin_display_ = false;
-      this->pending_sendspin_clear_ = true;
-      paused = this->sendspin_paused_;
+      if (this->sendspin_paused_) {
+        this->pending_sendspin_data_.clear();
+        this->pending_sendspin_image_ = false;
+        this->pending_sendspin_display_ = false;
+        this->pending_sendspin_clear_ = true;
+        return;
+      }
     }
-    if (!paused) {
-      this->queue_sendspin_process_();
-    }
+    this->release();
+    this->download_error_callback_.call();
   });
   this->sendspin_hub_->add_artwork_display_callback([this](uint8_t slot) {
     if (slot != this->sendspin_slot_) {
       return;
     }
-    bool paused = false;
     {
       LockGuard guard(this->sendspin_pending_lock_);
-      this->pending_sendspin_display_ = true;
-      paused = this->sendspin_paused_;
+      if (this->sendspin_paused_) {
+        this->pending_sendspin_display_ = true;
+        return;
+      }
     }
-    if (!paused) {
-      this->queue_sendspin_process_();
+    if (!this->sendspin_decode_failed_.load(std::memory_order_acquire) &&
+        !this->sendspin_decode_ready_.load(std::memory_order_acquire)) {
+      return;
     }
+    this->queue_sendspin_finish_();
   });
 #endif
 }
@@ -260,16 +276,8 @@ void ArtworkImage::set_sendspin_paused(bool paused) {
     resume = !paused;
   }
   if (resume) {
-    this->queue_sendspin_process_();
+    this->process_pending_sendspin_();
   }
-}
-
-void ArtworkImage::queue_sendspin_process_() {
-  this->defer([this]() {
-    this->cancel_timeout("sendspin_artwork_process");
-    this->set_timeout("sendspin_artwork_process", SENDSPIN_ARTWORK_PROCESS_DELAY_MS,
-                      [this]() { this->process_pending_sendspin_(); });
-  });
 }
 
 void ArtworkImage::process_pending_sendspin_() {
@@ -297,15 +305,6 @@ void ArtworkImage::process_pending_sendspin_() {
   if (clear) {
     this->release();
     this->download_error_callback_.call();
-    return;
-  }
-
-  if (display && !has_image && !this->sendspin_decode_failed_.load(std::memory_order_acquire) &&
-      !this->sendspin_decode_ready_.load(std::memory_order_acquire)) {
-    LockGuard guard(this->sendspin_pending_lock_);
-    if (!this->sendspin_paused_) {
-      this->pending_sendspin_display_ = true;
-    }
     return;
   }
 
