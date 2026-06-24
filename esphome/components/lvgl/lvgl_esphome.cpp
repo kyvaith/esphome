@@ -2155,6 +2155,14 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     return true;
   };
 
+  auto copy_current_frame = [&]() -> bool {
+    if (this->direct_last_flushed_buf_ == nullptr || this->direct_last_flushed_buf_ == target)
+      return false;
+    memcpy(target, this->direct_last_flushed_buf_, fb_bytes);
+    needs_sync = true;
+    return true;
+  };
+
   SnapshotAppRenderBufferState *buffer_state = nullptr;
   for (auto &state : s_snapshot_app_render_buffers) {
     if (state.buffer == target) {
@@ -2182,7 +2190,11 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
   }
 
   if (!buffer_state->initialized) {
-    if (!copy_full(background)) {
+    if (s_snapshot_app_render_opening && copy_current_frame()) {
+      // Opening starts from the exact frame currently visible on the panel. This
+      // avoids a transient blank frame if the cached home snapshot is unavailable
+      // or slower than the first manual-present frame.
+    } else if (!copy_full(background)) {
       memset(target, 0, fb_bytes);
       needs_sync = true;
     }
