@@ -136,6 +136,7 @@ class ArtworkImage : public PollingComponent,
   int get_content_offset_x() const { return this->buffer_offset_x_; }
   int get_content_offset_y() const { return this->buffer_offset_y_; }
   image::ImageType image_type() const { return this->type_; }
+  void apply_rgb_darken_once(uint8_t percent);
 
  protected:
   bool validate_url_(const std::string &url);
@@ -268,6 +269,8 @@ class ArtworkImage : public PollingComponent,
   int decode_offset_x_{0};
   int decode_offset_y_{0};
   bool decode_buffer_written_by_dma_{false};
+  uint8_t *darkened_buffer_{nullptr};
+  uint8_t darkened_percent_{0};
   int buffer_content_width_{0};
   int buffer_content_height_{0};
   int buffer_offset_x_{0};

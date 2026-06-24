@@ -341,6 +341,26 @@ void ArtworkImage::draw(int x, int y, display::Display *display, Color color_on,
   }
 }
 
+void ArtworkImage::apply_rgb_darken_once(uint8_t percent) {
+  if (this->buffer_ == nullptr || percent == 0 || percent >= 100 || this->type_ != image::IMAGE_TYPE_RGB) {
+    return;
+  }
+  if (this->darkened_buffer_ == this->buffer_ && this->darkened_percent_ == percent) {
+    return;
+  }
+
+  const uint32_t start = millis();
+  const uint16_t keep = 100 - percent;
+  const size_t size = this->get_buffer_size_();
+  for (size_t i = 0; i < size; i++) {
+    this->buffer_[i] = static_cast<uint8_t>((static_cast<uint16_t>(this->buffer_[i]) * keep) / 100);
+  }
+  this->darkened_buffer_ = this->buffer_;
+  this->darkened_percent_ = percent;
+  sync_artwork_buffer_for_dma(this->buffer_, size, false);
+  log_slow_artwork_stage("darken-buffer", start);
+}
+
 #ifdef USE_LVGL
 void ArtworkImage::prepare_lvgl_dsc_() {
   this->lvgl_dsc_slot_ = this->lvgl_dsc_slot_ == 0 ? 1 : 0;
@@ -1163,6 +1183,8 @@ bool ArtworkImage::promote_decode_buffer_() {
   this->buffer_content_height_ = this->decode_content_height_;
   this->buffer_offset_x_ = this->decode_offset_x_;
   this->buffer_offset_y_ = this->decode_offset_y_;
+  this->darkened_buffer_ = nullptr;
+  this->darkened_percent_ = 0;
   ESP_LOGI(TAG, "Artwork buffer ready: image=%dx%d content=%dx%d offset=%d,%d",
            this->buffer_width_, this->buffer_height_, this->buffer_content_width_, this->buffer_content_height_,
            this->buffer_offset_x_, this->buffer_offset_y_);
@@ -1190,7 +1212,8 @@ void ArtworkImage::retire_active_buffer_() {
   if (!this->buffer_) {
     return;
   }
-  this->retired_buffers_.push_back(RetiredBuffer{this->buffer_, this->get_buffer_size_(), millis()});
+  auto *retired = this->buffer_;
+  this->retired_buffers_.push_back(RetiredBuffer{retired, this->get_buffer_size_(), millis()});
   this->buffer_ = nullptr;
   this->data_start_ = nullptr;
   this->buffer_width_ = 0;
@@ -1199,6 +1222,10 @@ void ArtworkImage::retire_active_buffer_() {
   this->buffer_content_height_ = 0;
   this->buffer_offset_x_ = 0;
   this->buffer_offset_y_ = 0;
+  if (this->darkened_buffer_ == retired) {
+    this->darkened_buffer_ = nullptr;
+    this->darkened_percent_ = 0;
+  }
   this->width_ = 0;
   this->height_ = 0;
   this->cleanup_retired_buffers_(false);
