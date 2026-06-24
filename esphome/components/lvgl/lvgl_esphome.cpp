@@ -1746,6 +1746,15 @@ void LvglComponent::realign_direct_buffer_after_manual_present() {
     next_lvgl_buf = this->disp_->buf_1;
   }
 
+  if (next_lvgl_buf != nullptr) {
+    lv_area_t full;
+    full.x1 = 0;
+    full.y1 = 0;
+    full.x2 = static_cast<lv_coord_t>(this->width_ - 1);
+    full.y2 = static_cast<lv_coord_t>(this->height_ - 1);
+    this->sync_direct_other_buffer_(&full, this->direct_last_flushed_buf_);
+  }
+
   if (next_lvgl_buf != nullptr && this->disp_->buf_act != next_lvgl_buf) {
     ESP_LOGD(TAG, "direct mode: realigning LVGL buf_act away from presented framebuffer");
     this->disp_->buf_act = next_lvgl_buf;
