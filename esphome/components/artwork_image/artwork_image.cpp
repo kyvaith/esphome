@@ -341,6 +341,46 @@ void ArtworkImage::draw(int x, int y, display::Display *display, Color color_on,
   }
 }
 
+#ifdef USE_LVGL
+void ArtworkImage::prepare_lvgl_dsc_() {
+  this->lvgl_dsc_slot_ = this->lvgl_dsc_slot_ == 0 ? 1 : 0;
+  auto *dsc = &this->lvgl_dsc_slots_[this->lvgl_dsc_slot_];
+  memset(dsc, 0, sizeof(*dsc));
+  dsc->data = this->data_start_;
+  dsc->header.reserved_2 = 0;
+  dsc->header.stride = this->get_width_stride();
+  dsc->header.w = this->width_;
+  dsc->header.h = this->height_;
+  dsc->data_size = this->get_width_stride() * this->get_height();
+  switch (this->get_type()) {
+    case image::IMAGE_TYPE_BINARY:
+      dsc->header.cf = LV_COLOR_FORMAT_A1;
+      break;
+    case image::IMAGE_TYPE_GRAYSCALE:
+      dsc->header.cf = LV_COLOR_FORMAT_A8;
+      break;
+    case image::IMAGE_TYPE_RGB:
+      dsc->header.cf = this->transparency_ == image::TRANSPARENCY_ALPHA_CHANNEL ? LV_COLOR_FORMAT_ARGB8888
+                                                                                : LV_COLOR_FORMAT_RGB888;
+      break;
+    case image::IMAGE_TYPE_RGB565:
+      dsc->header.cf = this->transparency_ == image::TRANSPARENCY_ALPHA_CHANNEL ? LV_COLOR_FORMAT_RGB565A8
+                                                                                : LV_COLOR_FORMAT_RGB565;
+      break;
+  }
+}
+
+lv_image_dsc_t *ArtworkImage::get_lv_image_dsc() {
+  auto *dsc = &this->lvgl_dsc_slots_[this->lvgl_dsc_slot_];
+  if (dsc->data != this->data_start_ || dsc->header.w != this->width_ || dsc->header.h != this->height_ ||
+      dsc->header.stride != this->get_width_stride()) {
+    this->prepare_lvgl_dsc_();
+    dsc = &this->lvgl_dsc_slots_[this->lvgl_dsc_slot_];
+  }
+  return dsc;
+}
+#endif
+
 void ArtworkImage::release(bool immediate) {
   this->update_pending_ = false;
   this->pending_url_.clear();
@@ -449,11 +489,6 @@ size_t ArtworkImage::resize_(int width_in, int height_in) {
   ESP_LOGD(TAG, "Allocating decode buffer of %zu bytes", new_size);
   this->decode_buffer_ = this->allocator_.allocate(new_size);
   if (this->decode_buffer_ == nullptr) {
-    if (this->try_reuse_active_buffer_for_decode(width, height, content_width, content_height) != nullptr) {
-      ESP_LOGI(TAG, "Artwork fit: source=%dx%d target=%dx%d content=%dx%d offset=%d,%d",
-               width_in, height_in, width, height, content_width, content_height, offset_x, offset_y);
-      return new_size;
-    }
     ESP_LOGE(TAG, "allocation of %zu bytes failed. Biggest block in heap: %zu Bytes", new_size,
              this->allocator_.get_max_free_block_size());
     this->end_connection_();
@@ -1146,7 +1181,7 @@ bool ArtworkImage::promote_decode_buffer_() {
   this->height_ = this->buffer_height_;
   sync_artwork_buffer_for_dma(this->buffer_, this->get_buffer_size_(), written_by_dma);
 #ifdef USE_LVGL
-  memset(&this->dsc_, 0, sizeof(this->dsc_));
+  this->prepare_lvgl_dsc_();
 #endif
   return true;
 }
@@ -1166,9 +1201,6 @@ void ArtworkImage::retire_active_buffer_() {
   this->buffer_offset_y_ = 0;
   this->width_ = 0;
   this->height_ = 0;
-#ifdef USE_LVGL
-  memset(&this->dsc_, 0, sizeof(this->dsc_));
-#endif
   this->cleanup_retired_buffers_(false);
 }
 

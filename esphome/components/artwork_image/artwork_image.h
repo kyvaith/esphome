@@ -64,6 +64,9 @@ class ArtworkImage : public PollingComponent,
 
   void setup() override;
   void draw(int x, int y, display::Display *display, Color color_on, Color color_off) override;
+#ifdef USE_LVGL
+  lv_image_dsc_t *get_lv_image_dsc();
+#endif
 
   void update() override;
   void loop() override;
@@ -179,6 +182,9 @@ class ArtworkImage : public PollingComponent,
   bool promote_decode_buffer_();
   void retire_active_buffer_();
   void cleanup_retired_buffers_(bool force);
+#ifdef USE_LVGL
+  void prepare_lvgl_dsc_();
+#endif
   bool ensure_download_buffer_capacity_();
   bool decode_encoded_image_(ImageFormat format, const uint8_t *data, size_t length, bool finish_on_decode = true);
   bool decode_buffered_data_();
@@ -272,6 +278,10 @@ class ArtworkImage : public PollingComponent,
     uint32_t retired_at;
   };
   std::vector<RetiredBuffer> retired_buffers_{};
+#ifdef USE_LVGL
+  lv_image_dsc_t lvgl_dsc_slots_[2]{};
+  uint8_t lvgl_dsc_slot_{0};
+#endif
   time_t start_time_;
   uint32_t last_data_millis_{0};
   bool update_pending_{false};

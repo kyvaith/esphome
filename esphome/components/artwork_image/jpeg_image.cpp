@@ -152,7 +152,6 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   };
 
   uint8_t *output = nullptr;
-  bool output_reuses_active = false;
   size_t written = 0;
   const uint64_t start_us = esp_timer_get_time();
   err = esp32_jpeg::decode_allocated(cfg, buffer, size, output_size, &output, &written);
@@ -160,25 +159,6 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   if (err != ESP_OK || written == 0) {
     ESP_LOGW(TAG, "Hardware JPEG allocated decode failed err=%d written=%zu jpeg=%zu in %lluus", (int) err, written, size,
              (unsigned long long) elapsed_us);
-    uint8_t *reuse_output = this->image_->try_reuse_active_buffer_for_decode(aligned_w, aligned_h, frame_w, frame_h);
-    if (reuse_output != nullptr) {
-      written = 0;
-      const uint64_t retry_start_us = esp_timer_get_time();
-      err = esp32_jpeg::decode(cfg, buffer, size, reuse_output, output_size, &written);
-      const uint64_t retry_elapsed_us = esp_timer_get_time() - retry_start_us;
-      if (err == ESP_OK && written != 0) {
-        output = reuse_output;
-        output_reuses_active = true;
-        elapsed_us = retry_elapsed_us;
-        ESP_LOGW(TAG, "Hardware JPEG direct reuse decode finished: %ux%u into %zux%zu buffer, %zu -> %zu bytes in %lluus",
-                 (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h, size, written,
-                 (unsigned long long) retry_elapsed_us);
-      } else {
-        this->image_->cancel_reused_active_buffer_decode();
-        ESP_LOGW(TAG, "Hardware JPEG direct reuse decode failed err=%d written=%zu jpeg=%zu in %lluus", (int) err,
-                 written, size, (unsigned long long) retry_elapsed_us);
-      }
-    }
     if (output == nullptr) {
       if (static_cast<uint64_t>(frame_w) * static_cast<uint64_t>(frame_h) > 360000u) {
         ESP_LOGW(TAG, "Skipping software JPEG decode for large artwork %ux%u after hardware failure",
@@ -192,11 +172,7 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   const bool adopted = output_rgb565 ? this->adopt_rgb565_buffer(output, aligned_w, aligned_h, frame_w, frame_h)
                                      : this->adopt_rgb_buffer(output, aligned_w, aligned_h, frame_w, frame_h);
   if (!adopted) {
-    if (output_reuses_active) {
-      this->image_->cancel_reused_active_buffer_decode();
-    } else {
-      heap_caps_free(output);
-    }
+    heap_caps_free(output);
     return DECODE_ERROR_OUT_OF_MEMORY;
   }
   if (aligned_w == frame_w && aligned_h == frame_h) {
