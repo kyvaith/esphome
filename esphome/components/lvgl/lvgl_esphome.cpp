@@ -2126,8 +2126,13 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
       cfg.scale_y = 1.0f;
       cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
       cfg.mode = PPA_TRANS_MODE_BLOCKING;
-      if (ppa_do_scale_rotate_mirror(s_display_srm_client, &cfg) == ESP_OK)
+      lvgl_cache_msync_external(src->data, (size_t) src->header.stride * (size_t) this->height_,
+                                ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+      lvgl_cache_msync_external(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+      if (ppa_do_scale_rotate_mirror(s_display_srm_client, &cfg) == ESP_OK) {
+        lvgl_cache_msync_external(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
         return true;
+      }
     }
 #endif
     const uint8_t *src_row = src->data;
