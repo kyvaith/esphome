@@ -2268,9 +2268,6 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     buffer_state->opening = s_snapshot_app_render_opening;
   }
 
-  if (width == 0 || height == 0)
-    return false;
-
   if (!buffer_state->initialized) {
     if (!copy_full(background)) {
       memset(target, 0, fb_bytes);
@@ -2316,6 +2313,24 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
       copy_span(y, circle_center_x - span, circle_center_x + span, src_buf);
     }
   };
+
+  if (!s_snapshot_app_render_opening && (width <= 8 || height <= 8)) {
+    copy_circle(background, buffer_state->center_x, buffer_state->center_y, buffer_state->radius);
+    buffer_state->radius = 0;
+    buffer_state->center_x = center_x;
+    buffer_state->center_y = center_y;
+    if (needs_sync)
+      sync_full();
+    if (!this->present_snapshot_render_buffer_(target))
+      return false;
+#ifdef USE_LVGL_FPS_BENCHMARK
+    lvgl_esphome_note_frame();
+#endif
+    return true;
+  }
+
+  if (width == 0 || height == 0)
+    return false;
 
   if (s_snapshot_app_render_opening) {
     if (buffer_state->center_x != center_x || buffer_state->center_y != center_y) {
