@@ -3329,11 +3329,17 @@ void snapshot_cache_store_impl(lv_obj_t *obj, lv_draw_buf_t *buf, bool keep_raw_
       snapshot_cache_destroy_raw(entry);
       entry.big_endian = snapshot_cache_obj_big_endian(obj);
       if (snapshot_cache_encode_jpeg(entry, buf)) {
-        lv_draw_buf_destroy(buf);
+        if (keep_raw_fallback) {
+          entry.buf = buf;
+          entry.decoded_from_jpeg = false;
+        } else {
+          lv_draw_buf_destroy(buf);
+        }
       } else {
         snapshot_cache_destroy_jpeg(entry);
         if (keep_raw_fallback) {
           entry.buf = buf;
+          entry.decoded_from_jpeg = false;
         } else {
           snapshot_cache_free_entry(entry);
           lv_draw_buf_destroy(buf);
@@ -3351,10 +3357,16 @@ void snapshot_cache_store_impl(lv_obj_t *obj, lv_draw_buf_t *buf, bool keep_raw_
   slot->obj = obj;
   slot->big_endian = snapshot_cache_obj_big_endian(obj);
   if (snapshot_cache_encode_jpeg(*slot, buf)) {
-    lv_draw_buf_destroy(buf);
+    if (keep_raw_fallback) {
+      slot->buf = buf;
+      slot->decoded_from_jpeg = false;
+    } else {
+      lv_draw_buf_destroy(buf);
+    }
   } else {
     if (keep_raw_fallback) {
       slot->buf = buf;
+      slot->decoded_from_jpeg = false;
     } else {
       snapshot_cache_free_entry(*slot);
       lv_draw_buf_destroy(buf);
@@ -3940,7 +3952,7 @@ bool snapshot_app_direct_anim_tick() {
       snapshot_cache_release_decoded_if_compressed(state.app_root);
     }
     if (!state.opening && state.owns_app_buf && state.app_root != nullptr && state.app_buf != nullptr) {
-      snapshot_cache_store_compressed_only(state.app_root, state.app_buf);
+      snapshot_cache_store(state.app_root, state.app_buf);
       state.app_buf = nullptr;
       state.owns_app_buf = false;
     }
