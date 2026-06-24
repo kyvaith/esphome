@@ -3855,7 +3855,8 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
     return false;
 
   const bool previous_direct_active = s_snapshot_direct_active;
-  s_snapshot_direct_active = true;
+  if (!opening)
+    s_snapshot_direct_active = true;
 
   bool owns_app = false;
   lv_draw_buf_t *app_buf = nullptr;
@@ -3897,6 +3898,7 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
   snapshot_app_state.end_center_y = end_center_y;
   snapshot_app_state.component = component;
   snapshot_app_render_buffers_reset(opening);
+  s_snapshot_direct_active = true;
   snapshot_app_direct_anim_tick();
   return true;
 #else
