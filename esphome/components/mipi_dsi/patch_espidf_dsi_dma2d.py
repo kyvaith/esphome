@@ -466,6 +466,59 @@ static dma2d_csc_rx_option_t jpeg_dec_select_rgb_csc(jpeg_down_sampling_type_t s
     print("MIPI DSI patch: applied ESP-IDF JPEG decode RGB CSC selection")
 
 
+def _patch_jpeg_decode_dma2d_burst(framework_dir: Path) -> None:
+    target = framework_dir / "components" / "esp_driver_jpeg" / "jpeg_decode.c"
+    if not target.exists():
+        print("MIPI DSI patch: ESP-IDF JPEG decode driver not found; skipping DMA2D burst patch")
+        return
+
+    text = target.read_text(encoding="utf-8")
+    helper = """
+static dma2d_data_burst_length_t jpeg_dec_select_dma2d_burst_length(void)
+{
+#ifdef CONFIG_ESPHOME_JPEG_DMA2D_BURST_LENGTH
+    switch (CONFIG_ESPHOME_JPEG_DMA2D_BURST_LENGTH) {
+    case 8:
+        return DMA2D_DATA_BURST_LENGTH_8;
+    case 16:
+        return DMA2D_DATA_BURST_LENGTH_16;
+    case 32:
+        return DMA2D_DATA_BURST_LENGTH_32;
+    case 64:
+        return DMA2D_DATA_BURST_LENGTH_64;
+    case 128:
+    default:
+        return DMA2D_DATA_BURST_LENGTH_128;
+    }
+#else
+    return DMA2D_DATA_BURST_LENGTH_128;
+#endif
+}
+"""
+    changed = False
+    if "jpeg_dec_select_dma2d_burst_length" not in text:
+        anchor = "static void jpeg_dec_config_dma_trans_ability(jpeg_decoder_handle_t decoder_engine)\n"
+        if anchor not in text:
+            raise RuntimeError("ESP-IDF JPEG decode DMA2D transfer ability function not found; patch needs review")
+        text = text.replace(anchor, f"{helper}\n{anchor}", 1)
+        changed = True
+
+    old = ".data_burst_length = DMA2D_DATA_BURST_LENGTH_128,"
+    new = ".data_burst_length = jpeg_dec_select_dma2d_burst_length(),"
+    if new not in text:
+        count = text.count(old)
+        if count != 2:
+            raise RuntimeError("ESP-IDF JPEG decode DMA2D burst lines not found; patch needs review")
+        text = text.replace(old, new)
+        changed = True
+
+    if changed:
+        target.write_text(text, encoding="utf-8")
+        print("MIPI DSI patch: applied ESP-IDF JPEG decode DMA2D burst override")
+    else:
+        print("MIPI DSI patch: ESP-IDF JPEG decode DMA2D burst override already present")
+
+
 def _patch_dma2d_yuv2rgb_full_range(framework_dir: Path) -> None:
     candidates = (
         framework_dir / "components" / "esp_hal_dma" / "include" / "hal" / "dma2d_types.h",
@@ -539,6 +592,7 @@ def main() -> None:
         raise RuntimeError(f"Unsupported ESP-IDF major version {idf_version[0]}; patch needs review")
 
     _patch_jpeg_decode_csc(framework_path)
+    _patch_jpeg_decode_dma2d_burst(framework_path)
     _patch_dma2d_yuv2rgb_full_range(framework_path)
 
 
