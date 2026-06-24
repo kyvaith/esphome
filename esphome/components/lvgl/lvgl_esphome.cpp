@@ -3117,7 +3117,8 @@ constexpr int SNAPSHOT_PANORAMA_SCALE = 1;
 constexpr bool SNAPSHOT_DIRECT_COMPOSITOR_ENABLED = true;
 constexpr bool SNAPSHOT_JPEG_CACHE_ENABLED = true;
 constexpr uint32_t SNAPSHOT_JPEG_QUALITY = 100;
-constexpr int SNAPSHOT_APP_OPEN_START_SIZE = 120;
+constexpr int SNAPSHOT_APP_OPEN_START_SIZE = 1;
+constexpr int SNAPSHOT_APP_OPEN_MIN_PRESENT_SIZE = 96;
 constexpr uint32_t SNAPSHOT_APP_OPEN_FIRST_FRAME_ADVANCE_MS = 16;
 uint32_t snapshot_diag_budget = 24;
 
@@ -3961,6 +3962,9 @@ bool snapshot_app_direct_anim_tick() {
   const int size = snapshot_swipe_ease_out(state.start_size, state.end_size, elapsed_ms, duration_ms);
   const int center_x = snapshot_swipe_ease_out(state.start_center_x, state.end_center_x, elapsed_ms, duration_ms);
   const int center_y = snapshot_swipe_ease_out(state.start_center_y, state.end_center_y, elapsed_ms, duration_ms);
+
+  if (state.opening && size < SNAPSHOT_APP_OPEN_MIN_PRESENT_SIZE && elapsed_ms < duration_ms)
+    return true;
 
   state.component->snapshot_app_direct_render(state.background_buf, state.app_buf, center_x, center_y, size, size);
   if (elapsed_ms >= duration_ms) {
