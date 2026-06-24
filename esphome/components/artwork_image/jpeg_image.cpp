@@ -175,7 +175,13 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
     heap_caps_free(output);
     return DECODE_ERROR_OUT_OF_MEMORY;
   }
-  if (aligned_w == frame_w && aligned_h == frame_h) {
+  const bool fixed_fit_required =
+      output_rgb565 && this->image_->get_fixed_width() > 0 && this->image_->get_fixed_height() > 0 &&
+      (aligned_w != static_cast<size_t>(this->image_->get_fixed_width()) ||
+       aligned_h != static_cast<size_t>(this->image_->get_fixed_height()) ||
+       frame_w != static_cast<uint32_t>(this->image_->get_fixed_width()) ||
+       frame_h != static_cast<uint32_t>(this->image_->get_fixed_height()));
+  if (!fixed_fit_required && aligned_w == frame_w && aligned_h == frame_h) {
     this->image_->mark_decode_buffer_written_by_dma();
   }
 
