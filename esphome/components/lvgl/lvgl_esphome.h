@@ -60,6 +60,7 @@ extern "C" bool lvgl_esphome_snapshot_app_close(lv_obj_t *app, lv_obj_t *backgro
 extern "C" bool lvgl_esphome_snapshot_app_prepare_close(lv_obj_t *app);
 extern "C" void lvgl_esphome_snapshot_app_clear_prepared_close(void);
 extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *next, int width, int next_x);
+extern "C" void lvgl_esphome_snapshot_swipe_set_page_indicator(int page, int page_count);
 extern "C" void lvgl_esphome_snapshot_swipe_update(int current_x, int next_x);
 extern "C" void lvgl_esphome_snapshot_swipe_request_update(int current_x, int next_x);
 extern "C" void lvgl_esphome_snapshot_swipe_finish(int current_x, int next_x, uint32_t duration_ms, bool commit);

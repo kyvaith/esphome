@@ -101,6 +101,62 @@ static volatile uint32_t s_swipe_logging_enabled = 0;
 static volatile bool s_snapshot_swipe_active = false;
 static volatile bool s_snapshot_direct_active = false;
 static bool s_snapshot_app_open_frame_held = false;
+static volatile int s_snapshot_page_indicator_page = 0;
+static volatile int s_snapshot_page_indicator_count = 0;
+
+static bool snapshot_draw_page_indicator_rgb888(uint8_t *buffer, int width, int height, int page, int count) {
+  if (buffer == nullptr || width <= 0 || height <= 0 || count <= 0 || page <= 0 || page > count)
+    return false;
+  constexpr int dot_h = 10;
+  constexpr int inactive_w = 10;
+  constexpr int active_w = 30;
+  constexpr int gap = 12;
+  constexpr int y = 716;
+  if (y < 0 || y + dot_h > height)
+    return false;
+
+  const int total_w = active_w + (count - 1) * inactive_w + (count - 1) * gap;
+  int x = (width - total_w) / 2;
+  const size_t row_bytes = (size_t) width * 3u;
+
+  auto draw_rounded_rect = [&](int x0, int w, uint8_t r, uint8_t g, uint8_t b) {
+    const int radius = dot_h / 2;
+    for (int py = 0; py < dot_h; py++) {
+      const int dy = py - radius;
+      for (int px = 0; px < w; px++) {
+        bool inside = true;
+        if (px < radius) {
+          const int dx = px - radius;
+          inside = dx * dx + dy * dy <= radius * radius;
+        } else if (px >= w - radius) {
+          const int dx = px - (w - radius - 1);
+          inside = dx * dx + dy * dy <= radius * radius;
+        }
+        if (!inside)
+          continue;
+        const int tx = x0 + px;
+        if (tx < 0 || tx >= width)
+          continue;
+        uint8_t *dst = buffer + (size_t) (y + py) * row_bytes + (size_t) tx * 3u;
+        dst[0] = r;
+        dst[1] = g;
+        dst[2] = b;
+      }
+    }
+  };
+
+  for (int i = 1; i <= count; i++) {
+    const bool active = i == page;
+    const int w = active ? active_w : inactive_w;
+    if (active) {
+      draw_rounded_rect(x, w, 0xD3, 0xE3, 0xFD);
+    } else {
+      draw_rounded_rect(x, w, 0x5C, 0x5F, 0x5E);
+    }
+    x += w + gap;
+  }
+  return true;
+}
 
 struct SnapshotAppRenderBufferState {
   uint8_t *buffer{nullptr};
@@ -1867,6 +1923,9 @@ bool LvglComponent::snapshot_swipe_direct_render(lv_draw_buf_t *current, lv_draw
     bool needs_sync = false;
     needs_sync |= copy_visible(dst, current, current_x);
     needs_sync |= copy_visible(dst, next, next_x);
+    needs_sync |= snapshot_draw_page_indicator_rgb888(dst, this->width_, this->height_,
+                                                      s_snapshot_page_indicator_page,
+                                                      s_snapshot_page_indicator_count);
     if (needs_sync)
       sync_range(dst, fb_bytes);
   };
@@ -1961,6 +2020,11 @@ bool LvglComponent::snapshot_swipe_direct_render_panorama(const uint8_t *panoram
       warned = true;
     }
     return false;
+  }
+  if (snapshot_draw_page_indicator_rgb888(target, this->width_, this->height_,
+                                          s_snapshot_page_indicator_page,
+                                          s_snapshot_page_indicator_count)) {
+    lvgl_cache_msync_external(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   }
   if (!this->present_snapshot_render_buffer_(target))
     return false;
@@ -4507,6 +4571,11 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
 #else
   return false;
 #endif
+}
+
+extern "C" void lvgl_esphome_snapshot_swipe_set_page_indicator(int page, int page_count) {
+  s_snapshot_page_indicator_page = page;
+  s_snapshot_page_indicator_count = page_count;
 }
 
 extern "C" void lvgl_esphome_snapshot_swipe_update(int current_x, int next_x) {
