@@ -3952,7 +3952,6 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
   snapshot_app_state.component = component;
   snapshot_app_render_buffers_reset(opening);
   s_snapshot_direct_active = true;
-  snapshot_app_direct_anim_tick();
   return true;
 #else
   return false;
