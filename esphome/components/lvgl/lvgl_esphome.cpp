@@ -3303,9 +3303,9 @@ constexpr int SNAPSHOT_PANORAMA_SCALE = 1;
 constexpr bool SNAPSHOT_DIRECT_COMPOSITOR_ENABLED = true;
 constexpr bool SNAPSHOT_JPEG_CACHE_ENABLED = true;
 constexpr uint32_t SNAPSHOT_JPEG_QUALITY = 100;
-constexpr int SNAPSHOT_APP_OPEN_START_SIZE = 32;
-constexpr int SNAPSHOT_APP_OPEN_MIN_PRESENT_SIZE = 32;
-constexpr uint32_t SNAPSHOT_APP_OPEN_FIRST_FRAME_ADVANCE_MS = 0;
+constexpr int SNAPSHOT_APP_OPEN_START_SIZE = 1;
+constexpr int SNAPSHOT_APP_OPEN_MIN_PRESENT_SIZE = 96;
+constexpr uint32_t SNAPSHOT_APP_OPEN_FIRST_FRAME_ADVANCE_MS = 16;
 uint32_t snapshot_diag_budget = 24;
 
 #ifdef USE_ESP32
@@ -4011,18 +4011,6 @@ int snapshot_swipe_ease_out(int start, int end, uint32_t elapsed_ms, uint32_t du
   return start + (int) (((int64_t) (end - start) * eased) / 1024);
 }
 
-int snapshot_ease_smooth(int start, int end, uint32_t elapsed_ms, uint32_t duration_ms) {
-  if (duration_ms == 0 || elapsed_ms >= duration_ms)
-    return end;
-  uint32_t t = (elapsed_ms * 1024U) / duration_ms;
-  if (t > 1024U)
-    t = 1024U;
-  const uint64_t t2 = (uint64_t) t * t;
-  const uint64_t t3 = t2 * t;
-  const uint32_t eased = (uint32_t) ((3ULL * t2 * 1024ULL - 2ULL * t3) / (1024ULL * 1024ULL));
-  return start + (int) (((int64_t) (end - start) * eased) / 1024);
-}
-
 void snapshot_app_cleanup() {
   if (snapshot_app_state.owns_app_buf && snapshot_app_state.app_buf != nullptr) {
     lv_draw_buf_destroy(snapshot_app_state.app_buf);
@@ -4165,9 +4153,9 @@ bool snapshot_app_direct_anim_tick() {
   const uint64_t now_us = esp_timer_get_time();
   const uint32_t elapsed_ms = (uint32_t) ((now_us - state.anim_start_us) / 1000ULL);
   const uint32_t duration_ms = state.anim_duration_ms;
-  const int size = snapshot_ease_smooth(state.start_size, state.end_size, elapsed_ms, duration_ms);
-  const int center_x = snapshot_ease_smooth(state.start_center_x, state.end_center_x, elapsed_ms, duration_ms);
-  const int center_y = snapshot_ease_smooth(state.start_center_y, state.end_center_y, elapsed_ms, duration_ms);
+  const int size = snapshot_swipe_ease_out(state.start_size, state.end_size, elapsed_ms, duration_ms);
+  const int center_x = snapshot_swipe_ease_out(state.start_center_x, state.end_center_x, elapsed_ms, duration_ms);
+  const int center_y = snapshot_swipe_ease_out(state.start_center_y, state.end_center_y, elapsed_ms, duration_ms);
 
   if (state.opening && size < SNAPSHOT_APP_OPEN_MIN_PRESENT_SIZE && elapsed_ms < duration_ms)
     return true;
