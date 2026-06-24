@@ -53,7 +53,6 @@ CONF_SENDSPIN_SLOT = "sendspin_slot"
 CONF_SENDSPIN_PAUSED = "sendspin_paused"
 CONF_IMMEDIATE = "immediate"
 CONF_DARKEN = "darken"
-CONF_SENDSPIN_RESIZE = "sendspin_resize"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -184,7 +183,6 @@ ARTWORK_IMAGE_SCHEMA = (
             cv.Optional(CONF_BUFFER_SIZE, default=65536): cv.int_range(256, 524288),
             cv.Optional(CONF_ALLOW_INSECURE_LOCAL_URLS, default=False): cv.boolean,
             cv.Optional(CONF_DARKEN, default=0): cv.int_range(0, 99),
-            cv.Optional(CONF_SENDSPIN_RESIZE): cv.dimensions,
             cv.Optional(sendspin.CONF_SENDSPIN_ID): cv.use_id(sendspin.SendspinHub),
             cv.Optional(CONF_SENDSPIN_SLOT, default=0): cv.int_range(0, 3),
             cv.Optional(CONF_SENDSPIN_PAUSED, default=False): cv.boolean,
@@ -213,7 +211,7 @@ def _consume_sockets(config):
 def _request_sendspin_artwork(config):
     """Request binary artwork negotiation when this image is bound to a Sendspin hub."""
     if sendspin.CONF_SENDSPIN_ID in config:
-        width, height = config.get(CONF_SENDSPIN_RESIZE, config.get(CONF_RESIZE, (300, 300)))
+        width, height = config.get(CONF_RESIZE, (300, 300))
         sendspin.request_artwork_support(width, height)
     return config
 
