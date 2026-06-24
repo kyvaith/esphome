@@ -194,6 +194,7 @@ class ArtworkImage : public PollingComponent,
   void fail_download_();
 #ifdef USE_SENDSPIN_ARTWORK
   void process_pending_sendspin_();
+  void queue_sendspin_process_();
   void queue_sendspin_finish_();
 #endif
 
