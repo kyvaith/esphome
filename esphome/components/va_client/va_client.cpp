@@ -1585,5 +1585,22 @@ void VaClient::send_interrupt() {
            (unsigned) (flushed_bytes / (kPlaybackSampleRate / 1000 * 2)));
 }
 
+void VaClient::end_session() {
+  this->send_interrupt();
+  this->set_streaming_(false);
+  this->followup_pending_ = false;
+  this->waiting_for_speaker_stop_ = false;
+  this->request_follow_up_pending_ = false;
+  this->followup_armed_ = false;
+  this->idle_emit_pending_ = false;
+  this->suppress_followup_ = true;
+  this->post_stop_guard_ = true;
+  this->cancel_timeout("va_no_speech");
+  this->cancel_timeout("va_followup");
+  this->cancel_timeout("va_followup_open");
+  this->cancel_timeout("va_tts_tail");
+  this->fire_phase_led_("idle");
+}
+
 }  // namespace va_client
 }  // namespace esphome

@@ -68,6 +68,7 @@ class VaClient : public Component {
   // YAML-callable actions.
   void start_session();
   void send_interrupt();
+  void end_session();
   // Called from yaml's on_followup_opened automation AFTER the chime has
   // finished announcing through the speaker (wait_until !is_announcing +
   // i2s tail). Opens the mic for kRequestFollowUpMs. No-op if the device
