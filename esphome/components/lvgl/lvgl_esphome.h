@@ -67,6 +67,7 @@ extern "C" void lvgl_esphome_snapshot_swipe_request_update(int current_x, int ne
 extern "C" void lvgl_esphome_snapshot_swipe_finish(int current_x, int next_x, uint32_t duration_ms, bool commit);
 extern "C" void lvgl_esphome_snapshot_swipe_request_finish(int current_x, int next_x, uint32_t duration_ms, bool commit);
 extern "C" void lvgl_esphome_snapshot_swipe_end(void);
+extern "C" bool lvgl_esphome_snapshot_scroll_prepare(lv_obj_t *obj, int viewport_w, int viewport_h);
 extern "C" bool lvgl_esphome_snapshot_scroll_begin(lv_obj_t *obj, int viewport_w, int viewport_h);
 extern "C" void lvgl_esphome_snapshot_scroll_update(int scroll_y);
 extern "C" void lvgl_esphome_snapshot_scroll_finish(int scroll_y);

@@ -354,6 +354,11 @@ void ArtworkImage::release(bool immediate) {
 
 uint8_t *ArtworkImage::try_reuse_active_buffer_for_decode(int width, int height, int content_width,
                                                           int content_height) {
+  // Do not decode into the buffer currently used by LVGL. It avoids a second
+  // full-frame allocation, but the display can sample the buffer while the JPEG
+  // unit is still writing it, producing visible rectangular partial artwork.
+  return nullptr;
+
   if (this->decode_buffer_ != nullptr || this->buffer_ == nullptr) {
     return nullptr;
   }
