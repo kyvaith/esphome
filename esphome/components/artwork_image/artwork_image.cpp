@@ -350,10 +350,16 @@ void ArtworkImage::apply_rgb_darken_once(uint8_t percent) {
   }
 
   const uint32_t start = millis();
-  const uint16_t keep = 100 - percent;
   const size_t size = this->get_buffer_size_();
-  for (size_t i = 0; i < size; i++) {
-    this->buffer_[i] = static_cast<uint8_t>((static_cast<uint16_t>(this->buffer_[i]) * keep) / 100);
+  if (percent == 50) {
+    for (size_t i = 0; i < size; i++) {
+      this->buffer_[i] >>= 1;
+    }
+  } else {
+    const uint16_t keep = 100 - percent;
+    for (size_t i = 0; i < size; i++) {
+      this->buffer_[i] = static_cast<uint8_t>((static_cast<uint16_t>(this->buffer_[i]) * keep) / 100);
+    }
   }
   this->darkened_buffer_ = this->buffer_;
   this->darkened_percent_ = percent;
@@ -1202,6 +1208,7 @@ bool ArtworkImage::promote_decode_buffer_() {
   this->width_ = this->buffer_width_;
   this->height_ = this->buffer_height_;
   sync_artwork_buffer_for_dma(this->buffer_, this->get_buffer_size_(), written_by_dma);
+  this->apply_rgb_darken_once(this->darken_percent_);
 #ifdef USE_LVGL
   this->prepare_lvgl_dsc_();
 #endif
