@@ -158,7 +158,7 @@ bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int bu
           uint8_t *dst = target + (static_cast<size_t>(sy) * 2u * target_width * 2u);
           memcpy(dst, row, row_bytes);
           memcpy(dst + row_bytes, row, row_bytes);
-          if ((sy & 0x0F) == 0x0F) {
+          if ((sy & 0x03) == 0x03) {
             taskYIELD();
           }
         }
@@ -180,7 +180,7 @@ bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int bu
           x_acc += x_step;
         }
         y_acc += y_step;
-        if ((y & 0x1F) == 0x1F) {
+        if ((y & 0x07) == 0x07) {
           taskYIELD();
         }
       }
