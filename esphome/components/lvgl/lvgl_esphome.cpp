@@ -3117,7 +3117,7 @@ constexpr int SNAPSHOT_PANORAMA_SCALE = 1;
 constexpr bool SNAPSHOT_DIRECT_COMPOSITOR_ENABLED = true;
 constexpr bool SNAPSHOT_JPEG_CACHE_ENABLED = true;
 constexpr uint32_t SNAPSHOT_JPEG_QUALITY = 100;
-constexpr int SNAPSHOT_APP_OPEN_START_SIZE = 1;
+constexpr int SNAPSHOT_APP_OPEN_START_SIZE = 120;
 constexpr uint32_t SNAPSHOT_APP_OPEN_FIRST_FRAME_ADVANCE_MS = 16;
 uint32_t snapshot_diag_budget = 24;
 
