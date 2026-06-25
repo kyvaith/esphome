@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cinttypes>
 #include <cstdlib>
 #include <cstring>
 #include "esphome/core/application.h"
@@ -54,6 +55,46 @@ static void log_slow_artwork_stage(const char *stage, uint32_t start_ms) {
   }
 }
 
+static uint64_t artwork_trace_now_us() {
+#ifdef USE_ESP32
+  return esp_timer_get_time();
+#else
+  return static_cast<uint64_t>(millis()) * 1000ULL;
+#endif
+}
+
+static const char *image_format_to_string(ImageFormat format) {
+  switch (format) {
+    case ImageFormat::AUTO:
+      return "auto";
+    case ImageFormat::JPEG:
+      return "jpeg";
+    case ImageFormat::PNG:
+      return "png";
+    case ImageFormat::BMP:
+      return "bmp";
+    case ImageFormat::HEIC:
+      return "heic";
+    default:
+      return "unknown";
+  }
+}
+
+#ifdef USE_SENDSPIN_ARTWORK
+static const char *sendspin_format_to_string(sendspin::SendspinImageFormat format) {
+  switch (format) {
+    case sendspin::SendspinImageFormat::JPEG:
+      return "jpeg";
+    case sendspin::SendspinImageFormat::PNG:
+      return "png";
+    case sendspin::SendspinImageFormat::BMP:
+      return "bmp";
+    default:
+      return "unknown";
+  }
+}
+#endif
+
 void ArtworkImage::log_memory_summary_(const char *stage) const {
 #ifdef USE_ESP32
   ESP_LOGW(TAG,
@@ -66,6 +107,36 @@ void ArtworkImage::log_memory_summary_(const char *stage) const {
 #else
   ESP_LOGW(TAG, "Artwork memory %s: image=%dx%d buffer=%uKB retired=%zu", stage, this->buffer_width_,
            this->buffer_height_, (unsigned) (this->get_buffer_size_() / 1024), this->retired_buffers_.size());
+#endif
+}
+
+void ArtworkImage::begin_trace_(const char *stage, size_t bytes) {
+  this->trace_id_ = ++this->trace_next_id_;
+  this->trace_start_us_ = artwork_trace_now_us();
+  this->trace_event_(stage, bytes);
+}
+
+void ArtworkImage::trace_event_(const char *stage, size_t bytes) const {
+  if (this->trace_id_ == 0) {
+    return;
+  }
+  const uint64_t now_us = artwork_trace_now_us();
+  const uint64_t elapsed_us = this->trace_start_us_ == 0 ? 0 : now_us - this->trace_start_us_;
+#ifdef USE_ESP32
+  ESP_LOGW(TAG,
+           "artwork trace #%u +%lluus %s bytes=%zu active=%p image=%dx%d decode=%p %dx%d retired=%zu psram=%uK/%uK "
+           "internal=%uK/%uK",
+           this->trace_id_, (unsigned long long) elapsed_us, stage, bytes, this->buffer_, this->buffer_width_,
+           this->buffer_height_, this->decode_buffer_, this->decode_buffer_width_, this->decode_buffer_height_,
+           this->retired_buffers_.size(), (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+           (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024),
+           (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+           (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
+#else
+  ESP_LOGW(TAG, "artwork trace #%u +%lluus %s bytes=%zu active=%p image=%dx%d decode=%p %dx%d retired=%zu",
+           this->trace_id_, (unsigned long long) elapsed_us, stage, bytes, this->buffer_, this->buffer_width_,
+           this->buffer_height_, this->decode_buffer_, this->decode_buffer_width_, this->decode_buffer_height_,
+           this->retired_buffers_.size());
 #endif
 }
 
@@ -193,6 +264,9 @@ void ArtworkImage::setup() {
         bool paused = false;
         {
           LockGuard guard(this->sendspin_pending_lock_);
+          this->begin_trace_("sendspin-image", length);
+          ESP_LOGW(TAG, "artwork trace #%u sendspin image slot=%u format=%s length=%zu", this->trace_id_, slot,
+                   sendspin_format_to_string(format), length);
           this->pending_sendspin_data_.assign(data, data + length);
           this->pending_sendspin_format_ = format;
           this->pending_sendspin_image_ = true;
@@ -211,6 +285,8 @@ void ArtworkImage::setup() {
     bool paused = false;
     {
       LockGuard guard(this->sendspin_pending_lock_);
+      this->begin_trace_("sendspin-clear");
+      ESP_LOGW(TAG, "artwork trace #%u sendspin clear slot=%u", this->trace_id_, slot);
       this->pending_sendspin_data_.clear();
       this->pending_sendspin_image_ = false;
       this->pending_sendspin_display_ = false;
@@ -228,6 +304,8 @@ void ArtworkImage::setup() {
     bool paused = false;
     {
       LockGuard guard(this->sendspin_pending_lock_);
+      this->trace_event_("sendspin-display");
+      ESP_LOGW(TAG, "artwork trace #%u sendspin display slot=%u", this->trace_id_, slot);
       this->pending_sendspin_display_ = true;
       paused = this->sendspin_paused_;
     }
@@ -250,6 +328,7 @@ void ArtworkImage::set_sendspin_paused(bool paused) {
     resume = !paused;
   }
   if (resume) {
+    this->trace_event_("sendspin-resume");
     this->queue_sendspin_process_();
   }
 }
@@ -259,6 +338,7 @@ void ArtworkImage::queue_sendspin_process_() {
     return;
   }
   this->defer([this]() {
+    this->trace_event_("sendspin-process-defer");
     this->sendspin_process_queued_.store(false, std::memory_order_release);
     this->cancel_timeout("sendspin_artwork_process");
     this->set_timeout("sendspin_artwork_process", SENDSPIN_ARTWORK_PROCESS_DELAY_MS,
@@ -276,6 +356,7 @@ void ArtworkImage::process_pending_sendspin_() {
   {
     LockGuard guard(this->sendspin_pending_lock_);
     if (this->sendspin_paused_) {
+      this->trace_event_("sendspin-process-paused");
       return;
     }
     data = std::move(this->pending_sendspin_data_);
@@ -287,8 +368,10 @@ void ArtworkImage::process_pending_sendspin_() {
     this->pending_sendspin_display_ = false;
     this->pending_sendspin_clear_ = false;
   }
+  this->trace_event_("sendspin-process-start", data.size());
 
   if (clear) {
+    this->trace_event_("sendspin-process-clear");
     this->release();
     this->download_error_callback_.call();
     return;
@@ -307,6 +390,8 @@ void ArtworkImage::process_pending_sendspin_() {
         image_format = ImageFormat::BMP;
         break;
     }
+    ESP_LOGW(TAG, "artwork trace #%u decode request format=%s size=%zu display=%s", this->trace_id_,
+             image_format_to_string(image_format), data.size(), YESNO(display));
     this->sendspin_decode_failed_.store(false, std::memory_order_release);
     if (!this->decode_encoded_image_(image_format, data.data(), data.size(), false)) {
       this->sendspin_decode_failed_.store(true, std::memory_order_release);
@@ -314,6 +399,7 @@ void ArtworkImage::process_pending_sendspin_() {
   }
 
   if (!display) {
+    this->trace_event_("sendspin-process-wait-display");
     return;
   }
   if (display && !has_image && !this->sendspin_decode_failed_.load(std::memory_order_acquire) &&
@@ -322,10 +408,12 @@ void ArtworkImage::process_pending_sendspin_() {
     if (!this->sendspin_paused_) {
       this->pending_sendspin_display_ = true;
     }
+    this->trace_event_("sendspin-display-before-decode-ready");
     return;
   }
   if (this->sendspin_decode_failed_.load(std::memory_order_acquire) ||
       this->sendspin_decode_ready_.load(std::memory_order_acquire)) {
+    this->trace_event_("sendspin-queue-finish");
     this->queue_sendspin_finish_();
   }
 }
@@ -335,12 +423,15 @@ void ArtworkImage::queue_sendspin_finish_() {
     return;
   }
   this->defer([this]() {
+    this->trace_event_("sendspin-finish-defer");
     this->sendspin_finish_queued_.store(false, std::memory_order_release);
     if (this->sendspin_decode_failed_.exchange(false, std::memory_order_acq_rel)) {
+      this->trace_event_("sendspin-finish-error");
       this->download_error_callback_.call();
       return;
     }
     if (this->sendspin_decode_ready_.exchange(false, std::memory_order_acq_rel)) {
+      this->trace_event_("sendspin-finish-download");
       this->finish_download_();
     }
   });
@@ -1286,6 +1377,7 @@ bool ArtworkImage::ensure_download_buffer_capacity_() {
 }
 
 bool ArtworkImage::decode_encoded_image_(ImageFormat format, const uint8_t *data, size_t length, bool finish_on_decode) {
+  this->trace_event_("decode-encoded-start", length);
   if (data == nullptr || length == 0) {
     ESP_LOGE(TAG, "Sendspin artwork image is empty");
     return false;
@@ -1297,6 +1389,7 @@ bool ArtworkImage::decode_encoded_image_(ImageFormat format, const uint8_t *data
 
   const uint32_t start = millis();
   this->end_connection_();
+  this->trace_event_("decode-after-end-connection", length);
   this->download_buffer_.reset();
   if (this->download_buffer_.resize(length) < length) {
     ESP_LOGE(TAG, "Sendspin artwork buffer resize failed: %zu bytes", length);
@@ -1304,6 +1397,7 @@ bool ArtworkImage::decode_encoded_image_(ImageFormat format, const uint8_t *data
   }
   memcpy(this->download_buffer_.append(), data, length);
   this->download_buffer_.write(length);
+  this->trace_event_("decode-buffer-filled", length);
 
   if (!this->create_decoder_(format, length)) {
     this->end_connection_();
@@ -1318,6 +1412,7 @@ bool ArtworkImage::decode_encoded_image_(ImageFormat format, const uint8_t *data
     this->end_connection_();
     return false;
   }
+  this->trace_event_("decode-complete", length);
 
   this->start_time_ = ::time(nullptr);
   if (finish_on_decode) {
@@ -1327,11 +1422,13 @@ bool ArtworkImage::decode_encoded_image_(ImageFormat format, const uint8_t *data
     this->decoder_.reset();
     this->download_buffer_.reset();
     this->sendspin_decode_ready_.store(true, std::memory_order_release);
+    this->trace_event_("decode-ready-deferred", length);
 #else
     this->finish_download_();
 #endif
   }
   log_slow_artwork_stage("sendspin-decode", start);
+  this->trace_event_("decode-encoded-end", length);
   return true;
 }
 
@@ -1342,8 +1439,10 @@ bool ArtworkImage::decode_buffered_data_() {
 
   size_t unread = this->download_buffer_.unread();
   const uint32_t start = millis();
+  this->trace_event_("decode-buffered-start", unread);
   auto fed = this->decoder_->decode(this->download_buffer_.data(), unread);
   log_slow_artwork_stage("decode-buffered", start);
+  this->trace_event_("decode-buffered-end", static_cast<size_t>(std::max(fed, 0)));
   if (fed < 0) {
     ESP_LOGE(TAG, "Error when decoding image.");
     return false;
@@ -1357,12 +1456,14 @@ bool ArtworkImage::decode_buffered_data_() {
 }
 
 void ArtworkImage::finish_download_() {
+  this->trace_event_("finish-start");
   uint32_t stage_start = millis();
   if (!this->promote_decode_buffer_()) {
     this->fail_download_();
     return;
   }
   log_slow_artwork_stage("finish-promote", stage_start);
+  this->trace_event_("finish-promote");
   this->log_state_("download-complete");
   ESP_LOGD(TAG, "Image fully downloaded, read %zu bytes, width/height = %d/%d",
            this->downloader_ ? this->downloader_->get_bytes_read() : 0, this->width_, this->height_);
@@ -1377,18 +1478,23 @@ void ArtworkImage::finish_download_() {
 #endif
 #endif
   log_slow_artwork_stage("finish-lvgl-descriptor", stage_start);
+  this->trace_event_("finish-lvgl-descriptor");
   this->log_state_("lvgl-descriptor-ready");
   stage_start = millis();
   this->log_memory_summary_("ready");
   log_slow_artwork_stage("finish-memory-log", stage_start);
+  this->trace_event_("finish-memory-log");
   App.feed_wdt();
   stage_start = millis();
   this->end_connection_();
   log_slow_artwork_stage("finish-end-connection", stage_start);
+  this->trace_event_("finish-end-connection");
   this->defer([this]() {
     uint32_t stage_start = millis();
+    this->trace_event_("finish-callback-start");
     this->download_finished_callback_.call(false);
     log_slow_artwork_stage("finish-callback", stage_start);
+    this->trace_event_("finish-callback-end");
     App.feed_wdt();
     this->log_state_("download-callback-finished");
     stage_start = millis();

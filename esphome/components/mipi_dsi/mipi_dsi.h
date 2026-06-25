@@ -194,6 +194,8 @@ class MipiDsi : public display::Display {
   uint32_t async_perf_copy_max_us_{0};
   uint32_t async_perf_submit_max_us_{0};
   uint32_t async_perf_done_max_us_{0};
+  uint32_t last_underrun_total_{0};
+  uint32_t last_underrun_log_ms_{0};
   uint32_t last_diag_event_count_{0};
   uint32_t last_diag_log_ms_{0};
   uint8_t *frame_buffers_[2]{nullptr, nullptr};

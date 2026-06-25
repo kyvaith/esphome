@@ -20,6 +20,8 @@ static constexpr size_t DSI_DIAG_EVENT_COUNT = 8;
 static constexpr uint32_t DSI_DIAG_HOST_DPI_BUFF_PLD_UNDER = 1UL << 19;
 static constexpr uint32_t DSI_DIAG_LOG_INTERVAL_MS = 250;
 static volatile uint32_t dsi_underrun_count = 0;
+static volatile uint32_t dsi_underrun_total = 0;
+static volatile uint32_t dsi_underrun_last_tick = 0;
 static volatile uint32_t dsi_diag_event_count = 0;
 static volatile uint32_t dsi_diag_write_index = 0;
 static volatile uint32_t dsi_diag_same_status_suppressed = 0;
@@ -49,7 +51,11 @@ static esp_err_t cache_writeback_external_for_dma(const void *ptr, size_t size) 
                          ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
 }
 
-extern "C" void IRAM_ATTR esphome_mipi_dsi_note_underrun(void) { dsi_underrun_count++; }
+extern "C" void IRAM_ATTR esphome_mipi_dsi_note_underrun(void) {
+  dsi_underrun_count++;
+  dsi_underrun_total++;
+  dsi_underrun_last_tick = static_cast<uint32_t>(xTaskGetTickCountFromISR());
+}
 
 extern "C" void IRAM_ATTR esphome_mipi_dsi_note_status(uint32_t bridge_status, uint32_t bridge_raw,
                                                         uint32_t fifo_depth, uint32_t host_status0,
@@ -406,6 +412,17 @@ void MipiDsi::update() {
 void MipiDsi::loop() { this->log_dsi_diagnostics_(); }
 
 void MipiDsi::log_dsi_diagnostics_() {
+  const uint32_t underrun_total = dsi_underrun_total;
+  if (underrun_total != this->last_underrun_total_) {
+    const uint32_t now = millis();
+    if (this->last_underrun_log_ms_ == 0 || now - this->last_underrun_log_ms_ >= DSI_DIAG_LOG_INTERVAL_MS) {
+      ESP_LOGW(TAG, "dsi underrun irq: total=%" PRIu32 " (+%" PRIu32 ") tick=%" PRIu32,
+               underrun_total, underrun_total - this->last_underrun_total_, dsi_underrun_last_tick);
+      this->last_underrun_total_ = underrun_total;
+      this->last_underrun_log_ms_ = now;
+    }
+  }
+
   const uint32_t count = dsi_diag_event_count;
   if (count == this->last_diag_event_count_)
     return;

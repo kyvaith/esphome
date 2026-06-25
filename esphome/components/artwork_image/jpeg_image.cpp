@@ -141,6 +141,7 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   const size_t aligned_h = (frame_h + 15u) & ~15u;
   const size_t bytes_per_pixel = output_rgb565 ? 2u : 3u;
   const size_t output_size = aligned_w * aligned_h * bytes_per_pixel;
+  const uint32_t trace_id = this->image_->get_trace_id();
   esp32_jpeg::DecodeConfig cfg = {
       .output_format = output_rgb565 ? esp32_jpeg::PixelFormat::RGB565 : esp32_jpeg::PixelFormat::RGB888,
       .rgb_order = output_rgb565 ? (this->image_->is_big_endian() ? esp32_jpeg::RgbElementOrder::RGB
@@ -159,29 +160,35 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   uint8_t *reuse_output = this->image_->try_reuse_active_buffer_for_decode(aligned_w, aligned_h, frame_w, frame_h);
   if (reuse_output != nullptr) {
     const uint64_t direct_start_us = esp_timer_get_time();
+    ESP_LOGW(TAG, "artwork trace #%u hardware JPEG direct active start: %ux%u aligned=%zux%zu output=%zu bytes",
+             trace_id, (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h, output_size);
     err = esp32_jpeg::decode(cfg, buffer, size, reuse_output, output_size, &written);
     elapsed_us = esp_timer_get_time() - direct_start_us;
     if (err == ESP_OK && written != 0) {
       output = reuse_output;
       output_reuses_active = true;
-      ESP_LOGW(TAG, "Hardware JPEG direct active decode finished: %ux%u into %zux%zu buffer, %zu -> %zu bytes in %lluus",
-               (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h, size, written,
+      ESP_LOGW(TAG,
+               "artwork trace #%u hardware JPEG direct active finished: %ux%u into %zux%zu buffer, %zu -> %zu "
+               "bytes in %lluus",
+               trace_id, (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h, size, written,
                (unsigned long long) elapsed_us);
     } else {
       this->image_->cancel_reused_active_buffer_decode();
-      ESP_LOGW(TAG, "Hardware JPEG direct active decode failed err=%d written=%zu jpeg=%zu in %lluus", (int) err,
-               written, size, (unsigned long long) elapsed_us);
+      ESP_LOGW(TAG, "artwork trace #%u hardware JPEG direct active failed err=%d written=%zu jpeg=%zu in %lluus",
+               trace_id, (int) err, written, size, (unsigned long long) elapsed_us);
     }
   }
 
   if (output == nullptr) {
     written = 0;
     const uint64_t allocated_start_us = esp_timer_get_time();
+    ESP_LOGW(TAG, "artwork trace #%u hardware JPEG allocated start: %ux%u aligned=%zux%zu output=%zu bytes",
+             trace_id, (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h, output_size);
     err = esp32_jpeg::decode_allocated(cfg, buffer, size, output_size, &output, &written);
     elapsed_us = esp_timer_get_time() - allocated_start_us;
     if (err != ESP_OK || written == 0) {
-      ESP_LOGW(TAG, "Hardware JPEG allocated decode failed err=%d written=%zu jpeg=%zu in %lluus", (int) err, written,
-               size, (unsigned long long) elapsed_us);
+      ESP_LOGW(TAG, "artwork trace #%u hardware JPEG allocated failed err=%d written=%zu jpeg=%zu in %lluus",
+               trace_id, (int) err, written, size, (unsigned long long) elapsed_us);
       if (static_cast<uint64_t>(frame_w) * static_cast<uint64_t>(frame_h) > 360000u) {
         ESP_LOGW(TAG, "Skipping software JPEG decode for large artwork %ux%u after hardware failure",
                  (unsigned) frame_w, (unsigned) frame_h);
@@ -206,8 +213,8 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   }
 
   this->decoded_bytes_ = size;
-  ESP_LOGW(TAG, "Hardware JPEG %s decode ready: %ux%u into %zux%zu buffer, %zu -> %zu bytes in %lluus",
-           output_reuses_active ? "direct active" : "allocated",
+  ESP_LOGW(TAG, "artwork trace #%u hardware JPEG %s decode ready: %ux%u into %zux%zu buffer, %zu -> %zu bytes in %lluus",
+           trace_id, output_reuses_active ? "direct active" : "allocated",
            (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h, size, written,
            (unsigned long long) elapsed_us);
   return size;

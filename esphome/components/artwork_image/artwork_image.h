@@ -129,6 +129,7 @@ class ArtworkImage : public PollingComponent,
   }
 
   bool is_big_endian() const { return this->is_big_endian_; }
+  uint32_t get_trace_id() const { return this->trace_id_; }
   int get_fixed_width() const { return this->fixed_width_; }
   int get_fixed_height() const { return this->fixed_height_; }
   int get_content_width() const { return this->buffer_content_width_; }
@@ -155,6 +156,8 @@ class ArtworkImage : public PollingComponent,
   void start_pending_update_();
   void log_state_(const char *stage);
   void log_memory_summary_(const char *stage) const;
+  void begin_trace_(const char *stage, size_t bytes = 0);
+  void trace_event_(const char *stage, size_t bytes = 0) const;
 
   RAMAllocator<uint8_t> allocator_{};
 
@@ -272,6 +275,9 @@ class ArtworkImage : public PollingComponent,
   int decode_offset_x_{0};
   int decode_offset_y_{0};
   bool decode_buffer_written_by_dma_{false};
+  uint32_t trace_id_{0};
+  uint32_t trace_next_id_{0};
+  uint64_t trace_start_us_{0};
   uint8_t *darkened_buffer_{nullptr};
   uint8_t darkened_percent_{0};
   uint8_t darken_percent_{0};
