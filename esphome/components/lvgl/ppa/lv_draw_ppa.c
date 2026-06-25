@@ -21,6 +21,8 @@ static uint32_t s_ppa_fill_tasks = 0;
 static uint32_t s_ppa_img_tasks = 0;
 static uint32_t s_ppa_img_eval_logs = 0;
 
+static inline bool ppa_buf_usable(lv_draw_buf_t * buf);
+
 static inline uint32_t ppa_area_px(const lv_area_t * area)
 {
     int32_t w = lv_area_get_width(area);
@@ -44,6 +46,34 @@ static inline bool ppa_task_large_visible_band(const lv_draw_task_t * t)
      * artifacts, so keep them on the software renderer. */
     return lv_area_get_width(&visible_area) >= 320 &&
            ppa_area_px(&visible_area) >= (128U * 128U);
+}
+
+static void ppa_log_image_eval(lv_draw_unit_t * draw_unit, const lv_draw_task_t * t,
+                               const lv_draw_image_dsc_t * dsc, bool large_visible)
+{
+    lv_draw_buf_t * eval_dest = t->target_layer != NULL ? t->target_layer->draw_buf : NULL;
+    lv_color_format_t dest_cf = eval_dest != NULL ? (lv_color_format_t)eval_dest->header.cf : LV_COLOR_FORMAT_UNKNOWN;
+    lv_area_t visible_area;
+    bool has_visible = lv_area_intersect(&visible_area, &t->area, &t->clip_area);
+    if(has_visible && t->target_layer != NULL) {
+        has_visible = lv_area_intersect(&visible_area, &visible_area, &t->target_layer->buf_area);
+    }
+    ESP_LOGW(TAG,
+             "ppa image eval %s area=%dx%d clip=%dx%d visible=%dx%d img_area=%dx%d src_cf=%d opa=%u "
+             "blend=%d scale=%d/%d rot=%d dest_cf=%d dest=%ux%u stride=%u usable=%d score=%d unit=%d",
+             large_visible ? "large" : "seen",
+             (int)lv_area_get_width(&t->area), (int)lv_area_get_height(&t->area),
+             (int)lv_area_get_width(&t->clip_area), (int)lv_area_get_height(&t->clip_area),
+             has_visible ? (int)lv_area_get_width(&visible_area) : 0,
+             has_visible ? (int)lv_area_get_height(&visible_area) : 0,
+             (int)lv_area_get_width(&dsc->image_area), (int)lv_area_get_height(&dsc->image_area),
+             (int)dsc->header.cf, (unsigned)dsc->opa, (int)dsc->blend_mode,
+             (int)dsc->scale_x, (int)dsc->scale_y, (int)dsc->rotation,
+             (int)dest_cf, eval_dest != NULL ? (unsigned)eval_dest->header.w : 0,
+             eval_dest != NULL ? (unsigned)eval_dest->header.h : 0,
+             eval_dest != NULL ? (unsigned)eval_dest->header.stride : 0,
+             (int)ppa_buf_usable(eval_dest), (int)t->preference_score,
+             (int)draw_unit->idx);
 }
 
 /* Check if a draw buffer is suitable for PPA (non-NULL, aligned, has data) */
@@ -81,7 +111,8 @@ void lv_draw_ppa_init(void)
     draw_ppa_unit->base_unit.dispatch_cb = ppa_dispatch;
     draw_ppa_unit->base_unit.delete_cb = ppa_delete;
 
-    ESP_LOGI(TAG, "PPA draw unit registered, idx=%d", (int)draw_ppa_unit->base_unit.idx);
+    ESP_LOGW(TAG, "PPA draw unit registered, idx=%d burst=%d", (int)draw_ppa_unit->base_unit.idx,
+             (int)LV_DRAW_PPA_DATA_BURST_LENGTH);
 
     /* Register PPA clients */
     esp_err_t res;
@@ -165,19 +196,9 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
 
         case LV_DRAW_TASK_TYPE_IMAGE: {
             const lv_draw_image_dsc_t * dsc = (const lv_draw_image_dsc_t *)t->draw_dsc;
-            if(s_ppa_img_eval_logs < 20 && ppa_task_large_visible_band(t)) {
-                lv_draw_buf_t * eval_dest = t->target_layer != NULL ? t->target_layer->draw_buf : NULL;
-                lv_color_format_t dest_cf = eval_dest != NULL ? (lv_color_format_t)eval_dest->header.cf : LV_COLOR_FORMAT_UNKNOWN;
-                ESP_LOGW(TAG,
-                         "ppa image eval large area=%dx%d clip=%dx%d img_area=%dx%d src_cf=%d opa=%u blend=%d "
-                         "scale=%d/%d rot=%d dest_cf=%d dest_usable=%d score=%d unit=%d",
-                         (int)lv_area_get_width(&t->area), (int)lv_area_get_height(&t->area),
-                         (int)lv_area_get_width(&t->clip_area), (int)lv_area_get_height(&t->clip_area),
-                         (int)lv_area_get_width(&dsc->image_area), (int)lv_area_get_height(&dsc->image_area),
-                         (int)dsc->header.cf, (unsigned)dsc->opa, (int)dsc->blend_mode,
-                         (int)dsc->scale_x, (int)dsc->scale_y, (int)dsc->rotation,
-                         (int)dest_cf, (int)ppa_buf_usable(eval_dest), (int)t->preference_score,
-                         (int)draw_unit->idx);
+            const bool large_visible = ppa_task_large_visible_band(t);
+            if(s_ppa_img_eval_logs < 40) {
+                ppa_log_image_eval(draw_unit, t, dsc, large_visible);
                 s_ppa_img_eval_logs++;
             }
 
