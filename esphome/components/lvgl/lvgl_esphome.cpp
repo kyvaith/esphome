@@ -52,6 +52,9 @@ extern "C" {
 void lv_draw_ppa_init(void);
 uint32_t lv_draw_ppa_get_fill_task_count(void);
 uint32_t lv_draw_ppa_get_img_task_count(void);
+uint32_t lv_draw_ppa_get_img_eval_count(void);
+uint32_t lv_draw_ppa_get_img_large_eval_count(void);
+uint32_t lv_draw_ppa_get_img_accepted_eval_count(void);
 void lvgl_port_ppa_v9_init(lv_display_t *display);
 }
 #endif
@@ -3061,6 +3064,9 @@ void LvglComponent::loop() {
 #endif
       uint32_t ppa_fill_tasks = 0;
       uint32_t ppa_img_tasks = 0;
+      uint32_t ppa_img_eval_tasks = 0;
+      uint32_t ppa_img_large_eval_tasks = 0;
+      uint32_t ppa_img_accepted_eval_tasks = 0;
 #ifdef USE_ESP32
       const uint64_t compositor_us = this->perf_compositor_us_;
       const uint64_t compositor_ready_us = this->perf_compositor_ready_us_;
@@ -3079,6 +3085,9 @@ void LvglComponent::loop() {
 #ifdef USE_LVGL_PPA
       ppa_fill_tasks = lv_draw_ppa_get_fill_task_count();
       ppa_img_tasks = lv_draw_ppa_get_img_task_count();
+      ppa_img_eval_tasks = lv_draw_ppa_get_img_eval_count();
+      ppa_img_large_eval_tasks = lv_draw_ppa_get_img_large_eval_count();
+      ppa_img_accepted_eval_tasks = lv_draw_ppa_get_img_accepted_eval_count();
 #endif
 #ifdef USE_MIPI_DSI
       mipi_dsi::AsyncFlushPerfStats dsi_stats{};
@@ -3116,6 +3125,33 @@ void LvglComponent::loop() {
                  (unsigned)(this->perf_loop_max_us_ / 1000U),
                  (unsigned)(this->perf_flush_max_us_ / 1000U));
       }
+#ifdef USE_LVGL_PPA
+      static uint32_t last_ppa_fill_tasks = 0;
+      static uint32_t last_ppa_img_tasks = 0;
+      static uint32_t last_ppa_img_eval_tasks = 0;
+      static uint32_t last_ppa_img_large_eval_tasks = 0;
+      static uint32_t last_ppa_img_accepted_eval_tasks = 0;
+      if (ppa_fill_tasks != last_ppa_fill_tasks || ppa_img_tasks != last_ppa_img_tasks ||
+          ppa_img_eval_tasks != last_ppa_img_eval_tasks ||
+          ppa_img_large_eval_tasks != last_ppa_img_large_eval_tasks ||
+          ppa_img_accepted_eval_tasks != last_ppa_img_accepted_eval_tasks) {
+        ESP_LOGW(TAG,
+                 "ppa diag: fill=%u(+%u) img_dispatch=%u(+%u) img_eval=%u(+%u) large=%u(+%u) "
+                 "accepted=%u(+%u)",
+                 (unsigned)ppa_fill_tasks, (unsigned)(ppa_fill_tasks - last_ppa_fill_tasks),
+                 (unsigned)ppa_img_tasks, (unsigned)(ppa_img_tasks - last_ppa_img_tasks),
+                 (unsigned)ppa_img_eval_tasks, (unsigned)(ppa_img_eval_tasks - last_ppa_img_eval_tasks),
+                 (unsigned)ppa_img_large_eval_tasks,
+                 (unsigned)(ppa_img_large_eval_tasks - last_ppa_img_large_eval_tasks),
+                 (unsigned)ppa_img_accepted_eval_tasks,
+                 (unsigned)(ppa_img_accepted_eval_tasks - last_ppa_img_accepted_eval_tasks));
+        last_ppa_fill_tasks = ppa_fill_tasks;
+        last_ppa_img_tasks = ppa_img_tasks;
+        last_ppa_img_eval_tasks = ppa_img_eval_tasks;
+        last_ppa_img_large_eval_tasks = ppa_img_large_eval_tasks;
+        last_ppa_img_accepted_eval_tasks = ppa_img_accepted_eval_tasks;
+      }
+#endif
       if (s_perf_logging_enabled) {
         ESP_LOGI(TAG,
                  "perf1s: cpu=%u%% loop=%lluus flush=%lluus dsi_under=%u dsi_sync=%lluus max=%ums dsi_copy=%lluus/%u max=%ums dsi_submit=%lluus max=%ums dsi_done=%lluus/%u max=%ums zc=%u stage=%u/%u unsafe=%u/%u/%u %lluKB comp=%lluus ready=%lluus/%u jobs max_comp=%ums max_ready=%ums max_loop=%ums max_flush=%ums inv=%lu areas/%lu kpx flush_px=%llu kpx comp_px=%llu kpx free=%uK/%uK dir=%u ppa=%u/%u",

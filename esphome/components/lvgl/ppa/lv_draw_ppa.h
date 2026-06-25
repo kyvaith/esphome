@@ -39,6 +39,9 @@ void lv_draw_ppa_deinit(void);
 void lv_draw_buf_ppa_init_handlers(void);
 uint32_t lv_draw_ppa_get_fill_task_count(void);
 uint32_t lv_draw_ppa_get_img_task_count(void);
+uint32_t lv_draw_ppa_get_img_eval_count(void);
+uint32_t lv_draw_ppa_get_img_large_eval_count(void);
+uint32_t lv_draw_ppa_get_img_accepted_eval_count(void);
 
 void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
                       const lv_area_t * coords);

@@ -20,6 +20,9 @@ static const char * TAG = "ppa_draw";
 static uint32_t s_ppa_fill_tasks = 0;
 static uint32_t s_ppa_img_tasks = 0;
 static uint32_t s_ppa_img_eval_logs = 0;
+static uint32_t s_ppa_img_eval_tasks = 0;
+static uint32_t s_ppa_img_large_eval_tasks = 0;
+static uint32_t s_ppa_img_accepted_eval_tasks = 0;
 
 static inline bool ppa_buf_usable(lv_draw_buf_t * buf);
 
@@ -166,6 +169,21 @@ uint32_t lv_draw_ppa_get_img_task_count(void)
     return s_ppa_img_tasks;
 }
 
+uint32_t lv_draw_ppa_get_img_eval_count(void)
+{
+    return s_ppa_img_eval_tasks;
+}
+
+uint32_t lv_draw_ppa_get_img_large_eval_count(void)
+{
+    return s_ppa_img_large_eval_tasks;
+}
+
+uint32_t lv_draw_ppa_get_img_accepted_eval_count(void)
+{
+    return s_ppa_img_accepted_eval_tasks;
+}
+
 /**********************
  *   STATIC FUNCTIONS
  **********************/
@@ -197,6 +215,8 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
         case LV_DRAW_TASK_TYPE_IMAGE: {
             const lv_draw_image_dsc_t * dsc = (const lv_draw_image_dsc_t *)t->draw_dsc;
             const bool large_visible = ppa_task_large_visible_band(t);
+            s_ppa_img_eval_tasks++;
+            if(large_visible) s_ppa_img_large_eval_tasks++;
             if(s_ppa_img_eval_logs < 40) {
                 ppa_log_image_eval(draw_unit, t, dsc, large_visible);
                 s_ppa_img_eval_logs++;
@@ -223,6 +243,7 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
                     t->preference_score = 30;
                     t->preferred_draw_unit_id = draw_unit->idx;
                 }
+                s_ppa_img_accepted_eval_tasks++;
                 return 1;
             }
 #else
@@ -244,6 +265,7 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
                     t->preference_score = 50;
                     t->preferred_draw_unit_id = draw_unit->idx;
                 }
+                s_ppa_img_accepted_eval_tasks++;
                 return 1;
             }
 
@@ -267,6 +289,7 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
                 t->preference_score = 50;
                 t->preferred_draw_unit_id = draw_unit->idx;
             }
+            s_ppa_img_accepted_eval_tasks++;
             return 1;
 #else
             if(dsc->scale_x != LV_SCALE_NONE || dsc->scale_y != LV_SCALE_NONE) return 0;
