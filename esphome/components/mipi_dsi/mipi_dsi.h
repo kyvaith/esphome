@@ -138,6 +138,9 @@ class MipiDsi : public display::Display {
   void start_async_flush_task_();
   static void async_flush_task_trampoline(void *arg);
   void async_flush_task_();
+  void start_dsi_diagnostics_task_();
+  static void dsi_diagnostics_task_trampoline(void *arg);
+  void dsi_diagnostics_task_();
   bool ensure_async_staging_buffer_(size_t size);
   bool check_buffer_();
   size_t get_bytes_per_pixel_() const { return this->color_depth_ == display::COLOR_BITNESS_888 ? 3 : 2; }
@@ -171,6 +174,7 @@ class MipiDsi : public display::Display {
   SemaphoreHandle_t refresh_lock_{};
   SemaphoreHandle_t async_flush_done_{};
   TaskHandle_t async_flush_task_handle_{};
+  TaskHandle_t dsi_diagnostics_task_handle_{};
   MipiDsiCallbackContext callback_context_{};
   AsyncFlushReadyCallback async_ready_callback_{};
   void *async_ready_arg_{};
@@ -201,6 +205,18 @@ class MipiDsi : public display::Display {
   uint32_t last_polled_bridge_raw_{0};
   uint32_t last_polled_host_status0_{0};
   uint32_t last_polled_host_status1_{0};
+  uint32_t last_dsi_monitor_log_ms_{0};
+  volatile uint32_t dsi_monitor_samples_{0};
+  volatile uint32_t dsi_monitor_nonzero_{0};
+  volatile uint32_t dsi_monitor_bridge_underrun_{0};
+  volatile uint32_t dsi_monitor_host_under_{0};
+  volatile uint32_t dsi_monitor_fifo_zero_{0};
+  volatile uint32_t dsi_monitor_fifo_min_{UINT32_MAX};
+  volatile uint32_t dsi_monitor_last_bridge_status_{0};
+  volatile uint32_t dsi_monitor_last_bridge_raw_{0};
+  volatile uint32_t dsi_monitor_last_fifo_depth_{0};
+  volatile uint32_t dsi_monitor_last_host_status0_{0};
+  volatile uint32_t dsi_monitor_last_host_status1_{0};
   uint32_t last_diag_event_count_{0};
   uint32_t last_diag_log_ms_{0};
   uint8_t *frame_buffers_[2]{nullptr, nullptr};

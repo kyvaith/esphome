@@ -302,6 +302,7 @@ void MipiDsi::setup() {
     this->smark_failed(LOG_STR("Failed to register callbacks"), err);
     return;
   }
+  this->start_dsi_diagnostics_task_();
 
   ESP_LOGCONFIG(TAG, "MIPI DSI setup complete");
 }
@@ -353,6 +354,59 @@ void MipiDsi::async_flush_task_() {
     this->async_ready_arg_ = nullptr;
     if (callback != nullptr)
       callback(arg);
+  }
+}
+
+void MipiDsi::start_dsi_diagnostics_task_() {
+  if (esphome_mipi_dsi_poll_status == nullptr || this->handle_ == nullptr)
+    return;
+#if CONFIG_FREERTOS_UNICORE
+  constexpr BaseType_t diag_core = tskNO_AFFINITY;
+#else
+  constexpr BaseType_t diag_core = 0;
+#endif
+  TaskHandle_t task_handle = nullptr;
+  const BaseType_t ok = xTaskCreatePinnedToCore(&MipiDsi::dsi_diagnostics_task_trampoline, "mipi_dsi_diag", 3072,
+                                                this, 5, &task_handle, diag_core);
+  if (ok != pdPASS) {
+    ESP_LOGW(TAG, "DSI diagnostics task allocation failed");
+    return;
+  }
+  this->dsi_diagnostics_task_handle_ = task_handle;
+  ESP_LOGCONFIG(TAG, "DSI diagnostics poll task enabled on core %d", (int) diag_core);
+}
+
+void MipiDsi::dsi_diagnostics_task_trampoline(void *arg) {
+  static_cast<MipiDsi *>(arg)->dsi_diagnostics_task_();
+}
+
+void MipiDsi::dsi_diagnostics_task_() {
+  while (true) {
+    uint32_t bridge_status = 0;
+    uint32_t bridge_raw = 0;
+    uint32_t fifo_depth = UINT32_MAX;
+    uint32_t host_status0 = 0;
+    uint32_t host_status1 = 0;
+    if (esphome_mipi_dsi_poll_status(this->handle_, &bridge_status, &bridge_raw, &fifo_depth, &host_status0,
+                                     &host_status1) == ESP_OK) {
+      this->dsi_monitor_samples_++;
+      if (fifo_depth < this->dsi_monitor_fifo_min_)
+        this->dsi_monitor_fifo_min_ = fifo_depth;
+      if (fifo_depth == 0)
+        this->dsi_monitor_fifo_zero_++;
+      if (bridge_status != 0 || bridge_raw != 0 || host_status0 != 0 || host_status1 != 0)
+        this->dsi_monitor_nonzero_++;
+      if ((bridge_status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN) != 0)
+        this->dsi_monitor_bridge_underrun_++;
+      if ((host_status1 & DSI_DIAG_HOST_DPI_BUFF_PLD_UNDER) != 0)
+        this->dsi_monitor_host_under_++;
+      this->dsi_monitor_last_bridge_status_ = bridge_status;
+      this->dsi_monitor_last_bridge_raw_ = bridge_raw;
+      this->dsi_monitor_last_fifo_depth_ = fifo_depth;
+      this->dsi_monitor_last_host_status0_ = host_status0;
+      this->dsi_monitor_last_host_status1_ = host_status1;
+    }
+    vTaskDelay(pdMS_TO_TICKS(2));
   }
 }
 
@@ -462,12 +516,45 @@ void MipiDsi::log_dsi_diagnostics_() {
     }
   }
 
+  const uint32_t now = millis();
+  if (this->last_dsi_monitor_log_ms_ == 0 || now - this->last_dsi_monitor_log_ms_ >= 1000) {
+    const uint32_t samples = this->dsi_monitor_samples_;
+    if (samples != 0) {
+      const uint32_t nonzero = this->dsi_monitor_nonzero_;
+      const uint32_t bridge_underrun = this->dsi_monitor_bridge_underrun_;
+      const uint32_t host_under = this->dsi_monitor_host_under_;
+      const uint32_t fifo_zero = this->dsi_monitor_fifo_zero_;
+      const uint32_t fifo_min = this->dsi_monitor_fifo_min_;
+      const uint32_t last_bridge_status = this->dsi_monitor_last_bridge_status_;
+      const uint32_t last_bridge_raw = this->dsi_monitor_last_bridge_raw_;
+      const uint32_t last_fifo = this->dsi_monitor_last_fifo_depth_;
+      const uint32_t last_host_status0 = this->dsi_monitor_last_host_status0_;
+      const uint32_t last_host_status1 = this->dsi_monitor_last_host_status1_;
+      this->dsi_monitor_samples_ = 0;
+      this->dsi_monitor_nonzero_ = 0;
+      this->dsi_monitor_bridge_underrun_ = 0;
+      this->dsi_monitor_host_under_ = 0;
+      this->dsi_monitor_fifo_zero_ = 0;
+      this->dsi_monitor_fifo_min_ = UINT32_MAX;
+      if (nonzero != 0 || bridge_underrun != 0 || host_under != 0 || fifo_zero != 0 || fifo_min < 8) {
+        ESP_LOGW(TAG,
+                 "dsi monitor: samples=%" PRIu32 " nonzero=%" PRIu32 " brg_under=%" PRIu32
+                 " host_under=%" PRIu32 " fifo_zero=%" PRIu32 " fifo_min=%" PRIu32
+                 " last brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32
+                 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
+                 samples, nonzero, bridge_underrun, host_under, fifo_zero, fifo_min, last_bridge_status,
+                 last_bridge_raw, last_fifo, last_host_status0, last_host_status1);
+      }
+    }
+    this->last_dsi_monitor_log_ms_ = now;
+  }
+
   const uint32_t count = dsi_diag_event_count;
   if (count == this->last_diag_event_count_)
     return;
 
-  const uint32_t now = millis();
-  if (this->last_diag_log_ms_ != 0 && now - this->last_diag_log_ms_ < DSI_DIAG_LOG_INTERVAL_MS)
+  const uint32_t diag_now = millis();
+  if (this->last_diag_log_ms_ != 0 && diag_now - this->last_diag_log_ms_ < DSI_DIAG_LOG_INTERVAL_MS)
     return;
 
   const uint32_t index = (count - 1) % DSI_DIAG_EVENT_COUNT;
@@ -488,7 +575,7 @@ void MipiDsi::log_dsi_diagnostics_() {
            YESNO((event.host_status1 & DSI_DIAG_HOST_DPI_BUFF_PLD_UNDER) != 0));
 
   this->last_diag_event_count_ = count;
-  this->last_diag_log_ms_ = now;
+  this->last_diag_log_ms_ = diag_now;
 }
 
 void MipiDsi::draw_pixels_at(int x_start, int y_start, int w, int h, const uint8_t *ptr, display::ColorOrder order,
