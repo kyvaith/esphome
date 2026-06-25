@@ -311,7 +311,7 @@ esp_err_t esphome_mipi_dsi_poll_status(esp_lcd_panel_handle_t panel, uint32_t *b
         changed = True
 
     qos_anchor = '    ESP_RETURN_ON_ERROR(dw_gdma_new_channel(&dma_alloc_config, &dma_chan), TAG, "create DMA channel failed");\n'
-    qos_patch = (
+    old_qos_patch = (
         qos_anchor +
         "#if CONFIG_IDF_TARGET_ESP32P4\n"
         "    // DSI scanout is a real-time PSRAM reader. Give DW-GDMA read traffic\n"
@@ -322,10 +322,31 @@ esp_err_t esphome_mipi_dsi_poll_status(esp_lcd_panel_handle_t panel, uint32_t *b
         "    axi_icm_ll_set_dw_gdma_qos_arbiter_prio(1, 4, 15);\n"
         "#endif\n"
     )
+    qos_patch = (
+        qos_anchor +
+        "#if CONFIG_IDF_TARGET_ESP32P4\n"
+        "    // DSI scanout is a real-time PSRAM reader. Give DW-GDMA read traffic\n"
+        "    // higher AXI QoS than opportunistic DMA2D/JPEG copies to avoid rare\n"
+        "    // bridge FIFO underruns that otherwise show as a full-screen fallback\n"
+        "    // color flash.\n"
+        "    axi_icm_ll_set_dw_gdma_qos_arbiter_prio(0, 4, 15);\n"
+        "    axi_icm_ll_set_dw_gdma_qos_arbiter_prio(1, 4, 15);\n"
+        "    // JPEG decode and PPA operations use the DMA2D AXI master and can burst\n"
+        "    // enough PSRAM traffic to starve the DSI bridge FIFO without latching a\n"
+        "    // bridge underrun interrupt. Keep DMA2D accelerated, but make it less\n"
+        "    // aggressive than scanout.\n"
+        "    axi_icm_ll_set_dma2d_qos_arbiter_prio(1, 1);\n"
+        "    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, 8, AXI_ICM_ACCESS_READ);\n"
+        "    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, 8, AXI_ICM_ACCESS_WRITE);\n"
+        "#endif\n"
+    )
     if qos_patch not in text:
-        if qos_anchor not in text:
+        if old_qos_patch in text:
+            text = text.replace(old_qos_patch, qos_patch, 1)
+        elif qos_anchor in text:
+            text = text.replace(qos_anchor, qos_patch, 1)
+        else:
             raise RuntimeError("ESP-IDF DSI GDMA channel creation line not found; patch needs review")
-        text = text.replace(qos_anchor, qos_patch, 1)
         changed = True
     fifo_replacements = (
         (
