@@ -162,6 +162,44 @@ static esp_err_t dpi_panel_cache_msync(const void *buffer, size_t size)
         text = text[:helper_end] + cache_helper + text[helper_end:]
         changed = True
 
+    poll_helper = """
+esp_err_t esphome_mipi_dsi_poll_status(esp_lcd_panel_handle_t panel, uint32_t *bridge_status,
+                                       uint32_t *bridge_raw, uint32_t *fifo_depth,
+                                       uint32_t *host_status0, uint32_t *host_status1)
+{
+    if (panel == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_lcd_dpi_panel_t *dpi_panel = __containerof(panel, esp_lcd_dpi_panel_t, base);
+    mipi_dsi_hal_context_t *hal = &dpi_panel->bus->hal;
+    if (bridge_status) {
+        *bridge_status = mipi_dsi_brg_ll_get_interrupt_status(hal->bridge);
+    }
+    if (bridge_raw) {
+        *bridge_raw = hal->bridge->int_raw.val;
+    }
+    if (fifo_depth) {
+        *fifo_depth = hal->bridge->fifo_flow_status.raw_buf_depth;
+    }
+    if (host_status0) {
+        *host_status0 = hal->host->int_st0.val;
+    }
+    if (host_status1) {
+        *host_status1 = hal->host->int_st1.val;
+    }
+    return ESP_OK;
+}
+"""
+    if "esphome_mipi_dsi_poll_status" not in text:
+        anchor = (
+            "    void *user_ctx; // User context for the callback\n"
+            "};\n"
+        )
+        if anchor not in text:
+            raise RuntimeError("ESP-IDF DSI panel struct end not found; patch needs review")
+        text = text.replace(anchor, f"{anchor}{poll_helper}", 1)
+        changed = True
+
     old_underrun = (
         "    if (intr_status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN) {\n"
         "        // when an underrun happens, the LCD display may already becomes blue\n"

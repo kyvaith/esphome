@@ -86,6 +86,11 @@ extern "C" void IRAM_ATTR esphome_mipi_dsi_note_status(uint32_t bridge_status, u
   dsi_diag_event_count++;
 }
 
+extern "C" esp_err_t esphome_mipi_dsi_poll_status(esp_lcd_panel_handle_t panel, uint32_t *bridge_status,
+                                                   uint32_t *bridge_raw, uint32_t *fifo_depth,
+                                                   uint32_t *host_status0,
+                                                   uint32_t *host_status1) __attribute__((weak));
+
 static bool IRAM_ATTR notify_color_trans_ready(esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_event_data_t *edata,
                                                void *user_ctx) {
   auto *ctx = static_cast<MipiDsiCallbackContext *>(user_ctx);
@@ -423,6 +428,37 @@ void MipiDsi::log_dsi_diagnostics_() {
                underrun_total, underrun_total - this->last_underrun_total_, dsi_underrun_last_tick);
       this->last_underrun_total_ = underrun_total;
       this->last_underrun_log_ms_ = now;
+    }
+  }
+
+  if (esphome_mipi_dsi_poll_status != nullptr && this->handle_ != nullptr) {
+    const uint32_t now = millis();
+    if (this->last_status_poll_ms_ == 0 || now - this->last_status_poll_ms_ >= 50) {
+      this->last_status_poll_ms_ = now;
+      uint32_t bridge_status = 0;
+      uint32_t bridge_raw = 0;
+      uint32_t fifo_depth = 0;
+      uint32_t host_status0 = 0;
+      uint32_t host_status1 = 0;
+      if (esphome_mipi_dsi_poll_status(this->handle_, &bridge_status, &bridge_raw, &fifo_depth, &host_status0,
+                                       &host_status1) == ESP_OK) {
+        const bool interesting = bridge_status != 0 || bridge_raw != 0 || host_status0 != 0 || host_status1 != 0;
+        const bool changed = bridge_status != this->last_polled_bridge_status_ ||
+                             bridge_raw != this->last_polled_bridge_raw_ ||
+                             host_status0 != this->last_polled_host_status0_ ||
+                             host_status1 != this->last_polled_host_status1_;
+        if (interesting && changed) {
+          ESP_LOGW(TAG,
+                   "dsi poll: brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32
+                   " host0=0x%08" PRIx32 " host1=0x%08" PRIx32 " dpi_under=%s",
+                   bridge_status, bridge_raw, fifo_depth, host_status0, host_status1,
+                   YESNO((host_status1 & DSI_DIAG_HOST_DPI_BUFF_PLD_UNDER) != 0));
+          this->last_polled_bridge_status_ = bridge_status;
+          this->last_polled_bridge_raw_ = bridge_raw;
+          this->last_polled_host_status0_ = host_status0;
+          this->last_polled_host_status1_ = host_status1;
+        }
+      }
     }
   }
 
