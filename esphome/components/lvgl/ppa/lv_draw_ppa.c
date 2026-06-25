@@ -19,6 +19,7 @@
 static const char * TAG = "ppa_draw";
 static uint32_t s_ppa_fill_tasks = 0;
 static uint32_t s_ppa_img_tasks = 0;
+static uint32_t s_ppa_img_eval_logs = 0;
 
 static inline uint32_t ppa_area_px(const lv_area_t * area)
 {
@@ -164,6 +165,21 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
 
         case LV_DRAW_TASK_TYPE_IMAGE: {
             const lv_draw_image_dsc_t * dsc = (const lv_draw_image_dsc_t *)t->draw_dsc;
+            if(s_ppa_img_eval_logs < 20 && ppa_task_large_visible_band(t)) {
+                lv_draw_buf_t * eval_dest = t->target_layer != NULL ? t->target_layer->draw_buf : NULL;
+                lv_color_format_t dest_cf = eval_dest != NULL ? (lv_color_format_t)eval_dest->header.cf : LV_COLOR_FORMAT_UNKNOWN;
+                ESP_LOGW(TAG,
+                         "ppa image eval large area=%dx%d clip=%dx%d img_area=%dx%d src_cf=%d opa=%u blend=%d "
+                         "scale=%d/%d rot=%d dest_cf=%d dest_usable=%d score=%d unit=%d",
+                         (int)lv_area_get_width(&t->area), (int)lv_area_get_height(&t->area),
+                         (int)lv_area_get_width(&t->clip_area), (int)lv_area_get_height(&t->clip_area),
+                         (int)lv_area_get_width(&dsc->image_area), (int)lv_area_get_height(&dsc->image_area),
+                         (int)dsc->header.cf, (unsigned)dsc->opa, (int)dsc->blend_mode,
+                         (int)dsc->scale_x, (int)dsc->scale_y, (int)dsc->rotation,
+                         (int)dest_cf, (int)ppa_buf_usable(eval_dest), (int)t->preference_score,
+                         (int)draw_unit->idx);
+                s_ppa_img_eval_logs++;
+            }
 
 #ifdef LV_USE_PPA_IMG
             /* PPA SRM handles 90-degree increment rotation in hardware */
