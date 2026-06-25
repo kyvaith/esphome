@@ -48,6 +48,9 @@ uint32_t lv_draw_ppa_get_img_srm_unaligned_task_count(void);
 uint64_t lv_draw_ppa_get_img_srm_unaligned_bytes(void);
 uint64_t lv_draw_ppa_get_img_srm_copy_us(void);
 uint32_t lv_draw_ppa_get_img_srm_copy_max_us(void);
+uint64_t lv_draw_ppa_get_img_srm_sync_us(void);
+uint32_t lv_draw_ppa_get_img_srm_sync_max_us(void);
+uint64_t lv_draw_ppa_get_img_srm_sync_bytes(void);
 uint64_t lv_draw_ppa_get_img_srm_ppa_us(void);
 uint32_t lv_draw_ppa_get_img_srm_ppa_max_us(void);
 

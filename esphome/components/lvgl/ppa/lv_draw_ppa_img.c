@@ -27,6 +27,9 @@ static uint32_t s_ppa_img_srm_unaligned_tasks;
 static uint64_t s_ppa_img_srm_unaligned_bytes;
 static uint64_t s_ppa_img_srm_copy_us;
 static uint32_t s_ppa_img_srm_copy_max_us;
+static uint64_t s_ppa_img_srm_sync_us;
+static uint32_t s_ppa_img_srm_sync_max_us;
+static uint64_t s_ppa_img_srm_sync_bytes;
 static uint64_t s_ppa_img_srm_ppa_us;
 static uint32_t s_ppa_img_srm_ppa_max_us;
 
@@ -58,6 +61,21 @@ uint64_t lv_draw_ppa_get_img_srm_copy_us(void)
 uint32_t lv_draw_ppa_get_img_srm_copy_max_us(void)
 {
     return s_ppa_img_srm_copy_max_us;
+}
+
+uint64_t lv_draw_ppa_get_img_srm_sync_us(void)
+{
+    return s_ppa_img_srm_sync_us;
+}
+
+uint32_t lv_draw_ppa_get_img_srm_sync_max_us(void)
+{
+    return s_ppa_img_srm_sync_max_us;
+}
+
+uint64_t lv_draw_ppa_get_img_srm_sync_bytes(void)
+{
+    return s_ppa_img_srm_sync_bytes;
 }
 
 uint64_t lv_draw_ppa_get_img_srm_ppa_us(void)
@@ -232,6 +250,7 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
         return;
     }
 
+    const uint8_t * src_buf = (const uint8_t *)decoded->data;
     lv_color_format_t src_cf  = (lv_color_format_t)decoded->header.cf;
     lv_color_format_t dest_cf = (lv_color_format_t)dest_buf->header.cf;
     if(!ppa_src_cf_supported(src_cf) || !ppa_dest_cf_supported(dest_cf)) {
@@ -293,8 +312,6 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
         return;
     }
 
-    lv_draw_ppa_cache_msync(decoded->data, decoded->data_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-
     uint32_t out_bpp = (dest_cf == LV_COLOR_FORMAT_RGB565) ? 2u :
                        (dest_cf == LV_COLOR_FORMAT_RGB888)  ? 3u : 4u;
     uint32_t src_bpp = lv_color_format_get_size(src_cf);
@@ -316,6 +333,27 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     uint32_t dest_stride_px = dest_stride / out_bpp;
     uint32_t raw_bytes    = dest_stride * dest_buf->header.h;
     uint32_t aligned_size = lv_draw_ppa_align_size(raw_bytes);
+    uint32_t pixel_count = (uint32_t)clip_w * (uint32_t)clip_h;
+
+    /* PPA only reads the source rows covered by the clipped draw task.
+     * Syncing the full decoded image on every redraw can move megabytes over
+     * PSRAM for a tiny dirty area and starve MIPI DSI scanout. */
+    const uint8_t * src_sync = src_buf + (size_t)src_by * src_stride;
+    uint32_t src_sync_size = src_stride * src_bh;
+    int64_t sync_start_us = pixel_count >= 100000U ? esp_timer_get_time() : 0;
+    lv_draw_ppa_cache_msync(src_sync, src_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    if(sync_start_us != 0) {
+        uint32_t elapsed = (uint32_t)(esp_timer_get_time() - sync_start_us);
+        s_ppa_img_srm_sync_us += elapsed;
+        s_ppa_img_srm_sync_bytes += src_sync_size;
+        if(elapsed > s_ppa_img_srm_sync_max_us) {
+            s_ppa_img_srm_sync_max_us = elapsed;
+        }
+        if(elapsed > 5000U) {
+            ESP_LOGW("lvgl.ppa_img", "srm source sync %ux%u bytes=%u took=%uus",
+                     (unsigned)src_bw, (unsigned)src_bh, (unsigned)src_sync_size, (unsigned)elapsed);
+        }
+    }
 
     ppa_srm_oper_config_t cfg;
     lv_memzero(&cfg, sizeof(cfg));
@@ -386,7 +424,6 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     uint32_t sync_size = dest_stride * (uint32_t)clip_h;
     lv_draw_ppa_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
-    const uint32_t pixel_count = (uint32_t)clip_w * (uint32_t)clip_h;
     s_ppa_img_srm_tasks++;
     if(pixel_count >= 100000U) {
         s_ppa_img_srm_large_tasks++;

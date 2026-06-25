@@ -61,6 +61,9 @@ uint32_t lv_draw_ppa_get_img_srm_unaligned_task_count(void);
 uint64_t lv_draw_ppa_get_img_srm_unaligned_bytes(void);
 uint64_t lv_draw_ppa_get_img_srm_copy_us(void);
 uint32_t lv_draw_ppa_get_img_srm_copy_max_us(void);
+uint64_t lv_draw_ppa_get_img_srm_sync_us(void);
+uint32_t lv_draw_ppa_get_img_srm_sync_max_us(void);
+uint64_t lv_draw_ppa_get_img_srm_sync_bytes(void);
 uint64_t lv_draw_ppa_get_img_srm_ppa_us(void);
 uint32_t lv_draw_ppa_get_img_srm_ppa_max_us(void);
 void lvgl_port_ppa_v9_init(lv_display_t *display);
@@ -3081,6 +3084,9 @@ void LvglComponent::loop() {
       uint64_t ppa_img_srm_unaligned_bytes = 0;
       uint64_t ppa_img_srm_copy_us = 0;
       uint32_t ppa_img_srm_copy_max_us = 0;
+      uint64_t ppa_img_srm_sync_us = 0;
+      uint32_t ppa_img_srm_sync_max_us = 0;
+      uint64_t ppa_img_srm_sync_bytes = 0;
       uint64_t ppa_img_srm_ppa_us = 0;
       uint32_t ppa_img_srm_ppa_max_us = 0;
 #ifdef USE_ESP32
@@ -3110,6 +3116,9 @@ void LvglComponent::loop() {
       ppa_img_srm_unaligned_bytes = lv_draw_ppa_get_img_srm_unaligned_bytes();
       ppa_img_srm_copy_us = lv_draw_ppa_get_img_srm_copy_us();
       ppa_img_srm_copy_max_us = lv_draw_ppa_get_img_srm_copy_max_us();
+      ppa_img_srm_sync_us = lv_draw_ppa_get_img_srm_sync_us();
+      ppa_img_srm_sync_max_us = lv_draw_ppa_get_img_srm_sync_max_us();
+      ppa_img_srm_sync_bytes = lv_draw_ppa_get_img_srm_sync_bytes();
       ppa_img_srm_ppa_us = lv_draw_ppa_get_img_srm_ppa_us();
       ppa_img_srm_ppa_max_us = lv_draw_ppa_get_img_srm_ppa_max_us();
 #endif
@@ -3160,6 +3169,8 @@ void LvglComponent::loop() {
       static uint32_t last_ppa_img_srm_unaligned_tasks = 0;
       static uint64_t last_ppa_img_srm_unaligned_bytes = 0;
       static uint64_t last_ppa_img_srm_copy_us = 0;
+      static uint64_t last_ppa_img_srm_sync_us = 0;
+      static uint64_t last_ppa_img_srm_sync_bytes = 0;
       static uint64_t last_ppa_img_srm_ppa_us = 0;
       if (ppa_fill_tasks != last_ppa_fill_tasks || ppa_img_tasks != last_ppa_img_tasks ||
           ppa_img_eval_tasks != last_ppa_img_eval_tasks ||
@@ -3169,11 +3180,14 @@ void LvglComponent::loop() {
           ppa_img_srm_large_tasks != last_ppa_img_srm_large_tasks ||
           ppa_img_srm_unaligned_tasks != last_ppa_img_srm_unaligned_tasks ||
           ppa_img_srm_copy_us != last_ppa_img_srm_copy_us ||
+          ppa_img_srm_sync_us != last_ppa_img_srm_sync_us ||
           ppa_img_srm_ppa_us != last_ppa_img_srm_ppa_us) {
         ESP_LOGW(TAG,
                  "ppa diag: fill=%u(+%u) img_dispatch=%u(+%u) img_eval=%u(+%u) large=%u(+%u) "
                  "accepted=%u(+%u) srm=%u(+%u) srm_large=%u(+%u) srm_unalign=%u(+%u) "
-                 "srm_copy=%lluus(+%lluus) max=%uus bytes=%lluKB(+%lluKB) srm_ppa=%lluus(+%lluus) max=%uus",
+                 "srm_copy=%lluus(+%lluus) max=%uus bytes=%lluKB(+%lluKB) "
+                 "srm_sync=%lluus(+%lluus) max=%uus sync_kb=%llu(+%llu) "
+                 "srm_ppa=%lluus(+%lluus) max=%uus",
                  (unsigned)ppa_fill_tasks, (unsigned)(ppa_fill_tasks - last_ppa_fill_tasks),
                  (unsigned)ppa_img_tasks, (unsigned)(ppa_img_tasks - last_ppa_img_tasks),
                  (unsigned)ppa_img_eval_tasks, (unsigned)(ppa_img_eval_tasks - last_ppa_img_eval_tasks),
@@ -3191,6 +3205,11 @@ void LvglComponent::loop() {
                  (unsigned)ppa_img_srm_copy_max_us,
                  (unsigned long long)(ppa_img_srm_unaligned_bytes / 1024ULL),
                  (unsigned long long)((ppa_img_srm_unaligned_bytes - last_ppa_img_srm_unaligned_bytes) / 1024ULL),
+                 (unsigned long long)ppa_img_srm_sync_us,
+                 (unsigned long long)(ppa_img_srm_sync_us - last_ppa_img_srm_sync_us),
+                 (unsigned)ppa_img_srm_sync_max_us,
+                 (unsigned long long)(ppa_img_srm_sync_bytes / 1024ULL),
+                 (unsigned long long)((ppa_img_srm_sync_bytes - last_ppa_img_srm_sync_bytes) / 1024ULL),
                  (unsigned long long)ppa_img_srm_ppa_us,
                  (unsigned long long)(ppa_img_srm_ppa_us - last_ppa_img_srm_ppa_us),
                  (unsigned)ppa_img_srm_ppa_max_us);
@@ -3204,6 +3223,8 @@ void LvglComponent::loop() {
         last_ppa_img_srm_unaligned_tasks = ppa_img_srm_unaligned_tasks;
         last_ppa_img_srm_unaligned_bytes = ppa_img_srm_unaligned_bytes;
         last_ppa_img_srm_copy_us = ppa_img_srm_copy_us;
+        last_ppa_img_srm_sync_us = ppa_img_srm_sync_us;
+        last_ppa_img_srm_sync_bytes = ppa_img_srm_sync_bytes;
         last_ppa_img_srm_ppa_us = ppa_img_srm_ppa_us;
       }
 #endif
