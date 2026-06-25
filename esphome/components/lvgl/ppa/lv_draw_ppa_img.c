@@ -13,6 +13,7 @@
 #include "src/draw/lv_draw_image_private.h"
 #include "src/draw/lv_image_decoder_private.h"
 #include "src/draw/lv_image_decoder.h"
+#include "esp_timer.h"
 #include <math.h>
 #include <string.h>
 
@@ -133,7 +134,14 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
     cfg.mode                 = PPA_TRANS_MODE_BLOCKING;
     cfg.user_data            = u;
 
+    const uint32_t pixel_count = block_w * block_h;
+    const int64_t start_us = pixel_count >= 100000U ? esp_timer_get_time() : 0;
     esp_err_t ret = ppa_do_blend(u->blend_client, &cfg);
+    if(start_us != 0) {
+        ESP_LOGW("lvgl.ppa_img", "blend %ux%u src_cf=%d dst_cf=%d ret=%d took=%lldus",
+                 (unsigned)block_w, (unsigned)block_h, (int)src_cf, (int)dest_cf, (int)ret,
+                 (long long)(esp_timer_get_time() - start_us));
+    }
     if(ret != ESP_OK) {
         LV_LOG_ERROR("PPA blend failed: %d", ret);
     }
@@ -277,6 +285,9 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
 
     if(esp_ptr_external_ram(dest_buf->data) &&
        !lv_draw_ppa_buf_cache_aligned(dest_buf->data)) {
+        if((uint32_t)clip_w * (uint32_t)clip_h >= 100000U) {
+            ESP_LOGW("lvgl.ppa_img", "srm unaligned output: copying %u bytes before PPA", (unsigned)raw_bytes);
+        }
         aligned_out = (uint8_t *)heap_caps_aligned_alloc(
             PPA_CACHE_LINE_SIZE, aligned_size,
             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -318,7 +329,15 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     uint32_t sync_size = dest_stride * (uint32_t)clip_h;
     lv_draw_ppa_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
+    const uint32_t pixel_count = (uint32_t)clip_w * (uint32_t)clip_h;
+    const int64_t start_us = pixel_count >= 100000U ? esp_timer_get_time() : 0;
     esp_err_t ret = ppa_do_scale_rotate_mirror(u->srm_client, &cfg);
+    if(start_us != 0) {
+        ESP_LOGW("lvgl.ppa_img", "srm %dx%d src=%ux%u scale=%.2f/%.2f ret=%d took=%lldus",
+                 (int)clip_w, (int)clip_h, (unsigned)src_bw, (unsigned)src_bh,
+                 (double)sx, (double)sy, (int)ret,
+                 (long long)(esp_timer_get_time() - start_us));
+    }
     if(ret == ESP_OK) {
         lv_draw_ppa_cache_msync_after_dma_write(sync_start, sync_size);
     }
