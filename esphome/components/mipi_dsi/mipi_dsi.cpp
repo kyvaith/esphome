@@ -392,8 +392,18 @@ void MipiDsi::dsi_diagnostics_task_() {
       this->dsi_monitor_samples_++;
       if (fifo_depth < this->dsi_monitor_fifo_min_)
         this->dsi_monitor_fifo_min_ = fifo_depth;
-      if (fifo_depth == 0)
+      if (fifo_depth == 0) {
         this->dsi_monitor_fifo_zero_++;
+        const uint32_t now_ms = millis();
+        if (this->dsi_monitor_last_fifo_zero_log_ms_ == 0 ||
+            now_ms - this->dsi_monitor_last_fifo_zero_log_ms_ >= 250) {
+          this->dsi_monitor_last_fifo_zero_log_ms_ = now_ms;
+          ESP_LOGW(TAG,
+                   "dsi fifo zero: uptime=%" PRIu32 "ms brg=0x%08" PRIx32 " raw=0x%08" PRIx32
+                   " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
+                   now_ms, bridge_status, bridge_raw, host_status0, host_status1);
+        }
+      }
       if (bridge_status != 0 || bridge_raw != 0 || host_status0 != 0 || host_status1 != 0)
         this->dsi_monitor_nonzero_++;
       if ((bridge_status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN) != 0)

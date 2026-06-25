@@ -217,6 +217,7 @@ class MipiDsi : public display::Display {
   volatile uint32_t dsi_monitor_last_fifo_depth_{0};
   volatile uint32_t dsi_monitor_last_host_status0_{0};
   volatile uint32_t dsi_monitor_last_host_status1_{0};
+  uint32_t dsi_monitor_last_fifo_zero_log_ms_{0};
   uint32_t last_diag_event_count_{0};
   uint32_t last_diag_log_ms_{0};
   uint8_t *frame_buffers_[2]{nullptr, nullptr};
