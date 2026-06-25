@@ -21,6 +21,55 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
                                  const lv_image_decoder_dsc_t * decoder_dsc, lv_draw_image_sup_t * sup,
                                  const lv_area_t * img_coords, const lv_area_t * clipped_img_area);
 
+static uint32_t s_ppa_img_srm_tasks;
+static uint32_t s_ppa_img_srm_large_tasks;
+static uint32_t s_ppa_img_srm_unaligned_tasks;
+static uint64_t s_ppa_img_srm_unaligned_bytes;
+static uint64_t s_ppa_img_srm_copy_us;
+static uint32_t s_ppa_img_srm_copy_max_us;
+static uint64_t s_ppa_img_srm_ppa_us;
+static uint32_t s_ppa_img_srm_ppa_max_us;
+
+uint32_t lv_draw_ppa_get_img_srm_task_count(void)
+{
+    return s_ppa_img_srm_tasks;
+}
+
+uint32_t lv_draw_ppa_get_img_srm_large_task_count(void)
+{
+    return s_ppa_img_srm_large_tasks;
+}
+
+uint32_t lv_draw_ppa_get_img_srm_unaligned_task_count(void)
+{
+    return s_ppa_img_srm_unaligned_tasks;
+}
+
+uint64_t lv_draw_ppa_get_img_srm_unaligned_bytes(void)
+{
+    return s_ppa_img_srm_unaligned_bytes;
+}
+
+uint64_t lv_draw_ppa_get_img_srm_copy_us(void)
+{
+    return s_ppa_img_srm_copy_us;
+}
+
+uint32_t lv_draw_ppa_get_img_srm_copy_max_us(void)
+{
+    return s_ppa_img_srm_copy_max_us;
+}
+
+uint64_t lv_draw_ppa_get_img_srm_ppa_us(void)
+{
+    return s_ppa_img_srm_ppa_us;
+}
+
+uint32_t lv_draw_ppa_get_img_srm_ppa_max_us(void)
+{
+    return s_ppa_img_srm_ppa_max_us;
+}
+
 
 void lv_draw_ppa_img(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
                      const lv_area_t * coords)
@@ -296,7 +345,15 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
             lv_image_decoder_close(&decoder_dsc);
             return;
         }
+        s_ppa_img_srm_unaligned_tasks++;
+        s_ppa_img_srm_unaligned_bytes += raw_bytes;
+        int64_t copy_start_us = esp_timer_get_time();
         memcpy(aligned_out, dest_buf->data, raw_bytes);
+        uint32_t copy_elapsed_us = (uint32_t)(esp_timer_get_time() - copy_start_us);
+        s_ppa_img_srm_copy_us += copy_elapsed_us;
+        if(copy_elapsed_us > s_ppa_img_srm_copy_max_us) {
+            s_ppa_img_srm_copy_max_us = copy_elapsed_us;
+        }
         lv_draw_ppa_cache_msync(aligned_out, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
         out_ptr = aligned_out;
     }
@@ -330,13 +387,22 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     lv_draw_ppa_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
     const uint32_t pixel_count = (uint32_t)clip_w * (uint32_t)clip_h;
+    s_ppa_img_srm_tasks++;
+    if(pixel_count >= 100000U) {
+        s_ppa_img_srm_large_tasks++;
+    }
     const int64_t start_us = pixel_count >= 100000U ? esp_timer_get_time() : 0;
     esp_err_t ret = ppa_do_scale_rotate_mirror(u->srm_client, &cfg);
     if(start_us != 0) {
+        uint32_t elapsed = (uint32_t)(esp_timer_get_time() - start_us);
+        s_ppa_img_srm_ppa_us += elapsed;
+        if(elapsed > s_ppa_img_srm_ppa_max_us) {
+            s_ppa_img_srm_ppa_max_us = elapsed;
+        }
         ESP_LOGW("lvgl.ppa_img", "srm %dx%d src=%ux%u scale=%.2f/%.2f ret=%d took=%lldus",
                  (int)clip_w, (int)clip_h, (unsigned)src_bw, (unsigned)src_bh,
                  (double)sx, (double)sy, (int)ret,
-                 (long long)(esp_timer_get_time() - start_us));
+                 (long long)elapsed);
     }
     if(ret == ESP_OK) {
         lv_draw_ppa_cache_msync_after_dma_write(sync_start, sync_size);
@@ -378,7 +444,13 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     if(aligned_out) {
         if(ret == ESP_OK) {
             lv_draw_ppa_cache_msync_after_dma_write(aligned_out, aligned_size);
+            int64_t copy_start_us = esp_timer_get_time();
             memcpy(dest_buf->data, aligned_out, raw_bytes);
+            uint32_t copy_elapsed_us = (uint32_t)(esp_timer_get_time() - copy_start_us);
+            s_ppa_img_srm_copy_us += copy_elapsed_us;
+            if(copy_elapsed_us > s_ppa_img_srm_copy_max_us) {
+                s_ppa_img_srm_copy_max_us = copy_elapsed_us;
+            }
             lv_draw_ppa_cache_msync(dest_buf->data, raw_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
         }
         heap_caps_free(aligned_out);

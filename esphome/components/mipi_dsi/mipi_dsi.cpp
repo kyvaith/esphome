@@ -197,8 +197,11 @@ void MipiDsi::setup() {
   if (err == ESP_OK && fb0 != nullptr && fb1 != nullptr) {
     this->frame_buffers_[0] = static_cast<uint8_t *>(fb0);
     this->frame_buffers_[1] = static_cast<uint8_t *>(fb1);
-    ESP_LOGI(TAG, "DPI framebuffers exposed at %p / %p (%zu bytes each)", this->frame_buffers_[0],
-             this->frame_buffers_[1], this->get_frame_buffer_size());
+    constexpr size_t cache_alignment = 128;
+    ESP_LOGW(TAG, "DPI framebuffers exposed at %p / %p (%zu bytes each, cache_align=%zu, mod=%u/%u)",
+             this->frame_buffers_[0], this->frame_buffers_[1], this->get_frame_buffer_size(), cache_alignment,
+             (unsigned) (reinterpret_cast<uintptr_t>(this->frame_buffers_[0]) % cache_alignment),
+             (unsigned) (reinterpret_cast<uintptr_t>(this->frame_buffers_[1]) % cache_alignment));
   } else {
     ESP_LOGW(TAG, "DPI framebuffer unavailable: %s", esp_err_to_name(err));
   }

@@ -55,6 +55,14 @@ uint32_t lv_draw_ppa_get_img_task_count(void);
 uint32_t lv_draw_ppa_get_img_eval_count(void);
 uint32_t lv_draw_ppa_get_img_large_eval_count(void);
 uint32_t lv_draw_ppa_get_img_accepted_eval_count(void);
+uint32_t lv_draw_ppa_get_img_srm_task_count(void);
+uint32_t lv_draw_ppa_get_img_srm_large_task_count(void);
+uint32_t lv_draw_ppa_get_img_srm_unaligned_task_count(void);
+uint64_t lv_draw_ppa_get_img_srm_unaligned_bytes(void);
+uint64_t lv_draw_ppa_get_img_srm_copy_us(void);
+uint32_t lv_draw_ppa_get_img_srm_copy_max_us(void);
+uint64_t lv_draw_ppa_get_img_srm_ppa_us(void);
+uint32_t lv_draw_ppa_get_img_srm_ppa_max_us(void);
 void lvgl_port_ppa_v9_init(lv_display_t *display);
 }
 #endif
@@ -3067,6 +3075,14 @@ void LvglComponent::loop() {
       uint32_t ppa_img_eval_tasks = 0;
       uint32_t ppa_img_large_eval_tasks = 0;
       uint32_t ppa_img_accepted_eval_tasks = 0;
+      uint32_t ppa_img_srm_tasks = 0;
+      uint32_t ppa_img_srm_large_tasks = 0;
+      uint32_t ppa_img_srm_unaligned_tasks = 0;
+      uint64_t ppa_img_srm_unaligned_bytes = 0;
+      uint64_t ppa_img_srm_copy_us = 0;
+      uint32_t ppa_img_srm_copy_max_us = 0;
+      uint64_t ppa_img_srm_ppa_us = 0;
+      uint32_t ppa_img_srm_ppa_max_us = 0;
 #ifdef USE_ESP32
       const uint64_t compositor_us = this->perf_compositor_us_;
       const uint64_t compositor_ready_us = this->perf_compositor_ready_us_;
@@ -3088,6 +3104,14 @@ void LvglComponent::loop() {
       ppa_img_eval_tasks = lv_draw_ppa_get_img_eval_count();
       ppa_img_large_eval_tasks = lv_draw_ppa_get_img_large_eval_count();
       ppa_img_accepted_eval_tasks = lv_draw_ppa_get_img_accepted_eval_count();
+      ppa_img_srm_tasks = lv_draw_ppa_get_img_srm_task_count();
+      ppa_img_srm_large_tasks = lv_draw_ppa_get_img_srm_large_task_count();
+      ppa_img_srm_unaligned_tasks = lv_draw_ppa_get_img_srm_unaligned_task_count();
+      ppa_img_srm_unaligned_bytes = lv_draw_ppa_get_img_srm_unaligned_bytes();
+      ppa_img_srm_copy_us = lv_draw_ppa_get_img_srm_copy_us();
+      ppa_img_srm_copy_max_us = lv_draw_ppa_get_img_srm_copy_max_us();
+      ppa_img_srm_ppa_us = lv_draw_ppa_get_img_srm_ppa_us();
+      ppa_img_srm_ppa_max_us = lv_draw_ppa_get_img_srm_ppa_max_us();
 #endif
 #ifdef USE_MIPI_DSI
       mipi_dsi::AsyncFlushPerfStats dsi_stats{};
@@ -3131,25 +3155,56 @@ void LvglComponent::loop() {
       static uint32_t last_ppa_img_eval_tasks = 0;
       static uint32_t last_ppa_img_large_eval_tasks = 0;
       static uint32_t last_ppa_img_accepted_eval_tasks = 0;
+      static uint32_t last_ppa_img_srm_tasks = 0;
+      static uint32_t last_ppa_img_srm_large_tasks = 0;
+      static uint32_t last_ppa_img_srm_unaligned_tasks = 0;
+      static uint64_t last_ppa_img_srm_unaligned_bytes = 0;
+      static uint64_t last_ppa_img_srm_copy_us = 0;
+      static uint64_t last_ppa_img_srm_ppa_us = 0;
       if (ppa_fill_tasks != last_ppa_fill_tasks || ppa_img_tasks != last_ppa_img_tasks ||
           ppa_img_eval_tasks != last_ppa_img_eval_tasks ||
           ppa_img_large_eval_tasks != last_ppa_img_large_eval_tasks ||
-          ppa_img_accepted_eval_tasks != last_ppa_img_accepted_eval_tasks) {
+          ppa_img_accepted_eval_tasks != last_ppa_img_accepted_eval_tasks ||
+          ppa_img_srm_tasks != last_ppa_img_srm_tasks ||
+          ppa_img_srm_large_tasks != last_ppa_img_srm_large_tasks ||
+          ppa_img_srm_unaligned_tasks != last_ppa_img_srm_unaligned_tasks ||
+          ppa_img_srm_copy_us != last_ppa_img_srm_copy_us ||
+          ppa_img_srm_ppa_us != last_ppa_img_srm_ppa_us) {
         ESP_LOGW(TAG,
                  "ppa diag: fill=%u(+%u) img_dispatch=%u(+%u) img_eval=%u(+%u) large=%u(+%u) "
-                 "accepted=%u(+%u)",
+                 "accepted=%u(+%u) srm=%u(+%u) srm_large=%u(+%u) srm_unalign=%u(+%u) "
+                 "srm_copy=%lluus(+%lluus) max=%uus bytes=%lluKB(+%lluKB) srm_ppa=%lluus(+%lluus) max=%uus",
                  (unsigned)ppa_fill_tasks, (unsigned)(ppa_fill_tasks - last_ppa_fill_tasks),
                  (unsigned)ppa_img_tasks, (unsigned)(ppa_img_tasks - last_ppa_img_tasks),
                  (unsigned)ppa_img_eval_tasks, (unsigned)(ppa_img_eval_tasks - last_ppa_img_eval_tasks),
                  (unsigned)ppa_img_large_eval_tasks,
                  (unsigned)(ppa_img_large_eval_tasks - last_ppa_img_large_eval_tasks),
                  (unsigned)ppa_img_accepted_eval_tasks,
-                 (unsigned)(ppa_img_accepted_eval_tasks - last_ppa_img_accepted_eval_tasks));
+                 (unsigned)(ppa_img_accepted_eval_tasks - last_ppa_img_accepted_eval_tasks),
+                 (unsigned)ppa_img_srm_tasks, (unsigned)(ppa_img_srm_tasks - last_ppa_img_srm_tasks),
+                 (unsigned)ppa_img_srm_large_tasks,
+                 (unsigned)(ppa_img_srm_large_tasks - last_ppa_img_srm_large_tasks),
+                 (unsigned)ppa_img_srm_unaligned_tasks,
+                 (unsigned)(ppa_img_srm_unaligned_tasks - last_ppa_img_srm_unaligned_tasks),
+                 (unsigned long long)ppa_img_srm_copy_us,
+                 (unsigned long long)(ppa_img_srm_copy_us - last_ppa_img_srm_copy_us),
+                 (unsigned)ppa_img_srm_copy_max_us,
+                 (unsigned long long)(ppa_img_srm_unaligned_bytes / 1024ULL),
+                 (unsigned long long)((ppa_img_srm_unaligned_bytes - last_ppa_img_srm_unaligned_bytes) / 1024ULL),
+                 (unsigned long long)ppa_img_srm_ppa_us,
+                 (unsigned long long)(ppa_img_srm_ppa_us - last_ppa_img_srm_ppa_us),
+                 (unsigned)ppa_img_srm_ppa_max_us);
         last_ppa_fill_tasks = ppa_fill_tasks;
         last_ppa_img_tasks = ppa_img_tasks;
         last_ppa_img_eval_tasks = ppa_img_eval_tasks;
         last_ppa_img_large_eval_tasks = ppa_img_large_eval_tasks;
         last_ppa_img_accepted_eval_tasks = ppa_img_accepted_eval_tasks;
+        last_ppa_img_srm_tasks = ppa_img_srm_tasks;
+        last_ppa_img_srm_large_tasks = ppa_img_srm_large_tasks;
+        last_ppa_img_srm_unaligned_tasks = ppa_img_srm_unaligned_tasks;
+        last_ppa_img_srm_unaligned_bytes = ppa_img_srm_unaligned_bytes;
+        last_ppa_img_srm_copy_us = ppa_img_srm_copy_us;
+        last_ppa_img_srm_ppa_us = ppa_img_srm_ppa_us;
       }
 #endif
       if (s_perf_logging_enabled) {

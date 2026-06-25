@@ -42,6 +42,14 @@ uint32_t lv_draw_ppa_get_img_task_count(void);
 uint32_t lv_draw_ppa_get_img_eval_count(void);
 uint32_t lv_draw_ppa_get_img_large_eval_count(void);
 uint32_t lv_draw_ppa_get_img_accepted_eval_count(void);
+uint32_t lv_draw_ppa_get_img_srm_task_count(void);
+uint32_t lv_draw_ppa_get_img_srm_large_task_count(void);
+uint32_t lv_draw_ppa_get_img_srm_unaligned_task_count(void);
+uint64_t lv_draw_ppa_get_img_srm_unaligned_bytes(void);
+uint64_t lv_draw_ppa_get_img_srm_copy_us(void);
+uint32_t lv_draw_ppa_get_img_srm_copy_max_us(void);
+uint64_t lv_draw_ppa_get_img_srm_ppa_us(void);
+uint32_t lv_draw_ppa_get_img_srm_ppa_max_us(void);
 
 void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
                       const lv_area_t * coords);
