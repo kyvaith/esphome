@@ -198,17 +198,16 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
     }
   }
 
-  const bool adopted = output_rgb565 ? this->adopt_rgb565_buffer(output, aligned_w, aligned_h, frame_w, frame_h)
-                                     : this->adopt_rgb_buffer(output, aligned_w, aligned_h, frame_w, frame_h);
+  const bool adopted = output_rgb565 ? this->adopt_rgb565_buffer(output, aligned_w, aligned_h, frame_w, frame_h, true)
+                                     : this->adopt_rgb_buffer(output, aligned_w, aligned_h, frame_w, frame_h, true);
   if (!adopted) {
     if (output_uses_staging) {
       this->image_->cancel_staging_buffer_decode();
     } else {
-      heap_caps_free(output);
+      esp32_jpeg::release_decode_output(output);
     }
     return DECODE_ERROR_OUT_OF_MEMORY;
   }
-  this->image_->mark_decode_buffer_jpeg_allocator();
   if (aligned_w == frame_w && aligned_h == frame_h) {
     this->image_->mark_decode_buffer_written_by_dma();
   }
