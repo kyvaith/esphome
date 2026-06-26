@@ -107,11 +107,13 @@ class ArtworkImage : public PollingComponent,
   void release(bool immediate = false);
 
   /**
-   * Reuse the currently displayed full-size image buffer as the next decode target.
-   * This avoids a second full-frame allocation for fixed-size artwork updates.
+   * Return a non-displayed staging buffer for hardware JPEG output.
+   *
+   * DSI scans the active buffer continuously, so DMA2D/JPEG must not write into
+   * that same PSRAM region while it is visible.
    */
-  uint8_t *try_reuse_active_buffer_for_decode(int width, int height, int content_width, int content_height);
-  void cancel_reused_active_buffer_decode();
+  uint8_t *try_get_staging_buffer_for_decode(int width, int height, int content_width, int content_height);
+  void cancel_staging_buffer_decode();
   void mark_decode_buffer_written_by_dma() { this->decode_buffer_written_by_dma_ = true; }
 
   /**
@@ -185,6 +187,7 @@ class ArtworkImage : public PollingComponent,
    */
   size_t resize_(int width, int height);
   size_t get_decode_buffer_size_() const { return get_buffer_size_(this->decode_buffer_width_, this->decode_buffer_height_); }
+  void release_spare_buffer_();
   void discard_decode_buffer_();
   bool promote_decode_buffer_();
   void retire_active_buffer_();
@@ -227,6 +230,8 @@ class ArtworkImage : public PollingComponent,
   uint8_t *buffer_;
   uint8_t *decode_buffer_{nullptr};
   bool decode_buffer_reuses_active_{false};
+  uint8_t *spare_buffer_{nullptr};
+  size_t spare_buffer_size_{0};
   bool hardware_jpeg_{true};
   DownloadBuffer download_buffer_;
   /**

@@ -153,28 +153,28 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   };
 
   uint8_t *output = nullptr;
-  bool output_reuses_active = false;
+  bool output_uses_staging = false;
   size_t written = 0;
   uint64_t elapsed_us = 0;
 
-  uint8_t *reuse_output = this->image_->try_reuse_active_buffer_for_decode(aligned_w, aligned_h, frame_w, frame_h);
-  if (reuse_output != nullptr) {
-    const uint64_t direct_start_us = esp_timer_get_time();
-    ESP_LOGW(TAG, "artwork trace #%u hardware JPEG direct active start: %ux%u aligned=%zux%zu output=%zu bytes",
+  uint8_t *staging_output = this->image_->try_get_staging_buffer_for_decode(aligned_w, aligned_h, frame_w, frame_h);
+  if (staging_output != nullptr) {
+    const uint64_t staging_start_us = esp_timer_get_time();
+    ESP_LOGW(TAG, "artwork trace #%u hardware JPEG staging start: %ux%u aligned=%zux%zu output=%zu bytes",
              trace_id, (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h, output_size);
-    err = esp32_jpeg::decode(cfg, buffer, size, reuse_output, output_size, &written);
-    elapsed_us = esp_timer_get_time() - direct_start_us;
+    err = esp32_jpeg::decode(cfg, buffer, size, staging_output, output_size, &written);
+    elapsed_us = esp_timer_get_time() - staging_start_us;
     if (err == ESP_OK && written != 0) {
-      output = reuse_output;
-      output_reuses_active = true;
+      output = staging_output;
+      output_uses_staging = true;
       ESP_LOGW(TAG,
-               "artwork trace #%u hardware JPEG direct active finished: %ux%u into %zux%zu buffer, %zu -> %zu "
+               "artwork trace #%u hardware JPEG staging finished: %ux%u into %zux%zu buffer, %zu -> %zu "
                "bytes in %lluus",
                trace_id, (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h, size, written,
                (unsigned long long) elapsed_us);
     } else {
-      this->image_->cancel_reused_active_buffer_decode();
-      ESP_LOGW(TAG, "artwork trace #%u hardware JPEG direct active failed err=%d written=%zu jpeg=%zu in %lluus",
+      this->image_->cancel_staging_buffer_decode();
+      ESP_LOGW(TAG, "artwork trace #%u hardware JPEG staging failed err=%d written=%zu jpeg=%zu in %lluus",
                trace_id, (int) err, written, size, (unsigned long long) elapsed_us);
     }
   }
@@ -201,8 +201,8 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
   const bool adopted = output_rgb565 ? this->adopt_rgb565_buffer(output, aligned_w, aligned_h, frame_w, frame_h)
                                      : this->adopt_rgb_buffer(output, aligned_w, aligned_h, frame_w, frame_h);
   if (!adopted) {
-    if (output_reuses_active) {
-      this->image_->cancel_reused_active_buffer_decode();
+    if (output_uses_staging) {
+      this->image_->cancel_staging_buffer_decode();
     } else {
       heap_caps_free(output);
     }
@@ -214,7 +214,7 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
 
   this->decoded_bytes_ = size;
   ESP_LOGW(TAG, "artwork trace #%u hardware JPEG %s decode ready: %ux%u into %zux%zu buffer, %zu -> %zu bytes in %lluus",
-           trace_id, output_reuses_active ? "direct active" : "allocated",
+           trace_id, output_uses_staging ? "staging" : "allocated",
            (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h, size, written,
            (unsigned long long) elapsed_us);
   return size;
