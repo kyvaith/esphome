@@ -1390,6 +1390,45 @@ bool ArtworkImage::decode_encoded_image_(ImageFormat format, const uint8_t *data
   const uint32_t start = millis();
   this->end_connection_();
   this->trace_event_("decode-after-end-connection", length);
+
+#ifdef USE_ARTWORK_IMAGE_JPEG_SUPPORT
+  if (format == ImageFormat::JPEG) {
+    // SendSpin already delivers a complete encoded image. Avoid copying it
+    // into DownloadBuffer before the JPEG decoder copies it into its DMA input
+    // buffer. This keeps artwork changes from doing one extra PSRAM pass.
+    this->download_buffer_.reset();
+    this->decoder_ = esphome::make_unique<JpegDecoder>(this);
+    this->decoder_->set_download_size(length);
+    const int fed = this->decoder_->decode(const_cast<uint8_t *>(data), length);
+    log_slow_artwork_stage("sendspin-jpeg-direct-decode", start);
+    this->trace_event_("decode-direct-jpeg-end", static_cast<size_t>(std::max(fed, 0)));
+    if (fed < 0) {
+      ESP_LOGE(TAG, "Error when decoding JPEG artwork.");
+      this->end_connection_();
+      return false;
+    }
+    if (static_cast<size_t>(fed) > length || !this->decoder_->is_finished()) {
+      ESP_LOGE(TAG, "JPEG artwork decoder did not finish after %zu bytes", length);
+      this->end_connection_();
+      return false;
+    }
+    this->start_time_ = ::time(nullptr);
+    if (finish_on_decode) {
+      this->finish_download_();
+    } else {
+#ifdef USE_SENDSPIN_ARTWORK
+      this->decoder_.reset();
+      this->sendspin_decode_ready_.store(true, std::memory_order_release);
+      this->trace_event_("decode-ready-deferred", length);
+#else
+      this->finish_download_();
+#endif
+    }
+    this->trace_event_("decode-encoded-end", length);
+    return true;
+  }
+#endif
+
   this->download_buffer_.reset();
   if (this->download_buffer_.resize(length) < length) {
     ESP_LOGE(TAG, "Sendspin artwork buffer resize failed: %zu bytes", length);
