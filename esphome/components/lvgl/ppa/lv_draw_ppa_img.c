@@ -16,11 +16,52 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#include "hal/axi_icm_ll.h"
+#endif
 #include <math.h>
+#include <stdbool.h>
 #include <string.h>
 
 #ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_HEIGHT
 #define CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_HEIGHT 32
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_THROTTLE
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_THROTTLE 1
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_MIN_PIXELS
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_MIN_PIXELS 100000
+#endif
+#ifndef CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS
+#define CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS 8
+#endif
+#ifndef CONFIG_ESPHOME_DMA2D_PEAK_LEVEL
+#define CONFIG_ESPHOME_DMA2D_PEAK_LEVEL 0
+#endif
+#ifndef CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL
+#define CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL 1
+#endif
+#ifndef CONFIG_ESPHOME_DMA2D_WRITE_PRIORITY
+#define CONFIG_ESPHOME_DMA2D_WRITE_PRIORITY 1
+#endif
+#ifndef CONFIG_ESPHOME_DMA2D_READ_PRIORITY
+#define CONFIG_ESPHOME_DMA2D_READ_PRIORITY 1
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_AXI_BURSTINESS
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_AXI_BURSTINESS 1
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_PEAK_LEVEL
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_PEAK_LEVEL 8
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSACTION_LEVEL
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSACTION_LEVEL 11
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_WRITE_PRIORITY
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_WRITE_PRIORITY 0
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_READ_PRIORITY
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_READ_PRIORITY 0
 #endif
 
 static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t * draw_dsc,
@@ -38,6 +79,82 @@ static uint32_t s_ppa_img_srm_sync_max_us;
 static uint64_t s_ppa_img_srm_sync_bytes;
 static uint64_t s_ppa_img_srm_ppa_us;
 static uint32_t s_ppa_img_srm_ppa_max_us;
+static bool s_ppa_img_srm_qos_config_logged;
+
+#if defined(CONFIG_IDF_TARGET_ESP32P4) && CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_THROTTLE
+typedef struct {
+    bool active;
+} lv_draw_ppa_dma2d_qos_guard_t;
+
+static void lv_draw_ppa_dma2d_qos_guard_begin(lv_draw_ppa_dma2d_qos_guard_t * guard, uint32_t pixel_count)
+{
+    guard->active = pixel_count >= CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_MIN_PIXELS;
+    if(!guard->active) {
+        return;
+    }
+    if(!s_ppa_img_srm_qos_config_logged) {
+        s_ppa_img_srm_qos_config_logged = true;
+        ESP_LOGW("lvgl.ppa_img",
+                 "large SRM QoS throttle enabled: min_px=%u burst=%u peak=%u trans=%u prio=%u/%u restore_burst=%u",
+                 (unsigned)CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_MIN_PIXELS,
+                 (unsigned)CONFIG_ESPHOME_LVGL_PPA_SRM_AXI_BURSTINESS,
+                 (unsigned)CONFIG_ESPHOME_LVGL_PPA_SRM_PEAK_LEVEL,
+                 (unsigned)CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSACTION_LEVEL,
+                 (unsigned)CONFIG_ESPHOME_LVGL_PPA_SRM_WRITE_PRIORITY,
+                 (unsigned)CONFIG_ESPHOME_LVGL_PPA_SRM_READ_PRIORITY,
+                 (unsigned)CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS);
+    }
+    axi_icm_ll_set_dma2d_qos_arbiter_prio(CONFIG_ESPHOME_LVGL_PPA_SRM_WRITE_PRIORITY,
+                                          CONFIG_ESPHOME_LVGL_PPA_SRM_READ_PRIORITY);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_LVGL_PPA_SRM_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_LVGL_PPA_SRM_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_WRITE);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_LVGL_PPA_SRM_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_LVGL_PPA_SRM_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_WRITE);
+}
+
+static void lv_draw_ppa_dma2d_qos_guard_end(lv_draw_ppa_dma2d_qos_guard_t * guard)
+{
+    if(!guard->active) {
+        return;
+    }
+    axi_icm_ll_set_dma2d_qos_arbiter_prio(CONFIG_ESPHOME_DMA2D_WRITE_PRIORITY,
+                                          CONFIG_ESPHOME_DMA2D_READ_PRIORITY);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_WRITE);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_DMA2D_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_DMA2D_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_WRITE);
+    guard->active = false;
+}
+#else
+typedef struct {
+    bool active;
+} lv_draw_ppa_dma2d_qos_guard_t;
+static void lv_draw_ppa_dma2d_qos_guard_begin(lv_draw_ppa_dma2d_qos_guard_t * guard, uint32_t pixel_count)
+{
+    LV_UNUSED(pixel_count);
+    guard->active = false;
+}
+static void lv_draw_ppa_dma2d_qos_guard_end(lv_draw_ppa_dma2d_qos_guard_t * guard)
+{
+    LV_UNUSED(guard);
+}
+#endif
 
 uint32_t lv_draw_ppa_get_img_srm_task_count(void)
 {
@@ -452,6 +569,8 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     uint32_t elapsed = 0;
     uint32_t max_band_elapsed = 0;
     const int64_t start_us = pixel_count >= 100000U ? esp_timer_get_time() : 0;
+    lv_draw_ppa_dma2d_qos_guard_t qos_guard;
+    lv_draw_ppa_dma2d_qos_guard_begin(&qos_guard, pixel_count);
     if(use_bands) {
         for(uint32_t y = 0; y < (uint32_t)clip_h; y += band_height) {
             uint32_t this_band_h = (uint32_t)clip_h - y;
@@ -483,6 +602,7 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
             lv_draw_ppa_cache_msync_after_dma_write(sync_start, sync_size);
         }
     }
+    lv_draw_ppa_dma2d_qos_guard_end(&qos_guard);
     if(start_us != 0) {
         elapsed = (uint32_t)(esp_timer_get_time() - start_us);
         s_ppa_img_srm_ppa_us += elapsed;
