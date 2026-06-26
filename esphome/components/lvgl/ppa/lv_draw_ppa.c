@@ -272,27 +272,6 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
 #else
             if(dsc->scale_x != LV_SCALE_NONE || dsc->scale_y != LV_SCALE_NONE) return 0;
 #endif
-#ifdef LV_USE_PPA_IMG
-            /* Use SRM as an opaque 1:1 copy/convert engine for large plain images.
-             * The older plain image path used PPA blend with the target buffer as
-             * both input and output; on cached PSRAM RGB888 layers that produced
-             * short horizontal artifacts. SRM only reads the source image and writes
-             * the destination, so it is safer for full-screen artwork while still
-             * avoiding the very expensive software RGB565->RGB888 copy. */
-            if(dsc->opa < (lv_opa_t)LV_OPA_MAX) return 0;
-            if(dsc->blend_mode != LV_BLEND_MODE_NORMAL) return 0;
-            if(!ppa_task_large_visible_band(t)) return 0;
-            if(!ppa_src_cf_supported((lv_color_format_t)dsc->header.cf)) return 0;
-            lv_draw_buf_t * plain_dest = t->target_layer->draw_buf;
-            if(!ppa_buf_usable(plain_dest)) return 0;
-            if(!ppa_dest_cf_supported((lv_color_format_t)plain_dest->header.cf)) return 0;
-            if(t->preference_score > 55) {
-                t->preference_score = 55;
-                t->preferred_draw_unit_id = draw_unit->idx;
-            }
-            s_ppa_img_accepted_eval_tasks++;
-            return 1;
-#endif
             return 0;
         }
 
@@ -351,9 +330,6 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
                     if(img_dsc->rotation != 0) {
                         lv_draw_ppa_img_rotate(t, img_dsc, &t->area);
                     } else if(img_dsc->scale_x != LV_SCALE_NONE || img_dsc->scale_y != LV_SCALE_NONE) {
-                        lv_draw_ppa_img_srm(t, img_dsc, &t->area);
-                    } else if(img_dsc->opa >= (lv_opa_t)LV_OPA_MAX &&
-                              img_dsc->blend_mode == LV_BLEND_MODE_NORMAL) {
                         lv_draw_ppa_img_srm(t, img_dsc, &t->area);
                     } else
 #endif
