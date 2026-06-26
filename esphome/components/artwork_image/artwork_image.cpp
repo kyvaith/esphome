@@ -1348,14 +1348,6 @@ void ArtworkImage::discard_decode_buffer_() {
   this->decode_buffer_written_by_dma_ = false;
 }
 
-void ArtworkImage::sync_decode_buffer_for_display_() {
-  if (!this->decode_buffer_written_by_dma_ || this->decode_buffer_ == nullptr) {
-    return;
-  }
-  sync_artwork_buffer_for_dma(this->decode_buffer_, this->get_decode_buffer_size_(), true);
-  this->decode_buffer_written_by_dma_ = false;
-}
-
 void ArtworkImage::release_spare_buffer_() {
   if (this->spare_buffer_ != nullptr) {
     this->release_buffer_(this->spare_buffer_, this->spare_buffer_size_, this->spare_buffer_uses_jpeg_allocator_);
@@ -1424,7 +1416,9 @@ bool ArtworkImage::promote_decode_buffer_() {
   this->data_start_ = this->buffer_;
   this->width_ = this->buffer_width_;
   this->height_ = this->buffer_height_;
-  sync_artwork_buffer_for_dma(this->buffer_, this->get_buffer_size_(), written_by_dma);
+  if (!written_by_dma) {
+    sync_artwork_buffer_for_dma(this->buffer_, this->get_buffer_size_(), false);
+  }
   this->apply_rgb_darken_once(this->darken_percent_);
 #ifdef USE_LVGL
   this->prepare_lvgl_dsc_();
@@ -1535,7 +1529,6 @@ bool ArtworkImage::decode_encoded_image_(ImageFormat format, const uint8_t *data
       this->end_connection_();
       return false;
     }
-    this->sync_decode_buffer_for_display_();
     this->start_time_ = ::time(nullptr);
     if (finish_on_decode) {
       this->finish_download_();
@@ -1575,7 +1568,6 @@ bool ArtworkImage::decode_encoded_image_(ImageFormat format, const uint8_t *data
     this->end_connection_();
     return false;
   }
-  this->sync_decode_buffer_for_display_();
   this->trace_event_("decode-complete", length);
 
   this->start_time_ = ::time(nullptr);
