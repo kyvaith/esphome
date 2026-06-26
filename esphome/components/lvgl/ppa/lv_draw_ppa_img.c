@@ -14,8 +14,14 @@
 #include "src/draw/lv_image_decoder_private.h"
 #include "src/draw/lv_image_decoder.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <math.h>
 #include <string.h>
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_HEIGHT
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_HEIGHT 32
+#endif
 
 static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t * draw_dsc,
                                  const lv_image_decoder_dsc_t * decoder_dsc, lv_draw_image_sup_t * sup,
@@ -415,34 +421,78 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     cfg.mode              = PPA_TRANS_MODE_BLOCKING;
     cfg.user_data         = u;
 
-    /* SRM writes through DMA while LVGL's draw buffer is cacheable PSRAM.
-     * Synchronize whole touched rows, not just the visible rectangle: RGB888
-     * spans are not cache-line aligned, so a row-level contract preserves
-     * neighbouring software-rendered pixels and prevents delayed horizontal
-     * artifacts when later redraws hit the same cache lines. */
-    uint8_t * sync_start = out_ptr + (size_t)dest_area.y1 * dest_stride;
-    uint32_t sync_size = dest_stride * (uint32_t)clip_h;
-    lv_draw_ppa_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-
     s_ppa_img_srm_tasks++;
     if(pixel_count >= 100000U) {
         s_ppa_img_srm_large_tasks++;
     }
+    const bool plain_1x =
+        dsc->rotation == 0 && dsc->scale_x == LV_SCALE_NONE && dsc->scale_y == LV_SCALE_NONE &&
+        dsc->skew_x == 0 && dsc->skew_y == 0 && sx == 1.0f && sy == 1.0f &&
+        !gap_right && !gap_bottom;
+    const uint32_t band_height = CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_HEIGHT;
+    const bool use_bands =
+        plain_1x && aligned_out == NULL && pixel_count >= 100000U &&
+        band_height > 0 && (uint32_t)clip_h > band_height;
+
+    /* SRM writes through DMA while LVGL's draw buffer is cacheable PSRAM.
+     * Synchronize whole touched rows, not just the visible rectangle: RGB888
+     * spans are not cache-line aligned, so a row-level contract preserves
+     * neighbouring software-rendered pixels and prevents delayed horizontal
+     * artifacts when later redraws hit the same cache lines.
+     *
+     * Large 1:1 artwork copies are split into bands. A single full-screen SRM
+     * transfer can monopolize PSRAM long enough to starve MIPI DSI scanout;
+     * banding leaves short gaps between PPA jobs while keeping the CPU-free SRM
+     * path for the expensive RGB565/RGB888 copy.
+     */
+    uint8_t * sync_start = out_ptr + (size_t)dest_area.y1 * dest_stride;
+    uint32_t sync_size = dest_stride * (uint32_t)clip_h;
+
+    esp_err_t ret = ESP_OK;
+    uint32_t elapsed = 0;
+    uint32_t max_band_elapsed = 0;
     const int64_t start_us = pixel_count >= 100000U ? esp_timer_get_time() : 0;
-    esp_err_t ret = ppa_do_scale_rotate_mirror(u->srm_client, &cfg);
+    if(use_bands) {
+        for(uint32_t y = 0; y < (uint32_t)clip_h; y += band_height) {
+            uint32_t this_band_h = (uint32_t)clip_h - y;
+            if(this_band_h > band_height) this_band_h = band_height;
+
+            cfg.in.block_h = this_band_h;
+            cfg.in.block_offset_y = (uint32_t)src_by + y;
+            cfg.out.block_offset_y = (uint32_t)dest_area.y1 + y;
+
+            uint8_t * band_sync_start = out_ptr + (size_t)(dest_area.y1 + y) * dest_stride;
+            uint32_t band_sync_size = dest_stride * this_band_h;
+            lv_draw_ppa_cache_msync(band_sync_start, band_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+
+            const int64_t band_start_us = esp_timer_get_time();
+            ret = ppa_do_scale_rotate_mirror(u->srm_client, &cfg);
+            uint32_t band_elapsed = (uint32_t)(esp_timer_get_time() - band_start_us);
+            if(band_elapsed > max_band_elapsed) max_band_elapsed = band_elapsed;
+            if(ret == ESP_OK) {
+                lv_draw_ppa_cache_msync_after_dma_write(band_sync_start, band_sync_size);
+            } else {
+                break;
+            }
+            taskYIELD();
+        }
+    } else {
+        lv_draw_ppa_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        ret = ppa_do_scale_rotate_mirror(u->srm_client, &cfg);
+        if(ret == ESP_OK) {
+            lv_draw_ppa_cache_msync_after_dma_write(sync_start, sync_size);
+        }
+    }
     if(start_us != 0) {
-        uint32_t elapsed = (uint32_t)(esp_timer_get_time() - start_us);
+        elapsed = (uint32_t)(esp_timer_get_time() - start_us);
         s_ppa_img_srm_ppa_us += elapsed;
         if(elapsed > s_ppa_img_srm_ppa_max_us) {
             s_ppa_img_srm_ppa_max_us = elapsed;
         }
-        ESP_LOGW("lvgl.ppa_img", "srm %dx%d src=%ux%u scale=%.2f/%.2f ret=%d took=%lldus",
+        ESP_LOGW("lvgl.ppa_img", "srm %dx%d src=%ux%u scale=%.2f/%.2f band=%u max_band=%uus ret=%d took=%uus",
                  (int)clip_w, (int)clip_h, (unsigned)src_bw, (unsigned)src_bh,
-                 (double)sx, (double)sy, (int)ret,
-                 (long long)elapsed);
-    }
-    if(ret == ESP_OK) {
-        lv_draw_ppa_cache_msync_after_dma_write(sync_start, sync_size);
+                 (double)sx, (double)sy, use_bands ? (unsigned)band_height : 0U,
+                 (unsigned)max_band_elapsed, (int)ret, (unsigned)elapsed);
     }
     if(ret != ESP_OK) {
         LV_LOG_ERROR("PPA SRM scale failed: %d (src %ux%u scale %.2f/%.2f)",
