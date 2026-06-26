@@ -326,7 +326,10 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
 
     const uint32_t pixel_count = block_w * block_h;
     const int64_t start_us = pixel_count >= 100000U ? esp_timer_get_time() : 0;
+    lv_draw_ppa_dma2d_qos_guard_t qos_guard;
+    lv_draw_ppa_dma2d_qos_guard_begin(&qos_guard, pixel_count);
     esp_err_t ret = ppa_do_blend(u->blend_client, &cfg);
+    lv_draw_ppa_dma2d_qos_guard_end(&qos_guard);
     if(start_us != 0) {
         ESP_LOGW("lvgl.ppa_img", "blend %ux%u src_cf=%d dst_cf=%d ret=%d took=%lldus",
                  (unsigned)block_w, (unsigned)block_h, (int)src_cf, (int)dest_cf, (int)ret,
