@@ -114,8 +114,8 @@ void lv_draw_ppa_init(void)
     draw_ppa_unit->base_unit.dispatch_cb = ppa_dispatch;
     draw_ppa_unit->base_unit.delete_cb = ppa_delete;
 
-    ESP_LOGW(TAG, "PPA draw unit registered, idx=%d burst=%d", (int)draw_ppa_unit->base_unit.idx,
-             (int)LV_DRAW_PPA_DATA_BURST_LENGTH);
+    ESP_LOGW(TAG, "PPA draw unit registered, idx=%d burst=%d srm_burst=%d", (int)draw_ppa_unit->base_unit.idx,
+             (int)LV_DRAW_PPA_DATA_BURST_LENGTH, (int)LV_DRAW_PPA_SRM_DATA_BURST_LENGTH);
 
     /* Register PPA clients */
     esp_err_t res;
@@ -125,7 +125,7 @@ void lv_draw_ppa_init(void)
     /* Register SRM client */
     cfg.oper_type = PPA_OPERATION_SRM;
     cfg.max_pending_trans_num = 1;
-    cfg.data_burst_length = LV_DRAW_PPA_DATA_BURST_LENGTH;
+    cfg.data_burst_length = LV_DRAW_PPA_SRM_DATA_BURST_LENGTH;
 
     res = ppa_register_client(&cfg, &draw_ppa_unit->srm_client);
     if(res != ESP_OK) {

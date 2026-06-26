@@ -31,6 +31,7 @@
 #endif
 
 #ifdef USE_LVGL_PPA
+#include "sdkconfig.h"
 #include "driver/ppa.h"
 #ifndef LV_PPA_BURST_LENGTH
 #define LV_PPA_BURST_LENGTH (128)
@@ -47,6 +48,22 @@
 #define LVGL_ESPHOME_PPA_DATA_BURST_LENGTH PPA_DATA_BURST_LENGTH_8
 #else
 #error "LV_PPA_BURST_LENGTH must be 8, 16, 32, 64 or 128"
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_BURST_LENGTH
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_BURST_LENGTH LV_PPA_BURST_LENGTH
+#endif
+#if CONFIG_ESPHOME_LVGL_PPA_SRM_BURST_LENGTH == 128
+#define LVGL_ESPHOME_PPA_SRM_DATA_BURST_LENGTH PPA_DATA_BURST_LENGTH_128
+#elif CONFIG_ESPHOME_LVGL_PPA_SRM_BURST_LENGTH == 64
+#define LVGL_ESPHOME_PPA_SRM_DATA_BURST_LENGTH PPA_DATA_BURST_LENGTH_64
+#elif CONFIG_ESPHOME_LVGL_PPA_SRM_BURST_LENGTH == 32
+#define LVGL_ESPHOME_PPA_SRM_DATA_BURST_LENGTH PPA_DATA_BURST_LENGTH_32
+#elif CONFIG_ESPHOME_LVGL_PPA_SRM_BURST_LENGTH == 16
+#define LVGL_ESPHOME_PPA_SRM_DATA_BURST_LENGTH PPA_DATA_BURST_LENGTH_16
+#elif CONFIG_ESPHOME_LVGL_PPA_SRM_BURST_LENGTH == 8
+#define LVGL_ESPHOME_PPA_SRM_DATA_BURST_LENGTH PPA_DATA_BURST_LENGTH_8
+#else
+#error "CONFIG_ESPHOME_LVGL_PPA_SRM_BURST_LENGTH must be 8, 16, 32, 64 or 128"
 #endif
 extern "C" {
 void lv_draw_ppa_init(void);
@@ -1027,9 +1044,10 @@ void LvglComponent::esphome_lvgl_init() {
     ppa_client_config_t srm_cfg = {};
     srm_cfg.oper_type = PPA_OPERATION_SRM;
     srm_cfg.max_pending_trans_num = 1;
-    srm_cfg.data_burst_length = LVGL_ESPHOME_PPA_DATA_BURST_LENGTH;
+    srm_cfg.data_burst_length = LVGL_ESPHOME_PPA_SRM_DATA_BURST_LENGTH;
     if (ppa_register_client(&srm_cfg, &s_display_srm_client) == ESP_OK) {
-      ESP_LOGI(TAG, "PPA display rotation SRM client registered");
+      ESP_LOGI(TAG, "PPA display rotation SRM client registered (srm_burst=%d)",
+               (int) LVGL_ESPHOME_PPA_SRM_DATA_BURST_LENGTH);
     } else {
       ESP_LOGW(TAG, "PPA display rotation SRM client failed, SW rotation will be used");
       s_display_srm_client = nullptr;
@@ -1518,11 +1536,11 @@ bool LvglComponent::start_partial_compositor_() {
     ppa_client_config_t srm_cfg = {};
     srm_cfg.oper_type = PPA_OPERATION_SRM;
     srm_cfg.max_pending_trans_num = 1;
-    srm_cfg.data_burst_length = LVGL_ESPHOME_PPA_DATA_BURST_LENGTH;
+    srm_cfg.data_burst_length = LVGL_ESPHOME_PPA_SRM_DATA_BURST_LENGTH;
     esp_err_t ret = ppa_register_client(&srm_cfg, &s_compositor_srm_client);
     if (ret == ESP_OK) {
-      ESP_LOGI(TAG, "LVGL partial framebuffer compositor PPA SRM client registered (alignment=%u)",
-               (unsigned) s_compositor_srm_alignment);
+      ESP_LOGI(TAG, "LVGL partial framebuffer compositor PPA SRM client registered (alignment=%u srm_burst=%d)",
+               (unsigned) s_compositor_srm_alignment, (int) LVGL_ESPHOME_PPA_SRM_DATA_BURST_LENGTH);
     } else {
       s_compositor_srm_client = nullptr;
       ESP_LOGW(TAG, "LVGL partial framebuffer compositor PPA SRM client failed (%s); using CPU copy",
