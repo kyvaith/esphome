@@ -659,6 +659,7 @@ size_t ArtworkImage::resize_(int width_in, int height_in) {
     }
   }
   size_t new_size = this->get_buffer_size_(width, height);
+  const bool needs_clear = content_width != width || content_height != height || offset_x != 0 || offset_y != 0;
   if (this->decode_buffer_) {
     if (new_size <= this->get_decode_buffer_size_()) {
       this->decode_buffer_width_ = width;
@@ -668,7 +669,9 @@ size_t ArtworkImage::resize_(int width_in, int height_in) {
       this->decode_offset_x_ = offset_x;
       this->decode_offset_y_ = offset_y;
       this->decode_buffer_written_by_dma_ = false;
-      memset(this->decode_buffer_, 0, new_size);
+      if (needs_clear) {
+        memset(this->decode_buffer_, 0, new_size);
+      }
       ESP_LOGI(TAG, "Artwork fit: source=%dx%d target=%dx%d content=%dx%d offset=%d,%d",
                width_in, height_in, width, height, content_width, content_height, offset_x, offset_y);
       return new_size;
@@ -701,7 +704,9 @@ size_t ArtworkImage::resize_(int width_in, int height_in) {
   this->decode_offset_x_ = offset_x;
   this->decode_offset_y_ = offset_y;
   this->decode_buffer_written_by_dma_ = false;
-  memset(this->decode_buffer_, 0, new_size);
+  if (needs_clear) {
+    memset(this->decode_buffer_, 0, new_size);
+  }
   ESP_LOGI(TAG, "Artwork fit: source=%dx%d target=%dx%d content=%dx%d offset=%d,%d",
            width_in, height_in, width, height, content_width, content_height, offset_x, offset_y);
   return new_size;
