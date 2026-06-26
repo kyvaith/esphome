@@ -272,6 +272,24 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
 #else
             if(dsc->scale_x != LV_SCALE_NONE || dsc->scale_y != LV_SCALE_NONE) return 0;
 #endif
+#ifdef LV_USE_PPA_IMG
+            /* Plain opaque images use the PPA blend path, not SRM. SRM is excellent
+             * for scale/rotate/mirror, but full-screen 1:1 artwork redraws can
+             * monopolize PSRAM long enough for DSI to show fallback frames. */
+            if(dsc->opa < (lv_opa_t)LV_OPA_MAX) return 0;
+            if(dsc->blend_mode != LV_BLEND_MODE_NORMAL) return 0;
+            if(!ppa_task_large_visible_band(t)) return 0;
+            if(!ppa_src_cf_supported((lv_color_format_t)dsc->header.cf)) return 0;
+            lv_draw_buf_t * plain_dest = t->target_layer->draw_buf;
+            if(!ppa_buf_usable(plain_dest)) return 0;
+            if(!ppa_dest_cf_supported((lv_color_format_t)plain_dest->header.cf)) return 0;
+            if(t->preference_score > 55) {
+                t->preference_score = 55;
+                t->preferred_draw_unit_id = draw_unit->idx;
+            }
+            s_ppa_img_accepted_eval_tasks++;
+            return 1;
+#endif
             return 0;
         }
 
