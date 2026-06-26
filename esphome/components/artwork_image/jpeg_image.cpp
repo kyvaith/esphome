@@ -249,9 +249,14 @@ int HOT JpegDecoder::decode(uint8_t *buffer, size_t size) {
   }
   ESP_LOGD(TAG, "JPEG decode start: %zu bytes", size);
 
-  int hw_result = this->decode_hardware_(buffer, size);
-  if (hw_result != 0) {
-    return hw_result;
+  if (this->image_->use_hardware_jpeg()) {
+    int hw_result = this->decode_hardware_(buffer, size);
+    if (hw_result != 0) {
+      return hw_result;
+    }
+  } else {
+    ESP_LOGW(TAG, "artwork trace #%u hardware JPEG disabled for this image; using software decode",
+             this->image_->get_trace_id());
   }
 
   jpeg_decompress_struct cinfo;

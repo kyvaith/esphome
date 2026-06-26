@@ -53,6 +53,7 @@ CONF_SENDSPIN_SLOT = "sendspin_slot"
 CONF_SENDSPIN_PAUSED = "sendspin_paused"
 CONF_IMMEDIATE = "immediate"
 CONF_DARKEN = "darken"
+CONF_HARDWARE_JPEG = "hardware_jpeg"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -183,6 +184,7 @@ ARTWORK_IMAGE_SCHEMA = (
             cv.Optional(CONF_BUFFER_SIZE, default=65536): cv.int_range(256, 524288),
             cv.Optional(CONF_ALLOW_INSECURE_LOCAL_URLS, default=False): cv.boolean,
             cv.Optional(CONF_DARKEN, default=0): cv.int_range(0, 99),
+            cv.Optional(CONF_HARDWARE_JPEG, default=True): cv.boolean,
             cv.Optional(sendspin.CONF_SENDSPIN_ID): cv.use_id(sendspin.SendspinHub),
             cv.Optional(CONF_SENDSPIN_SLOT, default=0): cv.int_range(0, 3),
             cv.Optional(CONF_SENDSPIN_PAUSED, default=False): cv.boolean,
@@ -325,6 +327,7 @@ async def to_code(config):
     await cg.register_component(var, config)
     await cg.register_parented(var, config[CONF_HTTP_REQUEST_ID])
     cg.add(var.set_darken_percent(config[CONF_DARKEN]))
+    cg.add(var.set_hardware_jpeg(config[CONF_HARDWARE_JPEG]))
 
     for key, value in config.get(CONF_REQUEST_HEADERS, {}).items():
         if isinstance(value, Lambda):

@@ -139,6 +139,8 @@ class ArtworkImage : public PollingComponent,
   image::ImageType image_type() const { return this->type_; }
   void apply_rgb_darken_once(uint8_t percent);
   void set_darken_percent(uint8_t percent) { this->darken_percent_ = percent; }
+  void set_hardware_jpeg(bool hardware_jpeg) { this->hardware_jpeg_ = hardware_jpeg; }
+  bool use_hardware_jpeg() const { return this->hardware_jpeg_; }
 
  protected:
   bool validate_url_(const std::string &url);
@@ -225,6 +227,7 @@ class ArtworkImage : public PollingComponent,
   uint8_t *buffer_;
   uint8_t *decode_buffer_{nullptr};
   bool decode_buffer_reuses_active_{false};
+  bool hardware_jpeg_{true};
   DownloadBuffer download_buffer_;
   /**
    * This is the *initial* size of the download buffer, not the current size.
