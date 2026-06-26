@@ -115,6 +115,7 @@ class ArtworkImage : public PollingComponent,
   uint8_t *try_get_staging_buffer_for_decode(int width, int height, int content_width, int content_height);
   void cancel_staging_buffer_decode();
   void mark_decode_buffer_written_by_dma() { this->decode_buffer_written_by_dma_ = true; }
+  void mark_decode_buffer_jpeg_allocator() { this->decode_buffer_uses_jpeg_allocator_ = true; }
 
   /**
    * Resize the download buffer
@@ -188,6 +189,7 @@ class ArtworkImage : public PollingComponent,
   size_t resize_(int width, int height);
   size_t get_decode_buffer_size_() const { return get_buffer_size_(this->decode_buffer_width_, this->decode_buffer_height_); }
   void release_spare_buffer_();
+  void release_buffer_(uint8_t *buffer, size_t size, bool jpeg_allocator);
   void discard_decode_buffer_();
   bool promote_decode_buffer_();
   void retire_active_buffer_();
@@ -228,10 +230,13 @@ class ArtworkImage : public PollingComponent,
   std::unique_ptr<ImageDecoder> decoder_{nullptr};
 
   uint8_t *buffer_;
+  bool buffer_uses_jpeg_allocator_{false};
   uint8_t *decode_buffer_{nullptr};
   bool decode_buffer_reuses_active_{false};
+  bool decode_buffer_uses_jpeg_allocator_{false};
   uint8_t *spare_buffer_{nullptr};
   size_t spare_buffer_size_{0};
+  bool spare_buffer_uses_jpeg_allocator_{false};
   bool hardware_jpeg_{true};
   DownloadBuffer download_buffer_;
   /**
@@ -297,6 +302,7 @@ class ArtworkImage : public PollingComponent,
     uint8_t *data;
     size_t size;
     uint32_t retired_at;
+    bool jpeg_allocator;
   };
   std::vector<RetiredBuffer> retired_buffers_{};
 #ifdef USE_LVGL

@@ -208,6 +208,7 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
     }
     return DECODE_ERROR_OUT_OF_MEMORY;
   }
+  this->image_->mark_decode_buffer_jpeg_allocator();
   if (aligned_w == frame_w && aligned_h == frame_h) {
     this->image_->mark_decode_buffer_written_by_dma();
   }
