@@ -1309,7 +1309,9 @@ void LvglComponent::flush_cb_(lv_display_t *disp_drv, const lv_area_t *area, uin
         // otherwise fast animated widgets can occasionally race the scanout and
         // show short horizontal artifacts.
         this->wait_for_direct_frame_presented(20);
-        this->sync_direct_other_buffer_(area, color_p);
+        if (!this->full_refresh_) {
+          this->sync_direct_other_buffer_(area, color_p);
+        }
       } else {
         if (!this->sync_direct_other_buffer_(area, color_p)) {
           this->sync_direct_framebuffer_area_(area, color_p);
