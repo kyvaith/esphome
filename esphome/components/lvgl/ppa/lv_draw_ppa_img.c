@@ -27,6 +27,10 @@
 #define CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_HEIGHT 32
 #endif
 
+#ifndef CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_HEIGHT
+#define CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_HEIGHT 32
+#endif
+
 #ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_THROTTLE
 #define CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_THROTTLE 1
 #endif
@@ -256,7 +260,6 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
     uint8_t * dest_buf = draw_buf->data;
     uint32_t block_w = (uint32_t)lv_area_get_width(&src_area);
     uint32_t block_h = (uint32_t)lv_area_get_height(&src_area);
-    lv_draw_ppa_cache_msync(decoded->data, decoded->data_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
     uint32_t src_px_size = lv_color_format_get_size(src_cf);
     uint32_t dest_px_size = lv_color_format_get_size(dest_cf);
@@ -326,13 +329,62 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
 
     const uint32_t pixel_count = block_w * block_h;
     const int64_t start_us = pixel_count >= 100000U ? esp_timer_get_time() : 0;
+    const uint32_t band_height = CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_HEIGHT;
+    const bool use_bands =
+        pixel_count >= 100000U && band_height > 0 && block_h > band_height;
+
     lv_draw_ppa_dma2d_qos_guard_t qos_guard;
     lv_draw_ppa_dma2d_qos_guard_begin(&qos_guard, pixel_count);
-    esp_err_t ret = ppa_do_blend(u->blend_client, &cfg);
+    esp_err_t ret = ESP_OK;
+    uint32_t max_band_elapsed = 0;
+    if(use_bands) {
+        for(uint32_t y = 0; y < block_h; y += band_height) {
+            uint32_t this_band_h = block_h - y;
+            if(this_band_h > band_height) this_band_h = band_height;
+
+            cfg.in_bg.block_h = this_band_h;
+            cfg.in_bg.block_offset_y = (uint32_t)src_area.y1 + y;
+            cfg.in_fg.block_h = this_band_h;
+            cfg.in_fg.block_offset_y = (uint32_t)dest_area.y1 + y;
+            cfg.out.block_offset_y = (uint32_t)dest_area.y1 + y;
+
+            const uint8_t * src_sync_start = src_buf + (size_t)(src_area.y1 + y) * src_stride;
+            uint32_t src_sync_size = src_stride * this_band_h;
+            uint8_t * dest_sync_start = dest_buf + (size_t)(dest_area.y1 + y) * dest_stride;
+            uint32_t dest_sync_size = dest_stride * this_band_h;
+            lv_draw_ppa_cache_msync(src_sync_start, src_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+            lv_draw_ppa_cache_msync(dest_sync_start, dest_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+
+            const int64_t band_start_us = esp_timer_get_time();
+            ret = ppa_do_blend(u->blend_client, &cfg);
+            const uint32_t band_elapsed = (uint32_t)(esp_timer_get_time() - band_start_us);
+            if(band_elapsed > max_band_elapsed) max_band_elapsed = band_elapsed;
+            if(ret == ESP_OK) {
+                lv_draw_ppa_cache_msync_after_dma_write(dest_sync_start, dest_sync_size);
+            }
+            else {
+                break;
+            }
+            taskYIELD();
+        }
+    }
+    else {
+        const uint8_t * src_sync_start = src_buf + (size_t)src_area.y1 * src_stride;
+        uint32_t src_sync_size = src_stride * block_h;
+        uint8_t * dest_sync_start = dest_buf + (size_t)dest_area.y1 * dest_stride;
+        uint32_t dest_sync_size = dest_stride * block_h;
+        lv_draw_ppa_cache_msync(src_sync_start, src_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        lv_draw_ppa_cache_msync(dest_sync_start, dest_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        ret = ppa_do_blend(u->blend_client, &cfg);
+        if(ret == ESP_OK) {
+            lv_draw_ppa_cache_msync_after_dma_write(dest_sync_start, dest_sync_size);
+        }
+    }
     lv_draw_ppa_dma2d_qos_guard_end(&qos_guard);
     if(start_us != 0) {
-        ESP_LOGW("lvgl.ppa_img", "blend %ux%u src_cf=%d dst_cf=%d ret=%d took=%lldus",
-                 (unsigned)block_w, (unsigned)block_h, (int)src_cf, (int)dest_cf, (int)ret,
+        ESP_LOGW("lvgl.ppa_img", "blend %ux%u src_cf=%d dst_cf=%d band=%u max_band=%uus ret=%d took=%lldus",
+                 (unsigned)block_w, (unsigned)block_h, (int)src_cf, (int)dest_cf,
+                 use_bands ? (unsigned)band_height : 0U, (unsigned)max_band_elapsed, (int)ret,
                  (long long)(esp_timer_get_time() - start_us));
     }
     if(ret != ESP_OK) {
