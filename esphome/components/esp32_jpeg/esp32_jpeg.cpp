@@ -15,6 +15,9 @@
 #include "driver/jpeg_encode.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#include "hal/axi_icm_ll.h"
+#endif
 #endif
 
 namespace esphome::esp32_jpeg {
@@ -32,6 +35,41 @@ constexpr size_t MIN_ENCODER_INTERNAL_DMA_LARGEST = 56 * 1024;
 constexpr size_t MIN_DECODER_INTERNAL_DMA_LARGEST = 56 * 1024;
 bool encoder_dma_guard_logged = false;
 bool decoder_dma_guard_logged = false;
+
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#ifndef CONFIG_ESPHOME_JPEG_DMA2D_AXI_BURSTINESS
+#define CONFIG_ESPHOME_JPEG_DMA2D_AXI_BURSTINESS 1
+#endif
+#ifndef CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS
+#define CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS 8
+#endif
+
+class Dma2dJpegBurstGuard {
+ public:
+  Dma2dJpegBurstGuard() {
+    if constexpr (CONFIG_ESPHOME_JPEG_DMA2D_AXI_BURSTINESS != CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS) {
+      axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_JPEG_DMA2D_AXI_BURSTINESS,
+                                    AXI_ICM_ACCESS_READ);
+      axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_JPEG_DMA2D_AXI_BURSTINESS,
+                                    AXI_ICM_ACCESS_WRITE);
+    }
+  }
+
+  ~Dma2dJpegBurstGuard() {
+    if constexpr (CONFIG_ESPHOME_JPEG_DMA2D_AXI_BURSTINESS != CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS) {
+      axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS,
+                                    AXI_ICM_ACCESS_READ);
+      axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS,
+                                    AXI_ICM_ACCESS_WRITE);
+    }
+  }
+};
+#else
+class Dma2dJpegBurstGuard {
+ public:
+  Dma2dJpegBurstGuard() = default;
+};
+#endif
 
 void ensure_jpeg_codec_mutex_() {
   if (jpeg_codec_mutex == nullptr)
@@ -424,8 +462,12 @@ esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_si
   }
 
   uint32_t decoded_size = 0;
-  esp_err_t err =
-      jpeg_decoder_process(decoder, &decode_cfg, input_data, jpeg_size, decoded_data, decoded_capacity, &decoded_size);
+  esp_err_t err = ESP_OK;
+  {
+    Dma2dJpegBurstGuard burst_guard;
+    err = jpeg_decoder_process(decoder, &decode_cfg, input_data, jpeg_size, decoded_data, decoded_capacity,
+                               &decoded_size);
+  }
   if (err != ESP_OK && config.direct_output) {
     jpeg_decode_memory_alloc_cfg_t output_mem_cfg = {
         .buffer_direction = JPEG_DEC_ALLOC_OUTPUT_BUFFER,
@@ -434,8 +476,11 @@ esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_si
     if (decoded_data != nullptr) {
       decoded_owned = true;
       decoded_size = 0;
-      err =
-          jpeg_decoder_process(decoder, &decode_cfg, input_data, jpeg_size, decoded_data, decoded_capacity, &decoded_size);
+      {
+        Dma2dJpegBurstGuard burst_guard;
+        err = jpeg_decoder_process(decoder, &decode_cfg, input_data, jpeg_size, decoded_data, decoded_capacity,
+                                   &decoded_size);
+      }
     }
   }
   heap_caps_free(input_data);
@@ -531,8 +576,12 @@ esp_err_t decode_allocated(const DecodeConfig &config, const uint8_t *jpeg, size
   };
 
   uint32_t decoded_size = 0;
-  esp_err_t err =
-      jpeg_decoder_process(decoder, &decode_cfg, input_data, jpeg_size, decoded_data, output_capacity, &decoded_size);
+  esp_err_t err = ESP_OK;
+  {
+    Dma2dJpegBurstGuard burst_guard;
+    err = jpeg_decoder_process(decoder, &decode_cfg, input_data, jpeg_size, decoded_data, output_capacity,
+                               &decoded_size);
+  }
   heap_caps_free(input_data);
   if (owns_decoder)
     jpeg_del_decoder_engine(decoder);
