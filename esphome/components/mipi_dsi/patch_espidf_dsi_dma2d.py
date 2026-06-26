@@ -553,6 +553,15 @@ static dma2d_data_burst_length_t jpeg_dec_select_dma2d_burst_length(void)
     return DMA2D_DATA_BURST_LENGTH_128;
 #endif
 }
+
+static bool jpeg_dec_select_dma2d_desc_burst_en(void)
+{
+#ifdef CONFIG_ESPHOME_JPEG_DMA2D_DESC_BURST_DISABLE
+    return false;
+#else
+    return true;
+#endif
+}
 """
     changed = False
     if "jpeg_dec_select_dma2d_burst_length" not in text:
@@ -562,12 +571,38 @@ static dma2d_data_burst_length_t jpeg_dec_select_dma2d_burst_length(void)
         text = text.replace(anchor, f"{helper}\n{anchor}", 1)
         changed = True
 
+    desc_helper = """
+static bool jpeg_dec_select_dma2d_desc_burst_en(void)
+{
+#ifdef CONFIG_ESPHOME_JPEG_DMA2D_DESC_BURST_DISABLE
+    return false;
+#else
+    return true;
+#endif
+}
+"""
+    if "jpeg_dec_select_dma2d_desc_burst_en" not in text:
+        anchor = "static void jpeg_dec_config_dma_trans_ability(jpeg_decoder_handle_t decoder_engine)\n"
+        if anchor not in text:
+            raise RuntimeError("ESP-IDF JPEG decode DMA2D transfer ability function not found; patch needs review")
+        text = text.replace(anchor, f"{desc_helper}\n{anchor}", 1)
+        changed = True
+
     old = ".data_burst_length = DMA2D_DATA_BURST_LENGTH_128,"
     new = ".data_burst_length = jpeg_dec_select_dma2d_burst_length(),"
     if new not in text:
         count = text.count(old)
         if count != 2:
             raise RuntimeError("ESP-IDF JPEG decode DMA2D burst lines not found; patch needs review")
+        text = text.replace(old, new)
+        changed = True
+
+    old = ".desc_burst_en = true,"
+    new = ".desc_burst_en = jpeg_dec_select_dma2d_desc_burst_en(),"
+    if new not in text:
+        count = text.count(old)
+        if count != 2:
+            raise RuntimeError("ESP-IDF JPEG decode DMA2D desc burst lines not found; patch needs review")
         text = text.replace(old, new)
         changed = True
 
