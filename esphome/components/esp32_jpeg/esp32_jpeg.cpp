@@ -43,6 +43,18 @@ bool decoder_dma_guard_logged = false;
 #ifndef CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS
 #define CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS 8
 #endif
+#ifndef CONFIG_ESPHOME_JPEG_DMA2D_PEAK_LEVEL
+#define CONFIG_ESPHOME_JPEG_DMA2D_PEAK_LEVEL 2
+#endif
+#ifndef CONFIG_ESPHOME_JPEG_DMA2D_TRANSACTION_LEVEL
+#define CONFIG_ESPHOME_JPEG_DMA2D_TRANSACTION_LEVEL 4
+#endif
+#ifndef CONFIG_ESPHOME_DMA2D_PEAK_LEVEL
+#define CONFIG_ESPHOME_DMA2D_PEAK_LEVEL 0
+#endif
+#ifndef CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL
+#define CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL 1
+#endif
 
 class Dma2dJpegBurstGuard {
  public:
@@ -53,6 +65,13 @@ class Dma2dJpegBurstGuard {
       axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_JPEG_DMA2D_AXI_BURSTINESS,
                                     AXI_ICM_ACCESS_WRITE);
     }
+    if constexpr (CONFIG_ESPHOME_JPEG_DMA2D_PEAK_LEVEL != CONFIG_ESPHOME_DMA2D_PEAK_LEVEL ||
+                  CONFIG_ESPHOME_JPEG_DMA2D_TRANSACTION_LEVEL != CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL) {
+      axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_JPEG_DMA2D_PEAK_LEVEL,
+                                               CONFIG_ESPHOME_JPEG_DMA2D_TRANSACTION_LEVEL, AXI_ICM_ACCESS_READ);
+      axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_JPEG_DMA2D_PEAK_LEVEL,
+                                               CONFIG_ESPHOME_JPEG_DMA2D_TRANSACTION_LEVEL, AXI_ICM_ACCESS_WRITE);
+    }
   }
 
   ~Dma2dJpegBurstGuard() {
@@ -61,6 +80,13 @@ class Dma2dJpegBurstGuard {
                                     AXI_ICM_ACCESS_READ);
       axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS,
                                     AXI_ICM_ACCESS_WRITE);
+    }
+    if constexpr (CONFIG_ESPHOME_JPEG_DMA2D_PEAK_LEVEL != CONFIG_ESPHOME_DMA2D_PEAK_LEVEL ||
+                  CONFIG_ESPHOME_JPEG_DMA2D_TRANSACTION_LEVEL != CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL) {
+      axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_PEAK_LEVEL,
+                                               CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL, AXI_ICM_ACCESS_READ);
+      axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_PEAK_LEVEL,
+                                               CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL, AXI_ICM_ACCESS_WRITE);
     }
   }
 };
