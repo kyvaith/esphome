@@ -35,6 +35,10 @@ static constexpr int LOCAL_ARTWORK_HTTP_READ_TIMEOUT_MS = 15;
 static constexpr uint32_t SLOW_ARTWORK_STAGE_MS = 30;
 static constexpr uint32_t SENDSPIN_ARTWORK_PROCESS_DELAY_MS = 100;
 
+#ifndef CONFIG_ESPHOME_ARTWORK_TRACE_VERBOSE
+#define CONFIG_ESPHOME_ARTWORK_TRACE_VERBOSE 0
+#endif
+
 #include "image_decoder.h"
 
 #ifdef USE_ARTWORK_IMAGE_BMP_SUPPORT
@@ -121,6 +125,11 @@ void ArtworkImage::begin_trace_(const char *stage, size_t bytes) {
 }
 
 void ArtworkImage::trace_event_(const char *stage, size_t bytes) const {
+  if constexpr (!CONFIG_ESPHOME_ARTWORK_TRACE_VERBOSE) {
+    (void) stage;
+    (void) bytes;
+    return;
+  }
   if (this->trace_id_ == 0) {
     return;
   }
@@ -269,8 +278,10 @@ void ArtworkImage::setup() {
         {
           LockGuard guard(this->sendspin_pending_lock_);
           this->begin_trace_("sendspin-image", length);
-          ESP_LOGW(TAG, "artwork trace #%u sendspin image slot=%u format=%s length=%zu", this->trace_id_, slot,
-                   sendspin_format_to_string(format), length);
+          if constexpr (CONFIG_ESPHOME_ARTWORK_TRACE_VERBOSE) {
+            ESP_LOGW(TAG, "artwork trace #%u sendspin image slot=%u format=%s length=%zu", this->trace_id_, slot,
+                     sendspin_format_to_string(format), length);
+          }
           this->pending_sendspin_data_.assign(data, data + length);
           this->pending_sendspin_format_ = format;
           this->pending_sendspin_image_ = true;
@@ -290,7 +301,9 @@ void ArtworkImage::setup() {
     {
       LockGuard guard(this->sendspin_pending_lock_);
       this->begin_trace_("sendspin-clear");
-      ESP_LOGW(TAG, "artwork trace #%u sendspin clear slot=%u", this->trace_id_, slot);
+      if constexpr (CONFIG_ESPHOME_ARTWORK_TRACE_VERBOSE) {
+        ESP_LOGW(TAG, "artwork trace #%u sendspin clear slot=%u", this->trace_id_, slot);
+      }
       this->pending_sendspin_data_.clear();
       this->pending_sendspin_image_ = false;
       this->pending_sendspin_display_ = false;
@@ -309,7 +322,9 @@ void ArtworkImage::setup() {
     {
       LockGuard guard(this->sendspin_pending_lock_);
       this->trace_event_("sendspin-display");
-      ESP_LOGW(TAG, "artwork trace #%u sendspin display slot=%u", this->trace_id_, slot);
+      if constexpr (CONFIG_ESPHOME_ARTWORK_TRACE_VERBOSE) {
+        ESP_LOGW(TAG, "artwork trace #%u sendspin display slot=%u", this->trace_id_, slot);
+      }
       this->pending_sendspin_display_ = true;
       paused = this->sendspin_paused_;
     }
@@ -394,8 +409,10 @@ void ArtworkImage::process_pending_sendspin_() {
         image_format = ImageFormat::BMP;
         break;
     }
-    ESP_LOGW(TAG, "artwork trace #%u decode request format=%s size=%zu display=%s", this->trace_id_,
-             image_format_to_string(image_format), data.size(), YESNO(display));
+    if constexpr (CONFIG_ESPHOME_ARTWORK_TRACE_VERBOSE) {
+      ESP_LOGW(TAG, "artwork trace #%u decode request format=%s size=%zu display=%s", this->trace_id_,
+               image_format_to_string(image_format), data.size(), YESNO(display));
+    }
     this->sendspin_decode_failed_.store(false, std::memory_order_release);
     if (!this->decode_encoded_image_(image_format, data.data(), data.size(), false)) {
       this->sendspin_decode_failed_.store(true, std::memory_order_release);
@@ -1331,6 +1348,14 @@ void ArtworkImage::discard_decode_buffer_() {
   this->decode_buffer_written_by_dma_ = false;
 }
 
+void ArtworkImage::sync_decode_buffer_for_display_() {
+  if (!this->decode_buffer_written_by_dma_ || this->decode_buffer_ == nullptr) {
+    return;
+  }
+  sync_artwork_buffer_for_dma(this->decode_buffer_, this->get_decode_buffer_size_(), true);
+  this->decode_buffer_written_by_dma_ = false;
+}
+
 void ArtworkImage::release_spare_buffer_() {
   if (this->spare_buffer_ != nullptr) {
     this->release_buffer_(this->spare_buffer_, this->spare_buffer_size_, this->spare_buffer_uses_jpeg_allocator_);
@@ -1510,6 +1535,7 @@ bool ArtworkImage::decode_encoded_image_(ImageFormat format, const uint8_t *data
       this->end_connection_();
       return false;
     }
+    this->sync_decode_buffer_for_display_();
     this->start_time_ = ::time(nullptr);
     if (finish_on_decode) {
       this->finish_download_();
@@ -1549,6 +1575,7 @@ bool ArtworkImage::decode_encoded_image_(ImageFormat format, const uint8_t *data
     this->end_connection_();
     return false;
   }
+  this->sync_decode_buffer_for_display_();
   this->trace_event_("decode-complete", length);
 
   this->start_time_ = ::time(nullptr);

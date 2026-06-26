@@ -188,6 +188,7 @@ class ArtworkImage : public PollingComponent,
    */
   size_t resize_(int width, int height);
   size_t get_decode_buffer_size_() const { return get_buffer_size_(this->decode_buffer_width_, this->decode_buffer_height_); }
+  void sync_decode_buffer_for_display_();
   void release_spare_buffer_();
   void release_buffer_(uint8_t *buffer, size_t size, bool jpeg_allocator);
   void discard_decode_buffer_();
