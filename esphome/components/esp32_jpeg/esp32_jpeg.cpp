@@ -8,6 +8,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_idf_version.h"
+#include "sdkconfig.h"
 #include "esphome/core/log.h"
 
 #if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
