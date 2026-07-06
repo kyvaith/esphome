@@ -352,6 +352,8 @@ async def to_code(configs):
     # Rounded cards, arcs, slider tracks/knobs and other Material-style surfaces
     # require LVGL's complex software renderer. Keep it explicit because the
     # generated lv_conf.h disables every unused LV_* option by default.
+    df.add_define("LV_USE_DRAW_SW", "1")
+    df.add_define("LV_DRAW_SW_DRAW_UNIT_CNT", "1")
     df.add_define("LV_DRAW_SW_COMPLEX", "1")
     # Production firmware: keep LVGL's runtime hot path lean. These checks
     # are useful while porting, but they add work to every render/touch cycle.
