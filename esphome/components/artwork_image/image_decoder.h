@@ -111,6 +111,7 @@ class ImageDecoder {
 class DownloadBuffer {
  public:
   DownloadBuffer(size_t size);
+  DownloadBuffer(size_t size, uint8_t allocator_flags);
 
   virtual ~DownloadBuffer() { this->allocator_.deallocate(this->buffer_, this->size_); }
 
@@ -131,9 +132,10 @@ class DownloadBuffer {
   void reset() { this->unread_ = 0; }
 
   size_t resize(size_t size);
+  size_t shrink(size_t size);
 
  protected:
-  RAMAllocator<uint8_t> allocator_{};
+  RAMAllocator<uint8_t> allocator_;
   uint8_t *buffer_;
   size_t size_;
   /** Total number of downloaded bytes not yet read. */

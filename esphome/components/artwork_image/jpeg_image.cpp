@@ -149,7 +149,8 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
                                  : esp32_jpeg::RgbElementOrder::BGR,
       .color_conversion = esp32_jpeg::ColorConversionStandard::BT601,
       .direct_output = true,
-      .timeout_ms = 180,
+      .skip_output_cache_sync = true,
+      .timeout_ms = 1000,
   };
 
   uint8_t *output = nullptr;
@@ -255,7 +256,7 @@ int HOT JpegDecoder::decode(uint8_t *buffer, size_t size) {
       return hw_result;
     }
   } else {
-    ESP_LOGW(TAG, "artwork trace #%u hardware JPEG disabled for this image; using software decode",
+    ESP_LOGD(TAG, "artwork trace #%u hardware JPEG disabled for this image; using software decode",
              this->image_->get_trace_id());
   }
 
@@ -354,6 +355,9 @@ int HOT JpegDecoder::decode(uint8_t *buffer, size_t size) {
 
   bool use_rgb565 = (this->image_->image_type() == image::ImageType::IMAGE_TYPE_RGB565);
   bool big_endian = this->image_->is_big_endian();
+  const uint8_t darken_percent = this->image_->get_darken_percent();
+  const bool darken_rgb565 = use_rgb565 && darken_percent > 0 && darken_percent < 100;
+  const uint16_t darken_keep = 100 - darken_percent;
 
   int y = 0;
   while (cinfo.output_scanline < cinfo.output_height) {
@@ -374,6 +378,11 @@ int HOT JpegDecoder::decode(uint8_t *buffer, size_t size) {
         uint8_t r = row_buffer[x * 3 + 0];
         uint8_t g = row_buffer[x * 3 + 1];
         uint8_t b = row_buffer[x * 3 + 2];
+        if (darken_rgb565) {
+          r = static_cast<uint8_t>((static_cast<uint16_t>(r) * darken_keep) / 100);
+          g = static_cast<uint8_t>((static_cast<uint16_t>(g) * darken_keep) / 100);
+          b = static_cast<uint8_t>((static_cast<uint16_t>(b) * darken_keep) / 100);
+        }
         uint16_t rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
         if (big_endian) {
           dst[0] = rgb565 >> 8;
@@ -400,6 +409,9 @@ int HOT JpegDecoder::decode(uint8_t *buffer, size_t size) {
   free(row_buffer);
 
   this->decoded_bytes_ = size;
+  if (darken_rgb565) {
+    this->image_->mark_decode_buffer_darkened(darken_percent);
+  }
   ESP_LOGD(TAG, "JPEG decode finished: output=%dx%d", out_w, out_h);
   return size;
 }

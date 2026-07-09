@@ -45,8 +45,9 @@ void GT911Touchscreen::setup() {
 
 void GT911Touchscreen::setup_internal_() {
   if (this->interrupt_pin_ != nullptr) {
-    if (this->interrupt_pin_->is_internal())
-      this->interrupt_pin_->pin_mode(gpio::FLAG_INPUT);
+    if (this->interrupt_pin_->is_internal()) {
+      this->interrupt_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
+    }
   }
 
   uint8_t data[4];

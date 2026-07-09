@@ -81,6 +81,7 @@ struct DecodeConfig {
   RgbElementOrder rgb_order{RgbElementOrder::BGR};
   ColorConversionStandard color_conversion{ColorConversionStandard::BT601};
   bool direct_output{false};
+  bool skip_output_cache_sync{false};
   int timeout_ms{40};
 };
 

@@ -193,6 +193,34 @@ void VaClient::audio_task_() {
   }
 }
 
+bool VaClient::ensure_playback_speaker_ready_() {
+  if (this->speaker_ == nullptr)
+    return false;
+
+  const audio::AudioStreamInfo playback_info(/*bits_per_sample=*/16, /*channels=*/1,
+                                             /*sample_rate=*/kPlaybackSampleRate);
+
+  if (this->speaker_->get_audio_stream_info() != playback_info) {
+    if (!this->speaker_->is_stopped()) {
+      ESP_LOGD(TAG, "stopping realtime speaker before restoring 24 kHz playback format");
+      this->speaker_->stop();
+      this->last_fed_ms_ = 0;
+      this->chain_prime_remaining_ = 0;
+      return false;
+    }
+
+    ESP_LOGD(TAG, "restoring realtime speaker playback format to 24 kHz mono PCM");
+    this->speaker_->set_audio_stream_info(playback_info);
+    this->last_fed_ms_ = 0;
+    this->chain_prime_remaining_ = 0;
+  }
+
+  if (this->speaker_->is_stopped()) {
+    this->speaker_->start();
+  }
+  return true;
+}
+
 bool VaClient::drain_audio_() {
   if (this->speaker_ == nullptr || this->audio_buf_ == nullptr)
     return false;
@@ -204,6 +232,9 @@ bool VaClient::drain_audio_() {
   uint32_t generation = this->audio_generation_;
   portEXIT_CRITICAL(&this->ring_mux_);
   if (fill == 0)
+    return false;
+
+  if (!this->ensure_playback_speaker_ready_())
     return false;
 
   {

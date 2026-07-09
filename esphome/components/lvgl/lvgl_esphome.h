@@ -71,6 +71,7 @@ extern "C" bool lvgl_esphome_snapshot_scroll_prepare(lv_obj_t *obj, int viewport
 extern "C" bool lvgl_esphome_snapshot_scroll_begin(lv_obj_t *obj, int viewport_w, int viewport_h);
 extern "C" void lvgl_esphome_snapshot_scroll_update(int scroll_y);
 extern "C" void lvgl_esphome_snapshot_scroll_finish(int scroll_y);
+extern "C" void lvgl_esphome_snapshot_scroll_finish_retain(int scroll_y);
 extern "C" void lvgl_esphome_snapshot_scroll_end(void);
 
 #ifdef USE_FONT

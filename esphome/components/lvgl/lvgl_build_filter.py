@@ -30,6 +30,58 @@ ATOMIC_SHIM_TEXT = """#pragma once
 """
 
 PROFILER_NULL_FUNC_PATCHED = 'const char * func = item->func ? item->func : "<null>";'
+SW_RGB888_ARTWORK_THROTTLE_MARKER = "esphome_lvgl_rgb888_artwork_should_throttle"
+
+SW_RGB888_ARTWORK_THROTTLE_HELPER = """
+#ifndef CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_BACKPRESSURE
+#define CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_BACKPRESSURE 1
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_FIFO_MIN
+#define CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_FIFO_MIN 896
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_WAIT_US
+#define CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_WAIT_US 3000
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_ROW_PERIOD
+#define CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_ROW_PERIOD 4
+#endif
+
+bool esphome_artwork_image_buffer_written_by_dma(const void * ptr) __attribute__((weak));
+bool esphome_mipi_dsi_wait_fifo_margin(uint32_t min_depth, uint32_t timeout_us) __attribute__((weak));
+
+static inline bool esphome_lvgl_rgb888_artwork_should_throttle(const lv_draw_sw_blend_image_dsc_t * dsc)
+{
+#if CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_BACKPRESSURE
+    return esphome_artwork_image_buffer_written_by_dma != NULL &&
+           esphome_mipi_dsi_wait_fifo_margin != NULL &&
+           dsc != NULL &&
+           dsc->src_buf != NULL &&
+           dsc->dest_w >= 320 &&
+           dsc->dest_h >= 320 &&
+           esphome_artwork_image_buffer_written_by_dma(dsc->src_buf);
+#else
+    LV_UNUSED(dsc);
+    return false;
+#endif
+}
+
+static inline void esphome_lvgl_rgb888_artwork_throttle(bool active, int32_t y)
+{
+#if CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_BACKPRESSURE
+    if(!active || CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_ROW_PERIOD <= 0) return;
+    if((y % CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_ROW_PERIOD) == 0) {
+        esphome_mipi_dsi_wait_fifo_margin(CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_FIFO_MIN,
+                                          CONFIG_ESPHOME_LVGL_SW_ARTWORK_DSI_WAIT_US);
+    }
+#else
+    LV_UNUSED(active);
+    LV_UNUSED(y);
+#endif
+}
+"""
 
 PPA_CACHE_SYNC_HELPER = """
 static esp_err_t ppa_cache_msync_external_window(uint32_t window_start, uint32_t window_len,
@@ -96,7 +148,18 @@ def create_piolibdeps_atomic_shim():
         write_atomic_shim(Path(libdeps_dir) / pioenv / "lvgl" / "src" / "osal" / "atomic.h")
 
 
-create_piolibdeps_atomic_shim()
+def patch_piolibdeps_lvgl_sources():
+    if env is None:
+        return
+    libdeps_dir = env.subst("$PROJECT_LIBDEPS_DIR")
+    pioenv = env.subst("$PIOENV")
+    if not libdeps_dir or not pioenv:
+        return
+    lvgl_src = Path(libdeps_dir) / pioenv / "lvgl" / "src"
+    patch_profiler_builtin_source(lvgl_src / "misc" / "lv_profiler_builtin.c")
+    patch_sw_rgb888_artwork_throttle_source(
+        lvgl_src / "draw" / "sw" / "blend" / "lv_draw_sw_blend_to_rgb888.c"
+    )
 
 
 def patch_profiler_builtin_source(src):
@@ -132,6 +195,64 @@ def patch_profiler_builtin_source(src):
         print("Patched LVGL profiler null function guard:", src)
     except OSError as err:
         print("WARNING: failed to patch LVGL profiler source:", err)
+
+
+def patch_sw_rgb888_artwork_throttle_source(src):
+    src = Path(src)
+    if not src.exists():
+        return
+    try:
+        text = src.read_text(encoding="utf-8", errors="ignore")
+    except OSError as err:
+        print("WARNING: failed to read LVGL RGB888 blend source:", err)
+        return
+    if SW_RGB888_ARTWORK_THROTTLE_MARKER in text:
+        return
+
+    original = text
+    text = text.replace(
+        '#include "../../../stdlib/lv_string.h"\n',
+        '#include "../../../stdlib/lv_string.h"\n\n' + SW_RGB888_ARTWORK_THROTTLE_HELPER.strip() + "\n",
+        1,
+    )
+
+    func_start = text.find("static void LV_ATTRIBUTE_FAST_MEM rgb565_image_blend(")
+    if func_start == -1:
+        print("WARNING: failed to find LVGL RGB565->RGB888 blend function")
+        return
+    decl = "    int32_t mask_stride = dsc->mask_stride;\n"
+    decl_pos = text.find(decl, func_start)
+    if decl_pos == -1:
+        print("WARNING: failed to find LVGL RGB565->RGB888 blend declarations")
+        return
+    insert_at = decl_pos + len(decl)
+    text = (
+        text[:insert_at]
+        + "    const bool esphome_artwork_throttle = esphome_lvgl_rgb888_artwork_should_throttle(dsc);\n"
+        + text[insert_at:]
+    )
+
+    func_end = text.find("\n#endif", func_start)
+    if func_end == -1:
+        print("WARNING: failed to find LVGL RGB565->RGB888 blend function end")
+        return
+    body = text[func_start:func_end]
+    old = "src_buf_c16 = drawbuf_next_row(src_buf_c16, src_stride);"
+    new = old + "\n                    esphome_lvgl_rgb888_artwork_throttle(esphome_artwork_throttle, y);"
+    body = body.replace(old, new)
+    text = text[:func_start] + body + text[func_end:]
+
+    if text == original:
+        return
+    try:
+        src.write_text(text, encoding="utf-8")
+        print("Patched LVGL RGB565 artwork DSI backpressure:", src)
+    except OSError as err:
+        print("WARNING: failed to patch LVGL RGB888 blend source:", err)
+
+
+create_piolibdeps_atomic_shim()
+patch_piolibdeps_lvgl_sources()
 
 
 def patch_espidf_ppa_cache_sync_source(src):
@@ -309,6 +430,9 @@ def lvgl_src_filter(build_env, node):
 
     if path.endswith("/misc/lv_profiler_builtin.c"):
         patch_profiler_builtin_source(node.get_path())
+
+    if path.endswith("/draw/sw/blend/lv_draw_sw_blend_to_rgb888.c"):
+        patch_sw_rgb888_artwork_throttle_source(node.get_path())
 
     # Only filter files inside the LVGL library
     if "/lvgl/" not in path:

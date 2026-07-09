@@ -53,6 +53,9 @@ uint32_t lv_draw_ppa_get_img_srm_sync_max_us(void);
 uint64_t lv_draw_ppa_get_img_srm_sync_bytes(void);
 uint64_t lv_draw_ppa_get_img_srm_ppa_us(void);
 uint32_t lv_draw_ppa_get_img_srm_ppa_max_us(void);
+uint64_t lv_draw_ppa_get_img_srm_wait_us(void);
+uint32_t lv_draw_ppa_get_img_srm_wait_max_us(void);
+uint32_t lv_draw_ppa_get_img_srm_band_max_us(void);
 
 void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
                       const lv_area_t * coords);

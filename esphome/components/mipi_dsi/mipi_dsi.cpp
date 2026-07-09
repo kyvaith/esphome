@@ -1,6 +1,7 @@
 #ifdef USE_ESP32_VARIANT_ESP32P4
 #include <algorithm>
 #include <cinttypes>
+#include <cstdio>
 #include <cstring>
 #include <utility>
 #include "mipi_dsi.h"
@@ -9,6 +10,7 @@
 #include "esp_heap_caps.h"
 #include "esp_memory_utils.h"
 #include "esp_timer.h"
+#include "hal/axi_icm_ll.h"
 #include "hal/mipi_dsi_brg_ll.h"
 
 namespace esphome::mipi_dsi {
@@ -19,6 +21,45 @@ static constexpr size_t DMA2D_SAFE_ALIGN_BYTES = 4;
 static constexpr size_t DSI_DIAG_EVENT_COUNT = 8;
 static constexpr uint32_t DSI_DIAG_HOST_DPI_BUFF_PLD_UNDER = 1UL << 19;
 static constexpr uint32_t DSI_DIAG_LOG_INTERVAL_MS = 250;
+#ifndef CONFIG_ESPHOME_DSI_CACHE_WRITE_QOS
+#define CONFIG_ESPHOME_DSI_CACHE_WRITE_QOS 0
+#endif
+#ifndef CONFIG_ESPHOME_DSI_CACHE_READ_QOS
+#define CONFIG_ESPHOME_DSI_CACHE_READ_QOS 8
+#endif
+#ifndef CONFIG_ESPHOME_DSI_CPU_WRITE_QOS
+#define CONFIG_ESPHOME_DSI_CPU_WRITE_QOS 0
+#endif
+#ifndef CONFIG_ESPHOME_DSI_CPU_READ_QOS
+#define CONFIG_ESPHOME_DSI_CPU_READ_QOS 8
+#endif
+#ifndef CONFIG_ESPHOME_DSI_GDMA_WRITE_QOS
+#define CONFIG_ESPHOME_DSI_GDMA_WRITE_QOS 0
+#endif
+#ifndef CONFIG_ESPHOME_DSI_GDMA_READ_QOS
+#define CONFIG_ESPHOME_DSI_GDMA_READ_QOS 4
+#endif
+#ifndef CONFIG_ESPHOME_DSI_STRESS_POLL_US
+#define CONFIG_ESPHOME_DSI_STRESS_POLL_US 250
+#endif
+#ifndef CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+#define CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS 0
+#endif
+#ifndef CONFIG_ESPHOME_DSI_MONITOR_DIAGNOSTICS
+#define CONFIG_ESPHOME_DSI_MONITOR_DIAGNOSTICS 0
+#endif
+#ifndef CONFIG_ESPHOME_MIPI_DSI_DISABLE_LP
+#define CONFIG_ESPHOME_MIPI_DSI_DISABLE_LP 0
+#endif
+#ifndef CONFIG_ESPHOME_MIPI_DSI_DISABLE_FRAME_ACK
+#define CONFIG_ESPHOME_MIPI_DSI_DISABLE_FRAME_ACK 0
+#endif
+#ifndef CONFIG_ESPHOME_MIPI_DSI_NON_BURST_SYNC_PULSES
+#define CONFIG_ESPHOME_MIPI_DSI_NON_BURST_SYNC_PULSES 0
+#endif
+#ifndef CONFIG_ESPHOME_MIPI_DSI_CONTINUOUS_HS_CLOCK
+#define CONFIG_ESPHOME_MIPI_DSI_CONTINUOUS_HS_CLOCK 0
+#endif
 static volatile uint32_t dsi_underrun_count = 0;
 static volatile uint32_t dsi_underrun_total = 0;
 static volatile uint32_t dsi_underrun_last_tick = 0;
@@ -29,6 +70,7 @@ static volatile uint32_t dsi_diag_last_bridge_status = 0;
 static volatile uint32_t dsi_diag_last_host_status0 = 0;
 static volatile uint32_t dsi_diag_last_host_status1 = 0;
 static volatile DsiDiagnosticEvent dsi_diag_events[DSI_DIAG_EVENT_COUNT];
+static MipiDsi *active_dsi_instance = nullptr;
 
 static bool is_aligned(uintptr_t value, size_t alignment) { return (value & (alignment - 1U)) == 0; }
 
@@ -87,9 +129,23 @@ extern "C" void IRAM_ATTR esphome_mipi_dsi_note_status(uint32_t bridge_status, u
 }
 
 extern "C" esp_err_t esphome_mipi_dsi_poll_status(esp_lcd_panel_handle_t panel, uint32_t *bridge_status,
-                                                   uint32_t *bridge_raw, uint32_t *fifo_depth,
-                                                   uint32_t *host_status0,
-                                                   uint32_t *host_status1) __attribute__((weak));
+                                                    uint32_t *bridge_raw, uint32_t *fifo_depth,
+                                                    uint32_t *host_status0,
+                                                    uint32_t *host_status1) __attribute__((weak));
+extern "C" esp_err_t esphome_mipi_dsi_set_frame_ack(esp_lcd_panel_handle_t panel, bool enable)
+    __attribute__((weak));
+
+extern "C" void esphome_mipi_dsi_mark_stress(const char *label, uint32_t duration_ms) {
+  if (active_dsi_instance != nullptr) {
+    active_dsi_instance->mark_stress_window(label, duration_ms);
+  }
+}
+
+extern "C" bool esphome_mipi_dsi_wait_fifo_margin(uint32_t min_depth, uint32_t timeout_us) {
+  if (active_dsi_instance == nullptr)
+    return false;
+  return active_dsi_instance->wait_for_fifo_margin(min_depth, timeout_us);
+}
 
 static bool IRAM_ATTR notify_color_trans_ready(esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_event_data_t *edata,
                                                void *user_ctx) {
@@ -188,6 +244,7 @@ void MipiDsi::setup() {
 #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(6, 0, 0)
                                                .use_dma2d = this->use_dma2d_,
 #endif
+                                               .disable_lp = CONFIG_ESPHOME_MIPI_DSI_DISABLE_LP,
                                            }};
   // clang-format on
   err = esp_lcd_new_panel_dpi(this->bus_handle_, &dpi_config, &this->handle_);
@@ -210,6 +267,19 @@ void MipiDsi::setup() {
   } else {
     ESP_LOGW(TAG, "DPI framebuffer unavailable: %s", esp_err_to_name(err));
   }
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+  // DSI scanout is a real-time PSRAM reader. Keep cache/CPU writes, such as
+  // artwork downloads, below the DSI DW-GDMA read priority configured in the
+  // ESP-IDF DSI patch so short PSRAM write bursts don't drain the bridge FIFO.
+  axi_icm_ll_set_cache_qos_arbiter_prio(CONFIG_ESPHOME_DSI_CACHE_WRITE_QOS,
+                                        CONFIG_ESPHOME_DSI_CACHE_READ_QOS);
+  axi_icm_ll_set_cpu_qos_arbiter_prio(CONFIG_ESPHOME_DSI_CPU_WRITE_QOS, CONFIG_ESPHOME_DSI_CPU_READ_QOS);
+  axi_icm_ll_set_gdma_qos_arbiter_prio(CONFIG_ESPHOME_DSI_GDMA_WRITE_QOS, CONFIG_ESPHOME_DSI_GDMA_READ_QOS);
+  ESP_LOGW(TAG, "DSI AXI QoS cache wr/rd=%u/%u cpu wr/rd=%u/%u gdma wr/rd=%u/%u",
+           (unsigned) CONFIG_ESPHOME_DSI_CACHE_WRITE_QOS, (unsigned) CONFIG_ESPHOME_DSI_CACHE_READ_QOS,
+           (unsigned) CONFIG_ESPHOME_DSI_CPU_WRITE_QOS, (unsigned) CONFIG_ESPHOME_DSI_CPU_READ_QOS,
+           (unsigned) CONFIG_ESPHOME_DSI_GDMA_WRITE_QOS, (unsigned) CONFIG_ESPHOME_DSI_GDMA_READ_QOS);
+#endif
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
   if (this->use_dma2d_) {
     err = esp_lcd_dpi_panel_enable_dma2d(this->handle_);
@@ -220,13 +290,23 @@ void MipiDsi::setup() {
   }
 #endif
   ESP_LOGCONFIG(TAG, "DPI DMA2D draw hook: %s", YESNO(this->use_dma2d_));
+  ESP_LOGCONFIG(TAG, "DPI low-power transitions: %s",
+                CONFIG_ESPHOME_MIPI_DSI_DISABLE_LP ? "disabled" : "enabled");
+  ESP_LOGCONFIG(TAG, "DPI frame ACK: %s",
+                CONFIG_ESPHOME_MIPI_DSI_DISABLE_FRAME_ACK ? "disabled" : "enabled");
+  ESP_LOGCONFIG(TAG, "DPI video mode: %s", CONFIG_ESPHOME_MIPI_DSI_NON_BURST_SYNC_PULSES
+                                            ? "non-burst with sync pulses"
+                                            : "burst with sync pulses");
+  ESP_LOGCONFIG(TAG, "DPI clock lane: %s",
+                CONFIG_ESPHOME_MIPI_DSI_CONTINUOUS_HS_CLOCK ? "continuous HS" : "auto");
   if (this->reset_pin_ != nullptr) {
     this->reset_pin_->setup();
     this->reset_pin_->digital_write(true);
-    delay(5);
+    delay(20);
     this->reset_pin_->digital_write(false);
-    delay(5);
+    delay(40);
     this->reset_pin_->digital_write(true);
+    delay(20);
   } else {
     esp_lcd_panel_io_tx_param(this->io_handle_, SW_RESET_CMD, nullptr, 0);
   }
@@ -291,6 +371,7 @@ void MipiDsi::setup() {
   this->callback_context_.refresh_done = this->refresh_lock_;
   this->callback_context_.async_flush_done = this->async_flush_done_;
   this->callback_context_.async_flush_pending = &this->async_flush_pending_;
+  active_dsi_instance = this;
   this->start_async_flush_task_();
   esp_lcd_dpi_panel_event_callbacks_t cbs = {
       .on_color_trans_done = notify_color_trans_ready,
@@ -302,7 +383,10 @@ void MipiDsi::setup() {
     this->smark_failed(LOG_STR("Failed to register callbacks"), err);
     return;
   }
+  this->restart_dpi_stream_("post-init");
+#if CONFIG_ESPHOME_DSI_MONITOR_DIAGNOSTICS || CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
   this->start_dsi_diagnostics_task_();
+#endif
 
   ESP_LOGCONFIG(TAG, "MIPI DSI setup complete");
 }
@@ -398,10 +482,18 @@ void MipiDsi::dsi_diagnostics_task_() {
         if (this->dsi_monitor_last_fifo_zero_log_ms_ == 0 ||
             now_ms - this->dsi_monitor_last_fifo_zero_log_ms_ >= 250) {
           this->dsi_monitor_last_fifo_zero_log_ms_ = now_ms;
+          const uint32_t recent_age =
+              this->dsi_recent_stress_ms_ == 0 ? 0 : now_ms - this->dsi_recent_stress_ms_;
+          const uint32_t previous_age =
+              this->dsi_previous_stress_ms_ == 0 ? 0 : now_ms - this->dsi_previous_stress_ms_;
           ESP_LOGW(TAG,
-                   "dsi fifo zero: uptime=%" PRIu32 "ms brg=0x%08" PRIx32 " raw=0x%08" PRIx32
-                   " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
-                   now_ms, bridge_status, bridge_raw, host_status0, host_status1);
+                   "dsi fifo zero: uptime=%" PRIu32 "ms stress=%s recent=%s/%" PRIu32
+                   "ms prev=%s/%" PRIu32 "ms brg=0x%08" PRIx32 " raw=0x%08" PRIx32
+                   " fifo=%" PRIu32 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
+                   now_ms, this->dsi_stress_active_ ? this->dsi_stress_label_ : "none",
+                   this->dsi_recent_stress_label_[0] != '\0' ? this->dsi_recent_stress_label_ : "none", recent_age,
+                   this->dsi_previous_stress_label_[0] != '\0' ? this->dsi_previous_stress_label_ : "none",
+                   previous_age, bridge_status, bridge_raw, fifo_depth, host_status0, host_status1);
         }
       }
       if (bridge_status != 0 || bridge_raw != 0 || host_status0 != 0 || host_status1 != 0)
@@ -415,9 +507,113 @@ void MipiDsi::dsi_diagnostics_task_() {
       this->dsi_monitor_last_fifo_depth_ = fifo_depth;
       this->dsi_monitor_last_host_status0_ = host_status0;
       this->dsi_monitor_last_host_status1_ = host_status1;
+#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+      if (this->dsi_stress_active_) {
+        this->dsi_stress_samples_++;
+        if (fifo_depth < this->dsi_stress_fifo_min_)
+          this->dsi_stress_fifo_min_ = fifo_depth;
+        if (fifo_depth == 0)
+          this->dsi_stress_fifo_zero_++;
+        if (bridge_status != 0 || bridge_raw != 0 || host_status0 != 0 || host_status1 != 0)
+          this->dsi_stress_nonzero_++;
+        if ((bridge_status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN) != 0)
+          this->dsi_stress_bridge_underrun_++;
+        if ((host_status1 & DSI_DIAG_HOST_DPI_BUFF_PLD_UNDER) != 0)
+          this->dsi_stress_host_under_++;
+        this->dsi_stress_last_bridge_status_ = bridge_status;
+        this->dsi_stress_last_bridge_raw_ = bridge_raw;
+        this->dsi_stress_last_fifo_depth_ = fifo_depth;
+        this->dsi_stress_last_host_status0_ = host_status0;
+        this->dsi_stress_last_host_status1_ = host_status1;
+      }
+#endif
     }
+#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+    if (this->dsi_stress_active_) {
+      esp_rom_delay_us(CONFIG_ESPHOME_DSI_STRESS_POLL_US);
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(2));
+    }
+#else
     vTaskDelay(pdMS_TO_TICKS(2));
+#endif
   }
+}
+
+void MipiDsi::mark_stress_window(const char *label, uint32_t duration_ms) {
+#if !CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+  (void) label;
+  (void) duration_ms;
+  return;
+#endif
+  if (duration_ms == 0)
+    return;
+  const uint32_t now = millis();
+  if (this->dsi_recent_stress_label_[0] != '\0') {
+    std::snprintf(this->dsi_previous_stress_label_, sizeof(this->dsi_previous_stress_label_), "%s",
+                  this->dsi_recent_stress_label_);
+    this->dsi_previous_stress_ms_ = this->dsi_recent_stress_ms_;
+  }
+  if (this->dsi_stress_active_) {
+    ESP_LOGW(TAG,
+             "dsi stress interrupted: %s samples=%" PRIu32 " nonzero=%" PRIu32 " brg_under=%" PRIu32
+             " host_under=%" PRIu32 " fifo_zero=%" PRIu32 " fifo_min=%" PRIu32
+             " last brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32
+             " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
+             this->dsi_stress_label_, this->dsi_stress_samples_, this->dsi_stress_nonzero_,
+             this->dsi_stress_bridge_underrun_, this->dsi_stress_host_under_, this->dsi_stress_fifo_zero_,
+             this->dsi_stress_fifo_min_ == UINT32_MAX ? 0 : this->dsi_stress_fifo_min_,
+             this->dsi_stress_last_bridge_status_, this->dsi_stress_last_bridge_raw_,
+             this->dsi_stress_last_fifo_depth_, this->dsi_stress_last_host_status0_,
+             this->dsi_stress_last_host_status1_);
+  }
+  std::snprintf(this->dsi_stress_label_, sizeof(this->dsi_stress_label_), "%s", label == nullptr ? "unknown" : label);
+  std::snprintf(this->dsi_recent_stress_label_, sizeof(this->dsi_recent_stress_label_), "%s",
+                label == nullptr ? "unknown" : label);
+  this->dsi_recent_stress_ms_ = now;
+  this->dsi_stress_until_ms_ = now + duration_ms;
+  this->dsi_stress_last_log_ms_ = 0;
+  this->dsi_stress_samples_ = 0;
+  this->dsi_stress_nonzero_ = 0;
+  this->dsi_stress_bridge_underrun_ = 0;
+  this->dsi_stress_host_under_ = 0;
+  this->dsi_stress_fifo_zero_ = 0;
+  this->dsi_stress_fifo_min_ = UINT32_MAX;
+  this->dsi_stress_last_bridge_status_ = 0;
+  this->dsi_stress_last_bridge_raw_ = 0;
+  this->dsi_stress_last_fifo_depth_ = 0;
+  this->dsi_stress_last_host_status0_ = 0;
+  this->dsi_stress_last_host_status1_ = 0;
+  this->dsi_stress_active_ = true;
+  ESP_LOGW(TAG, "dsi stress begin: %s duration=%" PRIu32 "ms", this->dsi_stress_label_, duration_ms);
+}
+
+bool MipiDsi::wait_for_fifo_margin(uint32_t min_depth, uint32_t timeout_us) {
+  if (esphome_mipi_dsi_poll_status == nullptr || this->handle_ == nullptr)
+    return false;
+
+  const int64_t deadline = esp_timer_get_time() + timeout_us;
+  uint32_t bridge_status = 0;
+  uint32_t bridge_raw = 0;
+  uint32_t fifo_depth = 0;
+  uint32_t host_status0 = 0;
+  uint32_t host_status1 = 0;
+  uint8_t stable_samples = 0;
+
+  do {
+    if (esphome_mipi_dsi_poll_status(this->handle_, &bridge_status, &bridge_raw, &fifo_depth, &host_status0,
+                                     &host_status1) == ESP_OK &&
+        fifo_depth >= min_depth) {
+      stable_samples++;
+      if (stable_samples >= 2)
+        return true;
+    } else {
+      stable_samples = 0;
+    }
+    esp_rom_delay_us(50);
+  } while (esp_timer_get_time() < deadline);
+
+  return false;
 }
 
 bool MipiDsi::ensure_async_staging_buffer_(size_t size) {
@@ -452,6 +648,38 @@ bool MipiDsi::wait_for_refresh_done(uint32_t timeout_ms) {
   while (xSemaphoreTake(this->refresh_lock_, 0) == pdTRUE) {
   }
   return xSemaphoreTake(this->refresh_lock_, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
+bool MipiDsi::restart_dpi_stream_(const char *reason) {
+  if (this->handle_ == nullptr)
+    return false;
+
+  if (this->refresh_lock_ != nullptr) {
+    while (xSemaphoreTake(this->refresh_lock_, 0) == pdTRUE) {
+    }
+  }
+
+  ESP_LOGW(TAG, "DPI startup settle: %s", reason == nullptr ? "unspecified" : reason);
+  const bool refreshed = this->wait_for_refresh_done(240);
+  if (refreshed) {
+    // Let the panel latch one complete normal DPI frame before the backlight
+    // can expose boot content.
+    this->wait_for_refresh_done(240);
+#if CONFIG_ESPHOME_MIPI_DSI_DISABLE_FRAME_ACK
+    if (esphome_mipi_dsi_set_frame_ack != nullptr) {
+      esp_err_t ack_err = esphome_mipi_dsi_set_frame_ack(this->handle_, false);
+      if (ack_err != ESP_OK) {
+        ESP_LOGW(TAG, "DPI startup frame ACK disable failed: %s", esp_err_to_name(ack_err));
+      } else {
+        ESP_LOGW(TAG, "DPI startup frame ACK disabled after startup");
+      }
+    }
+#endif
+  }
+  if (!refreshed) {
+    ESP_LOGW(TAG, "DPI startup did not observe refresh_done");
+  }
+  return refreshed;
 }
 
 void MipiDsi::update() {
@@ -527,6 +755,43 @@ void MipiDsi::log_dsi_diagnostics_() {
   }
 
   const uint32_t now = millis();
+#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+  if (this->dsi_stress_active_) {
+    const bool expired = static_cast<int32_t>(now - this->dsi_stress_until_ms_) >= 0;
+    const bool due = this->dsi_stress_last_log_ms_ == 0 || now - this->dsi_stress_last_log_ms_ >= 100 || expired;
+    if (due) {
+      const uint32_t samples = this->dsi_stress_samples_;
+      const uint32_t nonzero = this->dsi_stress_nonzero_;
+      const uint32_t bridge_underrun = this->dsi_stress_bridge_underrun_;
+      const uint32_t host_under = this->dsi_stress_host_under_;
+      const uint32_t fifo_zero = this->dsi_stress_fifo_zero_;
+      const uint32_t fifo_min = this->dsi_stress_fifo_min_;
+      const uint32_t last_bridge_status = this->dsi_stress_last_bridge_status_;
+      const uint32_t last_bridge_raw = this->dsi_stress_last_bridge_raw_;
+      const uint32_t last_fifo = this->dsi_stress_last_fifo_depth_;
+      const uint32_t last_host_status0 = this->dsi_stress_last_host_status0_;
+      const uint32_t last_host_status1 = this->dsi_stress_last_host_status1_;
+      this->dsi_stress_samples_ = 0;
+      this->dsi_stress_nonzero_ = 0;
+      this->dsi_stress_bridge_underrun_ = 0;
+      this->dsi_stress_host_under_ = 0;
+      this->dsi_stress_fifo_zero_ = 0;
+      this->dsi_stress_fifo_min_ = UINT32_MAX;
+      this->dsi_stress_last_log_ms_ = now;
+      ESP_LOGW(TAG,
+               "dsi stress: %s%s samples=%" PRIu32 " nonzero=%" PRIu32 " brg_under=%" PRIu32
+               " host_under=%" PRIu32 " fifo_zero=%" PRIu32 " fifo_min=%" PRIu32
+               " last brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32
+               " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
+               this->dsi_stress_label_, expired ? " done" : "", samples, nonzero, bridge_underrun, host_under,
+               fifo_zero, fifo_min, last_bridge_status, last_bridge_raw, last_fifo, last_host_status0,
+               last_host_status1);
+      if (expired)
+        this->dsi_stress_active_ = false;
+    }
+  }
+#endif
+
   if (this->last_dsi_monitor_log_ms_ == 0 || now - this->last_dsi_monitor_log_ms_ >= 1000) {
     const uint32_t samples = this->dsi_monitor_samples_;
     if (samples != 0) {

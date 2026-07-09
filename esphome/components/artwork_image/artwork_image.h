@@ -18,6 +18,10 @@
 namespace esphome {
 namespace artwork_image {
 
+#ifdef USE_ESP_IDF
+class LocalHttpContainer;
+#endif
+
 using t_http_codes = enum {
   HTTP_CODE_OK = 200,
   HTTP_CODE_NOT_MODIFIED = 304,
@@ -144,6 +148,8 @@ class ArtworkImage : public PollingComponent,
   void set_darken_percent(uint8_t percent) { this->darken_percent_ = percent; }
   void set_hardware_jpeg(bool hardware_jpeg) { this->hardware_jpeg_ = hardware_jpeg; }
   bool use_hardware_jpeg() const { return this->hardware_jpeg_; }
+  uint8_t get_darken_percent() const { return this->darken_percent_; }
+  void mark_decode_buffer_darkened(uint8_t percent) { this->decode_buffer_darkened_percent_ = percent; }
 
  protected:
   bool validate_url_(const std::string &url);
@@ -156,6 +162,7 @@ class ArtworkImage : public PollingComponent,
   bool detect_progressive_jpeg_();
   bool detect_heic_();
   bool create_decoder_(ImageFormat format, size_t total_size);
+  bool start_response_download_();
   bool is_busy_() const { return this->downloader_ != nullptr || this->decoder_ != nullptr; }
   void queue_pending_update_(const std::string &url);
   void start_pending_update_();
@@ -188,6 +195,8 @@ class ArtworkImage : public PollingComponent,
    */
   size_t resize_(int width, int height);
   size_t get_decode_buffer_size_() const { return get_buffer_size_(this->decode_buffer_width_, this->decode_buffer_height_); }
+  bool fit_rgb565_decode_buffer_with_ppa_(uint8_t *buffer, int buffer_width, int buffer_height, int content_width,
+                                          int content_height, bool buffer_uses_jpeg_allocator);
   void release_spare_buffer_();
   void release_buffer_(uint8_t *buffer, size_t size, bool jpeg_allocator);
   void discard_decode_buffer_();
@@ -227,6 +236,9 @@ class ArtworkImage : public PollingComponent,
   CallbackManager<void()> download_error_callback_{};
 
   std::shared_ptr<http_request::HttpContainer> downloader_{nullptr};
+#ifdef USE_ESP_IDF
+  LocalHttpContainer *local_downloader_{nullptr};
+#endif
   std::unique_ptr<ImageDecoder> decoder_{nullptr};
 
   uint8_t *buffer_;
@@ -288,6 +300,7 @@ class ArtworkImage : public PollingComponent,
   int decode_offset_x_{0};
   int decode_offset_y_{0};
   bool decode_buffer_written_by_dma_{false};
+  uint8_t decode_buffer_darkened_percent_{0};
   uint32_t trace_id_{0};
   uint32_t trace_next_id_{0};
   uint64_t trace_start_us_{0};
@@ -311,6 +324,7 @@ class ArtworkImage : public PollingComponent,
 #endif
   time_t start_time_;
   uint32_t last_data_millis_{0};
+  uint32_t last_download_read_stress_ms_{0};
   bool update_pending_{false};
   std::string pending_url_{""};
 #ifdef USE_SENDSPIN_ARTWORK

@@ -99,6 +99,23 @@ static esp_err_t dpi_panel_cache_msync(const void *buffer, size_t size)
         !esp_ptr_external_ram((const void *)(sync_end - 1))) {
         return ESP_OK;
     }
+#ifdef CONFIG_ESPHOME_DSI_MSYNC_CHUNK
+    const size_t chunk_size = CONFIG_ESPHOME_DSI_MSYNC_CHUNK;
+    if (chunk_size > 0 && sync_end - sync_start > chunk_size) {
+        uint8_t *ptr = (uint8_t *)sync_start;
+        size_t remaining = sync_end - sync_start;
+        while (remaining > 0) {
+            size_t this_chunk = remaining > chunk_size ? chunk_size : remaining;
+            esp_err_t ret = esp_cache_msync(ptr, this_chunk, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+            if (ret != ESP_OK) {
+                return ret;
+            }
+            ptr += this_chunk;
+            remaining -= this_chunk;
+        }
+        return ESP_OK;
+    }
+#endif
     return esp_cache_msync((void *)sync_start, sync_end - sync_start, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 }
 """
@@ -189,6 +206,17 @@ esp_err_t esphome_mipi_dsi_poll_status(esp_lcd_panel_handle_t panel, uint32_t *b
     }
     return ESP_OK;
 }
+
+esp_err_t esphome_mipi_dsi_set_frame_ack(esp_lcd_panel_handle_t panel, bool enable)
+{
+    if (panel == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_lcd_dpi_panel_t *dpi_panel = __containerof(panel, esp_lcd_dpi_panel_t, base);
+    mipi_dsi_hal_context_t *hal = &dpi_panel->bus->hal;
+    mipi_dsi_host_ll_dpi_enable_frame_ack(hal->host, enable);
+    return ESP_OK;
+}
 """
     if "esphome_mipi_dsi_poll_status" not in text:
         anchor = (
@@ -198,6 +226,42 @@ esp_err_t esphome_mipi_dsi_poll_status(esp_lcd_panel_handle_t panel, uint32_t *b
         if anchor not in text:
             raise RuntimeError("ESP-IDF DSI panel struct end not found; patch needs review")
         text = text.replace(anchor, f"{anchor}{poll_helper}", 1)
+        changed = True
+    elif "esphome_mipi_dsi_set_frame_ack" not in text:
+        helper_end = text.find("\n}\n", text.find("esphome_mipi_dsi_poll_status"))
+        if helper_end == -1:
+            raise RuntimeError("ESP-IDF DSI poll helper end not found; patch needs review")
+        helper_end += len("\n}\n")
+        frame_ack_helper = """
+esp_err_t esphome_mipi_dsi_set_frame_ack(esp_lcd_panel_handle_t panel, bool enable)
+{
+    if (panel == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_lcd_dpi_panel_t *dpi_panel = __containerof(panel, esp_lcd_dpi_panel_t, base);
+    mipi_dsi_hal_context_t *hal = &dpi_panel->bus->hal;
+    mipi_dsi_host_ll_dpi_enable_frame_ack(hal->host, enable);
+    return ESP_OK;
+}
+"""
+        text = text[:helper_end] + frame_ack_helper + text[helper_end:]
+        changed = True
+    flow_helper = """
+esp_err_t esphome_mipi_dsi_set_dma_flow_controller(esp_lcd_panel_handle_t panel, bool enable)
+{
+    if (panel == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_lcd_dpi_panel_t *dpi_panel = __containerof(panel, esp_lcd_dpi_panel_t, base);
+    mipi_dsi_hal_context_t *hal = &dpi_panel->bus->hal;
+    mipi_dsi_brg_ll_set_flow_controller(
+        hal->bridge, enable ? MIPI_DSI_LL_FLOW_CONTROLLER_DMA : MIPI_DSI_LL_FLOW_CONTROLLER_BRIDGE);
+    mipi_dsi_brg_ll_update_dpi_config(hal->bridge);
+    return ESP_OK;
+}
+"""
+    if flow_helper in text:
+        text = text.replace(flow_helper, "", 1)
         changed = True
 
     old_underrun = (
@@ -232,6 +296,68 @@ esp_err_t esphome_mipi_dsi_poll_status(esp_lcd_panel_handle_t panel, uint32_t *b
         text = text.replace(status_anchor, status_call, 1)
         changed = True
 
+    frame_ack_old = (
+        "    // after sending a frame, the DSI device should return an ack\n"
+        "    mipi_dsi_host_ll_dpi_enable_frame_ack(hal->host, true);\n"
+    )
+    frame_ack_new = (
+        "    // Keep frame ACK enabled for panel startup. If CONFIG_ESPHOME_MIPI_DSI_DISABLE_FRAME_ACK is set,\n"
+        "    // ESPHome disables it after the first confirmed refresh so startup remains deterministic.\n"
+        "    mipi_dsi_host_ll_dpi_enable_frame_ack(hal->host, true);\n"
+    )
+    frame_ack_old_conditional = (
+        "    // after sending a frame, the DSI device should return an ack\n"
+        "#ifdef CONFIG_ESPHOME_MIPI_DSI_DISABLE_FRAME_ACK\n"
+        "    mipi_dsi_host_ll_dpi_enable_frame_ack(hal->host, false);\n"
+        "#else\n"
+        "    mipi_dsi_host_ll_dpi_enable_frame_ack(hal->host, true);\n"
+        "#endif\n"
+    )
+    if frame_ack_new not in text:
+        if frame_ack_old_conditional in text:
+            text = text.replace(frame_ack_old_conditional, frame_ack_new, 1)
+        elif frame_ack_old in text:
+            text = text.replace(frame_ack_old, frame_ack_new, 1)
+        else:
+            raise RuntimeError("ESP-IDF DSI frame ACK line not found; patch needs review")
+        changed = True
+
+    burst_old = (
+        "    // using the burst mode because it's energy-efficient\n"
+        "    mipi_dsi_host_ll_dpi_set_video_burst_type(hal->host, MIPI_DSI_LL_VIDEO_BURST_WITH_SYNC_PULSES);\n"
+    )
+    burst_new = (
+        "    // using the burst mode because it's energy-efficient\n"
+        "#ifdef CONFIG_ESPHOME_MIPI_DSI_NON_BURST_SYNC_PULSES\n"
+        "    mipi_dsi_host_ll_dpi_set_video_burst_type(hal->host, MIPI_DSI_LL_VIDEO_NON_BURST_WITH_SYNC_PULSES);\n"
+        "#else\n"
+        "    mipi_dsi_host_ll_dpi_set_video_burst_type(hal->host, MIPI_DSI_LL_VIDEO_BURST_WITH_SYNC_PULSES);\n"
+        "#endif\n"
+    )
+    if burst_new not in text:
+        if burst_old not in text:
+            raise RuntimeError("ESP-IDF DSI video burst mode line not found; patch needs review")
+        text = text.replace(burst_old, burst_new, 1)
+        changed = True
+
+    clock_lane_old = (
+        "    // switch the clock lane to high speed mode\n"
+        "    mipi_dsi_host_ll_set_clock_lane_state(hal->host, MIPI_DSI_LL_CLOCK_LANE_STATE_AUTO);\n"
+    )
+    clock_lane_new = (
+        "    // switch the clock lane to high speed mode\n"
+        "#ifdef CONFIG_ESPHOME_MIPI_DSI_CONTINUOUS_HS_CLOCK\n"
+        "    mipi_dsi_host_ll_set_clock_lane_state(hal->host, MIPI_DSI_LL_CLOCK_LANE_STATE_HS);\n"
+        "#else\n"
+        "    mipi_dsi_host_ll_set_clock_lane_state(hal->host, MIPI_DSI_LL_CLOCK_LANE_STATE_AUTO);\n"
+        "#endif\n"
+    )
+    if clock_lane_new not in text:
+        if clock_lane_old not in text:
+            raise RuntimeError("ESP-IDF DSI clock lane mode line not found; patch needs review")
+        text = text.replace(clock_lane_old, clock_lane_new, 1)
+        changed = True
+
     cache_sync_replacements = (
         (
             "esp_cache_msync(frame_buffer, fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED)",
@@ -262,8 +388,18 @@ esp_err_t esphome_mipi_dsi_poll_status(esp_lcd_panel_handle_t panel, uint32_t *b
         '            ESP_RETURN_ON_ERROR(dpi_panel_cache_msync(draw_buffer, color_data_size), TAG, "writeback draw buffer failed");\n'
         "        }"
     )
+    doubled_new = (
+        "        if (!dpi_panel_skip_draw_buffer_msync(draw_buffer)) {\n"
+        "            if (!dpi_panel_skip_draw_buffer_msync(draw_buffer)) {\n"
+        '            ESP_RETURN_ON_ERROR(dpi_panel_cache_msync(draw_buffer, color_data_size), TAG, "writeback draw buffer failed");\n'
+        "        }\n"
+        "        }"
+    )
 
-    if new in text:
+    if doubled_new in text:
+        text = text.replace(doubled_new, new, 1)
+        changed = True
+    elif new in text:
         pass
     elif old_guard in text:
         text = text.replace(old_guard, new)
@@ -274,20 +410,79 @@ esp_err_t esphome_mipi_dsi_poll_status(esp_lcd_panel_handle_t panel, uint32_t *b
     else:
         raise RuntimeError("ESP-IDF DSI DMA2D cache sync line not found; patch needs review")
 
-    flow_cleanup_replacements = (
-        (
-            "        .flow_controller = DW_GDMA_FLOW_CTRL_DST, // DSI bridge as the flow controller",
-            "        .flow_controller = DW_GDMA_FLOW_CTRL_SELF, // DMA as the flow controller",
-        ),
-        (
-            "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_BRIDGE);",
-            "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_DMA);",
-        ),
+    flow_controller_old_lines = (
+        "        .flow_controller = DW_GDMA_FLOW_CTRL_DST, // DSI bridge as the flow controller",
+        "        .flow_controller = DW_GDMA_FLOW_CTRL_SELF, // DMA as the flow controller",
     )
-    for old_line, new_line in flow_cleanup_replacements:
-        if old_line in text:
-            text = text.replace(old_line, new_line, 1)
+    flow_controller_new = (
+        "#ifdef CONFIG_ESPHOME_MIPI_DSI_DMA_FLOW_CONTROLLER\n"
+        "        .flow_controller = DW_GDMA_FLOW_CTRL_SELF, // DMA as the flow controller\n"
+        "#else\n"
+        "        .flow_controller = DW_GDMA_FLOW_CTRL_DST, // DSI bridge as the flow controller\n"
+        "#endif"
+    )
+    if flow_controller_new not in text:
+        for old_line in flow_controller_old_lines:
+            if old_line in text:
+                text = text.replace(old_line, flow_controller_new, 1)
+                changed = True
+                break
+        else:
+            raise RuntimeError("ESP-IDF DSI GDMA flow-controller line not found; patch needs review")
+
+    bridge_flow_old_lines = (
+        "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_BRIDGE);",
+        "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_DMA);",
+    )
+    bridge_flow_new = (
+        "#ifdef CONFIG_ESPHOME_MIPI_DSI_DMA_FLOW_CONTROLLER\n"
+        "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_DMA);\n"
+        "#else\n"
+        "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_BRIDGE);\n"
+        "#endif"
+    )
+    bridge_flow_safe_start = (
+        "    // Start with bridge flow control. If CONFIG_ESPHOME_MIPI_DSI_DMA_FLOW_CONTROLLER is set,\n"
+        "    // ESPHome switches to DMA flow control after the first confirmed refresh.\n"
+        "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_BRIDGE);"
+    )
+    bridge_flow_safe_current = (
+        "    // Keep DSI bridge flow control at startup. The DMA flow-controller option is used\n"
+        "    // for async frame copies; switching the live DSI bridge at runtime can stall scanout.\n"
+        "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_BRIDGE);"
+    )
+    bridge_flow_old_conditional = (
+        "#ifdef CONFIG_ESPHOME_MIPI_DSI_DMA_FLOW_CONTROLLER\n"
+        "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_DMA);\n"
+        "#else\n"
+        "    mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_BRIDGE);\n"
+        "#endif"
+    )
+    if bridge_flow_new not in text:
+        if bridge_flow_safe_current in text:
+            text = text.replace(bridge_flow_safe_current, bridge_flow_new, 1)
             changed = True
+        elif bridge_flow_safe_start in text:
+            text = text.replace(bridge_flow_safe_start, bridge_flow_new, 1)
+            changed = True
+        elif bridge_flow_old_conditional in text:
+            text = text.replace(bridge_flow_old_conditional, bridge_flow_new, 1)
+            changed = True
+        else:
+            for old_line in bridge_flow_old_lines:
+                if old_line in text:
+                    text = text.replace(old_line, bridge_flow_new, 1)
+                    changed = True
+                    break
+            else:
+                raise RuntimeError("ESP-IDF DSI bridge flow-controller line not found; patch needs review")
+    stale_bridge_flow_comment = (
+        "    // Start with bridge flow control. If CONFIG_ESPHOME_MIPI_DSI_DMA_FLOW_CONTROLLER is set,\n"
+        "    // ESPHome switches to DMA flow control after the first confirmed refresh.\n"
+    )
+    if stale_bridge_flow_comment in text:
+        text = text.replace(stale_bridge_flow_comment, "", 1)
+        changed = True
     gdma_qos_replacements = (
         (
             "            .num_outstanding_requests = 5,",
@@ -370,6 +565,25 @@ esp_err_t esphome_mipi_dsi_poll_status(esp_lcd_panel_handle_t panel, uint32_t *b
         if old_line not in text:
             raise RuntimeError("ESP-IDF DSI FIFO tuning line not found; patch needs review")
         text = text.replace(old_line, new_line, 1)
+        changed = True
+
+    legacy_fifo_tuning = (
+        "    hal->bridge->mem_clk_ctrl.dsi_bridge_mem_clk_force_on = 1;\n"
+        "    hal->bridge->mem_clk_ctrl.dsi_mem_clk_force_on = 1;\n"
+        "    mipi_dsi_brg_ll_set_burst_len(hal->bridge, 128);"
+    )
+    overwide_fifo_tuning = (
+        "    hal->bridge->mem_clk_ctrl.dsi_bridge_mem_clk_force_on = 1;\n"
+        "    hal->bridge->mem_clk_ctrl.dsi_mem_clk_force_on = 1;\n"
+        "    mipi_dsi_brg_ll_set_burst_len(hal->bridge, 256);"
+    )
+    if overwide_fifo_tuning in text:
+        text = text.replace(overwide_fifo_tuning, legacy_fifo_tuning, 1)
+        changed = True
+    overwide_empty_threshold = "    mipi_dsi_brg_ll_set_empty_threshold(hal->bridge, 1024 - 256);"
+    desired_empty_threshold = "    mipi_dsi_brg_ll_set_empty_threshold(hal->bridge, 1024 - 128);"
+    if overwide_empty_threshold in text:
+        text = text.replace(overwide_empty_threshold, desired_empty_threshold, 1)
         changed = True
 
     credit_reset = "    mipi_dsi_brg_ll_credit_reset(hal->bridge);"
@@ -537,6 +751,7 @@ static dma2d_data_burst_length_t jpeg_dec_select_dma2d_burst_length(void)
 {
 #ifdef CONFIG_ESPHOME_JPEG_DMA2D_BURST_LENGTH
     switch (CONFIG_ESPHOME_JPEG_DMA2D_BURST_LENGTH) {
+    case 1:
     case 8:
         return DMA2D_DATA_BURST_LENGTH_8;
     case 16:
@@ -564,6 +779,14 @@ static bool jpeg_dec_select_dma2d_desc_burst_en(void)
 }
 """
     changed = False
+    include = '#include "esp_memory_utils.h"'
+    if include not in text:
+        anchor = '#include "esp_heap_caps.h"\n'
+        if anchor not in text:
+            raise RuntimeError("ESP-IDF JPEG decode heap include not found; patch needs review")
+        text = text.replace(anchor, f"{anchor}{include}\n", 1)
+        changed = True
+
     if "jpeg_dec_select_dma2d_burst_length" not in text:
         anchor = "static void jpeg_dec_config_dma_trans_ability(jpeg_decoder_handle_t decoder_engine)\n"
         if anchor not in text:
@@ -588,6 +811,66 @@ static bool jpeg_dec_select_dma2d_desc_burst_en(void)
         text = text.replace(anchor, f"{desc_helper}\n{anchor}", 1)
         changed = True
 
+    output_msync_helper = """
+__attribute__((weak)) bool esphome_esp32_jpeg_skip_output_cache_msync(void)
+{
+    return false;
+}
+
+static esp_err_t jpeg_dec_output_cache_msync(void *buffer, size_t size)
+{
+#ifdef CONFIG_ESPHOME_JPEG_DMA2D_RUNTIME_SKIP_POST_OUTPUT_MSYNC
+    if (esphome_esp32_jpeg_skip_output_cache_msync()) {
+        return ESP_OK;
+    }
+#endif
+#ifdef CONFIG_ESPHOME_JPEG_DMA2D_SKIP_POST_OUTPUT_MSYNC
+    return ESP_OK;
+#endif
+#ifdef CONFIG_ESPHOME_JPEG_DMA2D_OUTPUT_MSYNC_CHUNK
+    const size_t chunk_size = CONFIG_ESPHOME_JPEG_DMA2D_OUTPUT_MSYNC_CHUNK;
+    if (chunk_size > 0 && size > chunk_size && esp_ptr_external_ram(buffer)) {
+        uint8_t *ptr = (uint8_t *)buffer;
+        size_t remaining = size;
+        while (remaining > 0) {
+            size_t this_chunk = remaining > chunk_size ? chunk_size : remaining;
+            esp_err_t ret = esp_cache_msync(ptr, this_chunk, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+            if (ret != ESP_OK) {
+                return ret;
+            }
+            ptr += this_chunk;
+            remaining -= this_chunk;
+#ifdef CONFIG_ESPHOME_JPEG_DMA2D_OUTPUT_MSYNC_YIELD
+            if (remaining > 0) {
+                vTaskDelay(1);
+            }
+#endif
+        }
+        return ESP_OK;
+    }
+#endif
+    return esp_cache_msync(buffer, size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+}
+"""
+    process_anchor = "esp_err_t jpeg_decoder_process(jpeg_decoder_handle_t decoder_engine"
+    process_pos = text.find(process_anchor)
+    if process_pos < 0:
+        raise RuntimeError("ESP-IDF JPEG decoder process function not found; patch needs review")
+    helper_pos = text.find("static esp_err_t jpeg_dec_output_cache_msync")
+    weak_pos = text.find("__attribute__((weak)) bool esphome_esp32_jpeg_skip_output_cache_msync")
+    if helper_pos >= 0:
+        block_start = weak_pos if 0 <= weak_pos < helper_pos else helper_pos
+        if block_start > process_pos:
+            raise RuntimeError("ESP-IDF JPEG output msync helper moved after process function; patch needs review")
+        current_helper = text[block_start:process_pos].strip()
+        if current_helper != output_msync_helper.strip():
+            text = text[:block_start] + f"{output_msync_helper}\n" + text[process_pos:]
+            process_pos = text.find(process_anchor)
+            changed = True
+    else:
+        text = text[:process_pos] + f"{output_msync_helper}\n" + text[process_pos:]
+        changed = True
+
     old = ".data_burst_length = DMA2D_DATA_BURST_LENGTH_128,"
     new = ".data_burst_length = jpeg_dec_select_dma2d_burst_length(),"
     if new not in text:
@@ -604,6 +887,32 @@ static bool jpeg_dec_select_dma2d_desc_burst_en(void)
         if count != 2:
             raise RuntimeError("ESP-IDF JPEG decode DMA2D desc burst lines not found; patch needs review")
         text = text.replace(old, new)
+        changed = True
+
+    old = (
+        "    // Before 2DDMA starts, invalidate cache ahead of time.\n"
+        "    ret = esp_cache_msync((void*)decoder_engine->decoded_buf, outbuf_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);\n"
+        "    assert(ret == ESP_OK);\n"
+    )
+    new = (
+        "    // Before 2DDMA starts, invalidate cache ahead of time.\n"
+        "#ifndef CONFIG_ESPHOME_JPEG_DMA2D_SKIP_PRE_OUTPUT_MSYNC\n"
+        "    ret = esp_cache_msync((void*)decoder_engine->decoded_buf, outbuf_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);\n"
+        "    assert(ret == ESP_OK);\n"
+        "#endif\n"
+    )
+    if new not in text:
+        if old not in text:
+            raise RuntimeError("ESP-IDF JPEG decode pre-output msync block not found; patch needs review")
+        text = text.replace(old, new, 1)
+        changed = True
+
+    old = "            ret = esp_cache_msync((void*)decoder_engine->decoded_buf, outbuf_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);"
+    new = "            ret = jpeg_dec_output_cache_msync((void*)decoder_engine->decoded_buf, outbuf_size);"
+    if new not in text:
+        if old not in text:
+            raise RuntimeError("ESP-IDF JPEG decode post-output msync line not found; patch needs review")
+        text = text.replace(old, new, 1)
         changed = True
 
     if changed:

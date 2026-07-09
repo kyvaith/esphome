@@ -83,6 +83,9 @@ uint32_t lv_draw_ppa_get_img_srm_sync_max_us(void);
 uint64_t lv_draw_ppa_get_img_srm_sync_bytes(void);
 uint64_t lv_draw_ppa_get_img_srm_ppa_us(void);
 uint32_t lv_draw_ppa_get_img_srm_ppa_max_us(void);
+uint64_t lv_draw_ppa_get_img_srm_wait_us(void);
+uint32_t lv_draw_ppa_get_img_srm_wait_max_us(void);
+uint32_t lv_draw_ppa_get_img_srm_band_max_us(void);
 void lvgl_port_ppa_v9_init(lv_display_t *display);
 }
 #endif
@@ -151,14 +154,17 @@ static bool s_snapshot_app_open_frame_held = false;
 static volatile int s_snapshot_page_indicator_page = 0;
 static volatile int s_snapshot_page_indicator_count = 0;
 
+static constexpr int SNAPSHOT_PAGE_INDICATOR_Y = 716;
+static constexpr int SNAPSHOT_PAGE_INDICATOR_H = 10;
+
 static bool snapshot_draw_page_indicator_rgb888(uint8_t *buffer, int width, int height, int page, int count) {
   if (buffer == nullptr || width <= 0 || height <= 0 || count <= 0 || page <= 0 || page > count)
     return false;
-  constexpr int dot_h = 10;
+  constexpr int dot_h = SNAPSHOT_PAGE_INDICATOR_H;
   constexpr int inactive_w = 10;
   constexpr int active_w = 30;
   constexpr int gap = 12;
-  constexpr int y = 716;
+  constexpr int y = SNAPSHOT_PAGE_INDICATOR_Y;
   if (y < 0 || y + dot_h > height)
     return false;
 
@@ -196,13 +202,25 @@ static bool snapshot_draw_page_indicator_rgb888(uint8_t *buffer, int width, int 
     const bool active = i == page;
     const int w = active ? active_w : inactive_w;
     if (active) {
-      draw_rounded_rect(x, w, 0xD3, 0xE3, 0xFD);
+      draw_rounded_rect(x, w, 0xF2, 0xF2, 0xF2);
     } else {
       draw_rounded_rect(x, w, 0x5C, 0x5F, 0x5E);
     }
     x += w + gap;
   }
   return true;
+}
+
+static void snapshot_sync_page_indicator_rgb888(uint8_t *buffer, int width, int height) {
+#if defined(USE_ESP32)
+  if (buffer == nullptr || width <= 0 || height <= 0)
+    return;
+  if (SNAPSHOT_PAGE_INDICATOR_Y < 0 || SNAPSHOT_PAGE_INDICATOR_Y + SNAPSHOT_PAGE_INDICATOR_H > height)
+    return;
+  const size_t row_bytes = (size_t) width * 3u;
+  lvgl_cache_msync_external(buffer + (size_t) SNAPSHOT_PAGE_INDICATOR_Y * row_bytes,
+                            row_bytes * SNAPSHOT_PAGE_INDICATOR_H, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+#endif
 }
 
 struct SnapshotAppRenderBufferState {
@@ -1970,14 +1988,16 @@ bool LvglComponent::snapshot_swipe_direct_render(lv_draw_buf_t *current, lv_draw
   };
 
   auto render_to = [&](uint8_t *dst) {
-    bool needs_sync = false;
-    needs_sync |= copy_visible(dst, current, current_x);
-    needs_sync |= copy_visible(dst, next, next_x);
-    needs_sync |= snapshot_draw_page_indicator_rgb888(dst, this->width_, this->height_,
-                                                      s_snapshot_page_indicator_page,
-                                                      s_snapshot_page_indicator_count);
-    if (needs_sync)
+    bool needs_full_sync = false;
+    needs_full_sync |= copy_visible(dst, current, current_x);
+    needs_full_sync |= copy_visible(dst, next, next_x);
+    const bool indicator_changed = snapshot_draw_page_indicator_rgb888(dst, this->width_, this->height_,
+                                                                       s_snapshot_page_indicator_page,
+                                                                       s_snapshot_page_indicator_count);
+    if (needs_full_sync)
       sync_range(dst, fb_bytes);
+    else if (indicator_changed)
+      snapshot_sync_page_indicator_rgb888(dst, this->width_, this->height_);
   };
 
   render_to(target);
@@ -2032,7 +2052,7 @@ bool LvglComponent::snapshot_swipe_direct_render_edge(lv_draw_buf_t *current, in
   if (target == nullptr)
     return false;
 
-  bool needs_sync = false;
+  bool needs_full_sync = false;
   auto clear_visible = [&](int x1, int x2) {
     const int screen_w = (int) this->width_;
     x1 = std::clamp(x1, 0, screen_w);
@@ -2045,7 +2065,7 @@ bool LvglComponent::snapshot_swipe_direct_render_edge(lv_draw_buf_t *current, in
       memset(dst_row, 0, clear_bytes);
       dst_row += row_bytes;
     }
-    needs_sync = true;
+    needs_full_sync = true;
   };
 
   auto copy_visible = [&](const lv_draw_buf_t *src, int image_x) -> bool {
@@ -2104,12 +2124,14 @@ bool LvglComponent::snapshot_swipe_direct_render_edge(lv_draw_buf_t *current, in
   } else if (current_x < 0) {
     clear_visible(this->width_ + current_x, this->width_);
   }
-  needs_sync |= copy_visible(current, current_x);
-  needs_sync |= snapshot_draw_page_indicator_rgb888(target, this->width_, this->height_,
-                                                    s_snapshot_page_indicator_page,
-                                                    s_snapshot_page_indicator_count);
-  if (needs_sync)
+  needs_full_sync |= copy_visible(current, current_x);
+  const bool indicator_changed = snapshot_draw_page_indicator_rgb888(target, this->width_, this->height_,
+                                                                     s_snapshot_page_indicator_page,
+                                                                     s_snapshot_page_indicator_count);
+  if (needs_full_sync)
     lvgl_cache_msync_external(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  else if (indicator_changed)
+    snapshot_sync_page_indicator_rgb888(target, this->width_, this->height_);
   if (!this->present_snapshot_render_buffer_(target))
     return false;
 #ifdef USE_LVGL_FPS_BENCHMARK
@@ -2179,9 +2201,8 @@ bool LvglComponent::snapshot_swipe_direct_render_panorama(const uint8_t *panoram
   }
   if (snapshot_draw_page_indicator_rgb888(target, this->width_, this->height_,
                                           s_snapshot_page_indicator_page,
-                                          s_snapshot_page_indicator_count)) {
-    lvgl_cache_msync_external(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-  }
+                                          s_snapshot_page_indicator_count))
+    snapshot_sync_page_indicator_rgb888(target, this->width_, this->height_);
   if (!this->present_snapshot_render_buffer_(target))
     return false;
 
@@ -3109,6 +3130,9 @@ void LvglComponent::loop() {
       uint64_t ppa_img_srm_sync_bytes = 0;
       uint64_t ppa_img_srm_ppa_us = 0;
       uint32_t ppa_img_srm_ppa_max_us = 0;
+      uint32_t ppa_img_srm_band_max_us = 0;
+      uint64_t ppa_img_srm_wait_us = 0;
+      uint32_t ppa_img_srm_wait_max_us = 0;
 #ifdef USE_ESP32
       const uint64_t compositor_us = this->perf_compositor_us_;
       const uint64_t compositor_ready_us = this->perf_compositor_ready_us_;
@@ -3141,6 +3165,9 @@ void LvglComponent::loop() {
       ppa_img_srm_sync_bytes = lv_draw_ppa_get_img_srm_sync_bytes();
       ppa_img_srm_ppa_us = lv_draw_ppa_get_img_srm_ppa_us();
       ppa_img_srm_ppa_max_us = lv_draw_ppa_get_img_srm_ppa_max_us();
+      ppa_img_srm_band_max_us = lv_draw_ppa_get_img_srm_band_max_us();
+      ppa_img_srm_wait_us = lv_draw_ppa_get_img_srm_wait_us();
+      ppa_img_srm_wait_max_us = lv_draw_ppa_get_img_srm_wait_max_us();
 #endif
 #ifdef USE_MIPI_DSI
       mipi_dsi::AsyncFlushPerfStats dsi_stats{};
@@ -3192,7 +3219,9 @@ void LvglComponent::loop() {
       static uint64_t last_ppa_img_srm_sync_us = 0;
       static uint64_t last_ppa_img_srm_sync_bytes = 0;
       static uint64_t last_ppa_img_srm_ppa_us = 0;
-      if (ppa_fill_tasks != last_ppa_fill_tasks || ppa_img_tasks != last_ppa_img_tasks ||
+      static uint64_t last_ppa_img_srm_wait_us = 0;
+      if (s_perf_logging_enabled &&
+          (ppa_fill_tasks != last_ppa_fill_tasks || ppa_img_tasks != last_ppa_img_tasks ||
           ppa_img_eval_tasks != last_ppa_img_eval_tasks ||
           ppa_img_large_eval_tasks != last_ppa_img_large_eval_tasks ||
           ppa_img_accepted_eval_tasks != last_ppa_img_accepted_eval_tasks ||
@@ -3201,13 +3230,15 @@ void LvglComponent::loop() {
           ppa_img_srm_unaligned_tasks != last_ppa_img_srm_unaligned_tasks ||
           ppa_img_srm_copy_us != last_ppa_img_srm_copy_us ||
           ppa_img_srm_sync_us != last_ppa_img_srm_sync_us ||
-          ppa_img_srm_ppa_us != last_ppa_img_srm_ppa_us) {
+          ppa_img_srm_wait_us != last_ppa_img_srm_wait_us ||
+          ppa_img_srm_ppa_us != last_ppa_img_srm_ppa_us)) {
         ESP_LOGW(TAG,
                  "ppa diag: fill=%u(+%u) img_dispatch=%u(+%u) img_eval=%u(+%u) large=%u(+%u) "
                  "accepted=%u(+%u) srm=%u(+%u) srm_large=%u(+%u) srm_unalign=%u(+%u) "
                  "srm_copy=%lluus(+%lluus) max=%uus bytes=%lluKB(+%lluKB) "
                  "srm_sync=%lluus(+%lluus) max=%uus sync_kb=%llu(+%llu) "
-                 "srm_ppa=%lluus(+%lluus) max=%uus",
+                 "srm_wait=%lluus(+%lluus) max=%uus "
+                 "srm_ppa=%lluus(+%lluus) max=%uus band_max=%uus",
                  (unsigned)ppa_fill_tasks, (unsigned)(ppa_fill_tasks - last_ppa_fill_tasks),
                  (unsigned)ppa_img_tasks, (unsigned)(ppa_img_tasks - last_ppa_img_tasks),
                  (unsigned)ppa_img_eval_tasks, (unsigned)(ppa_img_eval_tasks - last_ppa_img_eval_tasks),
@@ -3230,9 +3261,13 @@ void LvglComponent::loop() {
                  (unsigned)ppa_img_srm_sync_max_us,
                  (unsigned long long)(ppa_img_srm_sync_bytes / 1024ULL),
                  (unsigned long long)((ppa_img_srm_sync_bytes - last_ppa_img_srm_sync_bytes) / 1024ULL),
+                 (unsigned long long)ppa_img_srm_wait_us,
+                 (unsigned long long)(ppa_img_srm_wait_us - last_ppa_img_srm_wait_us),
+                 (unsigned)ppa_img_srm_wait_max_us,
                  (unsigned long long)ppa_img_srm_ppa_us,
                  (unsigned long long)(ppa_img_srm_ppa_us - last_ppa_img_srm_ppa_us),
-                 (unsigned)ppa_img_srm_ppa_max_us);
+                 (unsigned)ppa_img_srm_ppa_max_us,
+                 (unsigned)ppa_img_srm_band_max_us);
         last_ppa_fill_tasks = ppa_fill_tasks;
         last_ppa_img_tasks = ppa_img_tasks;
         last_ppa_img_eval_tasks = ppa_img_eval_tasks;
@@ -3245,6 +3280,7 @@ void LvglComponent::loop() {
         last_ppa_img_srm_copy_us = ppa_img_srm_copy_us;
         last_ppa_img_srm_sync_us = ppa_img_srm_sync_us;
         last_ppa_img_srm_sync_bytes = ppa_img_srm_sync_bytes;
+        last_ppa_img_srm_wait_us = ppa_img_srm_wait_us;
         last_ppa_img_srm_ppa_us = ppa_img_srm_ppa_us;
       }
 #endif
@@ -5164,6 +5200,33 @@ extern "C" void lvgl_esphome_snapshot_scroll_finish(int scroll_y) {
   lv_obj_invalidate(lv_screen_active());
   if (s_swipe_logging_enabled) {
     ESP_LOGI(TAG, "snapshot scroll: finish y=%d", clamped_y);
+  }
+}
+
+extern "C" void lvgl_esphome_snapshot_scroll_finish_retain(int scroll_y) {
+  if (snapshot_scroll_state.root == nullptr) {
+    snapshot_scroll_cleanup();
+    return;
+  }
+  const int clamped_y = snapshot_scroll_clamp_y(scroll_y);
+  if (snapshot_scroll_state.direct_render && snapshot_scroll_state.component != nullptr &&
+      snapshot_scroll_state.content_buf != nullptr) {
+    snapshot_scroll_state.component->snapshot_scroll_direct_render(snapshot_scroll_state.content_buf, clamped_y,
+                                                                  snapshot_scroll_state.viewport_w,
+                                                                  snapshot_scroll_state.viewport_h);
+    snapshot_scroll_state.component->wait_for_direct_frame_presented(50);
+    snapshot_scroll_state.component->realign_direct_buffer_after_manual_present();
+  }
+
+  lv_obj_t *root = snapshot_scroll_state.root;
+  lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_scroll_to_y(root, clamped_y, LV_ANIM_OFF);
+  snapshot_scroll_state.current_scroll_y = clamped_y;
+  snapshot_scroll_state.direct_render = false;
+  s_snapshot_direct_active = false;
+  lv_obj_invalidate(root);
+  if (s_swipe_logging_enabled) {
+    ESP_LOGI(TAG, "snapshot scroll: finish retain y=%d", clamped_y);
   }
 }
 

@@ -105,6 +105,15 @@ bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int bu
   if (target_width > 0 && target_height > 0 &&
       (buffer_width != target_width || buffer_height != target_height || content_width != target_width ||
        content_height != target_height)) {
+    if (this->image_->fit_rgb565_decode_buffer_with_ppa_(buffer, buffer_width, buffer_height, content_width,
+                                                         content_height, buffer_uses_jpeg_allocator)) {
+      this->x_offset_ = this->image_->decode_offset_x_;
+      this->y_offset_ = this->image_->decode_offset_y_;
+      this->x_scale_ = static_cast<double>(this->image_->decode_content_width_) / content_width;
+      this->y_scale_ = static_cast<double>(this->image_->decode_content_height_) / content_height;
+      return true;
+    }
+
     double scale = std::min(static_cast<double>(target_width) / content_width,
                             static_cast<double>(target_height) / content_height);
     int scaled_width = std::max(1, static_cast<int>(content_width * scale));
@@ -212,7 +221,9 @@ bool ImageDecoder::adopt_rgb_buffer(uint8_t *buffer, int buffer_width, int buffe
   return true;
 }
 
-DownloadBuffer::DownloadBuffer(size_t size) : size_(size) {
+DownloadBuffer::DownloadBuffer(size_t size) : DownloadBuffer(size, RAMAllocator<uint8_t>::NONE) {}
+
+DownloadBuffer::DownloadBuffer(size_t size, uint8_t allocator_flags) : allocator_(allocator_flags), size_(size) {
   this->buffer_ = this->allocator_.allocate(size);
   this->reset();
   if (!this->buffer_) {
@@ -263,6 +274,28 @@ size_t DownloadBuffer::resize(size_t size) {
     this->reset();
     return 0;
   }
+}
+
+size_t DownloadBuffer::shrink(size_t size) {
+  if (this->size_ <= size) {
+    return this->size_;
+  }
+  if (this->unread_ > size) {
+    ESP_LOGE(TAG, "Cannot shrink download buffer to %zu bytes; %zu bytes are still unread", size, this->unread_);
+    return this->size_;
+  }
+  uint8_t *new_buffer = this->allocator_.allocate(size);
+  if (new_buffer == nullptr) {
+    ESP_LOGW(TAG, "Could not shrink download buffer to %zu bytes; keeping %zu bytes", size, this->size_);
+    return this->size_;
+  }
+  if (this->buffer_ && this->unread_ > 0) {
+    memcpy(new_buffer, this->buffer_, this->unread_);
+  }
+  this->allocator_.deallocate(this->buffer_, this->size_);
+  this->buffer_ = new_buffer;
+  this->size_ = size;
+  return this->size_;
 }
 
 }  // namespace artwork_image

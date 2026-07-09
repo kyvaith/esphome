@@ -528,6 +528,7 @@ inline void lottie_show(LottieContext *ctx, bool restart) {
   }
   const bool was_hidden = ctx->runtime_hidden || lv_obj_has_flag(ctx->obj, LV_OBJ_FLAG_HIDDEN);
   ctx->runtime_hidden = false;
+  ctx->auto_start = true;
   if (ctx->pixel_buffer == nullptr) {
     lottie_launch(ctx);
     return;
@@ -535,6 +536,9 @@ inline void lottie_show(LottieContext *ctx, bool restart) {
   lv_obj_remove_flag(ctx->obj, LV_OBJ_FLAG_HIDDEN);
   if (restart && was_hidden) {
     lottie_restart(ctx);
+  }
+  if (ctx->task_handle != nullptr && eTaskGetState(ctx->task_handle) == eSuspended) {
+    vTaskResume(ctx->task_handle);
   }
   lv_obj_invalidate(ctx->obj);
 }
@@ -611,7 +615,6 @@ inline bool lottie_init(lv_obj_t *obj, const void *data, size_t data_size,
 
 #endif  // LV_USE_LOTTIE
 #endif  // USE_ESP32
-
 
 
 

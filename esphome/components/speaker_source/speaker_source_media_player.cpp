@@ -347,8 +347,11 @@ bool SpeakerSourceMediaPlayer::try_execute_play_uri_(const std::string &uri, uin
   // Clear stopping flag since we're past the stopping phase
   ps.stopping_source = nullptr;
 
-  // Check if speaker is ready
+  // Check if speaker is ready. Some speaker implementations are asynchronous and can remain
+  // in a non-stopped state after their source has already gone idle, so actively request a
+  // stop instead of waiting forever.
   if (!ps.speaker->is_stopped()) {
+    ps.speaker->stop();
     return false;  // Speaker not ready yet, retry later
   }
 

@@ -84,6 +84,7 @@ class VaClient : public Component {
   void connect_();
   void schedule_reconnect_();
   void on_mic_data_(const std::vector<uint8_t> &samples);
+  bool ensure_playback_speaker_ready_();
   bool drain_audio_();
   void audio_task_();
   void mic_tx_task_();

@@ -10,6 +10,7 @@
 
 #include "lv_draw_ppa_private.h"
 #include "lv_draw_ppa.h"
+#include "src/draw/lv_draw_image.h"
 
 /*********************
  *      DEFINES
@@ -23,6 +24,10 @@ static uint32_t s_ppa_img_eval_logs = 0;
 static uint32_t s_ppa_img_eval_tasks = 0;
 static uint32_t s_ppa_img_large_eval_tasks = 0;
 static uint32_t s_ppa_img_accepted_eval_tasks = 0;
+static uint32_t s_ppa_img_reject_logs = 0;
+
+extern uint32_t lvgl_esphome_get_perf_logging_enabled(void);
+bool esphome_artwork_image_buffer_written_by_dma(const void * ptr) __attribute__((weak));
 
 static inline bool ppa_buf_usable(lv_draw_buf_t * buf);
 
@@ -32,6 +37,27 @@ static inline uint32_t ppa_area_px(const lv_area_t * area)
     int32_t h = lv_area_get_height(area);
     if(w <= 0 || h <= 0) return 0;
     return (uint32_t)w * (uint32_t)h;
+}
+
+static inline bool ppa_image_scale_is_identity(const lv_draw_image_dsc_t * dsc)
+{
+    /* LVGL can represent "natural size" as either LV_SCALE_NONE or the fixed
+     * point value 256. Only use SRM when there is a real scale transform. */
+    const int32_t sx = dsc->scale_x;
+    const int32_t sy = dsc->scale_y;
+    return (sx == LV_SCALE_NONE || sx == 256) && (sy == LV_SCALE_NONE || sy == 256);
+}
+
+static inline bool ppa_image_source_is_artwork_dma_buffer(const lv_draw_image_dsc_t * dsc)
+{
+    if(esphome_artwork_image_buffer_written_by_dma == NULL || dsc == NULL || dsc->src == NULL) {
+        return false;
+    }
+    if(lv_image_src_get_type(dsc->src) != LV_IMAGE_SRC_VARIABLE) {
+        return false;
+    }
+    const lv_image_dsc_t * img = (const lv_image_dsc_t *)dsc->src;
+    return img->data != NULL && esphome_artwork_image_buffer_written_by_dma(img->data);
 }
 
 static inline bool ppa_task_large_visible_band(const lv_draw_task_t * t)
@@ -49,6 +75,19 @@ static inline bool ppa_task_large_visible_band(const lv_draw_task_t * t)
      * artifacts, so keep them on the software renderer. */
     return lv_area_get_width(&visible_area) >= 320 &&
            ppa_area_px(&visible_area) >= (128U * 128U);
+}
+
+static inline bool ppa_image_task_is_large_opaque_copy(const lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc)
+{
+    if(!ppa_image_scale_is_identity(dsc)) return false;
+    if(dsc->rotation != 0 || dsc->skew_x != 0 || dsc->skew_y != 0) return false;
+    if(dsc->opa < (lv_opa_t)LV_OPA_MAX || dsc->blend_mode != LV_BLEND_MODE_NORMAL) return false;
+    if(!ppa_task_large_visible_band(t)) return false;
+    if(!ppa_src_cf_supported((lv_color_format_t)dsc->header.cf)) return false;
+
+    lv_draw_buf_t * dest = t->target_layer != NULL ? t->target_layer->draw_buf : NULL;
+    if(!ppa_buf_usable(dest)) return false;
+    return ppa_dest_cf_supported((lv_color_format_t)dest->header.cf);
 }
 
 static void ppa_log_image_eval(lv_draw_unit_t * draw_unit, const lv_draw_task_t * t,
@@ -77,6 +116,39 @@ static void ppa_log_image_eval(lv_draw_unit_t * draw_unit, const lv_draw_task_t 
              eval_dest != NULL ? (unsigned)eval_dest->header.stride : 0,
              (int)ppa_buf_usable(eval_dest), (int)t->preference_score,
              (int)draw_unit->idx);
+}
+
+static void ppa_log_image_reject(lv_draw_unit_t * draw_unit, const lv_draw_task_t * t,
+                                 const lv_draw_image_dsc_t * dsc, const char * reason)
+{
+    if(!lvgl_esphome_get_perf_logging_enabled() || s_ppa_img_reject_logs >= 320) return;
+    if(dsc->scale_x == LV_SCALE_NONE && dsc->scale_y == LV_SCALE_NONE && dsc->rotation == 0) return;
+
+    lv_draw_buf_t * eval_dest = t->target_layer != NULL ? t->target_layer->draw_buf : NULL;
+    lv_color_format_t dest_cf = eval_dest != NULL ? (lv_color_format_t)eval_dest->header.cf : LV_COLOR_FORMAT_UNKNOWN;
+    lv_area_t visible_area;
+    bool has_visible = lv_area_intersect(&visible_area, &t->area, &t->clip_area);
+    if(has_visible && t->target_layer != NULL) {
+        has_visible = lv_area_intersect(&visible_area, &visible_area, &t->target_layer->buf_area);
+    }
+    ESP_LOGW(TAG,
+             "ppa image reject reason=%s area=%dx%d clip=%dx%d visible=%dx%d img_area=%dx%d "
+             "src_cf=%d opa=%u blend=%d scale=%d/%d rot=%d dest_cf=%d dest=%ux%u stride=%u usable=%d "
+             "score=%d unit=%d",
+             reason,
+             (int)lv_area_get_width(&t->area), (int)lv_area_get_height(&t->area),
+             (int)lv_area_get_width(&t->clip_area), (int)lv_area_get_height(&t->clip_area),
+             has_visible ? (int)lv_area_get_width(&visible_area) : 0,
+             has_visible ? (int)lv_area_get_height(&visible_area) : 0,
+             (int)lv_area_get_width(&dsc->image_area), (int)lv_area_get_height(&dsc->image_area),
+             (int)dsc->header.cf, (unsigned)dsc->opa, (int)dsc->blend_mode,
+             (int)dsc->scale_x, (int)dsc->scale_y, (int)dsc->rotation,
+             (int)dest_cf, eval_dest != NULL ? (unsigned)eval_dest->header.w : 0,
+             eval_dest != NULL ? (unsigned)eval_dest->header.h : 0,
+             eval_dest != NULL ? (unsigned)eval_dest->header.stride : 0,
+             (int)ppa_buf_usable(eval_dest), (int)t->preference_score,
+             (int)draw_unit->idx);
+    s_ppa_img_reject_logs++;
 }
 
 /* Check if a draw buffer is suitable for PPA (non-NULL, aligned, has data) */
@@ -215,9 +287,12 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
         case LV_DRAW_TASK_TYPE_IMAGE: {
             const lv_draw_image_dsc_t * dsc = (const lv_draw_image_dsc_t *)t->draw_dsc;
             const bool large_visible = ppa_task_large_visible_band(t);
+            if(ppa_image_source_is_artwork_dma_buffer(dsc) && !large_visible) return 0;
             s_ppa_img_eval_tasks++;
             if(large_visible) s_ppa_img_large_eval_tasks++;
-            if(s_ppa_img_eval_logs < 40) {
+            if(s_ppa_img_eval_logs < 40 ||
+               dsc->scale_x != LV_SCALE_NONE || dsc->scale_y != LV_SCALE_NONE ||
+               large_visible) {
                 ppa_log_image_eval(draw_unit, t, dsc, large_visible);
                 s_ppa_img_eval_logs++;
             }
@@ -253,14 +328,32 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
 
 #ifdef LV_USE_PPA_IMG
             /* PPA SRM handles scale+translate (Ken Burns) with rotation=0 */
-            if(dsc->scale_x != LV_SCALE_NONE || dsc->scale_y != LV_SCALE_NONE) {
-                if(dsc->opa < (lv_opa_t)LV_OPA_MAX) return 0;
-                if(dsc->blend_mode != LV_BLEND_MODE_NORMAL) return 0;
-                if(!ppa_task_large_visible_band(t)) return 0;
-                if(!ppa_src_cf_supported((lv_color_format_t)dsc->header.cf)) return 0;
+            if(!ppa_image_scale_is_identity(dsc)) {
+                if(dsc->opa < (lv_opa_t)LV_OPA_MAX) {
+                    ppa_log_image_reject(draw_unit, t, dsc, "scale-opa");
+                    return 0;
+                }
+                if(dsc->blend_mode != LV_BLEND_MODE_NORMAL) {
+                    ppa_log_image_reject(draw_unit, t, dsc, "scale-blend");
+                    return 0;
+                }
+                if(!ppa_task_large_visible_band(t)) {
+                    ppa_log_image_reject(draw_unit, t, dsc, "scale-small-visible");
+                    return 0;
+                }
+                if(!ppa_src_cf_supported((lv_color_format_t)dsc->header.cf)) {
+                    ppa_log_image_reject(draw_unit, t, dsc, "scale-src-cf");
+                    return 0;
+                }
                 lv_draw_buf_t * scale_dest = t->target_layer->draw_buf;
-                if(!ppa_buf_usable(scale_dest)) return 0;
-                if(!ppa_dest_cf_supported((lv_color_format_t)scale_dest->header.cf)) return 0;
+                if(!ppa_buf_usable(scale_dest)) {
+                    ppa_log_image_reject(draw_unit, t, dsc, "scale-dest-unusable");
+                    return 0;
+                }
+                if(!ppa_dest_cf_supported((lv_color_format_t)scale_dest->header.cf)) {
+                    ppa_log_image_reject(draw_unit, t, dsc, "scale-dest-cf");
+                    return 0;
+                }
                 if(t->preference_score > 50) {
                     t->preference_score = 50;
                     t->preferred_draw_unit_id = draw_unit->idx;
@@ -270,19 +363,10 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
             }
 
 #else
-            if(dsc->scale_x != LV_SCALE_NONE || dsc->scale_y != LV_SCALE_NONE) return 0;
+            if(!ppa_image_scale_is_identity(dsc)) return 0;
 #endif
 #ifdef LV_USE_PPA_IMG
-            /* Plain opaque images use the PPA blend path, not SRM. SRM is excellent
-             * for scale/rotate/mirror, but full-screen 1:1 artwork redraws can
-             * monopolize PSRAM long enough for DSI to show fallback frames. */
-            if(dsc->opa < (lv_opa_t)LV_OPA_MAX) return 0;
-            if(dsc->blend_mode != LV_BLEND_MODE_NORMAL) return 0;
-            if(!ppa_task_large_visible_band(t)) return 0;
-            if(!ppa_src_cf_supported((lv_color_format_t)dsc->header.cf)) return 0;
-            lv_draw_buf_t * plain_dest = t->target_layer->draw_buf;
-            if(!ppa_buf_usable(plain_dest)) return 0;
-            if(!ppa_dest_cf_supported((lv_color_format_t)plain_dest->header.cf)) return 0;
+            if(!ppa_image_task_is_large_opaque_copy(t, dsc)) return 0;
             if(t->preference_score > 55) {
                 t->preference_score = 55;
                 t->preferred_draw_unit_id = draw_unit->idx;
@@ -347,8 +431,20 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
 #ifdef LV_USE_PPA_IMG
                     if(img_dsc->rotation != 0) {
                         lv_draw_ppa_img_rotate(t, img_dsc, &t->area);
-                    } else if(img_dsc->scale_x != LV_SCALE_NONE || img_dsc->scale_y != LV_SCALE_NONE) {
+                    } else if(!ppa_image_scale_is_identity(img_dsc) ||
+                              img_dsc->skew_x != 0 || img_dsc->skew_y != 0) {
                         lv_draw_ppa_img_srm(t, img_dsc, &t->area);
+                    } else if(ppa_image_task_is_large_opaque_copy(t, img_dsc)) {
+                        /* A large 1:1 opaque artwork image is already decoded in
+                         * the final size. Copy it with the blend client so SRM is
+                         * reserved for real transforms. Keep non-artwork copies on
+                         * the proven SRM path; boot snapshots were more stable
+                         * there than on PPA blend. */
+                        if(ppa_image_source_is_artwork_dma_buffer(img_dsc)) {
+                            lv_draw_ppa_img(t, img_dsc, &t->area);
+                        } else {
+                            lv_draw_ppa_img_srm(t, img_dsc, &t->area);
+                        }
                     } else
 #endif
                     {

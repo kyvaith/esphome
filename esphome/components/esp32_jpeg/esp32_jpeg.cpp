@@ -8,6 +8,7 @@
 
 #include "esp_heap_caps.h"
 #include "esp_idf_version.h"
+#include "esp_memory_utils.h"
 #include "sdkconfig.h"
 #include "esphome/core/defines.h"
 #include "esphome/core/log.h"
@@ -20,6 +21,14 @@
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
 #include "hal/axi_icm_ll.h"
 #endif
+#endif
+
+#if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
+static volatile bool g_esphome_esp32_jpeg_skip_output_cache_msync = false;
+
+extern "C" bool esphome_esp32_jpeg_skip_output_cache_msync(void) {
+  return g_esphome_esp32_jpeg_skip_output_cache_msync;
+}
 #endif
 
 namespace esphome::esp32_jpeg {
@@ -35,8 +44,20 @@ StaticSemaphore_t jpeg_codec_mutex_buffer;
 SemaphoreHandle_t jpeg_codec_mutex = nullptr;
 constexpr size_t MIN_ENCODER_INTERNAL_DMA_LARGEST = 56 * 1024;
 constexpr size_t MIN_DECODER_INTERNAL_DMA_LARGEST = 56 * 1024;
+constexpr size_t DECODER_INTERNAL_INPUT_ALIGNMENT = 64;
+#ifndef CONFIG_ESPHOME_JPEG_DECODER_INTERNAL_INPUT_MAX_BYTES
+constexpr size_t DECODER_INTERNAL_INPUT_MAX_BYTES = 64 * 1024;
+#else
+constexpr size_t DECODER_INTERNAL_INPUT_MAX_BYTES = CONFIG_ESPHOME_JPEG_DECODER_INTERNAL_INPUT_MAX_BYTES;
+#endif
+#ifndef CONFIG_ESPHOME_JPEG_DECODER_DIRECT_PSRAM_INPUT
+#define CONFIG_ESPHOME_JPEG_DECODER_DIRECT_PSRAM_INPUT 0
+#endif
 bool encoder_dma_guard_logged = false;
 bool decoder_dma_guard_logged = false;
+bool decoder_internal_input_logged = false;
+bool decoder_input_fallback_logged = false;
+bool decoder_direct_psram_input_logged = false;
 
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
 #ifndef CONFIG_ESPHOME_JPEG_DMA2D_AXI_BURSTINESS
@@ -113,10 +134,33 @@ class Dma2dJpegBurstGuard {
     }
   }
 };
+
+class Dma2dJpegOutputCacheSyncGuard {
+ public:
+  explicit Dma2dJpegOutputCacheSyncGuard(bool skip)
+      : previous_(g_esphome_esp32_jpeg_skip_output_cache_msync), active_(skip) {
+    if (this->active_)
+      g_esphome_esp32_jpeg_skip_output_cache_msync = true;
+  }
+
+  ~Dma2dJpegOutputCacheSyncGuard() {
+    if (this->active_)
+      g_esphome_esp32_jpeg_skip_output_cache_msync = this->previous_;
+  }
+
+ protected:
+  bool previous_{false};
+  bool active_{false};
+};
 #else
 class Dma2dJpegBurstGuard {
  public:
   Dma2dJpegBurstGuard() = default;
+};
+
+class Dma2dJpegOutputCacheSyncGuard {
+ public:
+  explicit Dma2dJpegOutputCacheSyncGuard(bool skip) {}
 };
 #endif
 
@@ -187,6 +231,66 @@ bool has_decoder_dma_budget_() {
              MIN_DECODER_INTERNAL_DMA_LARGEST);
   }
   return false;
+}
+
+uint8_t *allocate_decoder_input_(const uint8_t *jpeg, size_t jpeg_size, size_t *capacity, bool *owned) {
+  if (owned != nullptr)
+    *owned = true;
+
+#if CONFIG_ESPHOME_JPEG_DECODER_DIRECT_PSRAM_INPUT
+  if (esp_ptr_external_ram(jpeg)) {
+    if (capacity != nullptr)
+      *capacity = jpeg_size;
+    if (owned != nullptr)
+      *owned = false;
+    if (!decoder_direct_psram_input_logged) {
+      decoder_direct_psram_input_logged = true;
+      ESP_LOGI(TAG, "JPEG decoder uses direct PSRAM input when possible");
+    }
+    return const_cast<uint8_t *>(jpeg);
+  }
+#endif
+
+  if (jpeg_size <= DECODER_INTERNAL_INPUT_MAX_BYTES) {
+    const size_t aligned_size = align_up(jpeg_size, DECODER_INTERNAL_INPUT_ALIGNMENT);
+    uint8_t *input_data = static_cast<uint8_t *>(heap_caps_aligned_calloc(
+        DECODER_INTERNAL_INPUT_ALIGNMENT, 1, aligned_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (input_data != nullptr) {
+      std::memcpy(input_data, jpeg, jpeg_size);
+      if (capacity != nullptr)
+        *capacity = aligned_size;
+      if (!decoder_internal_input_logged) {
+        decoder_internal_input_logged = true;
+        ESP_LOGI(TAG, "JPEG decoder input staged in internal DMA RAM up to %zu bytes",
+                 DECODER_INTERNAL_INPUT_MAX_BYTES);
+      }
+      return input_data;
+    }
+  }
+
+  if (!decoder_input_fallback_logged) {
+    decoder_input_fallback_logged = true;
+    ESP_LOGW(TAG,
+             "JPEG decoder input uses PSRAM fallback jpeg_size=%zu internal_dma_largest=%zu internal_free=%zu",
+             jpeg_size, heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL),
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+  }
+
+  jpeg_decode_memory_alloc_cfg_t input_mem_cfg = {
+      .buffer_direction = JPEG_DEC_ALLOC_INPUT_BUFFER,
+  };
+  size_t input_capacity = 0;
+  uint8_t *input_data = static_cast<uint8_t *>(jpeg_alloc_decoder_mem(jpeg_size, &input_mem_cfg, &input_capacity));
+  if (capacity != nullptr)
+    *capacity = input_capacity;
+  if (input_data != nullptr && input_capacity >= jpeg_size)
+    std::memcpy(input_data, jpeg, jpeg_size);
+  return input_data;
+}
+
+void release_decoder_input_(uint8_t *input_data, bool owned) {
+  if (owned && input_data != nullptr)
+    heap_caps_free(input_data);
 }
 
 void release_preallocated_decoder_() {
@@ -496,18 +600,14 @@ esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_si
   }
 
   size_t input_capacity = 0;
-  jpeg_decode_memory_alloc_cfg_t input_mem_cfg = {
-      .buffer_direction = JPEG_DEC_ALLOC_INPUT_BUFFER,
-  };
-  uint8_t *input_data = static_cast<uint8_t *>(jpeg_alloc_decoder_mem(jpeg_size, &input_mem_cfg, &input_capacity));
+  bool input_owned = true;
+  uint8_t *input_data = allocate_decoder_input_(jpeg, jpeg_size, &input_capacity, &input_owned);
   if (input_data == nullptr || input_capacity < jpeg_size) {
-    if (input_data != nullptr)
-      heap_caps_free(input_data);
+    release_decoder_input_(input_data, input_owned);
     if (owns_decoder)
       jpeg_del_decoder_engine(decoder);
     return ESP_ERR_NO_MEM;
   }
-  std::memcpy(input_data, jpeg, jpeg_size);
 
   jpeg_decode_cfg_t decode_cfg = {
       .output_format = to_decode_format(config.output_format),
@@ -524,7 +624,7 @@ esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_si
     };
     decoded_data = static_cast<uint8_t *>(jpeg_alloc_decoder_mem(output_size, &output_mem_cfg, &decoded_capacity));
     if (decoded_data == nullptr) {
-      heap_caps_free(input_data);
+      release_decoder_input_(input_data, input_owned);
       if (owns_decoder)
         jpeg_del_decoder_engine(decoder);
       return ESP_ERR_NO_MEM;
@@ -536,25 +636,11 @@ esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_si
   esp_err_t err = ESP_OK;
   {
     Dma2dJpegBurstGuard burst_guard;
+    Dma2dJpegOutputCacheSyncGuard cache_sync_guard(config.skip_output_cache_sync && !decoded_owned);
     err = jpeg_decoder_process(decoder, &decode_cfg, input_data, jpeg_size, decoded_data, decoded_capacity,
                                &decoded_size);
   }
-  if (err != ESP_OK && config.direct_output) {
-    jpeg_decode_memory_alloc_cfg_t output_mem_cfg = {
-        .buffer_direction = JPEG_DEC_ALLOC_OUTPUT_BUFFER,
-    };
-    decoded_data = static_cast<uint8_t *>(jpeg_alloc_decoder_mem(output_size, &output_mem_cfg, &decoded_capacity));
-    if (decoded_data != nullptr) {
-      decoded_owned = true;
-      decoded_size = 0;
-      {
-        Dma2dJpegBurstGuard burst_guard;
-        err = jpeg_decoder_process(decoder, &decode_cfg, input_data, jpeg_size, decoded_data, decoded_capacity,
-                                   &decoded_size);
-      }
-    }
-  }
-  heap_caps_free(input_data);
+  release_decoder_input_(input_data, input_owned);
   if (owns_decoder)
     jpeg_del_decoder_engine(decoder);
   if (err != ESP_OK) {
@@ -612,18 +698,14 @@ esp_err_t decode_allocated(const DecodeConfig &config, const uint8_t *jpeg, size
   }
 
   size_t input_capacity = 0;
-  jpeg_decode_memory_alloc_cfg_t input_mem_cfg = {
-      .buffer_direction = JPEG_DEC_ALLOC_INPUT_BUFFER,
-  };
-  uint8_t *input_data = static_cast<uint8_t *>(jpeg_alloc_decoder_mem(jpeg_size, &input_mem_cfg, &input_capacity));
+  bool input_owned = true;
+  uint8_t *input_data = allocate_decoder_input_(jpeg, jpeg_size, &input_capacity, &input_owned);
   if (input_data == nullptr || input_capacity < jpeg_size) {
-    if (input_data != nullptr)
-      heap_caps_free(input_data);
+    release_decoder_input_(input_data, input_owned);
     if (owns_decoder)
       jpeg_del_decoder_engine(decoder);
     return ESP_ERR_NO_MEM;
   }
-  std::memcpy(input_data, jpeg, jpeg_size);
 
   size_t output_capacity = 0;
   jpeg_decode_memory_alloc_cfg_t output_mem_cfg = {
@@ -634,7 +716,7 @@ esp_err_t decode_allocated(const DecodeConfig &config, const uint8_t *jpeg, size
   if (decoded_data == nullptr || output_capacity < output_size) {
     if (decoded_data != nullptr)
       heap_caps_free(decoded_data);
-    heap_caps_free(input_data);
+    release_decoder_input_(input_data, input_owned);
     if (owns_decoder)
       jpeg_del_decoder_engine(decoder);
     return ESP_ERR_NO_MEM;
@@ -653,7 +735,7 @@ esp_err_t decode_allocated(const DecodeConfig &config, const uint8_t *jpeg, size
     err = jpeg_decoder_process(decoder, &decode_cfg, input_data, jpeg_size, decoded_data, output_capacity,
                                &decoded_size);
   }
-  heap_caps_free(input_data);
+  release_decoder_input_(input_data, input_owned);
   if (owns_decoder)
     jpeg_del_decoder_engine(decoder);
   if (err != ESP_OK || decoded_size == 0 || decoded_size > output_size) {

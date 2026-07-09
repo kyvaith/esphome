@@ -123,6 +123,8 @@ class MipiDsi : public display::Display {
   bool present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end);
   void consume_async_flush_perf(AsyncFlushPerfStats *stats);
   uint32_t consume_underrun_count();
+  void mark_stress_window(const char *label, uint32_t duration_ms);
+  bool wait_for_fifo_margin(uint32_t min_depth, uint32_t timeout_us);
 
   void draw_pixel_at(int x, int y, Color color) override;
   void fill(Color color) override;
@@ -135,6 +137,7 @@ class MipiDsi : public display::Display {
   void log_dsi_diagnostics_();
   void write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,
                          int x_pad);
+  bool restart_dpi_stream_(const char *reason);
   void start_async_flush_task_();
   static void async_flush_task_trampoline(void *arg);
   void async_flush_task_();
@@ -218,6 +221,25 @@ class MipiDsi : public display::Display {
   volatile uint32_t dsi_monitor_last_host_status0_{0};
   volatile uint32_t dsi_monitor_last_host_status1_{0};
   uint32_t dsi_monitor_last_fifo_zero_log_ms_{0};
+  bool dsi_stress_active_{false};
+  char dsi_stress_label_[32]{};
+  char dsi_recent_stress_label_[32]{};
+  char dsi_previous_stress_label_[32]{};
+  uint32_t dsi_recent_stress_ms_{0};
+  uint32_t dsi_previous_stress_ms_{0};
+  uint32_t dsi_stress_until_ms_{0};
+  uint32_t dsi_stress_last_log_ms_{0};
+  volatile uint32_t dsi_stress_samples_{0};
+  volatile uint32_t dsi_stress_nonzero_{0};
+  volatile uint32_t dsi_stress_bridge_underrun_{0};
+  volatile uint32_t dsi_stress_host_under_{0};
+  volatile uint32_t dsi_stress_fifo_zero_{0};
+  volatile uint32_t dsi_stress_fifo_min_{UINT32_MAX};
+  volatile uint32_t dsi_stress_last_bridge_status_{0};
+  volatile uint32_t dsi_stress_last_bridge_raw_{0};
+  volatile uint32_t dsi_stress_last_fifo_depth_{0};
+  volatile uint32_t dsi_stress_last_host_status0_{0};
+  volatile uint32_t dsi_stress_last_host_status1_{0};
   uint32_t last_diag_event_count_{0};
   uint32_t last_diag_log_ms_{0};
   uint8_t *frame_buffers_[2]{nullptr, nullptr};

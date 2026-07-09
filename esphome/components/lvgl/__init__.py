@@ -673,7 +673,10 @@ async def to_code(configs):
     for use in lv_uses:
         upper = use.upper()
         cg.add_define(f"USE_LVGL_{upper}")
-        cg.add_define(f"USE_{upper}")
+        # LVGL's switch widget collides with ESPHome's switch entity define.
+        # Keep USE_LVGL_SWITCH/LV_USE_SWITCH, but don't enable the entity API.
+        if upper != "SWITCH":
+            cg.add_define(f"USE_{upper}")
         canonical = _TO_CANONICAL.get(upper, upper)
         if canonical not in _ALL_CANONICAL_WIDGETS:
             # Non-widget entry (e.g. LOG, THEME_DEFAULT, USER_DATA)
