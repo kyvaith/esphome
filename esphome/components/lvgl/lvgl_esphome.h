@@ -46,9 +46,16 @@ extern "C" uint32_t lvgl_esphome_get_profiler_enabled(void);
 extern "C" void lvgl_esphome_set_profiler_enabled(bool enabled);
 extern "C" void lvgl_esphome_profiler_flush(void);
 extern "C" void lvgl_esphome_profiler_mark(const char *name);
+extern "C" bool lvgl_esphome_direct_blit_rgb888(const uint8_t *src, int src_stride, int x, int y, int width,
+                                                 int height);
+extern "C" bool lvgl_esphome_direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, int y, int width,
+                                                    int height);
 extern "C" bool lvgl_esphome_snapshot_cache_page(lv_obj_t *obj);
 extern "C" bool lvgl_esphome_snapshot_cache_compressed_page(lv_obj_t *obj);
 extern "C" bool lvgl_esphome_snapshot_cache_raw_page(lv_obj_t *obj);
+extern "C" bool lvgl_esphome_snapshot_cache_current_frame_raw_page(lv_obj_t *obj);
+extern "C" void lvgl_esphome_snapshot_dsi_quiet_ms(uint32_t quiet_ms);
+extern "C" void lvgl_esphome_dsi_mark_stress(const char *label, uint32_t duration_ms);
 extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right, int width);
 extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t *page1, lv_obj_t *page2, lv_obj_t *page3,
                                                         lv_obj_t *page4, int current_page, int width);
@@ -62,6 +69,8 @@ extern "C" void lvgl_esphome_snapshot_app_clear_prepared_close(void);
 extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *next, int width, int next_x);
 extern "C" bool lvgl_esphome_snapshot_swipe_edge_begin(lv_obj_t *current, int width);
 extern "C" void lvgl_esphome_snapshot_swipe_set_page_indicator(int page, int page_count);
+extern "C" void lvgl_esphome_snapshot_set_clock_text(const char *text);
+extern "C" void lvgl_esphome_snapshot_set_clock_font(const lv_font_t *font);
 extern "C" void lvgl_esphome_snapshot_swipe_update(int current_x, int next_x);
 extern "C" void lvgl_esphome_snapshot_swipe_request_update(int current_x, int next_x);
 extern "C" void lvgl_esphome_snapshot_swipe_finish(int current_x, int next_x, uint32_t duration_ms, bool commit);
@@ -341,6 +350,8 @@ class LvglComponent : public PollingComponent {
   bool snapshot_present_current_frame();
   bool wait_for_direct_frame_presented(uint32_t timeout_ms);
   void realign_direct_buffer_after_manual_present();
+  bool direct_blit_rgb888(const uint8_t *src, int src_stride, int x, int y, int width, int height);
+  bool direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, int y, int width, int height);
 
  protected:
   void draw_end_();

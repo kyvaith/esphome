@@ -10,6 +10,7 @@
 #include "esp_timer.h"
 
 #include <cstring>
+#include <vector>
 
 #include "artwork_image.h"
 static const char *const TAG = "artwork_image.jpeg";
@@ -105,12 +106,103 @@ static bool read_jpeg_frame_info(const uint8_t *buffer, size_t size, uint32_t *w
   return false;
 }
 
+static bool sanitize_jpeg_for_hardware(const uint8_t *buffer, size_t size, std::vector<uint8_t> *out) {
+  if (buffer == nullptr || out == nullptr || size < 4 || buffer[0] != 0xFF || buffer[1] != 0xD8) {
+    return false;
+  }
+
+  bool changed = false;
+  out->clear();
+  out->reserve(size);
+  out->push_back(0xFF);
+  out->push_back(0xD8);
+
+  size_t pos = 2;
+  while (pos < size) {
+    if (buffer[pos] != 0xFF) {
+      out->insert(out->end(), buffer + pos, buffer + size);
+      break;
+    }
+
+    size_t marker_start = pos;
+    while (pos < size && buffer[pos] == 0xFF) {
+      pos++;
+    }
+    if (pos >= size) {
+      out->insert(out->end(), buffer + marker_start, buffer + size);
+      break;
+    }
+
+    uint8_t marker = buffer[pos++];
+    if (marker == 0xD9 || marker == 0xDA) {
+      out->push_back(0xFF);
+      out->push_back(marker);
+      if (marker == 0xDA && pos + 1 < size) {
+        const uint16_t segment_len = (static_cast<uint16_t>(buffer[pos]) << 8) | buffer[pos + 1];
+        if (segment_len >= 2 && pos + segment_len <= size) {
+          out->insert(out->end(), buffer + pos, buffer + pos + segment_len);
+          out->insert(out->end(), buffer + pos + segment_len, buffer + size);
+        } else {
+          out->insert(out->end(), buffer + pos, buffer + size);
+        }
+      }
+      break;
+    }
+
+    if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+      out->push_back(0xFF);
+      out->push_back(marker);
+      continue;
+    }
+    if (pos + 1 >= size) {
+      out->insert(out->end(), buffer + marker_start, buffer + size);
+      break;
+    }
+
+    const uint16_t segment_len = (static_cast<uint16_t>(buffer[pos]) << 8) | buffer[pos + 1];
+    if (segment_len < 2 || pos + segment_len > size) {
+      out->insert(out->end(), buffer + marker_start, buffer + size);
+      break;
+    }
+
+    if (marker == 0xE2) {
+      changed = true;
+      pos += segment_len;
+      continue;
+    }
+
+    if (marker == 0xC1 && segment_len >= 8 && buffer[pos + 2] == 8) {
+      marker = 0xC0;
+      changed = true;
+    }
+
+    out->push_back(0xFF);
+    out->push_back(marker);
+    out->insert(out->end(), buffer + pos, buffer + pos + segment_len);
+    pos += segment_len;
+  }
+
+  if (!changed) {
+    out->clear();
+  }
+  return changed;
+}
+
 int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
 #ifdef USE_ESP32_JPEG
+  const size_t input_size = size;
   const bool output_rgb565 = this->image_->image_type() == image::ImageType::IMAGE_TYPE_RGB565;
   const bool output_rgb888 = this->image_->image_type() == image::ImageType::IMAGE_TYPE_RGB;
   if (!output_rgb565 && !output_rgb888) {
     return 0;
+  }
+
+  std::vector<uint8_t> sanitized_jpeg;
+  if (sanitize_jpeg_for_hardware(buffer, size, &sanitized_jpeg)) {
+    ESP_LOGW(TAG, "artwork trace #%u sanitized JPEG headers for hardware decode: %zu -> %zu bytes",
+             this->image_->get_trace_id(), size, sanitized_jpeg.size());
+    buffer = sanitized_jpeg.data();
+    size = sanitized_jpeg.size();
   }
 
   uint32_t frame_w = 0;
@@ -213,12 +305,12 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
     this->image_->mark_decode_buffer_written_by_dma();
   }
 
-  this->decoded_bytes_ = size;
+  this->decoded_bytes_ = input_size;
   ESP_LOGW(TAG, "artwork trace #%u hardware JPEG %s decode ready: %ux%u into %zux%zu buffer, %zu -> %zu bytes in %lluus",
            trace_id, output_uses_staging ? "staging" : "allocated",
            (unsigned) frame_w, (unsigned) frame_h, aligned_w, aligned_h, size, written,
            (unsigned long long) elapsed_us);
-  return size;
+  return input_size;
 #else
   return 0;
 #endif
@@ -255,6 +347,8 @@ int HOT JpegDecoder::decode(uint8_t *buffer, size_t size) {
     if (hw_result != 0) {
       return hw_result;
     }
+    ESP_LOGW(TAG, "artwork trace #%u hardware JPEG failed; software fallback disabled", this->image_->get_trace_id());
+    return DECODE_ERROR_UNSUPPORTED_FORMAT;
   } else {
     ESP_LOGD(TAG, "artwork trace #%u hardware JPEG disabled for this image; using software decode",
              this->image_->get_trace_id());

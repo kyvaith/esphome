@@ -56,7 +56,7 @@ from esphome.core import CORE
 
 from ..automation import action_to_code
 from ..defines import CONF_AUTO_START, CONF_MAIN, CONF_SRC, add_lv_use, literal
-from ..lv_validation import size
+from ..lv_validation import lv_color, size
 from ..lvcode import lv, lv_add, lv_obj
 from ..types import LvType, ObjUpdateAction
 from . import Widget, WidgetType, get_widgets
@@ -68,6 +68,7 @@ CONF_LOTTIE = "lottie"
 CONF_LOOP = "loop"
 CONF_LOTTIE_WIDTH = "lottie_width"
 CONF_LOTTIE_HEIGHT = "lottie_height"
+CONF_OPAQUE_BACKGROUND = "opaque_background"
 
 lv_lottie_t = LvType("lv_lottie_t")
 
@@ -143,6 +144,7 @@ LOTTIE_SCHEMA = cv.Schema(
         cv.Optional(CONF_FILE): lottie_file_validator,
         cv.Optional(CONF_LOOP, default=True): cv.boolean,
         cv.Optional(CONF_AUTO_START, default=True): cv.boolean,
+        cv.Optional(CONF_OPAQUE_BACKGROUND): lv_color,
         cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
     }
 ).add_extra(validate_lottie_source)
@@ -201,12 +203,16 @@ class LottieType(WidgetType):
         do_loop = "true" if config.get(CONF_LOOP, True) else "false"
         do_auto_start = "true" if config.get(CONF_AUTO_START, True) else "false"
         user_wants_hidden = "true" if config.get("hidden", False) else "false"
+        opaque_args = ""
+        if CONF_OPAQUE_BACKGROUND in config:
+            background = await lv_color.process(config[CONF_OPAQUE_BACKGROUND])
+            opaque_args = f", true, {background}"
 
         # Use lottie_init() which handles PSRAM allocation, screen events, and task launch
         if src := config.get(CONF_SRC):
             # File from filesystem
             lv_add(cg.RawStatement(f"""
-    esphome::lvgl::lottie_init({w.obj}, nullptr, 0, "{src}", {width}, {height}, {do_loop}, {do_auto_start}, {user_wants_hidden});"""))
+    esphome::lvgl::lottie_init({w.obj}, nullptr, 0, "{src}", {width}, {height}, {do_loop}, {do_auto_start}, {user_wants_hidden}{opaque_args});"""))
         elif file_path := config.get(CONF_FILE):
             # Embedded data
             with Path(file_path).open("rb") as f:
@@ -219,7 +225,7 @@ class LottieType(WidgetType):
             prog_arr = cg.progmem_array(raw_data_id, list(json_data_with_null))
 
             lv_add(cg.RawStatement(f"""
-    esphome::lvgl::lottie_init({w.obj}, {prog_arr}, {len(json_data)}, nullptr, {width}, {height}, {do_loop}, {do_auto_start}, {user_wants_hidden});"""))
+    esphome::lvgl::lottie_init({w.obj}, {prog_arr}, {len(json_data)}, nullptr, {width}, {height}, {do_loop}, {do_auto_start}, {user_wants_hidden}{opaque_args});"""))
 
 
 lottie_spec = LottieType()

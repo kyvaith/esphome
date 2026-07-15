@@ -7,9 +7,11 @@
 #include "core/lv_obj_class_private.h"
 #include "core/lv_refr.h"
 #include "display/lv_display_private.h"
+#include "draw/lv_draw_buf_private.h"
 #include "misc/lv_ll.h"
 
 #include <cmath>
+#include <cstring>
 
 #ifdef USE_MIPI_DSI
 #include "esphome/components/mipi_dsi/mipi_dsi.h"
@@ -29,6 +31,9 @@
 #include "freertos/task.h"
 #include "soc/soc_caps.h"
 #endif
+
+extern "C" bool esphome_mipi_dsi_wait_fifo_margin(uint32_t min_depth, uint32_t timeout_us) __attribute__((weak));
+extern "C" void esphome_mipi_dsi_mark_stress(const char *label, uint32_t duration_ms) __attribute__((weak));
 
 #ifdef USE_LVGL_PPA
 #include "sdkconfig.h"
@@ -72,6 +77,10 @@ uint32_t lv_draw_ppa_get_img_task_count(void);
 uint32_t lv_draw_ppa_get_img_eval_count(void);
 uint32_t lv_draw_ppa_get_img_large_eval_count(void);
 uint32_t lv_draw_ppa_get_img_accepted_eval_count(void);
+uint32_t lv_draw_ppa_get_overlay_perf_count(void);
+uint64_t lv_draw_ppa_get_overlay_perf_pre_us(void);
+uint64_t lv_draw_ppa_get_overlay_perf_handler_us(void);
+uint64_t lv_draw_ppa_get_overlay_perf_post_us(void);
 uint32_t lv_draw_ppa_get_img_srm_task_count(void);
 uint32_t lv_draw_ppa_get_img_srm_large_task_count(void);
 uint32_t lv_draw_ppa_get_img_srm_unaligned_task_count(void);
@@ -86,6 +95,12 @@ uint32_t lv_draw_ppa_get_img_srm_ppa_max_us(void);
 uint64_t lv_draw_ppa_get_img_srm_wait_us(void);
 uint32_t lv_draw_ppa_get_img_srm_wait_max_us(void);
 uint32_t lv_draw_ppa_get_img_srm_band_max_us(void);
+uint32_t lv_draw_ppa_get_img_overlay_count(void);
+uint64_t lv_draw_ppa_get_img_overlay_src_sync_us(void);
+uint64_t lv_draw_ppa_get_img_overlay_wait_us(void);
+uint64_t lv_draw_ppa_get_img_overlay_dest_pre_us(void);
+uint64_t lv_draw_ppa_get_img_overlay_ppa_us(void);
+uint64_t lv_draw_ppa_get_img_overlay_dest_post_us(void);
 void lvgl_port_ppa_v9_init(lv_display_t *display);
 }
 #endif
@@ -111,6 +126,46 @@ void lvgl_esphome_note_frame(void);
 
 namespace esphome::lvgl {
 static const char *const TAG = "lvgl";
+
+#ifndef CONFIG_ESPHOME_LVGL_SNAPSHOT_DSI_FIFO_MIN
+#define CONFIG_ESPHOME_LVGL_SNAPSHOT_DSI_FIFO_MIN 1000
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_SNAPSHOT_DSI_WAIT_US
+#define CONFIG_ESPHOME_LVGL_SNAPSHOT_DSI_WAIT_US 6000
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_SNAPSHOT_JPEG_MIN_DMA_LARGEST
+#define CONFIG_ESPHOME_LVGL_SNAPSHOT_JPEG_MIN_DMA_LARGEST 57344
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_SNAPSHOT_RAW_DSI_QUIET_MS
+#define CONFIG_ESPHOME_LVGL_SNAPSHOT_RAW_DSI_QUIET_MS 35
+#endif
+
+static inline void lvgl_esphome_wait_snapshot_dsi_fifo() {
+#if defined(USE_MIPI_DSI)
+  if (esphome_mipi_dsi_wait_fifo_margin != nullptr) {
+    esphome_mipi_dsi_wait_fifo_margin(CONFIG_ESPHOME_LVGL_SNAPSHOT_DSI_FIFO_MIN,
+                                      CONFIG_ESPHOME_LVGL_SNAPSHOT_DSI_WAIT_US);
+  }
+#endif
+}
+
+static inline void lvgl_esphome_snapshot_dsi_quiet(uint32_t quiet_ms) {
+#if defined(USE_MIPI_DSI) && defined(USE_ESP32)
+  if (quiet_ms == 0 || esphome_mipi_dsi_wait_fifo_margin == nullptr)
+    return;
+  const int64_t deadline = esp_timer_get_time() + static_cast<int64_t>(quiet_ms) * 1000;
+  do {
+    lvgl_esphome_wait_snapshot_dsi_fifo();
+    vTaskDelay(1);
+  } while (esp_timer_get_time() < deadline);
+#else
+  (void) quiet_ms;
+#endif
+}
+
+extern "C" void lvgl_esphome_snapshot_dsi_quiet_ms(uint32_t quiet_ms) {
+  lvgl_esphome_snapshot_dsi_quiet(quiet_ms);
+}
 
 #ifdef USE_ESP32
 static void lvgl_cache_msync_external(const void *ptr, size_t len, int flags) {
@@ -153,9 +208,100 @@ static volatile bool s_snapshot_direct_active = false;
 static bool s_snapshot_app_open_frame_held = false;
 static volatile int s_snapshot_page_indicator_page = 0;
 static volatile int s_snapshot_page_indicator_count = 0;
+static char s_snapshot_clock_text[8] = "9:30";
+static const lv_font_t *s_snapshot_clock_font = nullptr;
+static lv_draw_buf_t *s_snapshot_clock_glyph_buffer = nullptr;
 
 static constexpr int SNAPSHOT_PAGE_INDICATOR_Y = 716;
 static constexpr int SNAPSHOT_PAGE_INDICATOR_H = 10;
+static constexpr int SNAPSHOT_CLOCK_Y = 10;
+static constexpr int SNAPSHOT_CLOCK_H = 52;
+
+static bool snapshot_draw_clock_rgb888(uint8_t *buffer, int width, int height) {
+  static_assert(sizeof(lv_color_t) == 3, "Snapshot clock compositor requires RGB888");
+  if (buffer == nullptr || width <= 0 || height <= 0 || s_snapshot_clock_font == nullptr)
+    return false;
+  if (SNAPSHOT_CLOCK_Y < 0 || SNAPSHOT_CLOCK_Y + SNAPSHOT_CLOCK_H > height)
+    return false;
+
+  char text[sizeof(s_snapshot_clock_text)];
+  std::memcpy(text, s_snapshot_clock_text, sizeof(text));
+  text[sizeof(text) - 1] = '\0';
+  size_t len = 0;
+  while (len < sizeof(text) && text[len] != '\0')
+    len++;
+  if (len == 0)
+    return false;
+
+  if (s_snapshot_clock_glyph_buffer == nullptr) {
+    s_snapshot_clock_glyph_buffer = lv_draw_buf_create(64, 64, LV_COLOR_FORMAT_A8, LV_STRIDE_AUTO);
+    if (s_snapshot_clock_glyph_buffer == nullptr)
+      return false;
+  }
+
+  lv_font_glyph_dsc_t glyphs[8]{};
+  int glyph_count = 0;
+  int text_width = 0;
+  for (size_t i = 0; i < len && glyph_count < 8; i++) {
+    const uint32_t next = i + 1 < len ? static_cast<uint8_t>(text[i + 1]) : 0;
+    if (!lv_font_get_glyph_dsc(s_snapshot_clock_font, &glyphs[glyph_count], static_cast<uint8_t>(text[i]), next))
+      continue;
+    text_width += glyphs[glyph_count].adv_w;
+    glyph_count++;
+  }
+  if (glyph_count == 0 || text_width <= 0)
+    return false;
+
+  lv_color_t *pixels = reinterpret_cast<lv_color_t *>(buffer);
+  int pen_x = (width - text_width) / 2;
+  const int line_y = SNAPSHOT_CLOCK_Y + (SNAPSHOT_CLOCK_H - s_snapshot_clock_font->line_height) / 2;
+  for (int i = 0; i < glyph_count; i++) {
+    auto &glyph = glyphs[i];
+    const auto *draw_buf =
+        static_cast<const lv_draw_buf_t *>(lv_font_get_glyph_bitmap(&glyph, s_snapshot_clock_glyph_buffer));
+    if (draw_buf != nullptr && glyph.box_w > 0 && glyph.box_h > 0) {
+      const int glyph_x = pen_x + glyph.ofs_x;
+      const int glyph_y =
+          line_y + (s_snapshot_clock_font->line_height - s_snapshot_clock_font->base_line) - glyph.box_h - glyph.ofs_y;
+      const int glyph_stride = lv_draw_buf_width_to_stride(glyph.box_w, LV_COLOR_FORMAT_A8);
+      for (int gy = 0; gy < glyph.box_h; gy++) {
+        const int y = glyph_y + gy;
+        if (y < 0 || y >= height)
+          continue;
+        const uint8_t *alpha_row = draw_buf->data + static_cast<size_t>(gy) * glyph_stride;
+        lv_color_t *dst_row = pixels + static_cast<size_t>(y) * width;
+        for (int gx = 0; gx < glyph.box_w; gx++) {
+          const int x = glyph_x + gx;
+          if (x < 0 || x >= width)
+            continue;
+          const uint16_t alpha = alpha_row[gx];
+          if (alpha == 0)
+            continue;
+          lv_color_t &dst = dst_row[x];
+          const uint16_t inverse = 255U - alpha;
+          dst.red = static_cast<uint8_t>((0xF5U * alpha + dst.red * inverse + 127U) / 255U);
+          dst.green = static_cast<uint8_t>((0xEEU * alpha + dst.green * inverse + 127U) / 255U);
+          dst.blue = static_cast<uint8_t>((0xFBU * alpha + dst.blue * inverse + 127U) / 255U);
+        }
+      }
+    }
+    pen_x += glyph.adv_w;
+    lv_font_glyph_release_draw_data(&glyph);
+  }
+  return true;
+}
+
+static void snapshot_sync_clock_rgb888(uint8_t *buffer, int width, int height) {
+#if defined(USE_ESP32)
+  if (buffer == nullptr || width <= 0 || height <= 0)
+    return;
+  if (SNAPSHOT_CLOCK_Y < 0 || SNAPSHOT_CLOCK_Y + SNAPSHOT_CLOCK_H > height)
+    return;
+  const size_t row_bytes = (size_t) width * 3u;
+  lvgl_cache_msync_external(buffer + (size_t) SNAPSHOT_CLOCK_Y * row_bytes, row_bytes * SNAPSHOT_CLOCK_H,
+                            ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+#endif
+}
 
 static bool snapshot_draw_page_indicator_rgb888(uint8_t *buffer, int width, int height, int page, int count) {
   if (buffer == nullptr || width <= 0 || height <= 0 || count <= 0 || page <= 0 || page > count)
@@ -248,6 +394,7 @@ static void snapshot_app_render_buffers_reset(bool opening) {
 }
 
 bool snapshot_swipe_process_pending();
+bool snapshot_scroll_process_pending();
 
 namespace {
 bool snapshot_swipe_direct_anim_tick();
@@ -427,9 +574,7 @@ static void profiler_add_duration(const char *name, uint32_t duration_us) {
     entry->max_us = duration_us;
 }
 
-static void profiler_flush_cb(const char *buf) {
-  if (buf == nullptr || s_profiler_stack == nullptr || s_profiler_aggs == nullptr)
-    return;
+static void profiler_process_line(const char *buf) {
   char phase = '\0';
   uint64_t time_us = 0;
   const char *name = nullptr;
@@ -463,6 +608,35 @@ static void profiler_flush_cb(const char *buf) {
     }
   }
   s_profiler_parse_drops++;
+}
+
+static void profiler_flush_cb(const char *buf) {
+  if (buf == nullptr || s_profiler_stack == nullptr || s_profiler_aggs == nullptr)
+    return;
+
+  // LVGL flushes a complete systrace block, not one event per callback.
+  // Parse every line so nested begin/end pairs can be aggregated reliably.
+  constexpr size_t LINE_CAPACITY = 256;
+  char line[LINE_CAPACITY];
+  const char *cursor = buf;
+  while (*cursor != '\0') {
+    const char *line_end = cursor;
+    while (*line_end != '\0' && *line_end != '\n' && *line_end != '\r')
+      line_end++;
+    const size_t line_len = static_cast<size_t>(line_end - cursor);
+    if (line_len > 0) {
+      if (line_len < LINE_CAPACITY) {
+        memcpy(line, cursor, line_len);
+        line[line_len] = '\0';
+        profiler_process_line(line);
+      } else {
+        s_profiler_parse_drops++;
+      }
+    }
+    cursor = line_end;
+    while (*cursor == '\n' || *cursor == '\r')
+      cursor++;
+  }
 }
 
 static void profiler_print_summary() {
@@ -1495,6 +1669,8 @@ uint8_t *LvglComponent::next_snapshot_render_buffer_() {
 bool LvglComponent::present_snapshot_render_buffer_(uint8_t *buffer) {
   if (buffer == nullptr)
     return false;
+  if (snapshot_draw_clock_rgb888(buffer, this->width_, this->height_))
+    snapshot_sync_clock_rgb888(buffer, this->width_, this->height_);
 #ifdef USE_MIPI_DSI
   if (!this->direct_mode_active_ && this->rotation == display::DISPLAY_ROTATION_0_DEGREES &&
       this->displays_.size() == 1) {
@@ -1878,6 +2054,181 @@ bool LvglComponent::wait_for_direct_frame_presented(uint32_t timeout_ms) {
 #else
   return false;
 #endif
+}
+
+bool LvglComponent::direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, int y, int width, int height) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI)
+  if (!this->direct_mode_active_ || this->rotation != display::DISPLAY_ROTATION_0_DEGREES ||
+      this->displays_.size() != 1 || dst == nullptr || s_snapshot_direct_active || s_snapshot_swipe_active ||
+      width <= 0 || height <= 0 || dst_stride < width * 3 || x < 0 || y < 0 || x + width > this->width_ ||
+      y + height > this->height_) {
+    return false;
+  }
+
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  if (mipi_display == nullptr)
+    return false;
+  uint8_t *fb0 = mipi_display->get_frame_buffer(0);
+  uint8_t *fb1 = mipi_display->get_frame_buffer(1);
+  if (fb0 == nullptr || fb1 == nullptr)
+    return false;
+
+  const uint8_t *source = this->direct_last_flushed_buf_;
+  if (source != fb0 && source != fb1)
+    source = fb0;
+
+  constexpr size_t bytes_per_pixel = 3;
+  const size_t framebuffer_stride = (size_t) this->width_ * bytes_per_pixel;
+  const size_t row_bytes = (size_t) width * bytes_per_pixel;
+  const uint8_t *source_row = source + (size_t) y * framebuffer_stride + (size_t) x * bytes_per_pixel;
+  uint8_t *target_row = dst;
+  constexpr int ROWS_PER_BAND = 4;
+  for (int row = 0; row < height;) {
+    lvgl_esphome_wait_snapshot_dsi_fifo();
+    const int rows = std::min(ROWS_PER_BAND, height - row);
+    const size_t source_span = (size_t) (rows - 1) * framebuffer_stride + row_bytes;
+    uint8_t *target_band = target_row;
+    lvgl_cache_msync_external(source_row, source_span, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    for (int band_row = 0; band_row < rows; band_row++) {
+      std::memcpy(target_row, source_row, row_bytes);
+      source_row += framebuffer_stride;
+      target_row += dst_stride;
+    }
+    lvgl_cache_msync_external(target_band, (size_t) dst_stride * (size_t) rows, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    row += rows;
+    if (row < height) {
+      taskYIELD();
+    }
+  }
+  return true;
+#else
+  return false;
+#endif
+}
+
+extern "C" bool lvgl_esphome_direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, int y, int width,
+                                                    int height) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component != nullptr && component->direct_capture_rgb888(dst, dst_stride, x, y, width, height);
+}
+
+extern "C" void lvgl_esphome_dsi_mark_stress(const char *label, uint32_t duration_ms) {
+#if defined(USE_MIPI_DSI)
+  if (esphome_mipi_dsi_mark_stress != nullptr) {
+    esphome_mipi_dsi_mark_stress(label, duration_ms);
+  }
+#else
+  (void) label;
+  (void) duration_ms;
+#endif
+}
+
+bool LvglComponent::direct_blit_rgb888(const uint8_t *src, int src_stride, int x, int y, int width, int height) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  if (!this->direct_mode_active_ || this->rotation != display::DISPLAY_ROTATION_0_DEGREES ||
+      this->displays_.size() != 1 || src == nullptr || s_display_srm_client == nullptr ||
+      s_snapshot_direct_active || s_snapshot_swipe_active || width <= 0 || height <= 0 || src_stride != width * 3 ||
+      x < 0 || y < 0 || x + width > this->width_ || y + height > this->height_) {
+    return false;
+  }
+
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  if (mipi_display == nullptr)
+    return false;
+  uint8_t *frame_buffers[2] = {mipi_display->get_frame_buffer(0), mipi_display->get_frame_buffer(1)};
+  if (frame_buffers[0] == nullptr || frame_buffers[1] == nullptr)
+    return false;
+
+  constexpr size_t BYTES_PER_PIXEL = 3;
+  const size_t framebuffer_stride = (size_t) this->width_ * BYTES_PER_PIXEL;
+  const size_t framebuffer_bytes = framebuffer_stride * (size_t) this->height_;
+  const size_t source_bytes = (size_t) src_stride * (size_t) height;
+  lvgl_cache_msync_external(src, source_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+
+  auto sync_output_region = [&](uint8_t *frame_buffer, int flags) {
+    const size_t row_bytes = (size_t) width * BYTES_PER_PIXEL;
+    uint8_t *region = frame_buffer + (size_t) y * framebuffer_stride + (size_t) x * BYTES_PER_PIXEL;
+    const size_t region_span = (size_t) (height - 1) * framebuffer_stride + row_bytes;
+    lvgl_cache_msync_external(region, region_span, flags);
+  };
+
+  const int64_t started_us = esp_timer_get_time();
+  for (uint8_t *frame_buffer : frame_buffers) {
+    // Preserve dirty CPU cache lines adjacent to the target before PPA writes
+    // into the same cache lines. Invalidate them afterwards so later LVGL
+    // redraws cannot write stale pixels back over the composited region.
+    sync_output_region(frame_buffer, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    mipi_display->wait_for_fifo_margin(768, 3000);
+
+    ppa_srm_oper_config_t cfg = {};
+    cfg.in.buffer = const_cast<uint8_t *>(src);
+    cfg.in.pic_w = width;
+    cfg.in.pic_h = height;
+    cfg.in.block_w = width;
+    cfg.in.block_h = height;
+    cfg.in.block_offset_x = 0;
+    cfg.in.block_offset_y = 0;
+    cfg.in.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
+    cfg.out.buffer = frame_buffer;
+    cfg.out.buffer_size = framebuffer_bytes;
+    cfg.out.pic_w = this->width_;
+    cfg.out.pic_h = this->height_;
+    cfg.out.block_offset_x = x;
+    cfg.out.block_offset_y = y;
+    cfg.out.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
+    cfg.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+    cfg.scale_x = 1.0f;
+    cfg.scale_y = 1.0f;
+    cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+    cfg.mode = PPA_TRANS_MODE_BLOCKING;
+    const esp_err_t result = ppa_do_scale_rotate_mirror(s_display_srm_client, &cfg);
+    if (result != ESP_OK) {
+      static bool warned = false;
+      if (!warned) {
+        ESP_LOGW("lvgl.region", "PPA RGB888 region blit unavailable (err=%d src=%p dst=%p)", result, src,
+                 frame_buffer);
+        warned = true;
+      }
+      return false;
+    }
+    sync_output_region(frame_buffer, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    taskYIELD();
+  }
+
+  if (s_perf_logging_enabled) {
+    static uint32_t count = 0;
+    static uint64_t total_us = 0;
+    static uint32_t max_us = 0;
+    static int64_t window_started_us = 0;
+    const int64_t now_us = esp_timer_get_time();
+    const uint32_t elapsed_us = (uint32_t) (now_us - started_us);
+    count++;
+    total_us += elapsed_us;
+    max_us = std::max(max_us, elapsed_us);
+    if (window_started_us == 0)
+      window_started_us = now_us;
+    if (now_us - window_started_us >= 2000000LL) {
+      ESP_LOGI("lvgl.region", "perf2s: blits=%u avg=%uus max=%uus area=%dx%d buffers=2", (unsigned) count,
+               (unsigned) (total_us / count), (unsigned) max_us, width, height);
+      count = 0;
+      total_us = 0;
+      max_us = 0;
+      window_started_us = now_us;
+    }
+  }
+  return true;
+#else
+  return false;
+#endif
+}
+
+extern "C" bool lvgl_esphome_direct_blit_rgb888(const uint8_t *src, int src_stride, int x, int y, int width,
+                                                 int height) {
+  auto *disp = lv_display_get_default();
+  auto *component =
+      disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component != nullptr && component->direct_blit_rgb888(src, src_stride, x, y, width, height);
 }
 
 void LvglComponent::realign_direct_buffer_after_manual_present() {
@@ -3073,7 +3424,7 @@ void LvglComponent::loop() {
     if (this->paused_ && this->show_snow_)
       this->write_random_();
   } else {
-    if (snapshot_swipe_process_pending())
+    if (snapshot_swipe_process_pending() || snapshot_scroll_process_pending())
       return;
     if (s_snapshot_direct_active) {
       snapshot_swipe_direct_anim_tick();
@@ -3119,6 +3470,16 @@ void LvglComponent::loop() {
       uint32_t ppa_img_eval_tasks = 0;
       uint32_t ppa_img_large_eval_tasks = 0;
       uint32_t ppa_img_accepted_eval_tasks = 0;
+      uint32_t ppa_overlay_perf_count = 0;
+      uint64_t ppa_overlay_perf_pre_us = 0;
+      uint64_t ppa_overlay_perf_handler_us = 0;
+      uint64_t ppa_overlay_perf_post_us = 0;
+      uint32_t ppa_img_overlay_count = 0;
+      uint64_t ppa_img_overlay_src_sync_us = 0;
+      uint64_t ppa_img_overlay_wait_us = 0;
+      uint64_t ppa_img_overlay_dest_pre_us = 0;
+      uint64_t ppa_img_overlay_ppa_us = 0;
+      uint64_t ppa_img_overlay_dest_post_us = 0;
       uint32_t ppa_img_srm_tasks = 0;
       uint32_t ppa_img_srm_large_tasks = 0;
       uint32_t ppa_img_srm_unaligned_tasks = 0;
@@ -3154,6 +3515,16 @@ void LvglComponent::loop() {
       ppa_img_eval_tasks = lv_draw_ppa_get_img_eval_count();
       ppa_img_large_eval_tasks = lv_draw_ppa_get_img_large_eval_count();
       ppa_img_accepted_eval_tasks = lv_draw_ppa_get_img_accepted_eval_count();
+      ppa_overlay_perf_count = lv_draw_ppa_get_overlay_perf_count();
+      ppa_overlay_perf_pre_us = lv_draw_ppa_get_overlay_perf_pre_us();
+      ppa_overlay_perf_handler_us = lv_draw_ppa_get_overlay_perf_handler_us();
+      ppa_overlay_perf_post_us = lv_draw_ppa_get_overlay_perf_post_us();
+      ppa_img_overlay_count = lv_draw_ppa_get_img_overlay_count();
+      ppa_img_overlay_src_sync_us = lv_draw_ppa_get_img_overlay_src_sync_us();
+      ppa_img_overlay_wait_us = lv_draw_ppa_get_img_overlay_wait_us();
+      ppa_img_overlay_dest_pre_us = lv_draw_ppa_get_img_overlay_dest_pre_us();
+      ppa_img_overlay_ppa_us = lv_draw_ppa_get_img_overlay_ppa_us();
+      ppa_img_overlay_dest_post_us = lv_draw_ppa_get_img_overlay_dest_post_us();
       ppa_img_srm_tasks = lv_draw_ppa_get_img_srm_task_count();
       ppa_img_srm_large_tasks = lv_draw_ppa_get_img_srm_large_task_count();
       ppa_img_srm_unaligned_tasks = lv_draw_ppa_get_img_srm_unaligned_task_count();
@@ -3211,6 +3582,16 @@ void LvglComponent::loop() {
       static uint32_t last_ppa_img_eval_tasks = 0;
       static uint32_t last_ppa_img_large_eval_tasks = 0;
       static uint32_t last_ppa_img_accepted_eval_tasks = 0;
+      static uint32_t last_ppa_overlay_perf_count = 0;
+      static uint64_t last_ppa_overlay_perf_pre_us = 0;
+      static uint64_t last_ppa_overlay_perf_handler_us = 0;
+      static uint64_t last_ppa_overlay_perf_post_us = 0;
+      static uint32_t last_ppa_img_overlay_count = 0;
+      static uint64_t last_ppa_img_overlay_src_sync_us = 0;
+      static uint64_t last_ppa_img_overlay_wait_us = 0;
+      static uint64_t last_ppa_img_overlay_dest_pre_us = 0;
+      static uint64_t last_ppa_img_overlay_ppa_us = 0;
+      static uint64_t last_ppa_img_overlay_dest_post_us = 0;
       static uint32_t last_ppa_img_srm_tasks = 0;
       static uint32_t last_ppa_img_srm_large_tasks = 0;
       static uint32_t last_ppa_img_srm_unaligned_tasks = 0;
@@ -3220,6 +3601,40 @@ void LvglComponent::loop() {
       static uint64_t last_ppa_img_srm_sync_bytes = 0;
       static uint64_t last_ppa_img_srm_ppa_us = 0;
       static uint64_t last_ppa_img_srm_wait_us = 0;
+      if (s_perf_logging_enabled && ppa_img_overlay_count != last_ppa_img_overlay_count) {
+        const uint32_t count = ppa_img_overlay_count - last_ppa_img_overlay_count;
+        const uint64_t src_sync_us = ppa_img_overlay_src_sync_us - last_ppa_img_overlay_src_sync_us;
+        const uint64_t wait_us = ppa_img_overlay_wait_us - last_ppa_img_overlay_wait_us;
+        const uint64_t dest_pre_us = ppa_img_overlay_dest_pre_us - last_ppa_img_overlay_dest_pre_us;
+        const uint64_t ppa_us = ppa_img_overlay_ppa_us - last_ppa_img_overlay_ppa_us;
+        const uint64_t dest_post_us = ppa_img_overlay_dest_post_us - last_ppa_img_overlay_dest_post_us;
+        ESP_LOGW(TAG,
+                 "ppa overlay core: count=%u src=%lluus wait=%lluus dest_pre=%lluus ppa=%lluus dest_post=%lluus",
+                 (unsigned) count, (unsigned long long) (src_sync_us / count),
+                 (unsigned long long) (wait_us / count), (unsigned long long) (dest_pre_us / count),
+                 (unsigned long long) (ppa_us / count), (unsigned long long) (dest_post_us / count));
+        last_ppa_img_overlay_count = ppa_img_overlay_count;
+        last_ppa_img_overlay_src_sync_us = ppa_img_overlay_src_sync_us;
+        last_ppa_img_overlay_wait_us = ppa_img_overlay_wait_us;
+        last_ppa_img_overlay_dest_pre_us = ppa_img_overlay_dest_pre_us;
+        last_ppa_img_overlay_ppa_us = ppa_img_overlay_ppa_us;
+        last_ppa_img_overlay_dest_post_us = ppa_img_overlay_dest_post_us;
+      }
+      if (s_perf_logging_enabled && ppa_overlay_perf_count != last_ppa_overlay_perf_count) {
+        const uint32_t count = ppa_overlay_perf_count - last_ppa_overlay_perf_count;
+        const uint64_t pre_us = ppa_overlay_perf_pre_us - last_ppa_overlay_perf_pre_us;
+        const uint64_t handler_us = ppa_overlay_perf_handler_us - last_ppa_overlay_perf_handler_us;
+        const uint64_t post_us = ppa_overlay_perf_post_us - last_ppa_overlay_perf_post_us;
+        ESP_LOGW(TAG, "ppa overlay: count=%u avg_pre=%lluus avg_handler=%lluus avg_post=%lluus",
+                 (unsigned)count,
+                 (unsigned long long)(pre_us / count),
+                 (unsigned long long)(handler_us / count),
+                 (unsigned long long)(post_us / count));
+        last_ppa_overlay_perf_count = ppa_overlay_perf_count;
+        last_ppa_overlay_perf_pre_us = ppa_overlay_perf_pre_us;
+        last_ppa_overlay_perf_handler_us = ppa_overlay_perf_handler_us;
+        last_ppa_overlay_perf_post_us = ppa_overlay_perf_post_us;
+      }
       if (s_perf_logging_enabled &&
           (ppa_fill_tasks != last_ppa_fill_tasks || ppa_img_tasks != last_ppa_img_tasks ||
           ppa_img_eval_tasks != last_ppa_img_eval_tasks ||
@@ -3411,7 +3826,9 @@ struct SnapshotScrollState {
   int content_h{0};
   int max_scroll_y{0};
   int current_scroll_y{0};
+  int pending_scroll_y{0};
   bool direct_render{false};
+  bool pending_update{false};
   bool root_was_hidden{false};
   LvglComponent *component{nullptr};
 };
@@ -3803,6 +4220,10 @@ bool snapshot_cache_prepare_raw_page(lv_obj_t *obj) {
   if (entry != nullptr && entry->buf != nullptr)
     return true;
 
+  lvgl_esphome_wait_snapshot_dsi_fifo();
+  if (esphome_mipi_dsi_mark_stress != nullptr) {
+    esphome_mipi_dsi_mark_stress("snapshot-raw-page", 160);
+  }
   const uint64_t t0 = snapshot_diag_now_us_();
   auto *buf = snapshot_take_centered(obj);
   if (buf == nullptr) {
@@ -3811,7 +4232,10 @@ bool snapshot_cache_prepare_raw_page(lv_obj_t *obj) {
     return false;
   }
   const uint64_t take_us = snapshot_diag_now_us_() - t0;
+  lvgl_esphome_wait_snapshot_dsi_fifo();
   snapshot_cache_store_raw_only(obj, buf);
+  lvgl_esphome_wait_snapshot_dsi_fifo();
+  lvgl_esphome_snapshot_dsi_quiet(CONFIG_ESPHOME_LVGL_SNAPSHOT_RAW_DSI_QUIET_MS);
   if (take_us > 50000 || snapshot_diag_budget > 0) {
     ESP_LOGW(TAG, "snapshot diag: raw page cache obj=%p took=%lluus size=%uKB cf=%u stride=%u", obj,
              (unsigned long long) take_us, (unsigned) (buf->data_size / 1024), (unsigned) buf->header.cf,
@@ -4615,6 +5039,16 @@ extern "C" bool lvgl_esphome_snapshot_cache_compressed_page(lv_obj_t *obj) {
 #if LV_USE_SNAPSHOT
   if (obj == nullptr)
     return false;
+#ifdef USE_ESP32
+  const size_t dma_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  if (dma_largest < CONFIG_ESPHOME_LVGL_SNAPSHOT_JPEG_MIN_DMA_LARGEST) {
+    if (snapshot_diag_budget > 0 || s_swipe_logging_enabled) {
+      ESP_LOGW(TAG, "snapshot compressed cache: skipped before capture obj=%p dma_largest=%u min=%u", obj,
+               (unsigned) dma_largest, (unsigned) CONFIG_ESPHOME_LVGL_SNAPSHOT_JPEG_MIN_DMA_LARGEST);
+    }
+    return false;
+  }
+#endif
   snapshot_log_heap_("cache_compressed_page begin", obj, false);
   const uint64_t t0 = snapshot_diag_now_us_();
   const bool was_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -4630,7 +5064,12 @@ extern "C" bool lvgl_esphome_snapshot_cache_compressed_page(lv_obj_t *obj) {
              (unsigned long long) take_us, obj, (unsigned) (buf->data_size / 1024), (unsigned) buf->header.cf,
              (unsigned) buf->header.stride, (unsigned) was_hidden);
   }
+  lvgl_esphome_wait_snapshot_dsi_fifo();
+  if (esphome_mipi_dsi_mark_stress != nullptr) {
+    esphome_mipi_dsi_mark_stress("snapshot-compress", 1200);
+  }
   snapshot_cache_store_compressed_only(obj, buf);
+  lvgl_esphome_wait_snapshot_dsi_fifo();
   snapshot_log_heap_("cache_compressed_page stored", obj, false);
   return snapshot_cache_find_entry(obj) != nullptr;
 #else
@@ -4643,6 +5082,63 @@ extern "C" bool lvgl_esphome_snapshot_cache_raw_page(lv_obj_t *obj) {
   return snapshot_cache_prepare_raw_page(obj);
 #else
   return false;
+#endif
+}
+
+extern "C" bool lvgl_esphome_snapshot_cache_current_frame_raw_page(lv_obj_t *obj) {
+#if LV_USE_SNAPSHOT && LV_COLOR_DEPTH == 32
+  if (obj == nullptr)
+    return false;
+  auto *entry = snapshot_cache_find_entry(obj);
+  if (entry != nullptr && entry->buf != nullptr)
+    return true;
+
+  auto *disp = lv_obj_get_display(obj);
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  if (component == nullptr)
+    return snapshot_cache_prepare_raw_page(obj);
+
+  lv_refr_now(disp);
+  component->wait_for_direct_frame_presented(40);
+  lvgl_esphome_snapshot_dsi_quiet(20);
+
+  const int WIDTH = lv_display_get_horizontal_resolution(disp);
+  const int HEIGHT = lv_display_get_vertical_resolution(disp);
+  const int STRIDE = WIDTH * 3;
+  if (WIDTH <= 0 || HEIGHT <= 0)
+    return snapshot_cache_prepare_raw_page(obj);
+  lv_draw_buf_t *buf = lv_draw_buf_create(WIDTH, HEIGHT, LV_COLOR_FORMAT_RGB888, STRIDE);
+  if (buf == nullptr || buf->data == nullptr) {
+    if (buf != nullptr)
+      lv_draw_buf_destroy(buf);
+    return snapshot_cache_prepare_raw_page(obj);
+  }
+
+  lvgl_esphome_wait_snapshot_dsi_fifo();
+  if (esphome_mipi_dsi_mark_stress != nullptr) {
+    esphome_mipi_dsi_mark_stress("snapshot-frame-copy", 220);
+  }
+  const uint64_t t0 = snapshot_diag_now_us_();
+  const bool captured =
+      component->direct_capture_rgb888(static_cast<uint8_t *>(buf->data), STRIDE, 0, 0, WIDTH, HEIGHT);
+  const uint64_t take_us = snapshot_diag_now_us_() - t0;
+  lvgl_esphome_wait_snapshot_dsi_fifo();
+  if (!captured) {
+    lv_draw_buf_destroy(buf);
+    return snapshot_cache_prepare_raw_page(obj);
+  }
+
+  snapshot_cache_store_raw_only(obj, buf);
+  lvgl_esphome_wait_snapshot_dsi_fifo();
+  lvgl_esphome_snapshot_dsi_quiet(CONFIG_ESPHOME_LVGL_SNAPSHOT_RAW_DSI_QUIET_MS);
+  if (take_us > 50000 || snapshot_diag_budget > 0) {
+    ESP_LOGW(TAG, "snapshot diag: frame copy raw page obj=%p took=%lluus size=%uKB cf=%u stride=%u", obj,
+             (unsigned long long) take_us, (unsigned) (buf->data_size / 1024), (unsigned) buf->header.cf,
+             (unsigned) buf->header.stride);
+  }
+  return true;
+#else
+  return snapshot_cache_prepare_raw_page(obj);
 #endif
 }
 
@@ -4819,7 +5315,27 @@ extern "C" bool lvgl_esphome_snapshot_app_close(lv_obj_t *app, lv_obj_t *backgro
 extern "C" bool lvgl_esphome_snapshot_app_prepare_close(lv_obj_t *app) {
 #if LV_USE_SNAPSHOT
   snapshot_app_clear_prepared_close();
-  auto *buf = snapshot_app_take_fresh(app);
+  if (app == nullptr)
+    return false;
+
+  auto *disp = lv_obj_get_display(app);
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  lv_draw_buf_t *buf = nullptr;
+  if (component != nullptr) {
+    const int width = lv_display_get_horizontal_resolution(disp);
+    const int height = lv_display_get_vertical_resolution(disp);
+    const int stride = width * 3;
+    if (width > 0 && height > 0) {
+      buf = lv_draw_buf_create(width, height, LV_COLOR_FORMAT_RGB888, stride);
+      if (buf != nullptr &&
+          !component->direct_capture_rgb888(static_cast<uint8_t *>(buf->data), stride, 0, 0, width, height)) {
+        lv_draw_buf_destroy(buf);
+        buf = nullptr;
+      }
+    }
+  }
+  if (buf == nullptr)
+    buf = snapshot_app_take_fresh(app);
   if (buf == nullptr)
     return false;
   snapshot_app_prepared_close_obj = app;
@@ -5020,6 +5536,15 @@ extern "C" void lvgl_esphome_snapshot_swipe_set_page_indicator(int page, int pag
   s_snapshot_page_indicator_count = page_count;
 }
 
+extern "C" void lvgl_esphome_snapshot_set_clock_text(const char *text) {
+  if (text == nullptr || text[0] == '\0')
+    return;
+  std::strncpy(s_snapshot_clock_text, text, sizeof(s_snapshot_clock_text) - 1);
+  s_snapshot_clock_text[sizeof(s_snapshot_clock_text) - 1] = '\0';
+}
+
+extern "C" void lvgl_esphome_snapshot_set_clock_font(const lv_font_t *font) { s_snapshot_clock_font = font; }
+
 extern "C" void lvgl_esphome_snapshot_swipe_update(int current_x, int next_x) {
   if (snapshot_swipe_state.direct_render && snapshot_swipe_state.component != nullptr) {
     if (snapshot_swipe_render_direct_frame(current_x, next_x)) {
@@ -5115,6 +5640,19 @@ bool snapshot_swipe_process_pending() {
   return false;
 }
 
+bool snapshot_scroll_process_pending() {
+  auto &state = snapshot_scroll_state;
+  if (!state.pending_update || !state.direct_render || state.component == nullptr || state.content_buf == nullptr)
+    return false;
+
+  const int scroll_y = state.pending_scroll_y;
+  state.pending_update = false;
+  if (state.component->snapshot_scroll_direct_render(state.content_buf, scroll_y, state.viewport_w, state.viewport_h)) {
+    state.current_scroll_y = scroll_y;
+  }
+  return true;
+}
+
 extern "C" void lvgl_esphome_snapshot_swipe_end(void) {
   snapshot_swipe_cleanup();
   lv_obj_invalidate(lv_screen_active());
@@ -5171,11 +5709,8 @@ extern "C" void lvgl_esphome_snapshot_scroll_update(int scroll_y) {
       snapshot_scroll_state.content_buf == nullptr)
     return;
   const int clamped_y = snapshot_scroll_clamp_y(scroll_y);
-  if (snapshot_scroll_state.component->snapshot_scroll_direct_render(
-          snapshot_scroll_state.content_buf, clamped_y, snapshot_scroll_state.viewport_w,
-          snapshot_scroll_state.viewport_h)) {
-    snapshot_scroll_state.current_scroll_y = clamped_y;
-  }
+  snapshot_scroll_state.pending_scroll_y = clamped_y;
+  snapshot_scroll_state.pending_update = true;
 }
 
 extern "C" void lvgl_esphome_snapshot_scroll_finish(int scroll_y) {
@@ -5184,6 +5719,7 @@ extern "C" void lvgl_esphome_snapshot_scroll_finish(int scroll_y) {
     return;
   }
   const int clamped_y = snapshot_scroll_clamp_y(scroll_y);
+  snapshot_scroll_state.pending_update = false;
   if (snapshot_scroll_state.direct_render && snapshot_scroll_state.component != nullptr &&
       snapshot_scroll_state.content_buf != nullptr) {
     snapshot_scroll_state.component->snapshot_scroll_direct_render(snapshot_scroll_state.content_buf, clamped_y,
@@ -5209,6 +5745,7 @@ extern "C" void lvgl_esphome_snapshot_scroll_finish_retain(int scroll_y) {
     return;
   }
   const int clamped_y = snapshot_scroll_clamp_y(scroll_y);
+  snapshot_scroll_state.pending_update = false;
   if (snapshot_scroll_state.direct_render && snapshot_scroll_state.component != nullptr &&
       snapshot_scroll_state.content_buf != nullptr) {
     snapshot_scroll_state.component->snapshot_scroll_direct_render(snapshot_scroll_state.content_buf, clamped_y,
@@ -5456,22 +5993,29 @@ void lv_mem_monitor_core(lv_mem_monitor_t *mon_p) {
 }
 
 void *lv_malloc_core(size_t size) {
-  void *ptr;
   // Use 64-byte alignment for optimal ESP32 PSRAM/cache performance.
   // Note: LV_DRAW_BUF_ALIGN is set to 4 to avoid LVGL warnings from
   // internal stack/static buffers, but heap allocations use 64-byte alignment.
   constexpr size_t LVGL_ALIGNMENT = 64;
+  constexpr size_t LVGL_INTERNAL_MAX_ALLOCATION = 4 * 1024;
+  constexpr size_t LVGL_INTERNAL_HEADROOM = 96 * 1024;
   const size_t aligned_size = (size + LVGL_ALIGNMENT - 1) & ~(LVGL_ALIGNMENT - 1);
 
-  // BUGFIX: Don't modify global cap_bits - use local variable
-  unsigned caps = cap_bits;
-
-  // Try PSRAM first
-  ptr = heap_caps_aligned_alloc(LVGL_ALIGNMENT, aligned_size, caps);
+  // Keep small, frequently accessed LVGL objects in internal SRAM. Large
+  // image and draw buffers remain in PSRAM, while the headroom protects audio,
+  // networking, and interrupt-time allocations from SRAM starvation.
+  const size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  const bool prefer_internal = aligned_size <= LVGL_INTERNAL_MAX_ALLOCATION &&
+                               largest_internal >= aligned_size + LVGL_INTERNAL_HEADROOM;
+  void *ptr = nullptr;
+  if (prefer_internal) {
+    ptr = heap_caps_aligned_alloc(LVGL_ALIGNMENT, aligned_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  }
   if (ptr == nullptr) {
-    // Fallback to internal RAM if PSRAM allocation fails
-    caps = MALLOC_CAP_8BIT;
-    ptr = heap_caps_aligned_alloc(LVGL_ALIGNMENT, aligned_size, caps);
+    ptr = heap_caps_aligned_alloc(LVGL_ALIGNMENT, aligned_size, cap_bits);
+  }
+  if (ptr == nullptr) {
+    ptr = heap_caps_aligned_alloc(LVGL_ALIGNMENT, aligned_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   }
 
   if (ptr == nullptr) {

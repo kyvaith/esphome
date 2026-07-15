@@ -24,6 +24,7 @@ namespace esphome::ledc {
 
 static const char *const TAG = "ledc.output";
 static bool ledc_peripheral_reset_done = false;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+static bool ledc_fade_service_installed = false;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 static const int MAX_RES_BITS = LEDC_TIMER_BIT_MAX - 1;
 #if SOC_LEDC_SUPPORT_HS_MODE
@@ -135,6 +136,8 @@ void LEDCOutput::write_state(float state) {
   const uint32_t max_duty = (uint32_t(1) << this->bit_depth_) - 1;
   const float duty_rounded = roundf(state * max_duty);
   auto duty = static_cast<uint32_t>(duty_rounded);
+  const uint32_t fade_duration_ms = this->next_fade_duration_ms_;
+  this->next_fade_duration_ms_ = 0;
   if (duty == this->last_duty_) {
     return;
   }
@@ -143,6 +146,35 @@ void LEDCOutput::write_state(float state) {
   auto speed_mode = get_speed_mode(this->channel_);
   auto chan_num = static_cast<ledc_channel_t>(this->channel_ % 8);
   int hpoint = ledc_angle_to_htop(this->phase_angle_, this->bit_depth_);
+  if (fade_duration_ms > 0) {
+    if (!ledc_fade_service_installed) {
+      const esp_err_t install_result = ledc_fade_func_install(0);
+      if (install_result == ESP_OK || install_result == ESP_ERR_INVALID_STATE) {
+        ledc_fade_service_installed = true;
+      } else {
+        ESP_LOGW(TAG, "Unable to install LEDC fade service: %s", esp_err_to_name(install_result));
+      }
+    }
+    if (ledc_fade_service_installed) {
+      // A previous exact-off write may have stopped the channel. Re-applying
+      // its current duty starts it again without changing the pin level.
+      if (this->last_duty_ != UINT32_MAX) {
+        ledc_set_duty_with_hpoint(speed_mode, chan_num, this->last_duty_, hpoint);
+        ledc_update_duty(speed_mode, chan_num);
+      }
+      const esp_err_t configure_result =
+          ledc_set_fade_with_time(speed_mode, chan_num, duty, fade_duration_ms);
+      const esp_err_t start_result = configure_result == ESP_OK
+                                         ? ledc_fade_start(speed_mode, chan_num, LEDC_FADE_NO_WAIT)
+                                         : configure_result;
+      if (start_result == ESP_OK) {
+        this->last_duty_ = duty;
+        return;
+      }
+      ESP_LOGW(TAG, "Unable to start %" PRIu32 "ms hardware fade: %s", fade_duration_ms,
+               esp_err_to_name(start_result));
+    }
+  }
   if (duty == max_duty) {
     ledc_stop(speed_mode, chan_num, 1);
     this->last_duty_ = duty;

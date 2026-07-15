@@ -13,6 +13,10 @@
 #include "esphome/components/sendspin/sendspin_hub.h"
 #include <sendspin/config.h>
 #include <atomic>
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#endif
 #endif
 
 namespace esphome {
@@ -147,6 +151,8 @@ class ArtworkImage : public PollingComponent,
   void apply_rgb_darken_once(uint8_t percent);
   void set_darken_percent(uint8_t percent) { this->darken_percent_ = percent; }
   void set_hardware_jpeg(bool hardware_jpeg) { this->hardware_jpeg_ = hardware_jpeg; }
+  void set_scrim_color(uint32_t color) { this->scrim_color_ = color; }
+  void set_scrim_opacity(uint8_t opacity) { this->scrim_opacity_ = opacity; }
   bool use_hardware_jpeg() const { return this->hardware_jpeg_; }
   uint8_t get_darken_percent() const { return this->darken_percent_; }
   void mark_decode_buffer_darkened(uint8_t percent) { this->decode_buffer_darkened_percent_ = percent; }
@@ -208,6 +214,7 @@ class ArtworkImage : public PollingComponent,
 #endif
   bool ensure_download_buffer_capacity_();
   bool decode_encoded_image_(ImageFormat format, const uint8_t *data, size_t length, bool finish_on_decode = true);
+  bool apply_decode_buffer_scrim_();
   bool decode_buffered_data_();
   void finish_download_();
   void fail_download_();
@@ -215,6 +222,11 @@ class ArtworkImage : public PollingComponent,
   void process_pending_sendspin_();
   void queue_sendspin_process_();
   void queue_sendspin_finish_();
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  static void sendspin_decode_worker_task_(void *arg);
+  bool start_sendspin_decode_worker_();
+  bool queue_sendspin_jpeg_decode_(std::vector<uint8_t> &&data, bool display);
+#endif
 #endif
 
   /**
@@ -238,6 +250,7 @@ class ArtworkImage : public PollingComponent,
   std::shared_ptr<http_request::HttpContainer> downloader_{nullptr};
 #ifdef USE_ESP_IDF
   LocalHttpContainer *local_downloader_{nullptr};
+  bool local_headers_ready_pending_start_{false};
 #endif
   std::unique_ptr<ImageDecoder> decoder_{nullptr};
 
@@ -301,12 +314,15 @@ class ArtworkImage : public PollingComponent,
   int decode_offset_y_{0};
   bool decode_buffer_written_by_dma_{false};
   uint8_t decode_buffer_darkened_percent_{0};
+  bool decode_buffer_scrim_applied_{false};
   uint32_t trace_id_{0};
   uint32_t trace_next_id_{0};
   uint64_t trace_start_us_{0};
   uint8_t *darkened_buffer_{nullptr};
   uint8_t darkened_percent_{0};
   uint8_t darken_percent_{0};
+  uint32_t scrim_color_{0};
+  uint8_t scrim_opacity_{0};
   int buffer_content_width_{0};
   int buffer_content_height_{0};
   int buffer_offset_x_{0};
@@ -341,6 +357,11 @@ class ArtworkImage : public PollingComponent,
   bool pending_sendspin_image_{false};
   bool pending_sendspin_display_{false};
   bool pending_sendspin_clear_{false};
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  TaskHandle_t sendspin_decode_task_{nullptr};
+  std::atomic<bool> sendspin_decode_busy_{false};
+  std::vector<uint8_t> sendspin_decode_data_{};
+#endif
 #endif
   static constexpr uint32_t DOWNLOAD_STALL_TIMEOUT_MS = 10000;
 

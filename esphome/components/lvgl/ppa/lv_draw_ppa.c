@@ -11,6 +11,7 @@
 #include "lv_draw_ppa_private.h"
 #include "lv_draw_ppa.h"
 #include "src/draw/lv_draw_image.h"
+#include "esp_timer.h"
 
 /*********************
  *      DEFINES
@@ -25,6 +26,10 @@ static uint32_t s_ppa_img_eval_tasks = 0;
 static uint32_t s_ppa_img_large_eval_tasks = 0;
 static uint32_t s_ppa_img_accepted_eval_tasks = 0;
 static uint32_t s_ppa_img_reject_logs = 0;
+static uint32_t s_ppa_overlay_perf_count = 0;
+static uint64_t s_ppa_overlay_perf_pre_us = 0;
+static uint64_t s_ppa_overlay_perf_handler_us = 0;
+static uint64_t s_ppa_overlay_perf_post_us = 0;
 
 extern uint32_t lvgl_esphome_get_perf_logging_enabled(void);
 bool esphome_artwork_image_buffer_written_by_dma(const void * ptr) __attribute__((weak));
@@ -88,6 +93,42 @@ static inline bool ppa_image_task_is_large_opaque_copy(const lv_draw_task_t * t,
     lv_draw_buf_t * dest = t->target_layer != NULL ? t->target_layer->draw_buf : NULL;
     if(!ppa_buf_usable(dest)) return false;
     return ppa_dest_cf_supported((lv_color_format_t)dest->header.cf);
+}
+
+static inline bool ppa_image_task_is_direct_overlay(const lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc)
+{
+    if(!ppa_image_scale_is_identity(dsc)) return false;
+    if(dsc->rotation != 0 || dsc->skew_x != 0 || dsc->skew_y != 0) return false;
+    if(dsc->opa < (lv_opa_t)LV_OPA_MAX || dsc->blend_mode != LV_BLEND_MODE_NORMAL) return false;
+    const lv_color_format_t src_cf = (lv_color_format_t)dsc->header.cf;
+    if(src_cf != LV_COLOR_FORMAT_ARGB8888 && src_cf != LV_COLOR_FORMAT_RGB888 &&
+       src_cf != LV_COLOR_FORMAT_XRGB8888) {
+        return false;
+    }
+    if(dsc->clip_radius != 0 || dsc->recolor_opa > (lv_opa_t)LV_OPA_MIN || dsc->tile) return false;
+    if(dsc->colorkey != NULL || dsc->bitmap_mask_src != NULL) return false;
+
+    lv_area_t visible_area;
+    if(!lv_area_intersect(&visible_area, &t->area, &t->clip_area)) return false;
+    if(t->target_layer != NULL) {
+        if(!lv_area_intersect(&visible_area, &visible_area, &t->target_layer->buf_area)) return false;
+    }
+
+    /* Small icons are cheaper to leave in the software renderer. Dynamic
+     * overlays such as meters and animated controls quickly amortize the PPA
+     * setup cost. RGB888/XRGB8888 sources are opaque copies; ARGB8888 sources
+     * are blended over the current destination. */
+    if(ppa_area_px(&visible_area) < (64U * 64U)) return false;
+
+    lv_draw_buf_t * dest = t->target_layer != NULL ? t->target_layer->draw_buf : NULL;
+    if(!ppa_buf_usable(dest)) return false;
+    return ppa_dest_cf_supported((lv_color_format_t)dest->header.cf);
+}
+
+static inline bool ppa_image_task_is_alpha_overlay(const lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc)
+{
+    return ppa_image_task_is_direct_overlay(t, dsc) &&
+           (lv_color_format_t)dsc->header.cf == LV_COLOR_FORMAT_ARGB8888;
 }
 
 static void ppa_log_image_eval(lv_draw_unit_t * draw_unit, const lv_draw_task_t * t,
@@ -256,6 +297,26 @@ uint32_t lv_draw_ppa_get_img_accepted_eval_count(void)
     return s_ppa_img_accepted_eval_tasks;
 }
 
+uint32_t lv_draw_ppa_get_overlay_perf_count(void)
+{
+    return s_ppa_overlay_perf_count;
+}
+
+uint64_t lv_draw_ppa_get_overlay_perf_pre_us(void)
+{
+    return s_ppa_overlay_perf_pre_us;
+}
+
+uint64_t lv_draw_ppa_get_overlay_perf_handler_us(void)
+{
+    return s_ppa_overlay_perf_handler_us;
+}
+
+uint64_t lv_draw_ppa_get_overlay_perf_post_us(void)
+{
+    return s_ppa_overlay_perf_post_us;
+}
+
 /**********************
  *   STATIC FUNCTIONS
  **********************/
@@ -366,6 +427,14 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
             if(!ppa_image_scale_is_identity(dsc)) return 0;
 #endif
 #ifdef LV_USE_PPA_IMG
+            if(ppa_image_task_is_direct_overlay(t, dsc)) {
+                if(t->preference_score > 45) {
+                    t->preference_score = 45;
+                    t->preferred_draw_unit_id = draw_unit->idx;
+                }
+                s_ppa_img_accepted_eval_tasks++;
+                return 1;
+            }
             if(!ppa_image_task_is_large_opaque_copy(t, dsc)) return 0;
             if(t->preference_score > 55) {
                 t->preference_score = 55;
@@ -414,11 +483,23 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
         buf = (target) ? target->draw_buf : NULL;
 
         if(buf != NULL && buf->data != NULL) {
+            const lv_draw_image_dsc_t * perf_img_dsc =
+                t->type == LV_DRAW_TASK_TYPE_IMAGE ? (const lv_draw_image_dsc_t *)t->draw_dsc : NULL;
+            const bool overlay_perf = perf_img_dsc != NULL &&
+                                      (lv_color_format_t)perf_img_dsc->header.cf == LV_COLOR_FORMAT_ARGB8888 &&
+                                      lvgl_esphome_get_perf_logging_enabled();
+            const bool direct_overlay =
+                perf_img_dsc != NULL && ppa_image_task_is_direct_overlay(t, perf_img_dsc);
+            const int64_t pre_start_us = overlay_perf ? esp_timer_get_time() : 0;
             lv_area_t sync_area;
             bool has_sync_area = lv_area_intersect(&sync_area, &t->area, &t->clip_area);
-            if(has_sync_area) {
+            /* Direct image copies/blends synchronize the complete source and
+             * destination row window in lv_draw_img_ppa_core(). Repeating the
+             * generic row-by-row sync here adds several milliseconds per frame. */
+            if(has_sync_area && !direct_overlay) {
                 lv_draw_ppa_cache_sync_area_to_memory(buf, &target->buf_area, &sync_area);
             }
+            const int64_t handler_start_us = overlay_perf ? esp_timer_get_time() : 0;
 
             switch(t->type) {
                 case LV_DRAW_TASK_TYPE_FILL:
@@ -433,6 +514,10 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
                         lv_draw_ppa_img_rotate(t, img_dsc, &t->area);
                     } else if(!ppa_image_scale_is_identity(img_dsc) ||
                               img_dsc->skew_x != 0 || img_dsc->skew_y != 0) {
+                        lv_draw_ppa_img_srm(t, img_dsc, &t->area);
+                    } else if(ppa_image_task_is_alpha_overlay(t, img_dsc)) {
+                        lv_draw_ppa_img(t, img_dsc, &t->area);
+                    } else if(ppa_image_task_is_direct_overlay(t, img_dsc)) {
                         lv_draw_ppa_img_srm(t, img_dsc, &t->area);
                     } else if(ppa_image_task_is_large_opaque_copy(t, img_dsc)) {
                         /* A large 1:1 opaque artwork image is already decoded in
@@ -455,9 +540,17 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
                 default:
                     break;
             }
+            const int64_t post_start_us = overlay_perf ? esp_timer_get_time() : 0;
 
-            if(has_sync_area) {
+            if(has_sync_area && !direct_overlay) {
                 lv_draw_ppa_cache_sync_area_from_memory(buf, &target->buf_area, &sync_area);
+            }
+            if(overlay_perf) {
+                const int64_t now_us = esp_timer_get_time();
+                s_ppa_overlay_perf_count++;
+                s_ppa_overlay_perf_pre_us += (uint64_t)(handler_start_us - pre_start_us);
+                s_ppa_overlay_perf_handler_us += (uint64_t)(post_start_us - handler_start_us);
+                s_ppa_overlay_perf_post_us += (uint64_t)(now_us - post_start_us);
             }
         }
 

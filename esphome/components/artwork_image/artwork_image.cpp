@@ -46,6 +46,10 @@ static constexpr int LOCAL_ARTWORK_HTTP_TX_BUFFER_SIZE = 512;
 static constexpr uint32_t SLOW_ARTWORK_STAGE_MS = 30;
 static constexpr uint32_t ARTWORK_READ_STRESS_PERIOD_MS = 250;
 static constexpr uint32_t SENDSPIN_ARTWORK_PROCESS_DELAY_MS = 100;
+#if defined(USE_SENDSPIN_ARTWORK) && defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+static constexpr uint32_t SENDSPIN_JPEG_DECODE_TASK_STACK_SIZE = 8192;
+static constexpr UBaseType_t SENDSPIN_JPEG_DECODE_TASK_PRIORITY = 1;
+#endif
 
 #ifndef CONFIG_ESPHOME_ARTWORK_TRACE_VERBOSE
 #define CONFIG_ESPHOME_ARTWORK_TRACE_VERBOSE 0
@@ -69,6 +73,14 @@ static constexpr uint32_t SENDSPIN_ARTWORK_PROCESS_DELAY_MS = 100;
 
 #ifndef CONFIG_ESPHOME_ARTWORK_POST_DECODE_DSI_QUIET_MS
 #define CONFIG_ESPHOME_ARTWORK_POST_DECODE_DSI_QUIET_MS 0
+#endif
+
+#ifndef CONFIG_ESPHOME_ARTWORK_LOCAL_HTTP_DSI_QUIET_MS
+#define CONFIG_ESPHOME_ARTWORK_LOCAL_HTTP_DSI_QUIET_MS 0
+#endif
+
+#ifndef CONFIG_ESPHOME_ARTWORK_LOCAL_HTTP_READ_CHUNK
+#define CONFIG_ESPHOME_ARTWORK_LOCAL_HTTP_READ_CHUNK 512
 #endif
 
 #ifndef CONFIG_ESPHOME_ARTWORK_PPA_SRM_BURST_LENGTH
@@ -194,6 +206,28 @@ bool wait_for_display_fifo_margin(const char *stage) {
   (void) stage;
   return true;
 #endif
+}
+
+void assign_with_display_backpressure(std::vector<uint8_t> &target, const uint8_t *data, size_t length,
+                                      const char *stage) {
+  target.clear();
+  if (data == nullptr || length == 0) {
+    return;
+  }
+  wait_for_display_fifo_margin(stage);
+  target.resize(length);
+  constexpr size_t COPY_CHUNK = 4096;
+  size_t offset = 0;
+  while (offset < length) {
+    const size_t chunk = std::min(COPY_CHUNK, length - offset);
+    memcpy(target.data() + offset, data + offset, chunk);
+    offset += chunk;
+    if (offset < length) {
+      wait_for_display_fifo_margin(stage);
+      taskYIELD();
+    }
+  }
+  wait_for_display_fifo_margin(stage);
 }
 
 void register_dma_written_buffer(const void *ptr, size_t size, bool written_by_dma) {
@@ -457,6 +491,10 @@ class LocalHttpContainer : public http_request::HttpContainer {
   }
 
   int read(uint8_t *buf, size_t max_len) override {
+    if (max_len > CONFIG_ESPHOME_ARTWORK_LOCAL_HTTP_READ_CHUNK) {
+      max_len = CONFIG_ESPHOME_ARTWORK_LOCAL_HTTP_READ_CHUNK;
+    }
+    wait_for_display_fifo_margin("local-read-pre");
     const uint32_t start = millis();
     int read = esp_http_client_read(this->client_, reinterpret_cast<char *>(buf), max_len);
     log_slow_artwork_stage("local-read", start);
@@ -535,6 +573,9 @@ void ArtworkImage::setup() {
   if (this->sendspin_hub_ == nullptr) {
     return;
   }
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  this->start_sendspin_decode_worker_();
+#endif
   this->sendspin_hub_->add_artwork_image_callback(
       [this](uint8_t slot, const uint8_t *data, size_t length, sendspin::SendspinImageFormat format) {
         if (slot != this->sendspin_slot_) {
@@ -545,13 +586,16 @@ void ArtworkImage::setup() {
           LockGuard guard(this->sendspin_pending_lock_);
           if (this->sendspin_paused_) {
             this->begin_trace_("sendspin-image-paused", length);
-            mark_display_stress("artwork-rx-paused", 1200);
-            this->pending_sendspin_data_.assign(data, data + length);
+            // Keep only the latest compressed frame while the player page is
+            // closed. Decoding stays paused, but opening the player can now
+            // present the first artwork received with the initial stream.
+            assign_with_display_backpressure(this->pending_sendspin_data_, data, length, "sendspin-paused-copy");
             this->pending_sendspin_format_ = format;
             this->pending_sendspin_image_ = true;
             this->pending_sendspin_clear_ = false;
+            this->sendspin_decode_failed_.store(false, std::memory_order_release);
             if constexpr (CONFIG_ESPHOME_ARTWORK_TRACE_VERBOSE) {
-              ESP_LOGW(TAG, "sendspin image queued while paused slot=%u format=%s length=%zu", slot,
+              ESP_LOGW(TAG, "sendspin image retained while paused slot=%u format=%s length=%zu", slot,
                        sendspin_format_to_string(format), length);
             }
             return;
@@ -562,7 +606,7 @@ void ArtworkImage::setup() {
             ESP_LOGW(TAG, "artwork trace #%u sendspin image slot=%u format=%s length=%zu", this->trace_id_, slot,
                      sendspin_format_to_string(format), length);
           }
-          this->pending_sendspin_data_.assign(data, data + length);
+          assign_with_display_backpressure(this->pending_sendspin_data_, data, length, "sendspin-copy");
           this->pending_sendspin_format_ = format;
           this->pending_sendspin_image_ = true;
           this->pending_sendspin_clear_ = false;
@@ -634,6 +678,64 @@ void ArtworkImage::setup() {
 }
 
 #ifdef USE_SENDSPIN_ARTWORK
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+bool ArtworkImage::start_sendspin_decode_worker_() {
+  if (this->sendspin_decode_task_ != nullptr) {
+    return true;
+  }
+
+#if CONFIG_FREERTOS_UNICORE
+  constexpr BaseType_t decode_core = tskNO_AFFINITY;
+#else
+  constexpr BaseType_t decode_core = 0;
+#endif
+  if (xTaskCreatePinnedToCore(ArtworkImage::sendspin_decode_worker_task_, "artwork_jpeg",
+                              SENDSPIN_JPEG_DECODE_TASK_STACK_SIZE, this, SENDSPIN_JPEG_DECODE_TASK_PRIORITY,
+                              &this->sendspin_decode_task_, decode_core) != pdPASS) {
+    this->sendspin_decode_task_ = nullptr;
+    ESP_LOGW(TAG, "Could not create the background SendSpin JPEG decoder task; using the main loop");
+    return false;
+  }
+  ESP_LOGI(TAG, "SendSpin JPEG decoder runs on core %d at priority %u", decode_core,
+           static_cast<unsigned>(SENDSPIN_JPEG_DECODE_TASK_PRIORITY));
+  return true;
+}
+
+bool ArtworkImage::queue_sendspin_jpeg_decode_(std::vector<uint8_t> &&data, bool display) {
+  if (this->sendspin_decode_task_ == nullptr || data.empty() ||
+      this->sendspin_decode_busy_.exchange(true, std::memory_order_acq_rel)) {
+    return false;
+  }
+
+  this->sendspin_decode_data_ = std::move(data);
+  this->sendspin_decode_ready_.store(false, std::memory_order_release);
+  this->sendspin_decode_failed_.store(false, std::memory_order_release);
+  if (display) {
+    LockGuard guard(this->sendspin_pending_lock_);
+    this->pending_sendspin_display_ = true;
+  }
+  xTaskNotifyGive(this->sendspin_decode_task_);
+  return true;
+}
+
+void ArtworkImage::sendspin_decode_worker_task_(void *arg) {
+  auto *image = static_cast<ArtworkImage *>(arg);
+  while (true) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    std::vector<uint8_t> data = std::move(image->sendspin_decode_data_);
+    image->trace_event_("sendspin-jpeg-worker-start", data.size());
+    mark_display_stress("artwork-decode", 2000);
+    if (!image->decode_encoded_image_(ImageFormat::JPEG, data.data(), data.size(), false)) {
+      image->sendspin_decode_failed_.store(true, std::memory_order_release);
+    }
+    mark_display_stress("artwork-decode-done", 1500);
+    image->trace_event_("sendspin-jpeg-worker-end", data.size());
+    image->sendspin_decode_busy_.store(false, std::memory_order_release);
+    image->queue_sendspin_process_();
+  }
+}
+#endif
+
 void ArtworkImage::set_sendspin_paused(bool paused) {
   bool resume = false;
   {
@@ -677,6 +779,24 @@ void ArtworkImage::process_pending_sendspin_() {
       this->trace_event_("sendspin-process-paused");
       return;
     }
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+    if (this->sendspin_decode_busy_.load(std::memory_order_acquire)) {
+      this->trace_event_("sendspin-process-decode-busy");
+      return;
+    }
+    const bool decoded_result_pending = this->sendspin_decode_ready_.load(std::memory_order_acquire) ||
+                                        this->sendspin_decode_failed_.load(std::memory_order_acquire);
+    if (decoded_result_pending) {
+      if (!this->pending_sendspin_display_ && !this->pending_sendspin_clear_) {
+        this->trace_event_("sendspin-process-wait-display");
+        return;
+      }
+      display = this->pending_sendspin_display_;
+      clear = this->pending_sendspin_clear_;
+      this->pending_sendspin_display_ = false;
+      this->pending_sendspin_clear_ = false;
+    } else
+#endif
     if (this->pending_sendspin_image_ && this->sendspin_finish_queued_.load(std::memory_order_acquire)) {
       this->trace_event_("sendspin-process-defer-finish");
       requeue = true;
@@ -700,6 +820,9 @@ void ArtworkImage::process_pending_sendspin_() {
 
   if (clear) {
     this->trace_event_("sendspin-process-clear");
+    this->sendspin_decode_ready_.store(false, std::memory_order_release);
+    this->sendspin_decode_failed_.store(false, std::memory_order_release);
+    this->discard_decode_buffer_();
     this->release();
     this->download_error_callback_.call();
     return;
@@ -723,6 +846,15 @@ void ArtworkImage::process_pending_sendspin_() {
                image_format_to_string(image_format), data.size(), YESNO(display));
     }
     this->sendspin_decode_failed_.store(false, std::memory_order_release);
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+    if (image_format == ImageFormat::JPEG && this->sendspin_decode_task_ != nullptr) {
+      if (this->queue_sendspin_jpeg_decode_(std::move(data), display)) {
+        this->trace_event_("sendspin-jpeg-worker-queued");
+        return;
+      }
+      ESP_LOGW(TAG, "Background SendSpin JPEG decoder was busy; decoding in the main loop");
+    }
+#endif
     mark_display_stress("artwork-decode", 2000);
     if (!this->decode_encoded_image_(image_format, data.data(), data.size(), false)) {
       this->sendspin_decode_failed_.store(true, std::memory_order_release);
@@ -823,6 +955,79 @@ void ArtworkImage::apply_rgb_darken_once(uint8_t percent) {
   this->darkened_percent_ = percent;
   sync_artwork_buffer_for_dma(this->buffer_, size, false);
   log_slow_artwork_stage("darken-buffer", start);
+}
+
+bool ArtworkImage::apply_decode_buffer_scrim_() {
+  if (this->scrim_opacity_ == 0 || this->decode_buffer_scrim_applied_) {
+    return true;
+  }
+  if (this->decode_buffer_ == nullptr || this->decode_buffer_width_ <= 0 || this->decode_buffer_height_ <= 0) {
+    ESP_LOGE(TAG, "Cannot apply artwork scrim without a decoded image buffer");
+    return false;
+  }
+  if (this->type_ != image::IMAGE_TYPE_RGB565 && this->type_ != image::IMAGE_TYPE_RGB) {
+    ESP_LOGE(TAG, "Artwork scrim requires an RGB565 or RGB output buffer");
+    return false;
+  }
+
+  const uint32_t start = millis();
+  const uint8_t alpha = static_cast<uint8_t>((static_cast<uint16_t>(this->scrim_opacity_) * 255U + 50U) / 100U);
+  const uint8_t keep = 255U - alpha;
+  const uint8_t scrim_red = static_cast<uint8_t>((this->scrim_color_ >> 16) & 0xFFU);
+  const uint8_t scrim_green = static_cast<uint8_t>((this->scrim_color_ >> 8) & 0xFFU);
+  const uint8_t scrim_blue = static_cast<uint8_t>(this->scrim_color_ & 0xFFU);
+  const int bytes_per_pixel = this->get_bpp() / 8;
+
+  // JPEG/PPA writes the staging buffer through DMA. Make those pixels visible
+  // to the CPU before the in-place pass; promotion performs the final C2M sync.
+  if (this->decode_buffer_written_by_dma_) {
+    sync_artwork_buffer_for_dma(this->decode_buffer_, this->get_decode_buffer_size_(), true);
+  }
+
+  mark_display_stress("artwork-scrim", 1500);
+  for (int y = 0; y < this->decode_buffer_height_; y++) {
+    if ((y & 7) == 0) {
+      wait_for_display_fifo_margin("artwork-scrim");
+#ifdef USE_ESP_IDF
+      taskYIELD();
+#endif
+    }
+    uint8_t *row = this->decode_buffer_ + static_cast<size_t>(y) * this->decode_buffer_width_ * bytes_per_pixel;
+    if (this->type_ == image::IMAGE_TYPE_RGB565) {
+      const uint8_t scrim_r5 = scrim_red >> 3;
+      const uint8_t scrim_g6 = scrim_green >> 2;
+      const uint8_t scrim_b5 = scrim_blue >> 3;
+      for (int x = 0; x < this->decode_buffer_width_; x++) {
+        uint8_t *pixel = row + static_cast<size_t>(x) * bytes_per_pixel;
+        const uint16_t raw = this->is_big_endian_ ? (static_cast<uint16_t>(pixel[0]) << 8) | pixel[1]
+                                                  : (static_cast<uint16_t>(pixel[1]) << 8) | pixel[0];
+        const uint16_t red = ((((raw >> 11) & 0x1FU) * keep) + (scrim_r5 * alpha) + 127U) / 255U;
+        const uint16_t green = ((((raw >> 5) & 0x3FU) * keep) + (scrim_g6 * alpha) + 127U) / 255U;
+        const uint16_t blue = (((raw & 0x1FU) * keep) + (scrim_b5 * alpha) + 127U) / 255U;
+        const uint16_t blended = static_cast<uint16_t>((red << 11) | (green << 5) | blue);
+        if (this->is_big_endian_) {
+          pixel[0] = static_cast<uint8_t>(blended >> 8);
+          pixel[1] = static_cast<uint8_t>(blended & 0xFFU);
+        } else {
+          pixel[0] = static_cast<uint8_t>(blended & 0xFFU);
+          pixel[1] = static_cast<uint8_t>(blended >> 8);
+        }
+      }
+    } else {
+      for (int x = 0; x < this->decode_buffer_width_; x++) {
+        uint8_t *pixel = row + static_cast<size_t>(x) * bytes_per_pixel;
+        pixel[0] = static_cast<uint8_t>((pixel[0] * keep + scrim_blue * alpha + 127U) / 255U);
+        pixel[1] = static_cast<uint8_t>((pixel[1] * keep + scrim_green * alpha + 127U) / 255U);
+        pixel[2] = static_cast<uint8_t>((pixel[2] * keep + scrim_red * alpha + 127U) / 255U);
+      }
+    }
+  }
+
+  this->decode_buffer_written_by_dma_ = false;
+  this->decode_buffer_scrim_applied_ = true;
+  register_dma_written_buffer(this->decode_buffer_, this->get_decode_buffer_size_(), false);
+  log_slow_artwork_stage("scrim-buffer", start);
+  return true;
 }
 
 #ifdef USE_LVGL
@@ -937,6 +1142,7 @@ uint8_t *ArtworkImage::try_get_staging_buffer_for_decode(int width, int height, 
   this->decode_offset_y_ = 0;
   this->decode_buffer_written_by_dma_ = false;
   this->decode_buffer_darkened_percent_ = 0;
+  this->decode_buffer_scrim_applied_ = false;
   ESP_LOGW(TAG, "Using artwork staging buffer for %dx%d hardware decode (%zu bytes)", width, height, size);
   return this->decode_buffer_;
 }
@@ -965,6 +1171,7 @@ void ArtworkImage::cancel_staging_buffer_decode() {
   this->decode_offset_y_ = 0;
   this->decode_buffer_written_by_dma_ = false;
   this->decode_buffer_darkened_percent_ = 0;
+  this->decode_buffer_scrim_applied_ = false;
 }
 
 size_t ArtworkImage::resize_(int width_in, int height_in) {
@@ -1005,6 +1212,7 @@ size_t ArtworkImage::resize_(int width_in, int height_in) {
       this->decode_offset_y_ = offset_y;
       this->decode_buffer_written_by_dma_ = false;
       this->decode_buffer_darkened_percent_ = 0;
+      this->decode_buffer_scrim_applied_ = false;
       if (needs_clear) {
         memset(this->decode_buffer_, 0, new_size);
       }
@@ -1024,6 +1232,7 @@ size_t ArtworkImage::resize_(int width_in, int height_in) {
     this->decode_offset_y_ = 0;
     this->decode_buffer_written_by_dma_ = false;
     this->decode_buffer_darkened_percent_ = 0;
+    this->decode_buffer_scrim_applied_ = false;
   }
   ESP_LOGD(TAG, "Allocating decode buffer of %zu bytes", new_size);
   this->decode_buffer_ = this->allocator_.allocate(new_size);
@@ -1042,6 +1251,7 @@ size_t ArtworkImage::resize_(int width_in, int height_in) {
   this->decode_offset_y_ = offset_y;
   this->decode_buffer_written_by_dma_ = false;
   this->decode_buffer_darkened_percent_ = 0;
+  this->decode_buffer_scrim_applied_ = false;
   if (needs_clear) {
     memset(this->decode_buffer_, 0, new_size);
   }
@@ -1194,6 +1404,7 @@ bool ArtworkImage::fit_rgb565_decode_buffer_with_ppa_(uint8_t *buffer, int buffe
   this->decode_offset_y_ = offset_y;
   this->decode_buffer_written_by_dma_ = true;
   this->decode_buffer_darkened_percent_ = 0;
+  this->decode_buffer_scrim_applied_ = false;
   register_dma_written_buffer(target, target_size, true);
   ESP_LOGW(TAG,
            "Artwork PPA fit: source=%dx%d buffer=%dx%d target=%dx%d content=%dx%d offset=%d,%d took=%lluus "
@@ -1293,6 +1504,7 @@ void ArtworkImage::update() {
 #ifdef USE_ESP_IDF
   if (this->local_downloader_ != nullptr && !this->local_downloader_->headers_ready()) {
     this->log_state_("response-pending");
+    this->local_headers_ready_pending_start_ = false;
     this->start_time_ = ::time(nullptr);
     this->last_data_millis_ = millis();
     this->last_download_read_stress_ms_ = 0;
@@ -1324,6 +1536,14 @@ bool ArtworkImage::start_response_download_() {
   }
 
   ImageFormat resolved = this->detect_format_();
+#ifdef USE_ESP_IDF
+  if (this->local_downloader_ != nullptr && resolved != ImageFormat::AUTO) {
+    // Local ESP-IDF HTTP responses can arrive immediately after header parsing.
+    // Defer decoder creation until magic bytes are in the download buffer so
+    // allocations do not run in the same tight window as the HTTP start response.
+    resolved = ImageFormat::AUTO;
+  }
+#endif
   ESP_LOGD(TAG, "Starting download");
   size_t total_size = this->get_sane_content_length_();
 
@@ -1451,8 +1671,10 @@ std::shared_ptr<http_request::HttpContainer> ArtworkImage::get_local_idf_(
   App.feed_wdt();
   stage_start = millis();
   wait_for_display_fifo_margin("local-open-pre");
-  mark_display_stress("artwork-local-open", 1500);
+  wait_for_display_quiet("local-open-pre", CONFIG_ESPHOME_ARTWORK_LOCAL_HTTP_DSI_QUIET_MS);
+  mark_display_stress("artwork-local-open", 2000);
   esp_err_t err = esp_http_client_open(client, 0);
+  wait_for_display_quiet("artwork-local-open", CONFIG_ESPHOME_ARTWORK_POST_DECODE_DSI_QUIET_MS);
   log_slow_artwork_stage("local-open", stage_start);
   App.feed_wdt();
   if (err != ESP_OK) {
@@ -1490,13 +1712,31 @@ void ArtworkImage::loop() {
   }
 
 #ifdef USE_ESP_IDF
+  if (this->local_headers_ready_pending_start_) {
+    this->local_headers_ready_pending_start_ = false;
+    const uint32_t stage_start = millis();
+    mark_display_stress("artwork-local-start-response", 600);
+    wait_for_display_fifo_margin("local-start-response-pre");
+    wait_for_display_quiet("local-start-response-pre", CONFIG_ESPHOME_ARTWORK_LOCAL_HTTP_DSI_QUIET_MS);
+    const bool started = this->start_response_download_();
+    wait_for_display_quiet("artwork-local-start-response", CONFIG_ESPHOME_ARTWORK_POST_DECODE_DSI_QUIET_MS);
+    if (!started) {
+      return;
+    }
+    log_slow_artwork_stage("local-start-response", stage_start);
+    return;
+  }
+
   if (this->local_downloader_ != nullptr && !this->local_downloader_->headers_ready()) {
     const uint32_t stage_start = millis();
-    mark_display_stress("artwork-local-headers-step", 150);
+    mark_display_stress("artwork-local-headers-step", 1000);
+    wait_for_display_fifo_margin("local-headers-pre");
+    wait_for_display_quiet("local-headers-pre", CONFIG_ESPHOME_ARTWORK_LOCAL_HTTP_DSI_QUIET_MS);
     auto result = this->local_downloader_->fetch_headers_step();
-    log_slow_artwork_stage("local-fetch-headers-step", stage_start);
-    App.feed_wdt();
     if (result == LocalHttpContainer::HeaderResult::PENDING) {
+      wait_for_display_quiet("artwork-local-headers-step", CONFIG_ESPHOME_ARTWORK_POST_DECODE_DSI_QUIET_MS);
+      log_slow_artwork_stage("local-fetch-headers-step", stage_start);
+      App.feed_wdt();
       if (millis() - this->last_data_millis_ > DOWNLOAD_STALL_TIMEOUT_MS) {
         ESP_LOGE(TAG, "Download stalled waiting for local artwork headers");
         this->fail_download_();
@@ -1504,10 +1744,18 @@ void ArtworkImage::loop() {
       return;
     }
     if (result == LocalHttpContainer::HeaderResult::ERROR) {
+      wait_for_display_quiet("artwork-local-headers-step", CONFIG_ESPHOME_ARTWORK_POST_DECODE_DSI_QUIET_MS);
+      log_slow_artwork_stage("local-fetch-headers-step", stage_start);
+      App.feed_wdt();
       this->fail_download_();
       return;
     }
-    if (!this->start_response_download_()) {
+    mark_display_stress("artwork-local-headers-response", 1000);
+    const bool started = this->start_response_download_();
+    wait_for_display_quiet("artwork-local-headers-response", CONFIG_ESPHOME_ARTWORK_POST_DECODE_DSI_QUIET_MS);
+    log_slow_artwork_stage("local-fetch-headers-start-response", stage_start);
+    App.feed_wdt();
+    if (!started) {
       return;
     }
     return;
@@ -1523,12 +1771,19 @@ void ArtworkImage::loop() {
 
     size_t available = std::min(this->download_buffer_.free_capacity(),
                                 std::min(this->download_buffer_initial_size_, MAX_READ_CHUNK_SIZE));
+    if (this->local_downloader_ != nullptr) {
+      available = std::min<size_t>(available, CONFIG_ESPHOME_ARTWORK_LOCAL_HTTP_READ_CHUNK);
+    }
     if (millis() - this->last_download_read_stress_ms_ >= ARTWORK_READ_STRESS_PERIOD_MS) {
       mark_display_stress("artwork-detect-read", 500);
       this->last_download_read_stress_ms_ = millis();
     }
     const uint32_t read_start = millis();
+    const bool local_detect_read = this->local_downloader_ != nullptr;
     auto len = this->downloader_->read(this->download_buffer_.append(), available);
+    if (local_detect_read) {
+      wait_for_display_quiet("artwork-detect-read", CONFIG_ESPHOME_ARTWORK_POST_DECODE_DSI_QUIET_MS);
+    }
     log_slow_artwork_stage("detect-read", read_start);
     bool transfer_complete = false;
     if (len > 0) {
@@ -1606,6 +1861,9 @@ void ArtworkImage::loop() {
 
   size_t available = std::min(this->download_buffer_.free_capacity(),
                               std::min(this->download_buffer_initial_size_, MAX_READ_CHUNK_SIZE));
+  if (this->local_downloader_ != nullptr) {
+    available = std::min<size_t>(available, CONFIG_ESPHOME_ARTWORK_LOCAL_HTTP_READ_CHUNK);
+  }
   if (millis() - this->last_download_read_stress_ms_ >= ARTWORK_READ_STRESS_PERIOD_MS) {
     mark_display_stress("artwork-http-read", 500);
     this->last_download_read_stress_ms_ = millis();
@@ -1912,6 +2170,7 @@ void ArtworkImage::discard_decode_buffer_() {
   this->decode_offset_y_ = 0;
   this->decode_buffer_written_by_dma_ = false;
   this->decode_buffer_darkened_percent_ = 0;
+  this->decode_buffer_scrim_applied_ = false;
 }
 
 void ArtworkImage::release_spare_buffer_() {
@@ -1984,6 +2243,7 @@ bool ArtworkImage::promote_decode_buffer_() {
   this->decode_offset_y_ = 0;
   this->decode_buffer_written_by_dma_ = false;
   this->decode_buffer_darkened_percent_ = 0;
+  this->decode_buffer_scrim_applied_ = false;
 
   this->data_start_ = this->buffer_;
   this->width_ = this->buffer_width_;
@@ -2109,6 +2369,10 @@ bool ArtworkImage::decode_encoded_image_(ImageFormat format, const uint8_t *data
       this->end_connection_();
       return false;
     }
+    if (!this->apply_decode_buffer_scrim_()) {
+      this->end_connection_();
+      return false;
+    }
     this->start_time_ = ::time(nullptr);
     if (finish_on_decode) {
       this->finish_download_();
@@ -2151,6 +2415,10 @@ bool ArtworkImage::decode_encoded_image_(ImageFormat format, const uint8_t *data
   this->trace_event_("decode-complete", length);
   if (this->decode_buffer_written_by_dma_) {
     wait_for_display_quiet("post-decode", CONFIG_ESPHOME_ARTWORK_POST_DECODE_DSI_QUIET_MS);
+  }
+  if (!this->apply_decode_buffer_scrim_()) {
+    this->end_connection_();
+    return false;
   }
 
   this->start_time_ = ::time(nullptr);
@@ -2197,6 +2465,10 @@ bool ArtworkImage::decode_buffered_data_() {
 void ArtworkImage::finish_download_() {
   this->trace_event_("finish-start");
   mark_display_stress("artwork-finish", 2000);
+  if (!this->apply_decode_buffer_scrim_()) {
+    this->fail_download_();
+    return;
+  }
   uint32_t stage_start = millis();
   if (!this->promote_decode_buffer_()) {
     this->fail_download_();
@@ -2328,6 +2600,7 @@ void ArtworkImage::end_connection_() {
   }
 #ifdef USE_ESP_IDF
   this->local_downloader_ = nullptr;
+  this->local_headers_ready_pending_start_ = false;
 #endif
   this->decoder_.reset();
   this->discard_decode_buffer_();

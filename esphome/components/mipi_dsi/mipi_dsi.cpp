@@ -39,9 +39,6 @@ static constexpr uint32_t DSI_DIAG_LOG_INTERVAL_MS = 250;
 #ifndef CONFIG_ESPHOME_DSI_GDMA_READ_QOS
 #define CONFIG_ESPHOME_DSI_GDMA_READ_QOS 4
 #endif
-#ifndef CONFIG_ESPHOME_DSI_STRESS_POLL_US
-#define CONFIG_ESPHOME_DSI_STRESS_POLL_US 250
-#endif
 #ifndef CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
 #define CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS 0
 #endif
@@ -450,8 +447,11 @@ void MipiDsi::start_dsi_diagnostics_task_() {
   constexpr BaseType_t diag_core = 0;
 #endif
   TaskHandle_t task_handle = nullptr;
+  // Diagnostics must never compete with display rendering. In particular, the
+  // Lottie renderer also runs on core 0 at priority 2. Keeping this task below
+  // it makes status polling observational instead of changing UI timing.
   const BaseType_t ok = xTaskCreatePinnedToCore(&MipiDsi::dsi_diagnostics_task_trampoline, "mipi_dsi_diag", 3072,
-                                                this, 5, &task_handle, diag_core);
+                                                this, 1, &task_handle, diag_core);
   if (ok != pdPASS) {
     ESP_LOGW(TAG, "DSI diagnostics task allocation failed");
     return;
@@ -498,6 +498,10 @@ void MipiDsi::dsi_diagnostics_task_() {
       }
       if (bridge_status != 0 || bridge_raw != 0 || host_status0 != 0 || host_status1 != 0)
         this->dsi_monitor_nonzero_++;
+      this->dsi_monitor_or_bridge_status_ |= bridge_status;
+      this->dsi_monitor_or_bridge_raw_ |= bridge_raw;
+      this->dsi_monitor_or_host_status0_ |= host_status0;
+      this->dsi_monitor_or_host_status1_ |= host_status1;
       if ((bridge_status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN) != 0)
         this->dsi_monitor_bridge_underrun_++;
       if ((host_status1 & DSI_DIAG_HOST_DPI_BUFF_PLD_UNDER) != 0)
@@ -516,6 +520,10 @@ void MipiDsi::dsi_diagnostics_task_() {
           this->dsi_stress_fifo_zero_++;
         if (bridge_status != 0 || bridge_raw != 0 || host_status0 != 0 || host_status1 != 0)
           this->dsi_stress_nonzero_++;
+        this->dsi_stress_or_bridge_status_ |= bridge_status;
+        this->dsi_stress_or_bridge_raw_ |= bridge_raw;
+        this->dsi_stress_or_host_status0_ |= host_status0;
+        this->dsi_stress_or_host_status1_ |= host_status1;
         if ((bridge_status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN) != 0)
           this->dsi_stress_bridge_underrun_++;
         if ((host_status1 & DSI_DIAG_HOST_DPI_BUFF_PLD_UNDER) != 0)
@@ -528,12 +536,11 @@ void MipiDsi::dsi_diagnostics_task_() {
       }
 #endif
     }
+    // A microsecond busy wait here starves every lower-priority task on this
+    // core for the whole stress window. One RTOS tick still gives us dense
+    // diagnostics while allowing the renderer and idle task to run.
 #if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
-    if (this->dsi_stress_active_) {
-      esp_rom_delay_us(CONFIG_ESPHOME_DSI_STRESS_POLL_US);
-    } else {
-      vTaskDelay(pdMS_TO_TICKS(2));
-    }
+    vTaskDelay(this->dsi_stress_active_ ? 1 : pdMS_TO_TICKS(2));
 #else
     vTaskDelay(pdMS_TO_TICKS(2));
 #endif
@@ -559,13 +566,16 @@ void MipiDsi::mark_stress_window(const char *label, uint32_t duration_ms) {
              "dsi stress interrupted: %s samples=%" PRIu32 " nonzero=%" PRIu32 " brg_under=%" PRIu32
              " host_under=%" PRIu32 " fifo_zero=%" PRIu32 " fifo_min=%" PRIu32
              " last brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32
-             " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
+             " host0=0x%08" PRIx32 " host1=0x%08" PRIx32
+             " or brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
              this->dsi_stress_label_, this->dsi_stress_samples_, this->dsi_stress_nonzero_,
              this->dsi_stress_bridge_underrun_, this->dsi_stress_host_under_, this->dsi_stress_fifo_zero_,
              this->dsi_stress_fifo_min_ == UINT32_MAX ? 0 : this->dsi_stress_fifo_min_,
              this->dsi_stress_last_bridge_status_, this->dsi_stress_last_bridge_raw_,
              this->dsi_stress_last_fifo_depth_, this->dsi_stress_last_host_status0_,
-             this->dsi_stress_last_host_status1_);
+             this->dsi_stress_last_host_status1_, this->dsi_stress_or_bridge_status_,
+             this->dsi_stress_or_bridge_raw_, this->dsi_stress_or_host_status0_,
+             this->dsi_stress_or_host_status1_);
   }
   std::snprintf(this->dsi_stress_label_, sizeof(this->dsi_stress_label_), "%s", label == nullptr ? "unknown" : label);
   std::snprintf(this->dsi_recent_stress_label_, sizeof(this->dsi_recent_stress_label_), "%s",
@@ -584,6 +594,10 @@ void MipiDsi::mark_stress_window(const char *label, uint32_t duration_ms) {
   this->dsi_stress_last_fifo_depth_ = 0;
   this->dsi_stress_last_host_status0_ = 0;
   this->dsi_stress_last_host_status1_ = 0;
+  this->dsi_stress_or_bridge_status_ = 0;
+  this->dsi_stress_or_bridge_raw_ = 0;
+  this->dsi_stress_or_host_status0_ = 0;
+  this->dsi_stress_or_host_status1_ = 0;
   this->dsi_stress_active_ = true;
   ESP_LOGW(TAG, "dsi stress begin: %s duration=%" PRIu32 "ms", this->dsi_stress_label_, duration_ms);
 }
@@ -771,21 +785,30 @@ void MipiDsi::log_dsi_diagnostics_() {
       const uint32_t last_fifo = this->dsi_stress_last_fifo_depth_;
       const uint32_t last_host_status0 = this->dsi_stress_last_host_status0_;
       const uint32_t last_host_status1 = this->dsi_stress_last_host_status1_;
+      const uint32_t or_bridge_status = this->dsi_stress_or_bridge_status_;
+      const uint32_t or_bridge_raw = this->dsi_stress_or_bridge_raw_;
+      const uint32_t or_host_status0 = this->dsi_stress_or_host_status0_;
+      const uint32_t or_host_status1 = this->dsi_stress_or_host_status1_;
       this->dsi_stress_samples_ = 0;
       this->dsi_stress_nonzero_ = 0;
       this->dsi_stress_bridge_underrun_ = 0;
       this->dsi_stress_host_under_ = 0;
       this->dsi_stress_fifo_zero_ = 0;
       this->dsi_stress_fifo_min_ = UINT32_MAX;
+      this->dsi_stress_or_bridge_status_ = 0;
+      this->dsi_stress_or_bridge_raw_ = 0;
+      this->dsi_stress_or_host_status0_ = 0;
+      this->dsi_stress_or_host_status1_ = 0;
       this->dsi_stress_last_log_ms_ = now;
       ESP_LOGW(TAG,
                "dsi stress: %s%s samples=%" PRIu32 " nonzero=%" PRIu32 " brg_under=%" PRIu32
                " host_under=%" PRIu32 " fifo_zero=%" PRIu32 " fifo_min=%" PRIu32
                " last brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32
-               " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
+               " host0=0x%08" PRIx32 " host1=0x%08" PRIx32
+               " or brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
                this->dsi_stress_label_, expired ? " done" : "", samples, nonzero, bridge_underrun, host_under,
                fifo_zero, fifo_min, last_bridge_status, last_bridge_raw, last_fifo, last_host_status0,
-               last_host_status1);
+               last_host_status1, or_bridge_status, or_bridge_raw, or_host_status0, or_host_status1);
       if (expired)
         this->dsi_stress_active_ = false;
     }
@@ -805,20 +828,30 @@ void MipiDsi::log_dsi_diagnostics_() {
       const uint32_t last_fifo = this->dsi_monitor_last_fifo_depth_;
       const uint32_t last_host_status0 = this->dsi_monitor_last_host_status0_;
       const uint32_t last_host_status1 = this->dsi_monitor_last_host_status1_;
+      const uint32_t or_bridge_status = this->dsi_monitor_or_bridge_status_;
+      const uint32_t or_bridge_raw = this->dsi_monitor_or_bridge_raw_;
+      const uint32_t or_host_status0 = this->dsi_monitor_or_host_status0_;
+      const uint32_t or_host_status1 = this->dsi_monitor_or_host_status1_;
       this->dsi_monitor_samples_ = 0;
       this->dsi_monitor_nonzero_ = 0;
       this->dsi_monitor_bridge_underrun_ = 0;
       this->dsi_monitor_host_under_ = 0;
       this->dsi_monitor_fifo_zero_ = 0;
       this->dsi_monitor_fifo_min_ = UINT32_MAX;
+      this->dsi_monitor_or_bridge_status_ = 0;
+      this->dsi_monitor_or_bridge_raw_ = 0;
+      this->dsi_monitor_or_host_status0_ = 0;
+      this->dsi_monitor_or_host_status1_ = 0;
       if (nonzero != 0 || bridge_underrun != 0 || host_under != 0 || fifo_zero != 0 || fifo_min < 8) {
         ESP_LOGW(TAG,
                  "dsi monitor: samples=%" PRIu32 " nonzero=%" PRIu32 " brg_under=%" PRIu32
                  " host_under=%" PRIu32 " fifo_zero=%" PRIu32 " fifo_min=%" PRIu32
                  " last brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32
-                 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
+                 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32
+                 " or brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
                  samples, nonzero, bridge_underrun, host_under, fifo_zero, fifo_min, last_bridge_status,
-                 last_bridge_raw, last_fifo, last_host_status0, last_host_status1);
+                 last_bridge_raw, last_fifo, last_host_status0, last_host_status1, or_bridge_status, or_bridge_raw,
+                 or_host_status0, or_host_status1);
       }
     }
     this->last_dsi_monitor_log_ms_ = now;

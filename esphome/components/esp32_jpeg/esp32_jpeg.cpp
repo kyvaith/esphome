@@ -300,6 +300,27 @@ void release_preallocated_decoder_() {
   }
 }
 
+esp_err_t preallocate_decoder_locked_(int timeout_ms) {
+  if (preallocated_decoder != nullptr)
+    return ESP_OK;
+
+  if (!has_decoder_dma_budget_())
+    return ESP_ERR_NO_MEM;
+
+  jpeg_decode_engine_cfg_t engine_cfg = {
+      .intr_priority = 0,
+      .timeout_ms = timeout_ms,
+  };
+  esp_err_t err = jpeg_new_decoder_engine(&engine_cfg, &preallocated_decoder);
+  if (err != ESP_OK) {
+    log_decoder_allocation_failure_(err);
+    return err;
+  }
+
+  ESP_LOGCONFIG(TAG, "Preallocated JPEG decoder engine");
+  return ESP_OK;
+}
+
 jpeg_enc_input_format_t to_encode_format(PixelFormat format) {
   switch (format) {
     case PixelFormat::RGB565:
@@ -488,13 +509,24 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   if (!lock.locked())
     return ESP_ERR_TIMEOUT;
 
+  if (!has_encoder_dma_budget_())
+    return ESP_ERR_NO_MEM;
+
   // The ESP32-P4 JPEG block is shared by the decoder and encoder. Keeping a
   // decoder engine preallocated is useful for artwork, but snapshot caching
   // occasionally needs the encoder; release the idle decoder before creating
   // the encoder to avoid the IDF driver tearing down a half-created handle.
+  const bool restore_decoder_after_encode = preallocated_decoder != nullptr;
+  auto restore_decoder = [&]() {
+    if (!restore_decoder_after_encode || preallocated_decoder != nullptr)
+      return;
+    esp_err_t prealloc_err = preallocate_decoder_locked_(config.timeout_ms);
+    if (prealloc_err != ESP_OK) {
+      ESP_LOGW(TAG, "Failed to restore preallocated JPEG decoder after encode: %s",
+               esp_err_to_name(prealloc_err));
+    }
+  };
   release_preallocated_decoder_();
-  if (!has_encoder_dma_budget_())
-    return ESP_ERR_NO_MEM;
 
   jpeg_encoder_handle_t encoder = nullptr;
   jpeg_encode_engine_cfg_t engine_cfg = {
@@ -502,8 +534,10 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
       .timeout_ms = config.timeout_ms,
   };
   esp_err_t err = jpeg_new_encoder_engine(&engine_cfg, &encoder);
-  if (err != ESP_OK)
+  if (err != ESP_OK) {
+    restore_decoder();
     return err;
+  }
 
   size_t input_capacity = 0;
   jpeg_encode_memory_alloc_cfg_t input_mem_cfg = {
@@ -515,6 +549,7 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
     if (input_data != nullptr)
       heap_caps_free(input_data);
     jpeg_del_encoder_engine(encoder);
+    restore_decoder();
     return ESP_ERR_NO_MEM;
   }
   std::memcpy(input_data, input, expected_input_size);
@@ -528,6 +563,7 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   if (output_data == nullptr) {
     heap_caps_free(input_data);
     jpeg_del_encoder_engine(encoder);
+    restore_decoder();
     return ESP_ERR_NO_MEM;
   }
 
@@ -547,6 +583,7 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
                              &encoded_size);
   heap_caps_free(input_data);
   jpeg_del_encoder_engine(encoder);
+  restore_decoder();
   if (err != ESP_OK || encoded_size == 0) {
     heap_caps_free(output_data);
     return err == ESP_OK ? ESP_FAIL : err;
@@ -728,12 +765,27 @@ esp_err_t decode_allocated(const DecodeConfig &config, const uint8_t *jpeg, size
       .conv_std = to_color_standard(config.color_conversion),
   };
 
+  jpeg_decode_picture_info_t debug_info = {};
+  esp_err_t info_err = jpeg_decoder_get_info(input_data, jpeg_size, &debug_info);
+  ESP_LOGW(TAG,
+           "JPEG decode_allocated trace: info_err=%d size=%zux%zu sample=%d out_format=%d rgb_order=%d "
+           "conv=%d jpeg=%zu output_capacity=%zu",
+           (int) info_err, info_err == ESP_OK ? (size_t) debug_info.width : 0,
+           info_err == ESP_OK ? (size_t) debug_info.height : 0,
+           info_err == ESP_OK ? (int) debug_info.sample_method : -1, (int) decode_cfg.output_format,
+           (int) decode_cfg.rgb_order, (int) decode_cfg.conv_std, jpeg_size, output_capacity);
+
   uint32_t decoded_size = 0;
   esp_err_t err = ESP_OK;
   {
     Dma2dJpegBurstGuard burst_guard;
     err = jpeg_decoder_process(decoder, &decode_cfg, input_data, jpeg_size, decoded_data, output_capacity,
                                &decoded_size);
+  }
+  ESP_LOGW(TAG, "JPEG decode_allocated trace: process err=%d decoded_size=%u", (int) err, (unsigned) decoded_size);
+  if (err == ESP_ERR_INVALID_STATE && decoded_size > 0 && decoded_size <= output_capacity) {
+    ESP_LOGW(TAG, "JPEG decode_allocated trace: accepting decoded output despite ESP_ERR_INVALID_STATE");
+    err = ESP_OK;
   }
   release_decoder_input_(input_data, input_owned);
   if (owns_decoder)
@@ -754,28 +806,11 @@ esp_err_t decode_allocated(const DecodeConfig &config, const uint8_t *jpeg, size
 
 esp_err_t preallocate_decoder(int timeout_ms) {
 #if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
-  if (preallocated_decoder != nullptr)
-    return ESP_OK;
-
   JpegCodecLock lock(timeout_ms);
   if (!lock.locked())
     return ESP_ERR_TIMEOUT;
 
-  if (!has_decoder_dma_budget_())
-    return ESP_ERR_NO_MEM;
-
-  jpeg_decode_engine_cfg_t engine_cfg = {
-      .intr_priority = 0,
-      .timeout_ms = timeout_ms,
-  };
-  esp_err_t err = jpeg_new_decoder_engine(&engine_cfg, &preallocated_decoder);
-  if (err != ESP_OK) {
-    log_decoder_allocation_failure_(err);
-    return err;
-  }
-
-  ESP_LOGCONFIG(TAG, "Preallocated JPEG decoder engine");
-  return ESP_OK;
+  return preallocate_decoder_locked_(timeout_ms);
 #else
   return ESP_ERR_NOT_SUPPORTED;
 #endif

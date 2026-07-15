@@ -827,6 +827,19 @@ static esp_err_t jpeg_dec_output_cache_msync(void *buffer, size_t size)
 #ifdef CONFIG_ESPHOME_JPEG_DMA2D_SKIP_POST_OUTPUT_MSYNC
     return ESP_OK;
 #endif
+    size_t cache_align = 0;
+    esp_cache_get_alignment(MALLOC_CAP_SPIRAM, &cache_align);
+    if (cache_align == 0) {
+        cache_align = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_EXT_MEM, CACHE_TYPE_DATA);
+    }
+    if (cache_align > 0) {
+        uintptr_t start = (uintptr_t)buffer;
+        uintptr_t aligned_start = start & ~(uintptr_t)(cache_align - 1);
+        uintptr_t end = start + size;
+        uintptr_t aligned_end = (end + cache_align - 1) & ~(uintptr_t)(cache_align - 1);
+        buffer = (void *)aligned_start;
+        size = aligned_end - aligned_start;
+    }
 #ifdef CONFIG_ESPHOME_JPEG_DMA2D_OUTPUT_MSYNC_CHUNK
     const size_t chunk_size = CONFIG_ESPHOME_JPEG_DMA2D_OUTPUT_MSYNC_CHUNK;
     if (chunk_size > 0 && size > chunk_size && esp_ptr_external_ram(buffer)) {
@@ -836,6 +849,8 @@ static esp_err_t jpeg_dec_output_cache_msync(void *buffer, size_t size)
             size_t this_chunk = remaining > chunk_size ? chunk_size : remaining;
             esp_err_t ret = esp_cache_msync(ptr, this_chunk, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
             if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "JPEG output msync chunk failed ret=%d ptr=%p size=%zu align=%zu",
+                         ret, ptr, this_chunk, cache_align);
                 return ret;
             }
             ptr += this_chunk;
@@ -849,7 +864,12 @@ static esp_err_t jpeg_dec_output_cache_msync(void *buffer, size_t size)
         return ESP_OK;
     }
 #endif
-    return esp_cache_msync(buffer, size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    esp_err_t ret = esp_cache_msync(buffer, size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "JPEG output msync failed ret=%d ptr=%p size=%zu align=%zu",
+                 ret, buffer, size, cache_align);
+    }
+    return ret;
 }
 """
     process_anchor = "esp_err_t jpeg_decoder_process(jpeg_decoder_handle_t decoder_engine"
@@ -898,20 +918,105 @@ static esp_err_t jpeg_dec_output_cache_msync(void *buffer, size_t size)
         "    // Before 2DDMA starts, invalidate cache ahead of time.\n"
         "#ifndef CONFIG_ESPHOME_JPEG_DMA2D_SKIP_PRE_OUTPUT_MSYNC\n"
         "    ret = esp_cache_msync((void*)decoder_engine->decoded_buf, outbuf_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);\n"
+        "    if (ret != ESP_OK) {\n"
+        "        ESP_LOGE(TAG, \"JPEG pre-output msync failed ret=%d ptr=%p size=%\" PRIu32,\n"
+        "                 ret, (void*)decoder_engine->decoded_buf, outbuf_size);\n"
+        "    }\n"
         "    assert(ret == ESP_OK);\n"
         "#endif\n"
     )
     if new not in text:
-        if old not in text:
+        current = (
+            "    // Before 2DDMA starts, invalidate cache ahead of time.\n"
+            "#ifndef CONFIG_ESPHOME_JPEG_DMA2D_SKIP_PRE_OUTPUT_MSYNC\n"
+            "    ret = esp_cache_msync((void*)decoder_engine->decoded_buf, outbuf_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);\n"
+            "    assert(ret == ESP_OK);\n"
+            "#endif\n"
+        )
+        if current in text:
+            text = text.replace(current, new, 1)
+        elif old in text:
+            text = text.replace(old, new, 1)
+        else:
             raise RuntimeError("ESP-IDF JPEG decode pre-output msync block not found; patch needs review")
-        text = text.replace(old, new, 1)
         changed = True
 
     old = "            ret = esp_cache_msync((void*)decoder_engine->decoded_buf, outbuf_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);"
-    new = "            ret = jpeg_dec_output_cache_msync((void*)decoder_engine->decoded_buf, outbuf_size);"
+    current = "            ret = jpeg_dec_output_cache_msync((void*)decoder_engine->decoded_buf, outbuf_size);"
+    new = "            ret = jpeg_dec_output_cache_msync((void*)decoder_engine->decoded_buf, *out_size);"
+    if new not in text:
+        if current in text:
+            text = text.replace(current, new, 1)
+        elif old in text:
+            text = text.replace(old, new, 1)
+        else:
+            raise RuntimeError("ESP-IDF JPEG decode post-output msync line not found; patch needs review")
+        changed = True
+
+    old = (
+        "    xSemaphoreGive(decoder_engine->codec_base->codec_mutex);\n"
+        "    if (decoder_engine->codec_base->pm_lock) {\n"
+        "        ESP_RETURN_ON_ERROR(esp_pm_lock_release(decoder_engine->codec_base->pm_lock), TAG, \"release pm_lock failed\");\n"
+        "    }\n"
+        "    return ESP_OK;\n"
+    )
+    new = (
+        "    xSemaphoreGive(decoder_engine->codec_base->codec_mutex);\n"
+        "    if (decoder_engine->codec_base->pm_lock) {\n"
+        "        ret = esp_pm_lock_release(decoder_engine->codec_base->pm_lock);\n"
+        "        if (ret != ESP_OK) {\n"
+        "            ESP_LOGE(TAG, \"JPEG release pm_lock failed ret=%d\", ret);\n"
+        "            return ret;\n"
+        "        }\n"
+        "    }\n"
+        "    return ESP_OK;\n"
+    )
     if new not in text:
         if old not in text:
-            raise RuntimeError("ESP-IDF JPEG decode post-output msync line not found; patch needs review")
+            raise RuntimeError("ESP-IDF JPEG decode success cleanup block not found; patch needs review")
+        text = text.replace(old, new, 1)
+        changed = True
+
+    old = (
+        "err1:\n"
+        "    dma2d_force_end(decoder_engine->trans_desc, &need_yield);\n"
+        "err2:\n"
+        "    xSemaphoreGive(decoder_engine->codec_base->codec_mutex);\n"
+    )
+    new = (
+        "err1:\n"
+        "    ESP_LOGE(TAG, \"JPEG decoder error path ret=%d out_size=%\" PRIu32, ret, *out_size);\n"
+        "    dma2d_force_end(decoder_engine->trans_desc, &need_yield);\n"
+        "err2:\n"
+        "    ESP_LOGE(TAG, \"JPEG decoder cleanup path ret=%d out_size=%\" PRIu32, ret, *out_size);\n"
+        "    xSemaphoreGive(decoder_engine->codec_base->codec_mutex);\n"
+    )
+    if new not in text:
+        if old not in text:
+            raise RuntimeError("ESP-IDF JPEG decode error cleanup block not found; patch needs review")
+        text = text.replace(old, new, 1)
+        changed = True
+
+    old = (
+        "        if (jpeg_dma2d_event.jpgd_status != 0) {\n"
+        "            uint32_t status = jpeg_dma2d_event.jpgd_status;\n"
+        "            s_decoder_error_log_print(status);\n"
+        "            ret = ESP_ERR_INVALID_STATE;\n"
+        "            goto err1;\n"
+        "        }\n"
+    )
+    new = (
+        "        if (jpeg_dma2d_event.jpgd_status != 0) {\n"
+        "            uint32_t status = jpeg_dma2d_event.jpgd_status;\n"
+        "            ESP_LOGE(TAG, \"JPEG decoder raw status=0x%08lx\", (unsigned long) status);\n"
+        "            s_decoder_error_log_print(status);\n"
+        "            ret = ESP_ERR_INVALID_STATE;\n"
+        "            goto err1;\n"
+        "        }\n"
+    )
+    if new not in text:
+        if old not in text:
+            raise RuntimeError("ESP-IDF JPEG decode status block not found; patch needs review")
         text = text.replace(old, new, 1)
         changed = True
 

@@ -47,6 +47,10 @@ uint32_t lvgl_esphome_get_perf_logging_enabled(void) __attribute__((weak));
 #define CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_HEIGHT 32
 #endif
 
+#ifndef CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_GAP_US
+#define CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_GAP_US 0
+#endif
+
 #ifndef CONFIG_ESPHOME_LVGL_PPA_DSI_BACKPRESSURE
 #define CONFIG_ESPHOME_LVGL_PPA_DSI_BACKPRESSURE 0
 #endif
@@ -118,6 +122,12 @@ static uint32_t s_ppa_img_srm_ppa_max_us;
 static uint32_t s_ppa_img_srm_band_max_us;
 static uint64_t s_ppa_img_srm_wait_us;
 static uint32_t s_ppa_img_srm_wait_max_us;
+static uint32_t s_ppa_img_overlay_count;
+static uint64_t s_ppa_img_overlay_src_sync_us;
+static uint64_t s_ppa_img_overlay_wait_us;
+static uint64_t s_ppa_img_overlay_dest_pre_us;
+static uint64_t s_ppa_img_overlay_ppa_us;
+static uint64_t s_ppa_img_overlay_dest_post_us;
 static bool s_ppa_img_srm_qos_config_logged;
 
 static inline bool lv_draw_ppa_verbose_log_enabled(void)
@@ -314,13 +324,93 @@ uint32_t lv_draw_ppa_get_img_srm_wait_max_us(void)
     return s_ppa_img_srm_wait_max_us;
 }
 
+uint32_t lv_draw_ppa_get_img_overlay_count(void)
+{
+    return s_ppa_img_overlay_count;
+}
+
+uint64_t lv_draw_ppa_get_img_overlay_src_sync_us(void)
+{
+    return s_ppa_img_overlay_src_sync_us;
+}
+
+uint64_t lv_draw_ppa_get_img_overlay_wait_us(void)
+{
+    return s_ppa_img_overlay_wait_us;
+}
+
+uint64_t lv_draw_ppa_get_img_overlay_dest_pre_us(void)
+{
+    return s_ppa_img_overlay_dest_pre_us;
+}
+
+uint64_t lv_draw_ppa_get_img_overlay_ppa_us(void)
+{
+    return s_ppa_img_overlay_ppa_us;
+}
+
+uint64_t lv_draw_ppa_get_img_overlay_dest_post_us(void)
+{
+    return s_ppa_img_overlay_dest_post_us;
+}
+
 
 void lv_draw_ppa_img(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
                      const lv_area_t * coords)
 {
     if(dsc->opa <= (lv_opa_t)LV_OPA_MIN)
         return;
-    lv_draw_image_normal_helper(t, dsc, coords, lv_draw_img_ppa_core, NULL);
+
+    /* Dynamic RGB/ARGB overlays are already decoded draw buffers. Going through
+     * lv_draw_image_normal_helper() opens and closes the variable-image
+     * decoder for every animation frame, which is substantially more
+     * expensive than the actual PPA blend on ESP32-P4. Feed the native image
+     * descriptor directly to the blocking PPA core instead. */
+    if(lv_image_src_get_type(dsc->src) == LV_IMAGE_SRC_VARIABLE &&
+       dsc->rotation == 0 && dsc->scale_x == LV_SCALE_NONE && dsc->scale_y == LV_SCALE_NONE &&
+       dsc->skew_x == 0 && dsc->skew_y == 0 &&
+       dsc->blend_mode == LV_BLEND_MODE_NORMAL && dsc->opa >= (lv_opa_t)LV_OPA_MAX) {
+        const lv_image_dsc_t * image = (const lv_image_dsc_t *)dsc->src;
+        const lv_color_format_t image_cf = (lv_color_format_t)image->header.cf;
+        if(image->header.magic == LV_IMAGE_HEADER_MAGIC &&
+           (image_cf == LV_COLOR_FORMAT_ARGB8888 || image_cf == LV_COLOR_FORMAT_RGB888 ||
+            image_cf == LV_COLOR_FORMAT_XRGB8888) &&
+           image->data != NULL) {
+            lv_area_t clipped_img_area;
+            if(!lv_area_intersect(&clipped_img_area, coords, &t->clip_area))
+                return;
+
+            lv_draw_buf_t direct_buf;
+            lv_memzero(&direct_buf, sizeof(direct_buf));
+            direct_buf.header = image->header;
+            direct_buf.data_size = image->data_size;
+            direct_buf.data = (uint8_t *)image->data;
+
+            lv_image_decoder_dsc_t decoder_dsc;
+            lv_memzero(&decoder_dsc, sizeof(decoder_dsc));
+            decoder_dsc.src = dsc->src;
+            decoder_dsc.decoded = &direct_buf;
+
+            lv_draw_image_sup_t sup;
+            lv_memzero(&sup, sizeof(sup));
+            sup.alpha_color = dsc->recolor;
+            lv_draw_img_ppa_core(t, dsc, &decoder_dsc, &sup, coords, &clipped_img_area);
+            return;
+        }
+    }
+
+    /* PPA accepts the image's native pixel stride. Asking the generic decoder
+     * for draw-buffer stride alignment makes LVGL allocate and copy dynamic
+     * ARGB images on every frame before PPA sees them. It is particularly
+     * expensive for animated overlays and provides no benefit to this unit. */
+    lv_image_decoder_args_t decoder_args;
+    lv_memzero(&decoder_args, sizeof(decoder_args));
+    decoder_args.stride_align = false;
+    decoder_args.premultiply = false;
+    decoder_args.no_cache = false;
+    decoder_args.use_indexed = false;
+    decoder_args.flush_cache = false;
+    lv_draw_image_normal_helper(t, dsc, coords, lv_draw_img_ppa_core, &decoder_args);
 }
 
 static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t * draw_dsc,
@@ -375,21 +465,25 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
     uint32_t src_stride_px = src_stride / src_px_size;
     uint32_t dest_stride_px = dest_stride / dest_px_size;
     uint32_t dest_buffer_size = lv_draw_ppa_align_size((size_t)dest_stride * draw_buf->header.h);
+    const bool alpha_overlay = src_cf == LV_COLOR_FORMAT_ARGB8888 &&
+                               draw_dsc->opa >= (lv_opa_t)LV_OPA_MAX;
 
     /* Use field-by-field assignment for C++ compatibility
      * (C++ designated initializers must be in declaration order) */
     ppa_blend_oper_config_t cfg;
     lv_memzero(&cfg, sizeof(cfg));
 
-    /* Background input (source image) */
-    cfg.in_bg.buffer         = (void *)src_buf;
-    cfg.in_bg.pic_w          = src_stride_px;
-    cfg.in_bg.pic_h          = decoded->header.h;
+    /* For an ARGB image, blend the source as foreground over the existing
+     * destination. The legacy opaque-copy path intentionally does the inverse
+     * and supplies a transparent A8 foreground so the source overwrites it. */
+    cfg.in_bg.buffer         = alpha_overlay ? (void *)dest_buf : (void *)src_buf;
+    cfg.in_bg.pic_w          = alpha_overlay ? dest_stride_px : src_stride_px;
+    cfg.in_bg.pic_h          = alpha_overlay ? draw_buf->header.h : decoded->header.h;
     cfg.in_bg.block_w        = block_w;
     cfg.in_bg.block_h        = block_h;
-    cfg.in_bg.block_offset_x = (uint32_t)src_area.x1;
-    cfg.in_bg.block_offset_y = (uint32_t)src_area.y1;
-    cfg.in_bg.blend_cm       = lv_color_format_to_ppa_blend(src_cf);
+    cfg.in_bg.block_offset_x = (uint32_t)(alpha_overlay ? dest_area.x1 : src_area.x1);
+    cfg.in_bg.block_offset_y = (uint32_t)(alpha_overlay ? dest_area.y1 : src_area.y1);
+    cfg.in_bg.blend_cm       = lv_color_format_to_ppa_blend(alpha_overlay ? dest_cf : src_cf);
 
     cfg.bg_rgb_swap          = false;
     cfg.bg_byte_swap         = false;
@@ -398,18 +492,18 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
     cfg.bg_ck_en             = false;
 
     /* Foreground input */
-    cfg.in_fg.buffer         = (void *)dest_buf;
-    cfg.in_fg.pic_w          = dest_stride_px;
-    cfg.in_fg.pic_h          = draw_buf->header.h;
+    cfg.in_fg.buffer         = alpha_overlay ? (void *)src_buf : (void *)dest_buf;
+    cfg.in_fg.pic_w          = alpha_overlay ? src_stride_px : dest_stride_px;
+    cfg.in_fg.pic_h          = alpha_overlay ? decoded->header.h : draw_buf->header.h;
     cfg.in_fg.block_w        = block_w;
     cfg.in_fg.block_h        = block_h;
-    cfg.in_fg.block_offset_x = (uint32_t)dest_area.x1;
-    cfg.in_fg.block_offset_y = (uint32_t)dest_area.y1;
-    cfg.in_fg.blend_cm       = PPA_BLEND_COLOR_MODE_A8;
+    cfg.in_fg.block_offset_x = (uint32_t)(alpha_overlay ? src_area.x1 : dest_area.x1);
+    cfg.in_fg.block_offset_y = (uint32_t)(alpha_overlay ? src_area.y1 : dest_area.y1);
+    cfg.in_fg.blend_cm       = alpha_overlay ? PPA_BLEND_COLOR_MODE_ARGB8888 : PPA_BLEND_COLOR_MODE_A8;
 
     cfg.fg_rgb_swap          = false;
     cfg.fg_byte_swap         = false;
-    cfg.fg_alpha_update_mode = PPA_ALPHA_FIX_VALUE;
+    cfg.fg_alpha_update_mode = alpha_overlay ? PPA_ALPHA_NO_CHANGE : PPA_ALPHA_FIX_VALUE;
     cfg.fg_alpha_fix_val     = 0;
     cfg.fg_ck_en             = false;
 
@@ -445,9 +539,9 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
             if(this_band_h > band_height) this_band_h = band_height;
 
             cfg.in_bg.block_h = this_band_h;
-            cfg.in_bg.block_offset_y = (uint32_t)src_area.y1 + y;
+            cfg.in_bg.block_offset_y = (uint32_t)(alpha_overlay ? dest_area.y1 : src_area.y1) + y;
             cfg.in_fg.block_h = this_band_h;
-            cfg.in_fg.block_offset_y = (uint32_t)dest_area.y1 + y;
+            cfg.in_fg.block_offset_y = (uint32_t)(alpha_overlay ? src_area.y1 : dest_area.y1) + y;
             cfg.out.block_offset_y = (uint32_t)dest_area.y1 + y;
 
             const uint8_t * src_sync_start = src_buf + (size_t)(src_area.y1 + y) * src_stride;
@@ -470,6 +564,9 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
             else {
                 break;
             }
+#if CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_GAP_US > 0
+            esp_rom_delay_us(CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_GAP_US);
+#endif
             taskYIELD();
         }
     }
@@ -478,14 +575,53 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
         uint32_t src_sync_size = src_stride * block_h;
         uint8_t * dest_sync_start = dest_buf + (size_t)dest_area.y1 * dest_stride;
         uint32_t dest_sync_size = dest_stride * block_h;
+        const bool overlay_perf = alpha_overlay && lvgl_esphome_get_perf_logging_enabled != NULL &&
+                                  lvgl_esphome_get_perf_logging_enabled();
+        int64_t perf_step_us = overlay_perf ? esp_timer_get_time() : 0;
         lv_draw_ppa_sync_source_for_dma_read(src_sync_start, src_sync_size);
+        if(overlay_perf) {
+            const int64_t now_us = esp_timer_get_time();
+            s_ppa_img_overlay_src_sync_us += (uint64_t)(now_us - perf_step_us);
+            perf_step_us = now_us;
+        }
         lv_draw_ppa_wait_for_display_fifo();
+        if(overlay_perf) {
+            const int64_t now_us = esp_timer_get_time();
+            s_ppa_img_overlay_wait_us += (uint64_t)(now_us - perf_step_us);
+            perf_step_us = now_us;
+        }
         lv_draw_ppa_cache_msync(dest_sync_start, dest_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        if(overlay_perf) {
+            const int64_t now_us = esp_timer_get_time();
+            s_ppa_img_overlay_dest_pre_us += (uint64_t)(now_us - perf_step_us);
+            perf_step_us = now_us;
+        }
         lv_draw_ppa_wait_for_display_fifo();
+        if(overlay_perf) {
+            const int64_t now_us = esp_timer_get_time();
+            s_ppa_img_overlay_wait_us += (uint64_t)(now_us - perf_step_us);
+            perf_step_us = now_us;
+        }
         ret = ppa_do_blend(u->blend_client, &cfg);
+        if(overlay_perf) {
+            const int64_t now_us = esp_timer_get_time();
+            s_ppa_img_overlay_ppa_us += (uint64_t)(now_us - perf_step_us);
+            perf_step_us = now_us;
+        }
         if(ret == ESP_OK) {
             lv_draw_ppa_wait_for_display_fifo();
+            if(overlay_perf) {
+                const int64_t now_us = esp_timer_get_time();
+                s_ppa_img_overlay_wait_us += (uint64_t)(now_us - perf_step_us);
+                perf_step_us = now_us;
+            }
             lv_draw_ppa_cache_msync_after_dma_write(dest_sync_start, dest_sync_size);
+            if(overlay_perf) {
+                s_ppa_img_overlay_dest_post_us += (uint64_t)(esp_timer_get_time() - perf_step_us);
+            }
+        }
+        if(overlay_perf) {
+            s_ppa_img_overlay_count++;
         }
     }
     lv_draw_ppa_dma2d_qos_guard_end(&qos_guard);
@@ -525,7 +661,9 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     lv_image_decoder_dsc_t decoder_dsc;
     lv_image_decoder_args_t dec_args;
     lv_memzero(&dec_args, sizeof(dec_args));
-    dec_args.flush_cache = true;
+    /* The exact source window is synchronized below. Flushing the complete
+     * variable image here duplicates the PSRAM traffic for every frame. */
+    dec_args.flush_cache = false;
 
     lv_result_t res = lv_image_decoder_open(&decoder_dsc, dsc->src, &dec_args);
     if(res != LV_RESULT_OK) return;
@@ -731,12 +869,14 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     uint32_t max_band_elapsed = 0;
     uint32_t wait_total_us = 0;
     uint32_t wait_max_us = 0;
-    const int64_t start_us = pixel_count >= 100000U ? esp_timer_get_time() : 0;
+    const int64_t start_us =
+        (pixel_count >= 100000U || lv_draw_ppa_verbose_log_enabled()) ? esp_timer_get_time() : 0;
     lv_draw_ppa_dma2d_qos_guard_t qos_guard;
     lv_draw_ppa_dma2d_qos_guard_begin(&qos_guard, pixel_count);
     if(pixel_count >= 100000U) {
         lv_draw_ppa_mark_display_stress(use_bands ? "ppa-srm-banded" : "ppa-srm", 1500);
     }
+    const bool use_area_sync = !use_bands && aligned_out == NULL && pixel_count < 100000U;
     if(use_bands) {
         for(uint32_t y = 0; y < (uint32_t)clip_h; y += band_height) {
             uint32_t this_band_h = (uint32_t)clip_h - y;
@@ -783,13 +923,21 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
             taskYIELD();
         }
     } else {
-        lv_draw_ppa_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        if(use_area_sync) {
+            lv_draw_ppa_cache_sync_area_to_memory(dest_buf, &layer->buf_area, &visible_area);
+        } else {
+            lv_draw_ppa_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        }
         uint32_t wait_us = lv_draw_ppa_wait_for_display_fifo();
         wait_total_us += wait_us;
         if(wait_us > wait_max_us) wait_max_us = wait_us;
         ret = ppa_do_scale_rotate_mirror(u->srm_client, &cfg);
         if(ret == ESP_OK) {
-            lv_draw_ppa_cache_msync_after_dma_write(sync_start, sync_size);
+            if(use_area_sync) {
+                lv_draw_ppa_cache_sync_area_from_memory(dest_buf, &layer->buf_area, &visible_area);
+            } else {
+                lv_draw_ppa_cache_msync_after_dma_write(sync_start, sync_size);
+            }
             wait_us = lv_draw_ppa_wait_for_display_fifo();
             wait_total_us += wait_us;
             if(wait_us > wait_max_us) wait_max_us = wait_us;

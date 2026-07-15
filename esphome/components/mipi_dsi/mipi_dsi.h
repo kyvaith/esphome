@@ -220,6 +220,10 @@ class MipiDsi : public display::Display {
   volatile uint32_t dsi_monitor_last_fifo_depth_{0};
   volatile uint32_t dsi_monitor_last_host_status0_{0};
   volatile uint32_t dsi_monitor_last_host_status1_{0};
+  volatile uint32_t dsi_monitor_or_bridge_status_{0};
+  volatile uint32_t dsi_monitor_or_bridge_raw_{0};
+  volatile uint32_t dsi_monitor_or_host_status0_{0};
+  volatile uint32_t dsi_monitor_or_host_status1_{0};
   uint32_t dsi_monitor_last_fifo_zero_log_ms_{0};
   bool dsi_stress_active_{false};
   char dsi_stress_label_[32]{};
@@ -240,6 +244,10 @@ class MipiDsi : public display::Display {
   volatile uint32_t dsi_stress_last_fifo_depth_{0};
   volatile uint32_t dsi_stress_last_host_status0_{0};
   volatile uint32_t dsi_stress_last_host_status1_{0};
+  volatile uint32_t dsi_stress_or_bridge_status_{0};
+  volatile uint32_t dsi_stress_or_bridge_raw_{0};
+  volatile uint32_t dsi_stress_or_host_status0_{0};
+  volatile uint32_t dsi_stress_or_host_status1_{0};
   uint32_t last_diag_event_count_{0};
   uint32_t last_diag_log_ms_{0};
   uint8_t *frame_buffers_[2]{nullptr, nullptr};

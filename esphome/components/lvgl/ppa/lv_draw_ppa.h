@@ -42,6 +42,10 @@ uint32_t lv_draw_ppa_get_img_task_count(void);
 uint32_t lv_draw_ppa_get_img_eval_count(void);
 uint32_t lv_draw_ppa_get_img_large_eval_count(void);
 uint32_t lv_draw_ppa_get_img_accepted_eval_count(void);
+uint32_t lv_draw_ppa_get_overlay_perf_count(void);
+uint64_t lv_draw_ppa_get_overlay_perf_pre_us(void);
+uint64_t lv_draw_ppa_get_overlay_perf_handler_us(void);
+uint64_t lv_draw_ppa_get_overlay_perf_post_us(void);
 uint32_t lv_draw_ppa_get_img_srm_task_count(void);
 uint32_t lv_draw_ppa_get_img_srm_large_task_count(void);
 uint32_t lv_draw_ppa_get_img_srm_unaligned_task_count(void);
@@ -56,6 +60,12 @@ uint32_t lv_draw_ppa_get_img_srm_ppa_max_us(void);
 uint64_t lv_draw_ppa_get_img_srm_wait_us(void);
 uint32_t lv_draw_ppa_get_img_srm_wait_max_us(void);
 uint32_t lv_draw_ppa_get_img_srm_band_max_us(void);
+uint32_t lv_draw_ppa_get_img_overlay_count(void);
+uint64_t lv_draw_ppa_get_img_overlay_src_sync_us(void);
+uint64_t lv_draw_ppa_get_img_overlay_wait_us(void);
+uint64_t lv_draw_ppa_get_img_overlay_dest_pre_us(void);
+uint64_t lv_draw_ppa_get_img_overlay_ppa_us(void);
+uint64_t lv_draw_ppa_get_img_overlay_dest_post_us(void);
 
 void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
                       const lv_area_t * coords);
