@@ -1199,8 +1199,10 @@ void LvglComponent::set_paused(bool paused, bool show_snow) {
   this->paused_ = paused;
   this->show_snow_ = show_snow;
   if (!paused && lv_screen_active() != nullptr) {
+    lv_lock();
     lv_display_trigger_activity(this->disp_);  // resets the inactivity time
     lv_obj_invalidate(lv_screen_active());
+    lv_unlock();
   }
   if (paused && this->pause_callback_ != nullptr)
     this->pause_callback_->trigger();
@@ -3048,12 +3050,15 @@ static std::string join_string(std::vector<std::string> options) {
 void LvSelectable::set_selected_text(const std::string &text, lv_anim_enable_t anim) {
   auto index = std::find(this->options_.begin(), this->options_.end(), text);
   if (index != this->options_.end()) {
+    lv_lock();
     this->set_selected_index(index - this->options_.begin(), anim);
     lv_obj_send_event(this->obj, lv_update_event, nullptr);
+    lv_unlock();
   }
 }
 
 void LvSelectable::set_options(std::vector<std::string> options) {
+  lv_lock();
   auto index = this->get_selected_index();
   if (index >= options.size())
     index = options.size() - 1;
@@ -3061,6 +3066,7 @@ void LvSelectable::set_options(std::vector<std::string> options) {
   this->set_option_string(join_string(this->options_).c_str());
   lv_obj_send_event(this->obj, LV_EVENT_REFRESH, nullptr);
   this->set_selected_index(index, LV_ANIM_OFF);
+  lv_unlock();
 }
 #endif  // USE_LVGL_DROPDOWN || LV_USE_ROLLER
 

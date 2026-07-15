@@ -461,7 +461,11 @@ template<typename... Ts> class LvglAction : public Action<Ts...>, public Parente
   explicit LvglAction(std::function<void(LvglComponent *)> &&lamb) : action_(std::move(lamb)) {}
 
  protected:
-  void play(const Ts &...x) override { this->action_(this->parent_); }
+  void play(const Ts &...x) override {
+    lv_lock();
+    this->action_(this->parent_);
+    lv_unlock();
+  }
   std::function<void(LvglComponent *)> action_{};
 };
 

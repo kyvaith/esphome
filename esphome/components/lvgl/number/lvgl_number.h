@@ -5,6 +5,7 @@
 #include "esphome/components/number/number.h"
 #include "esphome/core/component.h"
 #include "esphome/core/preferences.h"
+#include "lvgl.h"
 
 namespace esphome::lvgl {
 
@@ -14,17 +15,26 @@ class LVGLNumber : public number::Number, public Component {
       : control_lambda_(std::move(control_lambda)), value_lambda_(std::move(value_lambda)), restore_(restore) {}
 
   void setup() override {
+    lv_lock();
     float value = this->value_lambda_();
+    lv_unlock();
     if (this->restore_) {
       this->pref_ = this->make_entity_preference<float>();
       if (this->pref_.load(&value)) {
+        lv_lock();
         this->control_lambda_(value);
+        lv_unlock();
       }
     }
     this->publish_state(value);
   }
 
-  void on_value() { this->publish_(this->value_lambda_()); }
+  void on_value() {
+    lv_lock();
+    float value = this->value_lambda_();
+    lv_unlock();
+    this->publish_(value);
+  }
 
  protected:
   void publish_(float value) {
@@ -33,7 +43,9 @@ class LVGLNumber : public number::Number, public Component {
       this->pref_.save(&value);
   }
   void control(float value) override {
+    lv_lock();
     this->control_lambda_(value);
+    lv_unlock();
     this->publish_(value);
   }
   std::function<void(float)> control_lambda_;
