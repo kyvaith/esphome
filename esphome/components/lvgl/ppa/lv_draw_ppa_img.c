@@ -653,16 +653,11 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     lv_layer_t * layer        = t->target_layer;
     lv_draw_buf_t * dest_buf  = layer->draw_buf;
 
-    /* coords is the draw task area. On partial redraws it can be much larger
-     * than the dirty region, so clip it before mapping destination pixels back
-     * into the source image. The source origin must stay anchored to
-     * dsc->image_area; otherwise a small redraw such as a 1 Hz clock update can
-     * copy the top rows of the image into the clipped area. */
-    lv_area_t clipped_area;
-    if(!lv_area_intersect(&clipped_area, coords, &t->clip_area)) return;
-
+    /* _real_area is the transformed image footprint. coords/image_area remain
+     * the unscaled image rectangle and are only suitable as a stable origin. */
     lv_area_t visible_area;
-    if(!lv_area_intersect(&visible_area, &clipped_area, &layer->buf_area)) return;
+    if(!lv_area_intersect(&visible_area, &t->_real_area, &t->clip_area) ||
+       !lv_area_intersect(&visible_area, &visible_area, &layer->buf_area)) return;
 
     lv_image_decoder_dsc_t decoder_dsc;
     lv_image_decoder_args_t dec_args;
@@ -699,8 +694,9 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
         image_area = coords;
     }
 
-    /* Virtual image origin: pivot stays fixed on screen as scale changes.
-     * image_area->x1/y1 is the full image top-left, independent of clipping. */
+    /* Keep the source origin anchored to the complete image_area. Deriving it
+     * from a partial dirty tile makes unrelated invalidations (for example a
+     * 1 Hz clock over artwork) copy the top source rows into that tile. */
     float virt_x = (float)image_area->x1 + (float)dsc->pivot.x * (1.0f - sx);
     float virt_y = (float)image_area->y1 + (float)dsc->pivot.y * (1.0f - sy);
 
@@ -1094,20 +1090,6 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     uint32_t src_w = decoded->header.w;
     uint32_t src_h = decoded->header.h;
 
-    /* Compute destination area relative to layer buffer origin */
-    lv_area_t dest_area;
-    lv_area_copy(&dest_area, &t->area);
-    lv_area_move(&dest_area, -layer->buf_area.x1, -layer->buf_area.y1);
-
-    /* Flush decoded source buffer for PPA DMA access. Align size to cache
-     * line; _UNALIGNED flag is only a safety net for the address. */
-    lv_draw_ppa_sync_source_for_dma_read(decoded->data, decoded->data_size);
-
-    /* Configure PPA SRM operation */
-    ppa_srm_oper_config_t cfg;
-    lv_memzero(&cfg, sizeof(cfg));
-
-    /* Input: full source image block */
     uint32_t src_bpp_r = lv_color_format_get_size(src_cf);
     uint32_t src_stride_r = decoded->header.stride ? decoded->header.stride : (src_w * src_bpp_r);
     if(src_bpp_r == 0 || (src_stride_r % src_bpp_r) != 0) {
@@ -1117,13 +1099,92 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
         return;
     }
     uint32_t src_stride_px_r = src_stride_r / src_bpp_r;
+
+    /* coords is the original image rectangle; _real_area is its transformed
+     * on-screen footprint. Map only the visible output tile back to source. */
+    LV_UNUSED(coords);
+    int32_t buf_w = (int32_t)dest_buf->header.w;
+    int32_t buf_h = (int32_t)dest_buf->header.h;
+
+    lv_area_t visible_area;
+    if(!lv_area_intersect(&visible_area, &t->_real_area, &t->clip_area) ||
+       !lv_area_intersect(&visible_area, &visible_area, &layer->buf_area)) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+
+    int32_t out_dx = visible_area.x1 - t->_real_area.x1;
+    int32_t out_dy = visible_area.y1 - t->_real_area.y1;
+    int32_t visible_w = lv_area_get_width(&visible_area);
+    int32_t visible_h = lv_area_get_height(&visible_area);
+
+    lv_area_t dest_area;
+    lv_area_copy(&dest_area, &visible_area);
+    lv_area_move(&dest_area, -layer->buf_area.x1, -layer->buf_area.y1);
+    if(dest_area.x1 < 0 || dest_area.y1 < 0 ||
+       dest_area.x1 >= buf_w || dest_area.y1 >= buf_h) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    if(dest_area.x1 + visible_w > buf_w) visible_w = buf_w - dest_area.x1;
+    if(dest_area.y1 + visible_h > buf_h) visible_h = buf_h - dest_area.y1;
+    if(visible_w <= 0 || visible_h <= 0) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+
+    int32_t src_x;
+    int32_t src_y;
+    int32_t block_w;
+    int32_t block_h;
+    switch(angle) {
+        case 1800:
+            block_w = visible_w;
+            block_h = visible_h;
+            src_x = (int32_t)src_w - out_dx - visible_w;
+            src_y = (int32_t)src_h - out_dy - visible_h;
+            break;
+        case 900:
+            block_w = visible_h;
+            block_h = visible_w;
+            src_x = out_dy;
+            src_y = (int32_t)src_h - out_dx - visible_w;
+            break;
+        case 2700:
+            block_w = visible_h;
+            block_h = visible_w;
+            src_x = (int32_t)src_w - out_dy - visible_h;
+            src_y = out_dx;
+            break;
+        default:
+            lv_image_decoder_close(&decoder_dsc);
+            return;
+    }
+
+    if(src_x < 0 || src_y < 0 || src_x >= (int32_t)src_w || src_y >= (int32_t)src_h) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    if(src_x + block_w > (int32_t)src_w) block_w = (int32_t)src_w - src_x;
+    if(src_y + block_h > (int32_t)src_h) block_h = (int32_t)src_h - src_y;
+    if(block_w <= 0 || block_h <= 0) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+
+    const uint8_t * src_sync = (const uint8_t *)decoded->data + (size_t)src_y * src_stride_r;
+    lv_draw_ppa_sync_source_for_dma_read(src_sync, (size_t)src_stride_r * block_h);
+
+    ppa_srm_oper_config_t cfg;
+    lv_memzero(&cfg, sizeof(cfg));
+
     cfg.in.buffer         = (void *)decoded->data;
     cfg.in.pic_w          = src_stride_px_r;
     cfg.in.pic_h          = src_h;
-    cfg.in.block_w        = src_w;
-    cfg.in.block_h        = src_h;
-    cfg.in.block_offset_x = 0;
-    cfg.in.block_offset_y = 0;
+    cfg.in.block_w        = (uint32_t)block_w;
+    cfg.in.block_h        = (uint32_t)block_h;
+    cfg.in.block_offset_x = (uint32_t)src_x;
+    cfg.in.block_offset_y = (uint32_t)src_y;
     cfg.in.srm_cm         = lv_color_format_to_ppa_srm(src_cf);
 
     uint32_t out_bpp_r = (dest_cf == LV_COLOR_FORMAT_RGB565) ? 2u :
@@ -1171,8 +1232,8 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     cfg.out.srm_cm         = lv_color_format_to_ppa_srm(dest_cf);
 
     cfg.rotation_angle     = ppa_rot;
-    cfg.scale_x            = (dsc->scale_x != LV_SCALE_NONE) ? ((float)dsc->scale_x / 256.0f) : 1.0f;
-    cfg.scale_y            = (dsc->scale_y != LV_SCALE_NONE) ? ((float)dsc->scale_y / 256.0f) : 1.0f;
+    cfg.scale_x            = 1.0f;
+    cfg.scale_y            = 1.0f;
     cfg.mirror_x           = false;
     cfg.mirror_y           = false;
     cfg.rgb_swap           = false;
@@ -1183,7 +1244,8 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
 
     esp_err_t ret = ppa_do_scale_rotate_mirror(u->srm_client, &cfg);
     if(ret != ESP_OK) {
-        LV_LOG_ERROR("PPA SRM rotation failed: %d  (src %ux%u, angle %d)", (int)ret, src_w, src_h, angle);
+        LV_LOG_ERROR("PPA SRM rotation failed: %d angle=%d src=%ux%u block=%dx%d+%d+%d",
+                     (int)ret, angle, src_w, src_h, block_w, block_h, src_x, src_y);
     }
 
     if(aligned_out_r) {

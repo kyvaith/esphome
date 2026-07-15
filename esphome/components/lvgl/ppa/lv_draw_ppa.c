@@ -364,6 +364,10 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
                 if(angle < 0) angle += 3600;
                 /* Only accept exact 90° multiples */
                 if(angle != 0 && angle != 900 && angle != 1800 && angle != 2700) return 0;
+                /* Tile mapping for rotated PPA blocks assumes a 1:1 source to
+                 * destination ratio. Let the software renderer handle a
+                 * simultaneous scale instead of producing clipped geometry. */
+                if(!ppa_image_scale_is_identity(dsc)) return 0;
                 if(dsc->skew_x != 0 || dsc->skew_y != 0) return 0;
                 if(dsc->opa < (lv_opa_t)LV_OPA_MAX) return 0;
                 if(dsc->blend_mode != LV_BLEND_MODE_NORMAL) return 0;
@@ -490,8 +494,13 @@ static int32_t ppa_dispatch(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
             const bool direct_overlay =
                 perf_img_dsc != NULL && ppa_image_task_is_direct_overlay(t, perf_img_dsc);
             const int64_t pre_start_us = overlay_perf ? esp_timer_get_time() : 0;
+            const lv_area_t * task_area = &t->area;
+            if(perf_img_dsc != NULL &&
+               (perf_img_dsc->rotation != 0 || !ppa_image_scale_is_identity(perf_img_dsc))) {
+                task_area = &t->_real_area;
+            }
             lv_area_t sync_area;
-            bool has_sync_area = lv_area_intersect(&sync_area, &t->area, &t->clip_area);
+            bool has_sync_area = lv_area_intersect(&sync_area, task_area, &t->clip_area);
             /* Direct image copies/blends synchronize the complete source and
              * destination row window in lv_draw_img_ppa_core(). Repeating the
              * generic row-by-row sync here adds several milliseconds per frame. */
