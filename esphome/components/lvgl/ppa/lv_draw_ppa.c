@@ -204,9 +204,8 @@ static inline bool ppa_buf_usable(lv_draw_buf_t * buf)
     if(stride < (buf->header.w * px_size)) return false;
     if((stride % px_size) != 0) return false;
 
-    size_t required_size = (size_t)stride * buf->header.h;
-    if(required_size > buf->data_size && !esp_ptr_external_ram(buf->data)) return false;
-    return true;
+    uint32_t output_size;
+    return lv_draw_ppa_get_output_buffer_size(buf, (size_t)stride * buf->header.h, &output_size);
 }
 
 /**********************

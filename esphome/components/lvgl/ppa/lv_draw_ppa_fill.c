@@ -39,6 +39,13 @@ void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
         return;
     }
     uint32_t dest_stride_px = dest_stride / dest_px_size;
+    uint32_t dest_buffer_size;
+    if(!lv_draw_ppa_get_output_buffer_size(draw_buf,
+                                           (size_t)dest_stride * draw_buf->header.h,
+                                           &dest_buffer_size)) {
+        LV_LOG_WARN("PPA fill skipped: destination buffer is smaller than its geometry");
+        return;
+    }
 
     fill_cfg.fill_argb_color.val = lv_color_to_u32(dsc->color);
     fill_cfg.out.block_offset_x  = (uint32_t)blend_area.x1;
@@ -47,8 +54,7 @@ void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
     fill_cfg.fill_block_w        = (uint32_t)lv_area_get_width(&blend_area);
     fill_cfg.fill_block_h        = (uint32_t)lv_area_get_height(&blend_area);
     fill_cfg.out.buffer          = draw_buf->data;
-    /* PPA hardware rejects unaligned out.buffer_size (issue #9868). */
-    fill_cfg.out.buffer_size     = lv_draw_ppa_align_size((size_t)dest_stride * draw_buf->header.h);
+    fill_cfg.out.buffer_size     = dest_buffer_size;
     fill_cfg.out.pic_w           = dest_stride_px;
     fill_cfg.out.pic_h           = draw_buf->header.h;
     fill_cfg.mode                = PPA_TRANS_MODE_BLOCKING;

@@ -27,17 +27,7 @@ void lv_draw_buf_ppa_init_handlers(void)
 
 static inline size_t lv_draw_ppa_cache_sync_size(lv_draw_buf_t * buf)
 {
-    size_t data_size = (size_t)buf->data_size;
-    uint32_t px_size = lv_color_format_get_size((lv_color_format_t)buf->header.cf);
-    if(px_size == 0 || buf->header.w == 0 || buf->header.h == 0) {
-        return data_size;
-    }
-
-    size_t stride = buf->header.stride ? (size_t)buf->header.stride : ((size_t)buf->header.w * px_size);
-    size_t stride_size = stride * (size_t)buf->header.h;
-    if(stride_size > data_size) data_size = stride_size;
-
-    return data_size;
+    return (size_t)buf->data_size;
 }
 
 static inline void lv_draw_ppa_cache_sync_buf(lv_draw_buf_t * buf, int flags)

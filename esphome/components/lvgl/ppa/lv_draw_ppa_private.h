@@ -109,6 +109,32 @@ static inline uint32_t lv_draw_ppa_align_size(uint32_t size)
     return (size + alignment - 1U) & ~(alignment - 1U);
 }
 
+/**
+ * Return a cache-aligned PPA output size without exceeding the draw buffer.
+ *
+ * LVGL can expose partial draw buffers whose geometry describes a larger
+ * logical surface than data_size.  PPA treats buffer_size as accessible
+ * memory, so deriving it only from stride * height can allow DMA past the
+ * allocation.  data_size is the authoritative bound.
+ */
+static inline bool lv_draw_ppa_get_output_buffer_size(const lv_draw_buf_t * buf,
+                                                      size_t required_size,
+                                                      uint32_t * output_size)
+{
+    if(buf == NULL || output_size == NULL || required_size == 0 ||
+       required_size > (size_t)buf->data_size || required_size > UINT32_MAX) {
+        return false;
+    }
+
+    uint32_t aligned_size = lv_draw_ppa_align_size((uint32_t)required_size);
+    if(aligned_size < required_size || aligned_size > buf->data_size) {
+        return false;
+    }
+
+    *output_size = aligned_size;
+    return true;
+}
+
 static inline bool lv_draw_ppa_buf_cache_aligned(const void * p)
 {
     return ((uintptr_t)p % lv_draw_ppa_cache_align()) == 0;

@@ -464,7 +464,13 @@ static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t *
     }
     uint32_t src_stride_px = src_stride / src_px_size;
     uint32_t dest_stride_px = dest_stride / dest_px_size;
-    uint32_t dest_buffer_size = lv_draw_ppa_align_size((size_t)dest_stride * draw_buf->header.h);
+    uint32_t dest_buffer_size;
+    if(!lv_draw_ppa_get_output_buffer_size(draw_buf,
+                                           (size_t)dest_stride * draw_buf->header.h,
+                                           &dest_buffer_size)) {
+        LV_LOG_WARN("PPA image skipped: destination buffer is smaller than its geometry");
+        return;
+    }
     const bool alpha_overlay = src_cf == LV_COLOR_FORMAT_ARGB8888 &&
                                draw_dsc->opa >= (lv_opa_t)LV_OPA_MAX;
 
@@ -755,8 +761,13 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
         return;
     }
     uint32_t dest_stride_px = dest_stride / out_bpp;
-    uint32_t raw_bytes    = dest_stride * dest_buf->header.h;
-    uint32_t aligned_size = lv_draw_ppa_align_size(raw_bytes);
+    size_t raw_bytes = (size_t)dest_stride * dest_buf->header.h;
+    uint32_t aligned_size;
+    if(!lv_draw_ppa_get_output_buffer_size(dest_buf, raw_bytes, &aligned_size)) {
+        LV_LOG_WARN("PPA SRM scale skipped: destination buffer is smaller than its geometry");
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
     uint32_t pixel_count = (uint32_t)clip_w * (uint32_t)clip_h;
 
     /* PPA only reads the source rows covered by the clipped draw task.
@@ -1125,8 +1136,13 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
         return;
     }
     uint32_t dest_stride_px_r = dest_stride_r / out_bpp_r;
-    uint32_t raw_bytes_r    = dest_stride_r * dest_buf->header.h;
-    uint32_t aligned_size_r = lv_draw_ppa_align_size(raw_bytes_r);
+    size_t raw_bytes_r = (size_t)dest_stride_r * dest_buf->header.h;
+    uint32_t aligned_size_r;
+    if(!lv_draw_ppa_get_output_buffer_size(dest_buf, raw_bytes_r, &aligned_size_r)) {
+        LV_LOG_WARN("PPA SRM rotate skipped: destination buffer is smaller than its geometry");
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
 
     uint8_t * aligned_out_r = NULL;
     uint8_t * out_ptr_r     = dest_buf->data;
