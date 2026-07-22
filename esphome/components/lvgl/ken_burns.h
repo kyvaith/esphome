@@ -62,7 +62,8 @@ class KenBurnsController : public Component {
   bool update_transform_(uint32_t elapsed_ms);
   bool update_direct_frame_(uint32_t elapsed_ms);
   bool calculate_direct_crop_(const lv_image_dsc_t *source, uint32_t elapsed_ms, int *crop_x, int *crop_y,
-                              int *crop_width, int *crop_height) const;
+                               int *crop_width, int *crop_height, uint8_t *subpixel_alpha = nullptr,
+                               bool *subpixel_vertical = nullptr) const;
   bool render_direct_frame_(const lv_image_dsc_t *source, LvglComponent *component, uint32_t elapsed_ms);
   void reset_direct_frame_cache_();
   const lv_image_dsc_t *get_source_descriptor_() const;
@@ -76,6 +77,8 @@ class KenBurnsController : public Component {
   bool perform_direct_transition_(const lv_image_dsc_t *source);
   bool ensure_transition_buffers_(const lv_image_dsc_t *incoming_source);
   void release_transition_buffers_();
+  bool ensure_subpixel_scratch_(size_t required_size);
+  void release_subpixel_scratch_();
 
   TaskHandle_t direct_worker_handle_{nullptr};
   StackType_t *direct_worker_stack_{nullptr};
@@ -97,6 +100,8 @@ class KenBurnsController : public Component {
   bool transition_new_frame_owned_{false};
   size_t transition_old_frame_size_{0};
   size_t transition_frame_size_{0};
+  uint8_t *subpixel_scratch_{nullptr};
+  size_t subpixel_scratch_size_{0};
   lv_image_dsc_t direct_source_{};
   LvglComponent *direct_component_{nullptr};
   const uint8_t *last_direct_source_data_{nullptr};
@@ -104,6 +109,8 @@ class KenBurnsController : public Component {
   int last_direct_crop_y_{-1};
   int last_direct_crop_width_{-1};
   int last_direct_crop_height_{-1};
+  uint8_t last_direct_subpixel_alpha_{0};
+  bool last_direct_subpixel_vertical_{false};
 #endif
 
   lv_obj_t *obj_{nullptr};

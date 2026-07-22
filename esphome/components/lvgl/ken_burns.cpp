@@ -131,6 +131,7 @@ void KenBurnsController::restart() {
   this->direct_start_pending_.store(false);
   this->stop_direct_worker_();
   this->release_transition_buffers_();
+  this->release_subpixel_scratch_();
 #endif
   this->phase_elapsed_ms_ = 0;
   this->zooming_in_ = true;
@@ -177,6 +178,9 @@ bool KenBurnsController::pause() {
     }
     lv_unlock();
   }
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  this->release_subpixel_scratch_();
+#endif
   return true;
 }
 
@@ -198,6 +202,7 @@ bool KenBurnsController::pause_for_snapshot() {
     }
   }
   this->release_transition_buffers_();
+  this->release_subpixel_scratch_();
   // The last complete direct frame remains visible and can now be captured,
   // but LVGL owns the framebuffers again before the snapshot compositor runs.
   return true;
@@ -321,6 +326,7 @@ bool KenBurnsController::freeze_direct() {
   // keeping them while the next source is downloaded needlessly fragments
   // the exact window in which the hardware decoder allocates its output.
   this->release_transition_buffers_();
+  this->release_subpixel_scratch_();
   return true;
 #else
   return false;
@@ -346,6 +352,7 @@ size_t KenBurnsController::memory_usage_bytes() const {
     bytes += this->transition_old_frame_size_;
   if (this->transition_new_frame_ != nullptr && this->transition_new_frame_owned_)
     bytes += this->transition_frame_size_;
+  bytes += this->subpixel_scratch_size_;
   return bytes;
 #else
   return 0;
@@ -361,9 +368,10 @@ void KenBurnsController::log_memory_usage(const char *phase) const {
   const size_t new_bytes = this->transition_new_frame_ != nullptr && this->transition_new_frame_owned_
                                ? this->transition_frame_size_
                                : 0;
-  ESP_LOGW(TAG, "%s memory=%uK worker=%uK transition_old=%uK transition_new=%uK",
+  ESP_LOGW(TAG, "%s memory=%uK worker=%uK transition_old=%uK transition_new=%uK subpixel=%uK",
            phase == nullptr ? "runtime" : phase, (unsigned) (this->memory_usage_bytes() / 1024),
-           (unsigned) (worker_bytes / 1024), (unsigned) (old_bytes / 1024), (unsigned) (new_bytes / 1024));
+           (unsigned) (worker_bytes / 1024), (unsigned) (old_bytes / 1024), (unsigned) (new_bytes / 1024),
+           (unsigned) (this->subpixel_scratch_size_ / 1024));
 #else
   (void) phase;
 #endif
@@ -410,7 +418,8 @@ bool KenBurnsController::update_direct_frame_(uint32_t elapsed_ms) {
 }
 
 bool KenBurnsController::calculate_direct_crop_(const lv_image_dsc_t *source, uint32_t elapsed_ms, int *crop_x,
-                                                 int *crop_y, int *crop_width, int *crop_height) const {
+                                                 int *crop_y, int *crop_width, int *crop_height,
+                                                 uint8_t *subpixel_alpha, bool *subpixel_vertical) const {
   if (source == nullptr || source->data == nullptr || source->header.w < 2 ||
       source->header.h < 2 || this->phase_duration_ms_ == 0 || crop_x == nullptr || crop_y == nullptr ||
       crop_width == nullptr || crop_height == nullptr)
@@ -471,10 +480,23 @@ bool KenBurnsController::calculate_direct_crop_(const lv_image_dsc_t *source, ui
                          effective_target_x * movable_x * 0.5f * pan_progress;
   const float center_y = static_cast<float>(source->header.h) * 0.5f +
                          effective_target_y * movable_y * 0.5f * pan_progress;
-  *crop_x = std::clamp(static_cast<int>(std::lround(center_x - *crop_width * 0.5f)), 0,
-                       static_cast<int>(source->header.w) - *crop_width);
-  *crop_y = std::clamp(static_cast<int>(std::lround(center_y - *crop_height * 0.5f)), 0,
-                       static_cast<int>(source->header.h) - *crop_height);
+  const float max_crop_x = static_cast<float>(static_cast<int>(source->header.w) - *crop_width);
+  const float max_crop_y = static_cast<float>(static_cast<int>(source->header.h) - *crop_height);
+  const float precise_crop_x = std::clamp(center_x - *crop_width * 0.5f, 0.0f, max_crop_x);
+  const float precise_crop_y = std::clamp(center_y - *crop_height * 0.5f, 0.0f, max_crop_y);
+  *crop_x = static_cast<int>(std::floor(precise_crop_x));
+  *crop_y = static_cast<int>(std::floor(precise_crop_y));
+
+  if (subpixel_alpha != nullptr && subpixel_vertical != nullptr) {
+    const float fraction_x = precise_crop_x - static_cast<float>(*crop_x);
+    const float fraction_y = precise_crop_y - static_cast<float>(*crop_y);
+    // Motion is deliberately constrained to the photograph's long axis
+    // above. Keep interpolation on that same axis; choosing the larger
+    // instantaneous fraction can otherwise alternate X/Y for odd crop sizes.
+    *subpixel_vertical = source->header.h > source->header.w;
+    const float fraction = *subpixel_vertical ? fraction_y : fraction_x;
+    *subpixel_alpha = static_cast<uint8_t>(std::clamp(std::lround(fraction * 255.0f), 0L, 255L));
+  }
   return true;
 }
 
@@ -490,8 +512,19 @@ bool KenBurnsController::render_direct_frame_(const lv_image_dsc_t *source, Lvgl
   int crop_y = 0;
   int crop_width = 0;
   int crop_height = 0;
-  if (!this->calculate_direct_crop_(source, elapsed_ms, &crop_x, &crop_y, &crop_width, &crop_height))
+  uint8_t subpixel_alpha = 0;
+  bool subpixel_vertical = false;
+  if (!this->calculate_direct_crop_(source, elapsed_ms, &crop_x, &crop_y, &crop_width, &crop_height,
+                                    &subpixel_alpha, &subpixel_vertical))
     return false;
+  if (!component->direct_resolve_image_crop(source, &crop_x, &crop_y, &crop_width, &crop_height))
+    return false;
+
+  const bool subpixel_in_bounds = subpixel_vertical
+                                      ? crop_y + crop_height < static_cast<int>(source->header.h)
+                                      : crop_x + crop_width < static_cast<int>(source->header.w);
+  if (!subpixel_in_bounds)
+    subpixel_alpha = 0;
 
   // Source coordinates are integer pixels. At a calm pan speed many timer
   // ticks resolve to the exact same crop; submitting those frames used to
@@ -499,17 +532,43 @@ bool KenBurnsController::render_direct_frame_(const lv_image_dsc_t *source, Lvgl
   // change. Keep the already scanned framebuffer until the crop really moves.
   if (this->last_direct_source_data_ == source->data && this->last_direct_crop_x_ == crop_x &&
       this->last_direct_crop_y_ == crop_y && this->last_direct_crop_width_ == crop_width &&
-      this->last_direct_crop_height_ == crop_height) {
+      this->last_direct_crop_height_ == crop_height && this->last_direct_subpixel_alpha_ == subpixel_alpha &&
+      this->last_direct_subpixel_vertical_ == subpixel_vertical) {
     return true;
   }
-  const bool presented = component->direct_present_image_crop(source, crop_x, crop_y, crop_width, crop_height,
-                                                                this->direct_srm_client_);
+  const bool source_rgb888 = static_cast<lv_color_format_t>(source->header.cf) == LV_COLOR_FORMAT_RGB888;
+  const bool direct_rgb888 = source_rgb888 && crop_width == component->get_width() &&
+                             crop_height == component->get_height();
+  bool presented;
+  if (direct_rgb888 && subpixel_alpha != 0) {
+    presented = component->direct_present_rgb888_crop_subpixel(
+        source, crop_x, crop_y, crop_width, crop_height, subpixel_alpha, subpixel_vertical,
+        this->direct_blend_client_);
+  } else if (direct_rgb888) {
+    presented = component->direct_present_rgb888_crop_dma2d(source, crop_x, crop_y, crop_width, crop_height);
+  } else if (source_rgb888 && subpixel_alpha != 0) {
+    const size_t scratch_size = static_cast<size_t>(crop_width) * static_cast<size_t>(crop_height) * 3U;
+    if (this->ensure_subpixel_scratch_(scratch_size)) {
+      presented = component->direct_present_scaled_rgb888_crop_subpixel(
+          source, crop_x, crop_y, crop_width, crop_height, subpixel_alpha, subpixel_vertical,
+          this->subpixel_scratch_, this->subpixel_scratch_size_, this->direct_blend_client_,
+          this->direct_srm_client_);
+    } else {
+      presented = component->direct_present_image_crop(source, crop_x, crop_y, crop_width, crop_height,
+                                                         this->direct_srm_client_);
+    }
+  } else {
+    presented = component->direct_present_image_crop(source, crop_x, crop_y, crop_width, crop_height,
+                                                       this->direct_srm_client_);
+  }
   if (presented) {
     this->last_direct_source_data_ = source->data;
     this->last_direct_crop_x_ = crop_x;
     this->last_direct_crop_y_ = crop_y;
     this->last_direct_crop_width_ = crop_width;
     this->last_direct_crop_height_ = crop_height;
+    this->last_direct_subpixel_alpha_ = subpixel_alpha;
+    this->last_direct_subpixel_vertical_ = subpixel_vertical;
   }
   return presented;
 #else
@@ -524,6 +583,8 @@ void KenBurnsController::reset_direct_frame_cache_() {
   this->last_direct_crop_y_ = -1;
   this->last_direct_crop_width_ = -1;
   this->last_direct_crop_height_ = -1;
+  this->last_direct_subpixel_alpha_ = 0;
+  this->last_direct_subpixel_vertical_ = false;
 #endif
 }
 
@@ -673,6 +734,39 @@ void KenBurnsController::release_transition_buffers_() {
   this->transition_frame_size_ = 0;
   this->transition_old_frame_owned_ = false;
   this->transition_new_frame_owned_ = false;
+}
+
+bool KenBurnsController::ensure_subpixel_scratch_(size_t required_size) {
+  constexpr size_t ALIGNMENT = 64;
+  if (required_size == 0 || (required_size & (ALIGNMENT - 1U)) != 0)
+    return false;
+  if (this->subpixel_scratch_ != nullptr && this->subpixel_scratch_size_ == required_size)
+    return true;
+
+  this->release_subpixel_scratch_();
+  this->subpixel_scratch_ = static_cast<uint8_t *>(heap_caps_aligned_alloc(
+      ALIGNMENT, required_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+  if (this->subpixel_scratch_ == nullptr) {
+    ESP_LOGW(TAG, "Unable to allocate %u-byte scaled subpixel workspace (largest PSRAM block=%u)",
+             static_cast<unsigned>(required_size),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
+    return false;
+  }
+  this->subpixel_scratch_size_ = required_size;
+  if (esp_cache_msync(this->subpixel_scratch_, required_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK) {
+    ESP_LOGW(TAG, "Unable to hand scaled subpixel workspace to PPA");
+    this->release_subpixel_scratch_();
+    return false;
+  }
+  ESP_LOGI(TAG, "Scaled subpixel workspace allocated: %uK", static_cast<unsigned>(required_size / 1024U));
+  return true;
+}
+
+void KenBurnsController::release_subpixel_scratch_() {
+  if (this->subpixel_scratch_ != nullptr)
+    heap_caps_free(this->subpixel_scratch_);
+  this->subpixel_scratch_ = nullptr;
+  this->subpixel_scratch_size_ = 0;
 }
 
 bool KenBurnsController::perform_direct_transition_(const lv_image_dsc_t *source) {

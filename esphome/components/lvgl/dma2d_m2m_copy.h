@@ -1,8 +1,24 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace esphome::lvgl {
+
+struct Dma2dM2mCopySpan {
+  const uint8_t *source;
+  int source_width;
+  int source_height;
+  int source_x;
+  int source_y;
+  int target_x;
+  int target_y;
+  int width;
+  int height;
+};
+
+bool dma2d_m2m_copy_rgb888_spans(const Dma2dM2mCopySpan *spans, size_t span_count, uint8_t *target,
+                                 int target_width, int target_height);
 
 bool dma2d_m2m_copy_rgb888_2d(const uint8_t *source, int source_width, int source_height, int source_x,
                               int source_y, uint8_t *target, int target_width, int target_height, int target_x,

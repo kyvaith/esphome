@@ -69,6 +69,7 @@ extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_async(
 extern "C" void lvgl_esphome_direct_blit_rgb888_release(int x, int y, int width, int height);
 extern "C" bool lvgl_esphome_direct_regions_pause(bool paused, uint32_t timeout_ms);
 extern "C" void lvgl_esphome_synchronize_direct_framebuffer_area(int x, int y, int width, int height);
+extern "C" bool lvgl_esphome_wait_for_direct_frame_presented(uint32_t timeout_ms);
 extern "C" bool lvgl_esphome_direct_blit_xrgb8888(const uint8_t *src, int src_stride, int x, int y, int width,
                                                     int height);
 extern "C" bool lvgl_esphome_direct_blit_xrgb8888_coherent(const uint8_t *src, int src_stride, int x, int y,
@@ -91,6 +92,7 @@ extern "C" void lvgl_esphome_dsi_mark_stress(const char *label, uint32_t duratio
 extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right, int width);
 extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t *page1, lv_obj_t *page2, lv_obj_t *page3,
                                                         lv_obj_t *page4, int current_page, int width);
+extern "C" bool lvgl_esphome_snapshot_refresh_tile_page(lv_obj_t *page, int width);
 extern "C" bool lvgl_esphome_snapshot_is_active(void);
 extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *background, int width, uint32_t duration_ms);
 extern "C" void lvgl_esphome_snapshot_app_release_open_hold(void);
@@ -109,6 +111,7 @@ extern "C" void lvgl_esphome_snapshot_swipe_finish(int current_x, int next_x, ui
 extern "C" void lvgl_esphome_snapshot_swipe_request_finish(int current_x, int next_x, uint32_t duration_ms, bool commit);
 extern "C" void lvgl_esphome_snapshot_swipe_end(void);
 extern "C" bool lvgl_esphome_snapshot_scroll_prepare(lv_obj_t *obj, int viewport_w, int viewport_h);
+extern "C" bool lvgl_esphome_snapshot_scroll_refresh(lv_obj_t *obj, int viewport_w, int viewport_h);
 extern "C" bool lvgl_esphome_snapshot_scroll_begin(lv_obj_t *obj, int viewport_w, int viewport_h);
 extern "C" void lvgl_esphome_snapshot_scroll_update(int scroll_y);
 extern "C" void lvgl_esphome_snapshot_scroll_finish(int scroll_y);
@@ -375,6 +378,7 @@ class LvglComponent : public PollingComponent {
   // Check if loop() has started - safe to perform LVGL operations
   bool is_loop_started() const { return this->loop_started_; }
   uint16_t get_width() const { return this->width_; }
+  uint16_t get_height() const { return this->height_; }
   void record_invalidated_area(const lv_area_t *area);
   bool snapshot_swipe_direct_render(lv_draw_buf_t *current, lv_draw_buf_t *next, int current_x, int next_x, int width);
   bool snapshot_swipe_direct_render_edge(lv_draw_buf_t *current, int current_x, int width);
@@ -397,6 +401,15 @@ class LvglComponent : public PollingComponent {
                                  int *source_height) const;
   bool direct_present_image_crop(const lv_image_dsc_t *source, int source_x, int source_y, int source_width,
                                  int source_height, ppa_client_handle_t srm_client);
+  bool direct_present_rgb888_crop_dma2d(const lv_image_dsc_t *source, int source_x, int source_y,
+                                        int source_width, int source_height);
+  bool direct_present_rgb888_crop_subpixel(const lv_image_dsc_t *source, int source_x, int source_y,
+                                           int source_width, int source_height, uint8_t subpixel_alpha,
+                                           bool subpixel_vertical, ppa_client_handle_t blend_client);
+  bool direct_present_scaled_rgb888_crop_subpixel(
+      const lv_image_dsc_t *source, int source_x, int source_y, int source_width, int source_height,
+      uint8_t subpixel_alpha, bool subpixel_vertical, uint8_t *scratch, size_t scratch_size,
+      ppa_client_handle_t blend_client, ppa_client_handle_t srm_client);
   bool direct_render_image_crop_rgb888(const lv_image_dsc_t *source, int source_x, int source_y, int source_width,
                                        int source_height, uint8_t *target, size_t target_size,
                                        ppa_client_handle_t srm_client);
@@ -510,7 +523,8 @@ class LvglComponent : public PollingComponent {
   uint8_t *next_direct_render_buffer_() const;
   void present_direct_render_buffer_(uint8_t *buffer);
   uint8_t *next_snapshot_render_buffer_(const uint8_t *exclude_a = nullptr,
-                                        const uint8_t *exclude_b = nullptr);
+                                        const uint8_t *exclude_b = nullptr,
+                                        uint32_t wait_ms = 0);
   bool present_snapshot_render_buffer_(uint8_t *buffer, bool wait_for_active = true);
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   bool direct_render_image_crop_(const lv_image_dsc_t *source, int source_x, int source_y, int source_width,

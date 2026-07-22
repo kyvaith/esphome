@@ -197,25 +197,47 @@ uint32_t integer_sqrt(uint32_t value) {
 }  // namespace
 #endif
 
+bool dma2d_m2m_copy_rgb888_spans(const Dma2dM2mCopySpan *spans, size_t span_count, uint8_t *target,
+                                 int target_width, int target_height) {
+#if defined(USE_ESP32) && defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (spans == nullptr || target == nullptr || span_count == 0 || span_count > DMA2D_MAX_BATCH_SPANS ||
+      target_width <= 0 || target_height <= 0 || !initialize_context()) {
+    return false;
+  }
+  for (size_t index = 0; index < span_count; index++) {
+    const auto &span = spans[index];
+    if (span.source == nullptr || span.source_width <= 0 || span.source_height <= 0 || span.source_x < 0 ||
+        span.source_y < 0 || span.target_x < 0 || span.target_y < 0 || span.width <= 0 || span.height <= 0 ||
+        span.source_x + span.width > span.source_width || span.source_y + span.height > span.source_height ||
+        span.target_x + span.width > target_width || span.target_y + span.height > target_height) {
+      return false;
+    }
+  }
+  if (xSemaphoreTake(context.lock, pdMS_TO_TICKS(20)) != pdTRUE)
+    return false;
+
+  for (size_t index = 0; index < span_count; index++) {
+    const auto &span = spans[index];
+    init_descriptor(&context.tx_descriptors[index], const_cast<uint8_t *>(span.source), span.source_width,
+                    span.source_height, span.source_x, span.source_y, span.width, span.height);
+    init_descriptor(&context.rx_descriptors[index], target, target_width, target_height, span.target_x,
+                    span.target_y, span.width, span.height);
+  }
+  const bool complete = run_transaction_locked(span_count, pdMS_TO_TICKS(100));
+  xSemaphoreGive(context.lock);
+  return complete;
+#else
+  return false;
+#endif
+}
+
 bool dma2d_m2m_copy_rgb888_2d(const uint8_t *source, int source_width, int source_height, int source_x,
                               int source_y, uint8_t *target, int target_width, int target_height, int target_x,
                               int target_y, int block_width, int block_height) {
 #if defined(USE_ESP32) && defined(CONFIG_IDF_TARGET_ESP32P4)
-  if (source == nullptr || target == nullptr || source_width <= 0 || source_height <= 0 || target_width <= 0 ||
-      target_height <= 0 || block_width <= 0 || block_height <= 0 || source_x < 0 || source_y < 0 || target_x < 0 ||
-      target_y < 0 || source_x + block_width > source_width || source_y + block_height > source_height ||
-      target_x + block_width > target_width || target_y + block_height > target_height || !initialize_context()) {
-    return false;
-  }
-  if (xSemaphoreTake(context.lock, pdMS_TO_TICKS(20)) != pdTRUE)
-    return false;
-  init_descriptor(&context.tx_descriptors[0], const_cast<uint8_t *>(source), source_width, source_height, source_x,
-                  source_y, block_width, block_height);
-  init_descriptor(&context.rx_descriptors[0], target, target_width, target_height, target_x, target_y, block_width,
-                  block_height);
-  const bool complete = run_transaction_locked(1, pdMS_TO_TICKS(100));
-  xSemaphoreGive(context.lock);
-  return complete;
+  const Dma2dM2mCopySpan span{source, source_width, source_height, source_x, source_y,
+                              target_x, target_y, block_width, block_height};
+  return dma2d_m2m_copy_rgb888_spans(&span, 1, target, target_width, target_height);
 #else
   return false;
 #endif

@@ -685,8 +685,31 @@ class LocalHttpContainer : public http_request::HttpContainer {
       if (result != ESP_OK)
         return result;
     }
-    result = esp_http_client_open(this->client_, 0);
-    this->transport_open_ = result == ESP_OK;
+
+    // fetch_headers_step() and read_staged() deliberately reduce the client
+    // timeout after connecting. Restore the connect timeout for every reused
+    // request; otherwise the second and later TCP handshakes inherit the 5 ms
+    // read timeout and intermittently fail with ESP_ERR_HTTP_CONNECT.
+    for (uint8_t attempt = 0; attempt < 2; attempt++) {
+      esp_http_client_set_timeout_ms(this->client_, LOCAL_ARTWORK_HTTP_CONNECT_TIMEOUT_MS);
+      result = esp_http_client_open(this->client_, 0);
+      if (result == ESP_OK) {
+        this->transport_open_ = true;
+        return ESP_OK;
+      }
+
+      const int socket_errno = esp_http_client_get_errno(this->client_);
+      ESP_LOGW(TAG, "Local artwork connect attempt %u failed: %s errno=%d", attempt + 1,
+               esp_err_to_name(result), socket_errno);
+      // A failed connect can leave the transport partly initialized even
+      // though transport_open_ was never set. Close it unconditionally before
+      // retrying so the reusable handle returns to HTTP_STATE_INIT.
+      esp_http_client_close(this->client_);
+      this->transport_open_ = false;
+      this->close_pending_ = false;
+      if (attempt == 0)
+        vTaskDelay(pdMS_TO_TICKS(25));
+    }
     return result;
   }
 
