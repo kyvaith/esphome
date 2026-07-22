@@ -6,6 +6,7 @@
 #include "esphome/core/log.h"
 
 #include <cmath>
+#include <esp_timer.h>
 
 namespace esphome::sendspin_ {
 
@@ -170,29 +171,61 @@ size_t SendspinMediaSource::on_audio_write(uint8_t *data, size_t length, uint32_
 
 // THREAD CONTEXT: Main loop (PlayerRoleListener lifecycle callback)
 void SendspinMediaSource::on_stream_start() {
+  const int64_t callback_started_us = esp_timer_get_time();
+  int64_t stage_started_us = callback_started_us;
   this->parent_->update_state(sendspin::SendspinClientState::SYNCHRONIZED);
+  const int64_t update_state_us = esp_timer_get_time() - stage_started_us;
 
   if (!this->pending_start_) {
     // Dedup rapid on_stream_start() calls
     this->pending_start_ = true;
     // Request the orchestrator to start this source
+    stage_started_us = esp_timer_get_time();
     this->request_play_uri_("sendspin://current");
+    const int64_t request_play_us = esp_timer_get_time() - stage_started_us;
+    if (request_play_us > 30000) {
+      ESP_LOGW(TAG, "slow stream_start request_play_uri: %lldms", request_play_us / 1000);
+    }
+  }
+  const int64_t callback_us = esp_timer_get_time() - callback_started_us;
+  if (callback_us > 30000) {
+    ESP_LOGW(TAG, "slow stream_start callback: %lldms (update_state=%lldms)", callback_us / 1000,
+             update_state_us / 1000);
   }
 }
 
 // THREAD CONTEXT: Main loop (PlayerRoleListener lifecycle callback)
 void SendspinMediaSource::on_stream_end() {
+  const int64_t started_us = esp_timer_get_time();
   if (this->get_state() != media_source::MediaSourceState::IDLE) {
     // Only set to IDLE if we were previously in a non-IDLE state, to avoid duplicate state changes
     this->set_state_(media_source::MediaSourceState::IDLE);
   }
+  const int64_t elapsed_us = esp_timer_get_time() - started_us;
+  if (elapsed_us > 30000) {
+    ESP_LOGW(TAG, "slow stream_end callback: %lldms", elapsed_us / 1000);
+  }
 }
 
 // THREAD CONTEXT: Main loop (PlayerRoleListener callback)
-void SendspinMediaSource::on_volume_changed(uint8_t volume) { this->request_volume_(volume / 100.0f); }
+void SendspinMediaSource::on_volume_changed(uint8_t volume) {
+  const int64_t started_us = esp_timer_get_time();
+  this->request_volume_(volume / 100.0f);
+  const int64_t elapsed_us = esp_timer_get_time() - started_us;
+  if (elapsed_us > 30000) {
+    ESP_LOGW(TAG, "slow volume callback: %lldms", elapsed_us / 1000);
+  }
+}
 
 // THREAD CONTEXT: Main loop (PlayerRoleListener callback)
-void SendspinMediaSource::on_mute_changed(bool muted) { this->request_mute_(muted); }
+void SendspinMediaSource::on_mute_changed(bool muted) {
+  const int64_t started_us = esp_timer_get_time();
+  this->request_mute_(muted);
+  const int64_t elapsed_us = esp_timer_get_time() - started_us;
+  if (elapsed_us > 30000) {
+    ESP_LOGW(TAG, "slow mute callback: %lldms", elapsed_us / 1000);
+  }
+}
 
 }  // namespace esphome::sendspin_
 

@@ -17,10 +17,18 @@
 #include "esphome/core/version.h"
 
 #include <esp_log.h>
+#include <esp_timer.h>
 
 namespace esphome::sendspin_ {
 
 static const char *const TAG = "sendspin.hub";
+
+static void log_slow_callback(const char *name, int64_t started_us) {
+  const int64_t elapsed_us = esp_timer_get_time() - started_us;
+  if (elapsed_us > 30000) {
+    ESP_LOGW(TAG, "slow callback %s: %lldms", name, elapsed_us / 1000);
+  }
+}
 
 void SendspinHub::setup() {
   auto config = this->build_client_config_();
@@ -145,7 +153,9 @@ sendspin::SendspinClientConfig SendspinHub::build_client_config_() {
 // THREAD CONTEXT: Main loop (fired from client_->loop())
 
 void SendspinHub::on_group_update(const sendspin::GroupUpdateObject &group) {
+  const int64_t started_us = esp_timer_get_time();
   this->group_update_callbacks_.call(group);
+  log_slow_callback("group_update", started_us);
 }
 
 void SendspinHub::on_request_high_performance() {
@@ -207,7 +217,9 @@ void SendspinHub::on_image_decode(uint8_t slot, const uint8_t *data, size_t leng
   target.format = format;
   target.ready = true;
   ESP_LOGD(TAG, "Artwork slot %u received: %zu bytes", slot, length);
+  const int64_t started_us = esp_timer_get_time();
   this->artwork_image_callbacks_.call(slot, data, length, format);
+  log_slow_callback("artwork_decode", started_us);
 }
 
 // THREAD CONTEXT: Main loop (ArtworkRoleListener override, fired from client_->loop()).
@@ -218,7 +230,9 @@ void SendspinHub::on_image_display(uint8_t slot) {
   if (!this->artwork_slots_[slot].ready) {
     return;
   }
+  const int64_t started_us = esp_timer_get_time();
   this->artwork_display_callbacks_.call(slot);
+  log_slow_callback("artwork_display", started_us);
 }
 
 // THREAD CONTEXT: Main loop (ArtworkRoleListener override, fired from client_->loop()).
@@ -227,7 +241,9 @@ void SendspinHub::on_image_clear(uint8_t slot) {
     this->artwork_slots_[slot].ready = false;
     this->artwork_slots_[slot].data.clear();
   }
+  const int64_t started_us = esp_timer_get_time();
   this->artwork_clear_callbacks_.call(slot);
+  log_slow_callback("artwork_clear", started_us);
 }
 #endif
 
@@ -235,21 +251,28 @@ void SendspinHub::on_image_clear(uint8_t slot) {
 // THREAD CONTEXT: Main loop (invoked from ESPHome actions / other components)
 void SendspinHub::send_client_command(sendspin::SendspinControllerCommand command, std::optional<uint8_t> volume,
                                       std::optional<bool> mute) {
+  ESP_LOGW(TAG, "controller command %u: checking hub readiness", static_cast<unsigned>(command));
   if (this->is_ready()) {
+    ESP_LOGW(TAG, "controller command %u: entering sendspin-cpp", static_cast<unsigned>(command));
     this->controller_role_->send_command(command, volume, mute);
+    ESP_LOGW(TAG, "controller command %u: sendspin-cpp returned", static_cast<unsigned>(command));
   }
 }
 
 // THREAD CONTEXT: Main loop (ControllerRoleListener override, fired from client_->loop())
 void SendspinHub::on_controller_state(const sendspin::ServerStateControllerObject &state) {
+  const int64_t started_us = esp_timer_get_time();
   this->controller_state_callbacks_.call(state);
+  log_slow_callback("controller_state", started_us);
 }
 #endif
 
 #ifdef USE_SENDSPIN_METADATA
 // THREAD CONTEXT: Main loop (MetadataRoleListener override, fired from client_->loop())
 void SendspinHub::on_metadata(const sendspin::ServerMetadataStateObject &metadata) {
+  const int64_t started_us = esp_timer_get_time();
   this->metadata_update_callbacks_.call(metadata);
+  log_slow_callback("metadata", started_us);
 }
 
 // THREAD CONTEXT: Main loop (invoked from Sendspin components)

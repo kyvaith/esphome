@@ -105,7 +105,9 @@ void SendspinMediaPlayer::control(const media_player::MediaPlayerCall &call) {
       }
       break;
     case media_player::MEDIA_PLAYER_COMMAND_PLAY:
+      ESP_LOGW(TAG, "control PLAY: entering hub command");
       this->parent_->send_client_command(sendspin::SendspinControllerCommand::PLAY);
+      ESP_LOGW(TAG, "control PLAY: hub command returned");
       break;
     case media_player::MEDIA_PLAYER_COMMAND_PAUSE:
       this->parent_->send_client_command(sendspin::SendspinControllerCommand::PAUSE);

@@ -17,6 +17,8 @@ from .. import (
     CONF_FIXED_DELAY,
     CONF_INITIAL_STATIC_DELAY,
     CONF_SENDSPIN_ID,
+    CONF_SUPPORTED_CHANNELS,
+    CONF_SUPPORTED_CODECS,
     MEMORY_LOCATIONS,
     SendspinHub,
     register_player_config,
@@ -59,6 +61,8 @@ def _register(config: ConfigType) -> ConfigType:
             CONF_FIXED_DELAY: config[CONF_FIXED_DELAY],
             CONF_TASK_STACK_IN_PSRAM: config.get(CONF_TASK_STACK_IN_PSRAM, False),
             CONF_DECODE_MEMORY: config.get(CONF_DECODE_MEMORY),
+            CONF_SUPPORTED_CODECS: config[CONF_SUPPORTED_CODECS],
+            CONF_SUPPORTED_CHANNELS: config[CONF_SUPPORTED_CHANNELS],
         }
     )
     return config
@@ -85,6 +89,14 @@ CONFIG_SCHEMA = cv.All(
                 min=16000, max=96000
             ),
             cv.Optional(CONF_DECODE_MEMORY): cv.one_of(*MEMORY_LOCATIONS, lower=True),
+            cv.Optional(CONF_SUPPORTED_CODECS, default=["flac", "opus", "pcm"]): cv.All(
+                cv.ensure_list(cv.one_of("flac", "opus", "pcm", lower=True)),
+                cv.Length(min=1),
+            ),
+            cv.Optional(CONF_SUPPORTED_CHANNELS, default=[2, 1]): cv.All(
+                cv.ensure_list(cv.int_range(min=1, max=2)),
+                cv.Length(min=1),
+            ),
         }
     ),
     cv.only_on_esp32,
