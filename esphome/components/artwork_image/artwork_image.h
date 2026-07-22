@@ -169,11 +169,16 @@ class ArtworkImage : public PollingComponent,
   void apply_rgb_darken_once(uint8_t percent);
   void set_darken_percent(uint8_t percent) { this->darken_percent_ = percent; }
   void set_hardware_jpeg(bool hardware_jpeg) { this->hardware_jpeg_ = hardware_jpeg; }
+  void set_reuse_active_buffer_capacity(bool reuse) { this->reuse_active_buffer_capacity_ = reuse; }
   void set_scrim_color(uint32_t color) { this->scrim_color_ = color; }
   void set_scrim_opacity(uint8_t opacity) { this->scrim_opacity_ = opacity; }
   bool use_hardware_jpeg() const { return this->hardware_jpeg_; }
+  bool reserve_decode_buffer_capacity(size_t size);
+  size_t get_active_buffer_capacity() const { return this->buffer_capacity_; }
   uint8_t get_darken_percent() const { return this->darken_percent_; }
   void mark_decode_buffer_darkened(uint8_t percent) { this->decode_buffer_darkened_percent_ = percent; }
+  size_t memory_usage_bytes() const;
+  void log_memory_usage(const char *phase) const;
 
  protected:
   bool validate_url_(const std::string &url);
@@ -298,14 +303,17 @@ class ArtworkImage : public PollingComponent,
   ImageFormat active_format_{ImageFormat::AUTO};
 
   uint8_t *buffer_;
+  size_t buffer_capacity_{0};
   bool buffer_uses_jpeg_allocator_{false};
   uint8_t *decode_buffer_{nullptr};
+  size_t decode_buffer_capacity_{0};
   bool decode_buffer_reuses_active_{false};
   bool decode_buffer_uses_jpeg_allocator_{false};
   uint8_t *spare_buffer_{nullptr};
   size_t spare_buffer_size_{0};
   bool spare_buffer_uses_jpeg_allocator_{false};
   bool hardware_jpeg_{true};
+  bool reuse_active_buffer_capacity_{false};
   DownloadBuffer download_buffer_;
   /**
    * This is the *initial* size of the download buffer, not the current size.

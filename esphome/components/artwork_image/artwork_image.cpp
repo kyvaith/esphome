@@ -846,6 +846,73 @@ ArtworkImage::ArtworkImage(const std::string &url, int width, int height, ImageF
   this->set_url(url);
 }
 
+size_t ArtworkImage::memory_usage_bytes() const {
+  size_t decoded_bytes = this->buffer_ == nullptr ? 0 : this->buffer_capacity_;
+  if (this->decode_buffer_ != nullptr && this->decode_buffer_ != this->buffer_)
+    decoded_bytes += this->decode_buffer_capacity_;
+  if (this->spare_buffer_ != nullptr && this->spare_buffer_ != this->buffer_ &&
+      this->spare_buffer_ != this->decode_buffer_)
+    decoded_bytes += this->spare_buffer_size_;
+  if (this->darkened_buffer_ != nullptr && this->darkened_buffer_ != this->buffer_ &&
+      this->darkened_buffer_ != this->decode_buffer_ && this->darkened_buffer_ != this->spare_buffer_)
+    decoded_bytes += this->get_buffer_size_();
+  for (const auto &entry : this->retired_buffers_)
+    decoded_bytes += entry.size;
+
+  size_t encoded_bytes = this->download_buffer_.size();
+#ifdef USE_SENDSPIN_ARTWORK
+  encoded_bytes += this->pending_sendspin_data_.capacity();
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  encoded_bytes += this->sendspin_decode_data_.capacity();
+#endif
+#endif
+
+  size_t task_bytes = 0;
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  if (this->http_jpeg_decode_task_stack_ != nullptr)
+    task_bytes += HTTP_JPEG_DECODE_TASK_STACK_SIZE;
+#ifdef USE_SENDSPIN_ARTWORK
+  if (this->sendspin_decode_task_stack_ != nullptr)
+    task_bytes += SENDSPIN_JPEG_DECODE_TASK_STACK_SIZE;
+#endif
+#endif
+  return decoded_bytes + encoded_bytes + task_bytes;
+}
+
+void ArtworkImage::log_memory_usage(const char *phase) const {
+  size_t active_bytes = this->buffer_ == nullptr ? 0 : this->buffer_capacity_;
+  size_t staging_bytes =
+      this->decode_buffer_ != nullptr && this->decode_buffer_ != this->buffer_ ? this->decode_buffer_capacity_ : 0;
+  size_t spare_retired_bytes = 0;
+  if (this->spare_buffer_ != nullptr && this->spare_buffer_ != this->buffer_ &&
+      this->spare_buffer_ != this->decode_buffer_)
+    spare_retired_bytes += this->spare_buffer_size_;
+  for (const auto &entry : this->retired_buffers_)
+    spare_retired_bytes += entry.size;
+
+  size_t encoded_bytes = this->download_buffer_.size();
+#ifdef USE_SENDSPIN_ARTWORK
+  encoded_bytes += this->pending_sendspin_data_.capacity();
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  encoded_bytes += this->sendspin_decode_data_.capacity();
+#endif
+#endif
+  size_t task_bytes = 0;
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  if (this->http_jpeg_decode_task_stack_ != nullptr)
+    task_bytes += HTTP_JPEG_DECODE_TASK_STACK_SIZE;
+#ifdef USE_SENDSPIN_ARTWORK
+  if (this->sendspin_decode_task_stack_ != nullptr)
+    task_bytes += SENDSPIN_JPEG_DECODE_TASK_STACK_SIZE;
+#endif
+#endif
+  ESP_LOGW("memory.artwork", "%s total=%uK active=%uK staging=%uK spare_retired=%uK encoded=%uK tasks=%uK",
+           phase == nullptr ? "runtime" : phase, (unsigned) (this->memory_usage_bytes() / 1024),
+           (unsigned) (active_bytes / 1024), (unsigned) (staging_bytes / 1024),
+           (unsigned) (spare_retired_bytes / 1024), (unsigned) (encoded_bytes / 1024),
+           (unsigned) (task_bytes / 1024));
+}
+
 void ArtworkImage::setup() {
 #if defined(USE_ESP_IDF) && defined(CONFIG_SOC_PPA_SUPPORTED) && defined(USE_ESP32_JPEG)
   if (this->scrim_opacity_ > 0 && this->type_ == image::IMAGE_TYPE_RGB565) {
@@ -1811,13 +1878,18 @@ uint8_t *ArtworkImage::try_reuse_active_buffer_for_decode(int width, int height,
   if (this->decode_buffer_ != nullptr || this->buffer_ == nullptr || !this->buffer_uses_jpeg_allocator_) {
     return nullptr;
   }
-  if (width <= 0 || height <= 0 || content_width != width || content_height != height ||
-      width != this->buffer_width_ || height != this->buffer_height_ ||
-      this->get_buffer_size_(width, height) != this->get_buffer_size_()) {
+  const size_t requested_size = width > 0 && height > 0 ? this->get_buffer_size_(width, height) : 0;
+  const bool exact_reuse = content_width == width && content_height == height && width == this->buffer_width_ &&
+                           height == this->buffer_height_ && requested_size == this->get_buffer_size_();
+  const bool capacity_reuse = this->reuse_active_buffer_capacity_ && content_width > 0 && content_height > 0 &&
+                              content_width <= width && content_height <= height && requested_size > 0 &&
+                              requested_size <= this->buffer_capacity_;
+  if (!exact_reuse && !capacity_reuse) {
     return nullptr;
   }
 
   this->decode_buffer_ = this->buffer_;
+  this->decode_buffer_capacity_ = this->buffer_capacity_;
   this->decode_buffer_reuses_active_ = true;
   this->decode_buffer_uses_jpeg_allocator_ = this->buffer_uses_jpeg_allocator_;
   this->decode_buffer_width_ = width;
@@ -1838,6 +1910,7 @@ void ArtworkImage::cancel_reused_active_buffer_decode() {
     return;
   }
   this->decode_buffer_ = nullptr;
+  this->decode_buffer_capacity_ = 0;
   this->decode_buffer_reuses_active_ = false;
   this->decode_buffer_uses_jpeg_allocator_ = false;
   this->decode_buffer_width_ = 0;
@@ -1862,6 +1935,7 @@ uint8_t *ArtworkImage::try_get_staging_buffer_for_decode(int width, int height, 
   if (this->spare_buffer_ != nullptr && this->spare_buffer_size_ >= size) {
     if (this->spare_buffer_uses_jpeg_allocator_) {
       this->decode_buffer_ = this->spare_buffer_;
+      this->decode_buffer_capacity_ = this->spare_buffer_size_;
       this->decode_buffer_uses_jpeg_allocator_ = true;
       this->spare_buffer_ = nullptr;
       this->spare_buffer_size_ = 0;
@@ -1887,6 +1961,7 @@ uint8_t *ArtworkImage::try_get_staging_buffer_for_decode(int width, int height, 
                size, capacity, this->allocator_.get_max_free_block_size());
       return nullptr;
     }
+    this->decode_buffer_capacity_ = capacity;
 #else
     this->decode_buffer_ = this->allocator_.allocate(size);
     this->decode_buffer_uses_jpeg_allocator_ = false;
@@ -1895,6 +1970,7 @@ uint8_t *ArtworkImage::try_get_staging_buffer_for_decode(int width, int height, 
                this->allocator_.get_max_free_block_size());
       return nullptr;
     }
+    this->decode_buffer_capacity_ = size;
 #endif
   } else {
     ESP_LOGD(TAG, "Reusing JPEG-compatible artwork staging buffer");
@@ -1917,7 +1993,7 @@ void ArtworkImage::cancel_staging_buffer_decode() {
   if (!this->decode_buffer_) {
     return;
   }
-  const size_t size = this->get_decode_buffer_size_();
+  const size_t size = this->decode_buffer_capacity_;
   if (!this->decode_buffer_reuses_active_ && this->spare_buffer_ == nullptr &&
       should_keep_spare_buffer(size, this->decode_buffer_uses_jpeg_allocator_)) {
     this->spare_buffer_ = this->decode_buffer_;
@@ -1927,6 +2003,7 @@ void ArtworkImage::cancel_staging_buffer_decode() {
     this->release_buffer_(this->decode_buffer_, size, this->decode_buffer_uses_jpeg_allocator_);
   }
   this->decode_buffer_ = nullptr;
+  this->decode_buffer_capacity_ = 0;
   this->decode_buffer_reuses_active_ = false;
   this->decode_buffer_uses_jpeg_allocator_ = false;
   this->decode_buffer_width_ = 0;
@@ -1938,6 +2015,38 @@ void ArtworkImage::cancel_staging_buffer_decode() {
   this->decode_buffer_written_by_dma_ = false;
   this->decode_buffer_darkened_percent_ = 0;
   this->decode_buffer_scrim_applied_ = false;
+}
+
+bool ArtworkImage::reserve_decode_buffer_capacity(size_t size) {
+  if (size == 0 || (this->buffer_ != nullptr && this->buffer_capacity_ >= size) ||
+      (this->spare_buffer_ != nullptr && this->spare_buffer_size_ >= size)) {
+    return true;
+  }
+  if (this->decode_buffer_ != nullptr || this->spare_buffer_ != nullptr) {
+    return false;
+  }
+#ifdef USE_ESP32_JPEG
+  size_t capacity = 0;
+  uint8_t *buffer = esp32_jpeg::allocate_decode_output(size, &capacity);
+  if (buffer == nullptr || capacity < size) {
+    if (buffer != nullptr)
+      esp32_jpeg::release_decode_output(buffer);
+    ESP_LOGW(TAG, "Unable to reserve JPEG output buffer: requested=%zu capacity=%zu", size, capacity);
+    return false;
+  }
+  this->spare_buffer_ = buffer;
+  this->spare_buffer_size_ = capacity;
+  this->spare_buffer_uses_jpeg_allocator_ = true;
+#else
+  uint8_t *buffer = this->allocator_.allocate(size);
+  if (buffer == nullptr)
+    return false;
+  this->spare_buffer_ = buffer;
+  this->spare_buffer_size_ = size;
+  this->spare_buffer_uses_jpeg_allocator_ = false;
+#endif
+  ESP_LOGI(TAG, "Reserved reusable decoded-image buffer: %zu bytes", this->spare_buffer_size_);
+  return true;
 }
 
 size_t ArtworkImage::resize_(int width_in, int height_in) {
@@ -1969,7 +2078,7 @@ size_t ArtworkImage::resize_(int width_in, int height_in) {
   size_t new_size = this->get_buffer_size_(width, height);
   const bool needs_clear = content_width != width || content_height != height || offset_x != 0 || offset_y != 0;
   if (this->decode_buffer_) {
-    if (new_size <= this->get_decode_buffer_size_()) {
+    if (new_size <= this->decode_buffer_capacity_) {
       this->decode_buffer_width_ = width;
       this->decode_buffer_height_ = height;
       this->decode_content_width_ = content_width;
@@ -1986,9 +2095,10 @@ size_t ArtworkImage::resize_(int width_in, int height_in) {
                height, content_width, content_height, offset_x, offset_y);
       return new_size;
     }
-    this->release_buffer_(this->decode_buffer_, this->get_decode_buffer_size_(),
+    this->release_buffer_(this->decode_buffer_, this->decode_buffer_capacity_,
                           this->decode_buffer_uses_jpeg_allocator_);
     this->decode_buffer_ = nullptr;
+    this->decode_buffer_capacity_ = 0;
     this->decode_buffer_uses_jpeg_allocator_ = false;
     this->decode_buffer_width_ = 0;
     this->decode_buffer_height_ = 0;
@@ -2002,8 +2112,10 @@ size_t ArtworkImage::resize_(int width_in, int height_in) {
   }
   ESP_LOGD(TAG, "Allocating decode buffer of %zu bytes", new_size);
   this->decode_buffer_ = this->allocator_.allocate(new_size);
+  this->decode_buffer_capacity_ = new_size;
   this->decode_buffer_uses_jpeg_allocator_ = false;
   if (this->decode_buffer_ == nullptr) {
+    this->decode_buffer_capacity_ = 0;
     ESP_LOGE(TAG, "allocation of %zu bytes failed. Biggest block in heap: %zu Bytes", new_size,
              this->allocator_.get_max_free_block_size());
     this->end_connection_();
@@ -2164,6 +2276,7 @@ bool ArtworkImage::fit_rgb565_decode_buffer_with_ppa_(uint8_t *buffer, int buffe
   this->release_buffer_(buffer, static_cast<size_t>(buffer_width) * buffer_height * 2u, buffer_uses_jpeg_allocator);
   this->discard_decode_buffer_();
   this->decode_buffer_ = target;
+  this->decode_buffer_capacity_ = target_size;
   this->decode_buffer_uses_jpeg_allocator_ = true;
   this->decode_buffer_reuses_active_ = false;
   this->decode_buffer_width_ = this->fixed_width_;
@@ -3001,7 +3114,7 @@ bool ArtworkImage::create_decoder_(ImageFormat format, size_t total_size) {
 void ArtworkImage::discard_decode_buffer_() {
   if (this->decode_buffer_) {
     if (!this->decode_buffer_reuses_active_) {
-      const size_t size = this->get_decode_buffer_size_();
+      const size_t size = this->decode_buffer_capacity_;
       if (this->spare_buffer_ == nullptr && should_keep_spare_buffer(size, this->decode_buffer_uses_jpeg_allocator_)) {
         this->spare_buffer_ = this->decode_buffer_;
         this->spare_buffer_size_ = size;
@@ -3012,6 +3125,7 @@ void ArtworkImage::discard_decode_buffer_() {
     }
     this->decode_buffer_ = nullptr;
   }
+  this->decode_buffer_capacity_ = 0;
   this->decode_buffer_reuses_active_ = false;
   this->decode_buffer_uses_jpeg_allocator_ = false;
   this->decode_buffer_width_ = 0;
@@ -3064,12 +3178,14 @@ bool ArtworkImage::promote_decode_buffer_() {
   const bool reused_active_buffer = this->decode_buffer_reuses_active_;
   const bool written_by_dma = this->decode_buffer_written_by_dma_;
   const bool jpeg_allocator = this->decode_buffer_uses_jpeg_allocator_;
+  const size_t decode_capacity = this->decode_buffer_capacity_;
   const uint8_t decode_buffer_darkened_percent = this->decode_buffer_darkened_percent_;
   mark_display_stress("artwork-promote", 1500);
   if (!reused_active_buffer) {
     this->retire_active_buffer_();
   }
   this->buffer_ = this->decode_buffer_;
+  this->buffer_capacity_ = decode_capacity;
   this->buffer_uses_jpeg_allocator_ = jpeg_allocator;
   this->buffer_width_ = this->decode_buffer_width_;
   this->buffer_height_ = this->decode_buffer_height_;
@@ -3085,6 +3201,7 @@ bool ArtworkImage::promote_decode_buffer_() {
              this->buffer_offset_y_);
   }
   this->decode_buffer_ = nullptr;
+  this->decode_buffer_capacity_ = 0;
   this->decode_buffer_reuses_active_ = false;
   this->decode_buffer_uses_jpeg_allocator_ = false;
   this->decode_buffer_width_ = 0;
@@ -3123,8 +3240,9 @@ void ArtworkImage::retire_active_buffer_() {
   }
   auto *retired = this->buffer_;
   this->retired_buffers_.push_back(
-      RetiredBuffer{retired, this->get_buffer_size_(), millis(), this->buffer_uses_jpeg_allocator_});
+      RetiredBuffer{retired, this->buffer_capacity_, millis(), this->buffer_uses_jpeg_allocator_});
   this->buffer_ = nullptr;
+  this->buffer_capacity_ = 0;
   this->buffer_uses_jpeg_allocator_ = false;
   this->data_start_ = nullptr;
   this->buffer_width_ = 0;

@@ -56,6 +56,7 @@ CONF_SENDSPIN_PAUSED = "sendspin_paused"
 CONF_IMMEDIATE = "immediate"
 CONF_DARKEN = "darken"
 CONF_HARDWARE_JPEG = "hardware_jpeg"
+CONF_REUSE_ACTIVE_BUFFER_CAPACITY = "reuse_active_buffer_capacity"
 CONF_SCRIM_COLOR = "scrim_color"
 CONF_SCRIM_OPACITY = "scrim_opacity"
 
@@ -189,6 +190,7 @@ ARTWORK_IMAGE_SCHEMA = (
             cv.Optional(CONF_ALLOW_INSECURE_LOCAL_URLS, default=False): cv.boolean,
             cv.Optional(CONF_DARKEN, default=0): cv.int_range(0, 99),
             cv.Optional(CONF_HARDWARE_JPEG, default=True): cv.boolean,
+            cv.Optional(CONF_REUSE_ACTIVE_BUFFER_CAPACITY, default=False): cv.boolean,
             cv.Optional(CONF_SCRIM_COLOR, default=0): cv.hex_uint32_t,
             cv.Optional(CONF_SCRIM_OPACITY, default=0): cv.int_range(0, 100),
             cv.Optional(sendspin.CONF_SENDSPIN_ID): cv.use_id(sendspin.SendspinHub),
@@ -342,6 +344,7 @@ async def to_code(config):
     await cg.register_parented(var, config[CONF_HTTP_REQUEST_ID])
     cg.add(var.set_darken_percent(config[CONF_DARKEN]))
     cg.add(var.set_hardware_jpeg(config[CONF_HARDWARE_JPEG]))
+    cg.add(var.set_reuse_active_buffer_capacity(config[CONF_REUSE_ACTIVE_BUFFER_CAPACITY]))
     cg.add(var.set_scrim_color(config[CONF_SCRIM_COLOR]))
     cg.add(var.set_scrim_opacity(config[CONF_SCRIM_OPACITY]))
 

@@ -48,10 +48,12 @@ void SendspinHub::setup() {
 
 #ifdef USE_SENDSPIN_ARTWORK
   sendspin::ArtworkRoleConfig artwork_config;
-  artwork_config.preferred_formats = {
-      {0, sendspin::SendspinImageSource::ALBUM, sendspin::SendspinImageFormat::JPEG, this->artwork_width_,
-       this->artwork_height_},
-  };
+  sendspin::ImageSlotPreference artwork_preference{};
+  artwork_preference.source = sendspin::SendspinImageSource::ALBUM;
+  artwork_preference.format = sendspin::SendspinImageFormat::JPEG;
+  artwork_preference.width = this->artwork_width_;
+  artwork_preference.height = this->artwork_height_;
+  artwork_config.preferred_formats.push_back(artwork_preference);
   this->artwork_role_ = &this->client_->add_artwork(std::move(artwork_config));
   this->artwork_role_->set_listener(this);
 #endif

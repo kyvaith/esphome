@@ -156,6 +156,7 @@ bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int bu
     this->image_->release_buffer_(buffer, buffer_width * buffer_height * 2u, buffer_uses_jpeg_allocator);
     this->image_->discard_decode_buffer_();
     this->image_->decode_buffer_ = target;
+    this->image_->decode_buffer_capacity_ = target_size;
     this->image_->decode_buffer_uses_jpeg_allocator_ = false;
     this->image_->decode_buffer_width_ = target_width;
     this->image_->decode_buffer_height_ = target_height;
@@ -176,6 +177,9 @@ bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int bu
   if (this->image_->decode_buffer_ != buffer) {
     this->image_->discard_decode_buffer_();
     this->image_->decode_buffer_ = buffer;
+    this->image_->decode_buffer_capacity_ = static_cast<size_t>(buffer_width) * buffer_height * 2u;
+  } else if (this->image_->decode_buffer_capacity_ == 0) {
+    this->image_->decode_buffer_capacity_ = static_cast<size_t>(buffer_width) * buffer_height * 2u;
   }
   this->image_->decode_buffer_uses_jpeg_allocator_ = buffer_uses_jpeg_allocator;
   this->image_->decode_buffer_width_ = buffer_width;
@@ -204,6 +208,11 @@ bool ImageDecoder::adopt_rgb_buffer(uint8_t *buffer, int buffer_width, int buffe
   if (this->image_->decode_buffer_ != buffer) {
     this->image_->discard_decode_buffer_();
     this->image_->decode_buffer_ = buffer;
+    this->image_->decode_buffer_capacity_ =
+        static_cast<size_t>(buffer_width) * buffer_height * this->image_->get_bpp() / 8u;
+  } else if (this->image_->decode_buffer_capacity_ == 0) {
+    this->image_->decode_buffer_capacity_ =
+        static_cast<size_t>(buffer_width) * buffer_height * this->image_->get_bpp() / 8u;
   }
   this->image_->decode_buffer_uses_jpeg_allocator_ = buffer_uses_jpeg_allocator;
   this->image_->decode_buffer_width_ = buffer_width;
