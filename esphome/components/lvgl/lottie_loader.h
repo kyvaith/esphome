@@ -162,6 +162,46 @@ inline size_t lottie_display_buffer_bytes(const LottieContext *ctx) {
     return static_cast<size_t>(lv_draw_buf_width_to_stride(ctx->width, cf)) * ctx->height;
 }
 
+inline size_t lottie_memory_usage_bytes(const LottieContext *ctx) {
+    if (ctx == nullptr) return 0;
+    size_t bytes = 0;
+    if (ctx->pixel_buffer != nullptr) bytes += lottie_display_buffer_bytes(ctx);
+    if (ctx->work_buffer != nullptr && ctx->work_buffer != ctx->pixel_buffer) bytes += lottie_buffer_bytes(ctx);
+    if (ctx->display_back_buffer != nullptr && ctx->display_back_buffer != ctx->pixel_buffer &&
+        ctx->display_back_buffer != ctx->work_buffer) {
+        bytes += lottie_display_buffer_bytes(ctx);
+    }
+    if (ctx->frame_cache != nullptr) bytes += ctx->frame_cache_stride * ctx->frame_cache_count;
+    if (ctx->task_stack != nullptr) bytes += LOTTIE_TASK_STACK_SIZE;
+    if (ctx->task_tcb != nullptr) bytes += sizeof(StaticTask_t);
+    return bytes;
+}
+
+inline void lottie_log_memory_usage(const LottieContext *ctx, const char *phase) {
+    if (ctx == nullptr) {
+        ESP_LOGW("memory.lottie", "%s unavailable", phase == nullptr ? "runtime" : phase);
+        return;
+    }
+    const size_t pixel_bytes = ctx->pixel_buffer == nullptr ? 0 : lottie_display_buffer_bytes(ctx);
+    const size_t work_bytes = ctx->work_buffer == nullptr || ctx->work_buffer == ctx->pixel_buffer
+                                  ? 0
+                                  : lottie_buffer_bytes(ctx);
+    const size_t back_bytes =
+        ctx->display_back_buffer == nullptr || ctx->display_back_buffer == ctx->pixel_buffer ||
+                ctx->display_back_buffer == ctx->work_buffer
+            ? 0
+            : lottie_display_buffer_bytes(ctx);
+    const size_t cache_bytes =
+        ctx->frame_cache == nullptr ? 0 : ctx->frame_cache_stride * ctx->frame_cache_count;
+    const size_t task_bytes = (ctx->task_stack == nullptr ? 0 : LOTTIE_TASK_STACK_SIZE) +
+                              (ctx->task_tcb == nullptr ? 0 : sizeof(StaticTask_t));
+    ESP_LOGW("memory.lottie", "%s total=%uK pixel=%uK work=%uK back=%uK frame_cache=%uK tasks=%uK frames=%u",
+             phase == nullptr ? "runtime" : phase, (unsigned) (lottie_memory_usage_bytes(ctx) / 1024),
+             (unsigned) (pixel_bytes / 1024), (unsigned) (work_bytes / 1024), (unsigned) (back_bytes / 1024),
+             (unsigned) (cache_bytes / 1024), (unsigned) (task_bytes / 1024),
+             (unsigned) ctx->frame_cache_count);
+}
+
 inline int32_t lottie_first_renderable_frame(const LottieContext *ctx) {
     if (ctx == nullptr || ctx->end_frame <= ctx->start_frame) {
         return ctx != nullptr ? ctx->start_frame : 0;

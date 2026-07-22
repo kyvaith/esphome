@@ -3361,6 +3361,13 @@ extern "C" bool lvgl_esphome_direct_regions_pause(bool paused, uint32_t timeout_
   return component == nullptr || component->direct_regions_pause(paused, timeout_ms);
 }
 
+extern "C" void lvgl_esphome_synchronize_direct_framebuffer_area(int x, int y, int width, int height) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  if (component != nullptr)
+    component->synchronize_direct_framebuffer_area(x, y, width, height);
+}
+
 extern "C" bool lvgl_esphome_direct_blit_xrgb8888(const uint8_t *src, int src_stride, int x, int y, int width,
                                                      int height) {
   auto *disp = lv_display_get_default();
@@ -3373,6 +3380,66 @@ extern "C" bool lvgl_esphome_direct_blit_xrgb8888_coherent(const uint8_t *src, i
   auto *disp = lv_display_get_default();
   auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
   return component != nullptr && component->direct_blit_xrgb8888_coherent(src, src_stride, x, y, width, height);
+}
+
+void LvglComponent::synchronize_direct_framebuffer_area(int x, int y, int width, int height) {
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && LV_COLOR_DEPTH == 32
+  if (!this->direct_mode_active_ || this->disp_ == nullptr || this->direct_last_flushed_buf_ == nullptr ||
+      this->disp_->buf_1 == nullptr || this->disp_->buf_2 == nullptr || width <= 0 || height <= 0)
+    return;
+
+  const int x1 = std::clamp(x, 0, static_cast<int>(this->width_));
+  const int x2 = std::clamp(x + width, 0, static_cast<int>(this->width_));
+  const int y1 = std::clamp(y, 0, static_cast<int>(this->height_));
+  const int y2 = std::clamp(y + height, 0, static_cast<int>(this->height_));
+  if (x2 <= x1 || y2 <= y1)
+    return;
+
+  constexpr size_t BYTES_PER_PIXEL = 3;
+  const size_t row_bytes = static_cast<size_t>(this->width_) * BYTES_PER_PIXEL;
+  const size_t copy_row_bytes = static_cast<size_t>(x2 - x1) * BYTES_PER_PIXEL;
+  const size_t source_span = static_cast<size_t>(y2 - y1 - 1) * row_bytes + copy_row_bytes;
+  const auto *source = this->direct_last_flushed_buf_ + static_cast<size_t>(y1) * row_bytes +
+                       static_cast<size_t>(x1) * BYTES_PER_PIXEL;
+
+  lv_draw_buf_t *buffers[] = {this->disp_->buf_1, this->disp_->buf_2};
+  for (auto *buffer : buffers) {
+    if (buffer == nullptr || buffer->data == nullptr)
+      continue;
+    auto *destination = static_cast<uint8_t *>(buffer->data) + static_cast<size_t>(y1) * row_bytes +
+                        static_cast<size_t>(x1) * BYTES_PER_PIXEL;
+    if (destination == source)
+      continue;
+
+    lvgl_cache_msync_external(destination, source_span, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+#if CONFIG_ESPHOME_LVGL_SNAPSHOT_DMA2D_M2M
+    if (dma2d_m2m_copy_rgb888_2d(this->direct_last_flushed_buf_, this->width_, this->height_, x1, y1,
+                                 static_cast<uint8_t *>(buffer->data), this->width_, this->height_, x1, y1,
+                                 x2 - x1, y2 - y1)) {
+      lvgl_cache_msync_external(destination, source_span, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+      continue;
+    }
+#endif
+    lvgl_cache_msync_external(source, source_span, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    for (int row = y1; row < y2; row++) {
+      memcpy(static_cast<uint8_t *>(buffer->data) + static_cast<size_t>(row) * row_bytes +
+                 static_cast<size_t>(x1) * BYTES_PER_PIXEL,
+             this->direct_last_flushed_buf_ + static_cast<size_t>(row) * row_bytes +
+                 static_cast<size_t>(x1) * BYTES_PER_PIXEL,
+             copy_row_bytes);
+    }
+    lvgl_cache_msync_external(destination, source_span, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  }
+#else
+  (void) x;
+  (void) y;
+  (void) width;
+  (void) height;
+#endif
+}
+
+void LvglComponent::synchronize_direct_framebuffer_rows(int y, int height) {
+  this->synchronize_direct_framebuffer_area(0, y, this->width_, height);
 }
 
 void LvglComponent::realign_direct_buffer_after_manual_present(bool synchronize) {
@@ -7848,6 +7915,11 @@ struct SnapshotScrollState {
   int pending_scroll_y{0};
   bool direct_render{false};
   bool pending_update{false};
+  bool inertia_active{false};
+  uint64_t inertia_start_us{0};
+  uint32_t inertia_duration_ms{0};
+  int inertia_start_y{0};
+  int inertia_target_y{0};
   bool worker_enabled{false};
   bool root_was_hidden{false};
   uint64_t perf_first_render_us{0};
@@ -8026,6 +8098,89 @@ SnapshotPanoramaCacheEntry snapshot_panorama_cache[3];
 lv_obj_t *snapshot_cache_pending_compress_obj = nullptr;
 uint32_t snapshot_cache_pending_compress_at = 0;
 lv_obj_t *snapshot_cache_latest_raw_app_obj = nullptr;
+
+extern "C" size_t lvgl_esphome_snapshot_memory_bytes(void) {
+  size_t raw_cache_bytes = 0;
+  size_t jpeg_cache_bytes = 0;
+  size_t panorama_bytes = 0;
+  size_t app_work_bytes = snapshot_app_work_buf == nullptr ? 0 : snapshot_app_work_buf->data_size;
+  size_t scroll_bytes = 0;
+  size_t prepared_close_bytes = 0;
+
+  for (const auto &entry : snapshot_cache) {
+    if (entry.buf != nullptr)
+      raw_cache_bytes += entry.buf->data_size;
+#ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
+    jpeg_cache_bytes += entry.jpeg.capacity();
+#endif
+  }
+  for (const auto &entry : snapshot_panorama_cache)
+    panorama_bytes += entry.buf == nullptr ? 0 : entry.size;
+
+  if (snapshot_scroll_state.content_buf != nullptr)
+    scroll_bytes += snapshot_scroll_state.content_buf->data_size;
+  if (snapshot_scroll_state.content_tail_buf != nullptr &&
+      snapshot_scroll_state.content_tail_buf != snapshot_scroll_state.content_buf)
+    scroll_bytes += snapshot_scroll_state.content_tail_buf->data_size;
+  if (snapshot_app_prepared_close_owns_buf && snapshot_app_prepared_close_buf != nullptr &&
+      snapshot_app_prepared_close_buf != snapshot_app_work_buf)
+    prepared_close_bytes = snapshot_app_prepared_close_buf->data_size;
+
+#ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
+  if (snapshot_compression_worker.result_ready.load(std::memory_order_acquire))
+    jpeg_cache_bytes += snapshot_compression_worker.jpeg.capacity();
+#endif
+#ifdef USE_LVGL_PPA
+  const size_t app_low_res_bytes = s_snapshot_app_low_res.allocation == nullptr
+                                       ? 0
+                                       : s_snapshot_app_low_res.allocation_bytes;
+#else
+  constexpr size_t app_low_res_bytes = 0;
+#endif
+  return raw_cache_bytes + jpeg_cache_bytes + panorama_bytes + app_work_bytes + scroll_bytes +
+         prepared_close_bytes + app_low_res_bytes;
+}
+
+extern "C" void lvgl_esphome_snapshot_log_memory(const char *phase) {
+  size_t raw_cache_bytes = 0;
+  size_t jpeg_cache_bytes = 0;
+  size_t panorama_bytes = 0;
+  size_t scroll_bytes = 0;
+  for (const auto &entry : snapshot_cache) {
+    if (entry.buf != nullptr)
+      raw_cache_bytes += entry.buf->data_size;
+#ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
+    jpeg_cache_bytes += entry.jpeg.capacity();
+#endif
+  }
+  for (const auto &entry : snapshot_panorama_cache)
+    panorama_bytes += entry.buf == nullptr ? 0 : entry.size;
+  if (snapshot_scroll_state.content_buf != nullptr)
+    scroll_bytes += snapshot_scroll_state.content_buf->data_size;
+  if (snapshot_scroll_state.content_tail_buf != nullptr &&
+      snapshot_scroll_state.content_tail_buf != snapshot_scroll_state.content_buf)
+    scroll_bytes += snapshot_scroll_state.content_tail_buf->data_size;
+  const size_t app_work_bytes = snapshot_app_work_buf == nullptr ? 0 : snapshot_app_work_buf->data_size;
+  const size_t prepared_close_bytes =
+      snapshot_app_prepared_close_owns_buf && snapshot_app_prepared_close_buf != nullptr &&
+              snapshot_app_prepared_close_buf != snapshot_app_work_buf
+          ? snapshot_app_prepared_close_buf->data_size
+          : 0;
+#ifdef USE_LVGL_PPA
+  const size_t app_low_res_bytes = s_snapshot_app_low_res.allocation == nullptr
+                                       ? 0
+                                       : s_snapshot_app_low_res.allocation_bytes;
+#else
+  constexpr size_t app_low_res_bytes = 0;
+#endif
+  ESP_LOGW("memory.snapshot",
+           "%s total=%uK panorama=%uK raw=%uK jpeg=%uK app_work=%uK scroll=%uK close=%uK lowres=%uK",
+           phase == nullptr ? "runtime" : phase, (unsigned) (lvgl_esphome_snapshot_memory_bytes() / 1024),
+           (unsigned) (panorama_bytes / 1024), (unsigned) (raw_cache_bytes / 1024),
+           (unsigned) (jpeg_cache_bytes / 1024), (unsigned) (app_work_bytes / 1024),
+           (unsigned) (scroll_bytes / 1024), (unsigned) (prepared_close_bytes / 1024),
+           (unsigned) (app_low_res_bytes / 1024));
+}
 
 constexpr lv_color_format_t SNAPSHOT_CF = LV_COLOR_FORMAT_RGB888;
 constexpr int SNAPSHOT_PANORAMA_SCALE = 1;
@@ -9572,15 +9727,6 @@ int snapshot_swipe_ease_out(int start, int end, uint32_t elapsed_ms, uint32_t du
   return start + (int) (((int64_t) (end - start) * eased) / 1024);
 }
 
-int snapshot_app_ease_in_out(int start, int end, uint32_t elapsed_ms, uint32_t duration_ms) {
-  if (duration_ms == 0 || elapsed_ms >= duration_ms)
-    return end;
-  uint32_t t = std::min<uint32_t>((elapsed_ms * 1024U) / duration_ms, 1024U);
-  const uint64_t t2 = (uint64_t) t * t;
-  const uint32_t eased = (uint32_t) ((3ULL * t2 * 1024ULL - 2ULL * t2 * t) / (1024ULL * 1024ULL));
-  return start + (int) (((int64_t) (end - start) * eased) / 1024);
-}
-
 #ifdef USE_ESP32
 void snapshot_app_worker_task(void *) {
   auto &worker = snapshot_app_worker;
@@ -9657,7 +9803,7 @@ void snapshot_app_worker_task(void *) {
       const uint64_t now_us = esp_timer_get_time();
       const uint32_t elapsed_ms = static_cast<uint32_t>((now_us - animation_start_us) / 1000ULL);
       const bool final_frame = elapsed_ms >= duration_ms;
-      const auto interpolate = opening ? snapshot_app_ease_in_out : snapshot_swipe_ease_out;
+      const auto interpolate = snapshot_swipe_ease_out;
       const int size = final_frame ? end_size : interpolate(start_size, end_size, elapsed_ms, duration_ms);
       const int center_x =
           final_frame ? end_center_x : interpolate(start_center_x, end_center_x, elapsed_ms, duration_ms);
@@ -9994,7 +10140,7 @@ bool snapshot_app_direct_anim_tick() {
     const uint64_t now_us = esp_timer_get_time();
     const uint32_t elapsed_ms = (uint32_t) ((now_us - state.anim_start_us) / 1000ULL);
     const uint32_t duration_ms = state.anim_duration_ms;
-    const auto interpolate = state.opening ? snapshot_app_ease_in_out : snapshot_swipe_ease_out;
+    const auto interpolate = snapshot_swipe_ease_out;
     const int size = interpolate(state.start_size, state.end_size, elapsed_ms, duration_ms);
     const int center_x = interpolate(state.start_center_x, state.end_center_x, elapsed_ms, duration_ms);
     const int center_y = interpolate(state.start_center_y, state.end_center_y, elapsed_ms, duration_ms);
@@ -10144,6 +10290,14 @@ void snapshot_swipe_finish_now() {
       }
     }
     snapshot_swipe_state.component->wait_for_direct_frame_presented(50);
+    if (snapshot_swipe_state.commit) {
+      // The compositor draws the page indicator after copying the panorama.
+      // Mirror only that final 10-row strip into LVGL's two buffers before
+      // handoff. This prevents correct -> previous -> correct indicator jumps
+      // without copying two complete 1.92 MB frames.
+      snapshot_swipe_state.component->synchronize_direct_framebuffer_rows(
+          SNAPSHOT_PAGE_INDICATOR_Y, SNAPSHOT_PAGE_INDICATOR_H);
+    }
     // FULL mode redraws the whole next LVGL buffer. Keep the compositor's
     // final third framebuffer on DSI until that redraw is ready instead of
     // copying 1.92 MB into each LVGL buffer between chained gestures.
@@ -11075,10 +11229,31 @@ bool snapshot_swipe_process_pending() {
 
 bool snapshot_scroll_process_pending() {
   auto &state = snapshot_scroll_state;
+  if (state.inertia_active && state.direct_render && state.component != nullptr && state.content_buf != nullptr) {
+    const uint64_t now_us = static_cast<uint64_t>(millis()) * 1000ULL;
+    const uint32_t elapsed_ms = static_cast<uint32_t>((now_us - state.inertia_start_us) / 1000ULL);
+    if (elapsed_ms >= state.inertia_duration_ms) {
+      state.inertia_active = false;
+      lvgl_esphome_snapshot_scroll_finish_retain(state.inertia_target_y);
+      return true;
+    }
+
+    const int scroll_y = snapshot_swipe_ease_out(state.inertia_start_y, state.inertia_target_y, elapsed_ms,
+                                                  state.inertia_duration_ms);
+    state.current_scroll_y = scroll_y;
+#ifdef USE_ESP32
+    if (state.worker_enabled) {
+      snapshot_scroll_worker_queue_update(scroll_y);
+      return true;
+    }
+#endif
+    state.pending_scroll_y = scroll_y;
+    state.pending_update = true;
+  }
 #ifdef USE_ESP32
   if (state.worker_enabled) {
     if (!snapshot_scroll_worker.failed.load(std::memory_order_acquire))
-      return false;
+      return state.inertia_active;
     snapshot_scroll_worker_stop_and_wait();
     state.worker_enabled = false;
     state.pending_scroll_y = snapshot_scroll_worker.requested_scroll_y.load(std::memory_order_acquire);
@@ -11260,6 +11435,32 @@ extern "C" void lvgl_esphome_snapshot_scroll_finish_retain(int scroll_y) {
   if (s_swipe_logging_enabled) {
     ESP_LOGI(TAG, "snapshot scroll: finish retain y=%d", clamped_y);
   }
+}
+
+extern "C" void lvgl_esphome_snapshot_scroll_finish_inertial(int scroll_y, int velocity_px_s) {
+  if (snapshot_scroll_state.root == nullptr || !snapshot_scroll_state.direct_render) {
+    lvgl_esphome_snapshot_scroll_finish_retain(scroll_y);
+    return;
+  }
+
+  auto &state = snapshot_scroll_state;
+  const int start_y = snapshot_scroll_clamp_y(scroll_y);
+  const int clamped_velocity = std::clamp(velocity_px_s, -3200, 3200);
+  const int travel = std::clamp((clamped_velocity * 220) / 1000, -560, 560);
+  const int target_y = snapshot_scroll_clamp_y(start_y + travel);
+  const int distance = std::abs(target_y - start_y);
+  if (distance < 8 || std::abs(clamped_velocity) < 80) {
+    lvgl_esphome_snapshot_scroll_finish_retain(start_y);
+    return;
+  }
+
+  state.pending_update = false;
+  state.current_scroll_y = start_y;
+  state.inertia_start_y = start_y;
+  state.inertia_target_y = target_y;
+  state.inertia_duration_ms = std::clamp<uint32_t>(180U + static_cast<uint32_t>(distance) / 2U, 180U, 480U);
+  state.inertia_start_us = static_cast<uint64_t>(millis()) * 1000ULL;
+  state.inertia_active = true;
 }
 
 extern "C" void lvgl_esphome_snapshot_scroll_end(void) {

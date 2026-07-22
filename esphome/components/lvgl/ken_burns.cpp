@@ -339,6 +339,36 @@ void KenBurnsController::resume_direct() {
 #endif
 }
 
+size_t KenBurnsController::memory_usage_bytes() const {
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  size_t bytes = this->direct_worker_stack_ == nullptr ? 0 : 8192;
+  if (this->transition_old_frame_ != nullptr && this->transition_old_frame_owned_)
+    bytes += this->transition_old_frame_size_;
+  if (this->transition_new_frame_ != nullptr && this->transition_new_frame_owned_)
+    bytes += this->transition_frame_size_;
+  return bytes;
+#else
+  return 0;
+#endif
+}
+
+void KenBurnsController::log_memory_usage(const char *phase) const {
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  const size_t worker_bytes = this->direct_worker_stack_ == nullptr ? 0 : 8192;
+  const size_t old_bytes = this->transition_old_frame_ != nullptr && this->transition_old_frame_owned_
+                               ? this->transition_old_frame_size_
+                               : 0;
+  const size_t new_bytes = this->transition_new_frame_ != nullptr && this->transition_new_frame_owned_
+                               ? this->transition_frame_size_
+                               : 0;
+  ESP_LOGW(TAG, "%s memory=%uK worker=%uK transition_old=%uK transition_new=%uK",
+           phase == nullptr ? "runtime" : phase, (unsigned) (this->memory_usage_bytes() / 1024),
+           (unsigned) (worker_bytes / 1024), (unsigned) (old_bytes / 1024), (unsigned) (new_bytes / 1024));
+#else
+  (void) phase;
+#endif
+}
+
 LvglComponent *KenBurnsController::get_lvgl_component_() const {
   if (this->obj_ == nullptr || !lv_obj_is_valid(this->obj_))
     return nullptr;

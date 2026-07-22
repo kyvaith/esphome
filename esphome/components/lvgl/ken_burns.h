@@ -53,6 +53,8 @@ class KenBurnsController : public Component {
   bool is_phase_complete() const { return this->phase_complete_.load(std::memory_order_acquire); }
   bool freeze_direct();
   void resume_direct();
+  size_t memory_usage_bytes() const;
+  void log_memory_usage(const char *phase) const;
 
  protected:
   void choose_target_();

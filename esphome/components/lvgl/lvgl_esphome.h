@@ -68,6 +68,7 @@ extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_async(
     int height, LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
 extern "C" void lvgl_esphome_direct_blit_rgb888_release(int x, int y, int width, int height);
 extern "C" bool lvgl_esphome_direct_regions_pause(bool paused, uint32_t timeout_ms);
+extern "C" void lvgl_esphome_synchronize_direct_framebuffer_area(int x, int y, int width, int height);
 extern "C" bool lvgl_esphome_direct_blit_xrgb8888(const uint8_t *src, int src_stride, int x, int y, int width,
                                                     int height);
 extern "C" bool lvgl_esphome_direct_blit_xrgb8888_coherent(const uint8_t *src, int src_stride, int x, int y,
@@ -112,7 +113,10 @@ extern "C" bool lvgl_esphome_snapshot_scroll_begin(lv_obj_t *obj, int viewport_w
 extern "C" void lvgl_esphome_snapshot_scroll_update(int scroll_y);
 extern "C" void lvgl_esphome_snapshot_scroll_finish(int scroll_y);
 extern "C" void lvgl_esphome_snapshot_scroll_finish_retain(int scroll_y);
+extern "C" void lvgl_esphome_snapshot_scroll_finish_inertial(int scroll_y, int velocity_px_s);
 extern "C" void lvgl_esphome_snapshot_scroll_end(void);
+extern "C" size_t lvgl_esphome_snapshot_memory_bytes(void);
+extern "C" void lvgl_esphome_snapshot_log_memory(const char *phase);
 
 #ifdef USE_FONT
 #include "esphome/components/font/font.h"
@@ -384,6 +388,8 @@ class LvglComponent : public PollingComponent {
   bool synchronize_direct_framebuffers();
   bool wait_for_direct_frame_presented(uint32_t timeout_ms);
   void realign_direct_buffer_after_manual_present(bool synchronize = true);
+  void synchronize_direct_framebuffer_area(int x, int y, int width, int height);
+  void synchronize_direct_framebuffer_rows(int y, int height);
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   static ppa_client_handle_t register_direct_image_animation_client();
   static ppa_client_handle_t register_direct_image_blend_client();
