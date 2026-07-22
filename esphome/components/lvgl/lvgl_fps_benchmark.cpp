@@ -20,6 +20,8 @@
 #ifdef USE_LVGL_FPS_BENCHMARK
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -74,6 +76,8 @@ typedef struct {
 
 static fps_ctx_t s_ctx;
 static volatile uint32_t s_current_fps = 0;
+static StaticTask_t s_sampler_task_storage;
+static StackType_t *s_sampler_task_stack = nullptr;
 
 extern "C" uint32_t lvgl_esphome_get_fps(void)
 {
@@ -330,11 +334,23 @@ extern "C" void lvgl_fps_attach_v2(lv_display_t *display)
     lv_display_add_event_cb(display, fps_refr_ready_cb, LV_EVENT_REFR_READY, NULL);
 
     FPS_LOGI(TAG_FPS, "cb registered, creating sampler task...");
-    BaseType_t r = xTaskCreate(fps_sampler_task, "lvgl_fps", 4096, NULL, 3, NULL);
-    if (r != pdPASS) {
-        ESP_LOGE(TAG_FPS, "task create failed (r=%d)", (int)r);
+    constexpr uint32_t sampler_stack_size = 4096;
+    s_sampler_task_stack = static_cast<StackType_t *>(
+        heap_caps_aligned_alloc(16, sampler_stack_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (s_sampler_task_stack == nullptr) {
+        s_sampler_task_stack = static_cast<StackType_t *>(
+            heap_caps_aligned_alloc(16, sampler_stack_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    }
+    TaskHandle_t task = s_sampler_task_stack == nullptr ? nullptr : xTaskCreateStatic(
+        fps_sampler_task, "lvgl_fps", sampler_stack_size, NULL, 3, s_sampler_task_stack,
+        &s_sampler_task_storage);
+    if (task == nullptr) {
+        free(s_sampler_task_stack);
+        s_sampler_task_stack = nullptr;
+        ESP_LOGE(TAG_FPS, "task create failed");
         return;
     }
+    FPS_LOGI(TAG_FPS, "sampler uses %s stack", esp_ptr_external_ram(s_sampler_task_stack) ? "PSRAM" : "internal");
     FPS_LOGI(TAG_FPS, "<<< attach() done, warmup %d ms", FPS_STARTUP_DELAY_MS);
 }
 

@@ -66,6 +66,8 @@ uint64_t lv_draw_ppa_get_img_overlay_wait_us(void);
 uint64_t lv_draw_ppa_get_img_overlay_dest_pre_us(void);
 uint64_t lv_draw_ppa_get_img_overlay_ppa_us(void);
 uint64_t lv_draw_ppa_get_img_overlay_dest_post_us(void);
+void lv_draw_ppa_srm_qos_begin(uint32_t pixel_count);
+void lv_draw_ppa_srm_qos_end(uint32_t pixel_count);
 
 void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
                       const lv_area_t * coords);

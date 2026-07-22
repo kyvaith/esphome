@@ -24,6 +24,11 @@
 #include <stdbool.h>
 #include <string.h>
 
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+static portMUX_TYPE s_direct_animation_qos_lock = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t s_direct_animation_qos_users;
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -41,6 +46,14 @@ uint32_t lvgl_esphome_get_perf_logging_enabled(void) __attribute__((weak));
 
 #ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_GAP_US
 #define CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_GAP_US 0
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_HEIGHT
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_HEIGHT CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_HEIGHT
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_GAP_US
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_GAP_US CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_GAP_US
 #endif
 
 #ifndef CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_HEIGHT
@@ -61,6 +74,22 @@ uint32_t lvgl_esphome_get_perf_logging_enabled(void) __attribute__((weak));
 
 #ifndef CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US
 #define CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US 2000
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_FIFO_MIN
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_FIFO_MIN CONFIG_ESPHOME_LVGL_PPA_DSI_FIFO_MIN
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_WAIT_US
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_WAIT_US CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_POST_WAIT
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_POST_WAIT 1
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DSI_STRESS_DIAGNOSTICS
+#define CONFIG_ESPHOME_LVGL_PPA_DSI_STRESS_DIAGNOSTICS 0
 #endif
 
 #ifndef CONFIG_ESPHOME_LVGL_PPA_SKIP_DMA_SOURCE_MSYNC
@@ -102,6 +131,21 @@ uint32_t lvgl_esphome_get_perf_logging_enabled(void) __attribute__((weak));
 #endif
 #ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_READ_PRIORITY
 #define CONFIG_ESPHOME_LVGL_PPA_SRM_READ_PRIORITY 0
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DIRECT_AXI_BURSTINESS
+#define CONFIG_ESPHOME_LVGL_PPA_DIRECT_AXI_BURSTINESS 8
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DIRECT_PEAK_LEVEL
+#define CONFIG_ESPHOME_LVGL_PPA_DIRECT_PEAK_LEVEL 0
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DIRECT_TRANSACTION_LEVEL
+#define CONFIG_ESPHOME_LVGL_PPA_DIRECT_TRANSACTION_LEVEL 1
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DIRECT_WRITE_PRIORITY
+#define CONFIG_ESPHOME_LVGL_PPA_DIRECT_WRITE_PRIORITY 0
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DIRECT_READ_PRIORITY
+#define CONFIG_ESPHOME_LVGL_PPA_DIRECT_READ_PRIORITY 0
 #endif
 
 static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t * draw_dsc,
@@ -157,24 +201,33 @@ static inline void lv_draw_ppa_sync_source_for_dma_read(const void * ptr, uint32
     }
 }
 
-static inline uint32_t lv_draw_ppa_wait_for_display_fifo(void)
+static inline uint32_t lv_draw_ppa_wait_for_display_fifo_with_limits(uint32_t min_depth,
+                                                                     uint32_t timeout_us)
 {
 #if CONFIG_ESPHOME_LVGL_PPA_DSI_BACKPRESSURE
     if(esphome_mipi_dsi_wait_fifo_margin == NULL) {
         return 0;
     }
     int64_t start_us = esp_timer_get_time();
-    esphome_mipi_dsi_wait_fifo_margin(CONFIG_ESPHOME_LVGL_PPA_DSI_FIFO_MIN,
-                                      CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US);
+    esphome_mipi_dsi_wait_fifo_margin(min_depth, timeout_us);
     return (uint32_t)(esp_timer_get_time() - start_us);
 #else
+    LV_UNUSED(min_depth);
+    LV_UNUSED(timeout_us);
     return 0;
 #endif
 }
 
+static inline uint32_t lv_draw_ppa_wait_for_display_fifo(void)
+{
+    return lv_draw_ppa_wait_for_display_fifo_with_limits(CONFIG_ESPHOME_LVGL_PPA_DSI_FIFO_MIN,
+                                                         CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US);
+}
+
 static inline void lv_draw_ppa_mark_display_stress(const char * label, uint32_t duration_ms)
 {
-    if(esphome_mipi_dsi_mark_stress != NULL) {
+    if(CONFIG_ESPHOME_LVGL_PPA_DSI_STRESS_DIAGNOSTICS &&
+       lv_draw_ppa_verbose_log_enabled() && esphome_mipi_dsi_mark_stress != NULL) {
         esphome_mipi_dsi_mark_stress(label, duration_ms);
     }
 }
@@ -253,6 +306,83 @@ static void lv_draw_ppa_dma2d_qos_guard_end(lv_draw_ppa_dma2d_qos_guard_t * guar
     LV_UNUSED(guard);
 }
 #endif
+
+void lv_draw_ppa_srm_qos_begin(uint32_t pixel_count)
+{
+    lv_draw_ppa_dma2d_qos_guard_t guard;
+    lv_draw_ppa_dma2d_qos_guard_begin(&guard, pixel_count);
+}
+
+void lv_draw_ppa_srm_qos_end(uint32_t pixel_count)
+{
+    lv_draw_ppa_dma2d_qos_guard_t guard;
+#if defined(CONFIG_IDF_TARGET_ESP32P4) && CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_THROTTLE
+    guard.active = pixel_count >= CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_MIN_PIXELS;
+#else
+    LV_UNUSED(pixel_count);
+    guard.active = false;
+#endif
+    lv_draw_ppa_dma2d_qos_guard_end(&guard);
+}
+
+void lv_draw_ppa_direct_animation_qos_apply(void)
+{
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    portENTER_CRITICAL(&s_direct_animation_qos_lock);
+    if(s_direct_animation_qos_users++ != 0) {
+        portEXIT_CRITICAL(&s_direct_animation_qos_lock);
+        return;
+    }
+    /* Direct animation always writes a complete idle DSI framebuffer. Give
+     * DMA2D its unrestricted transaction rate while keeping its AXI arbiter
+     * priority below the display GDMA reader. */
+    axi_icm_ll_set_dma2d_qos_arbiter_prio(CONFIG_ESPHOME_LVGL_PPA_DIRECT_WRITE_PRIORITY,
+                                          CONFIG_ESPHOME_LVGL_PPA_DIRECT_READ_PRIORITY);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_LVGL_PPA_DIRECT_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_LVGL_PPA_DIRECT_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_WRITE);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_LVGL_PPA_DIRECT_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_LVGL_PPA_DIRECT_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_LVGL_PPA_DIRECT_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_LVGL_PPA_DIRECT_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_WRITE);
+    portEXIT_CRITICAL(&s_direct_animation_qos_lock);
+#endif
+}
+
+void lv_draw_ppa_direct_animation_qos_restore(void)
+{
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    portENTER_CRITICAL(&s_direct_animation_qos_lock);
+    if(s_direct_animation_qos_users == 0) {
+        portEXIT_CRITICAL(&s_direct_animation_qos_lock);
+        return;
+    }
+    if(--s_direct_animation_qos_users != 0) {
+        portEXIT_CRITICAL(&s_direct_animation_qos_lock);
+        return;
+    }
+    axi_icm_ll_set_dma2d_qos_arbiter_prio(CONFIG_ESPHOME_DMA2D_WRITE_PRIORITY,
+                                          CONFIG_ESPHOME_DMA2D_READ_PRIORITY);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_WRITE);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_DMA2D_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_DMA2D_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_WRITE);
+    portEXIT_CRITICAL(&s_direct_animation_qos_lock);
+#endif
+}
 
 uint32_t lv_draw_ppa_get_img_srm_task_count(void)
 {
@@ -373,7 +503,8 @@ void lv_draw_ppa_img(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
         const lv_image_dsc_t * image = (const lv_image_dsc_t *)dsc->src;
         const lv_color_format_t image_cf = (lv_color_format_t)image->header.cf;
         if(image->header.magic == LV_IMAGE_HEADER_MAGIC &&
-           (image_cf == LV_COLOR_FORMAT_ARGB8888 || image_cf == LV_COLOR_FORMAT_RGB888 ||
+           (image_cf == LV_COLOR_FORMAT_RGB565 || image_cf == LV_COLOR_FORMAT_ARGB8888 ||
+            image_cf == LV_COLOR_FORMAT_RGB888 ||
             image_cf == LV_COLOR_FORMAT_XRGB8888) &&
            image->data != NULL) {
             lv_area_t clipped_img_area;
@@ -852,7 +983,15 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
     }
     const bool srm_axis_aligned =
         dsc->rotation == 0 && dsc->skew_x == 0 && dsc->skew_y == 0;
-    const uint32_t band_height = CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_HEIGHT;
+    const bool is_scaled = dsc->scale_x != LV_SCALE_NONE || dsc->scale_y != LV_SCALE_NONE;
+    const uint32_t band_height = is_scaled ? CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_HEIGHT :
+                                 CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_HEIGHT;
+    const uint32_t band_gap_us = is_scaled ? CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_GAP_US :
+                                CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_GAP_US;
+    const uint32_t fifo_min = is_scaled ? CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_FIFO_MIN :
+                              CONFIG_ESPHOME_LVGL_PPA_DSI_FIFO_MIN;
+    const uint32_t fifo_wait_us = is_scaled ? CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_WAIT_US :
+                                  CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US;
     const bool use_bands =
         srm_axis_aligned && aligned_out == NULL && pixel_count >= 100000U &&
         band_height > 0 && (uint32_t)clip_h > band_height;
@@ -908,7 +1047,7 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
             uint32_t band_sync_size = dest_stride * this_band_h;
             lv_draw_ppa_cache_msync(band_sync_start, band_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
-            uint32_t wait_us = lv_draw_ppa_wait_for_display_fifo();
+            uint32_t wait_us = lv_draw_ppa_wait_for_display_fifo_with_limits(fifo_min, fifo_wait_us);
             wait_total_us += wait_us;
             if(wait_us > wait_max_us) wait_max_us = wait_us;
 
@@ -918,15 +1057,17 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
             if(band_elapsed > max_band_elapsed) max_band_elapsed = band_elapsed;
             if(ret == ESP_OK) {
                 lv_draw_ppa_cache_msync_after_dma_write(band_sync_start, band_sync_size);
-                wait_us = lv_draw_ppa_wait_for_display_fifo();
-                wait_total_us += wait_us;
-                if(wait_us > wait_max_us) wait_max_us = wait_us;
+                if(!is_scaled || CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_POST_WAIT) {
+                    wait_us = lv_draw_ppa_wait_for_display_fifo_with_limits(fifo_min, fifo_wait_us);
+                    wait_total_us += wait_us;
+                    if(wait_us > wait_max_us) wait_max_us = wait_us;
+                }
             } else {
                 break;
             }
-#if CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_GAP_US > 0
-            esp_rom_delay_us(CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_GAP_US);
-#endif
+            if(band_gap_us > 0) {
+                esp_rom_delay_us(band_gap_us);
+            }
             taskYIELD();
         }
     } else {
@@ -969,7 +1110,7 @@ void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
                      "srm %dx%d src=%ux%u scale=%.2f/%.2f band=%u gap=%u wait=%uus max_wait=%uus max_band=%uus ret=%d took=%uus",
                      (int)clip_w, (int)clip_h, (unsigned)src_bw, (unsigned)src_bh,
                      (double)sx, (double)sy, use_bands ? (unsigned)band_height : 0U,
-                     (unsigned)CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_GAP_US,
+                     (unsigned)band_gap_us,
                      (unsigned)wait_total_us, (unsigned)wait_max_us,
                      (unsigned)max_band_elapsed, (int)ret, (unsigned)elapsed);
         }

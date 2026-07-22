@@ -23,6 +23,11 @@
 #include <src/widgets/lottie/lv_lottie_private.h>
 
 extern "C" uint32_t lvgl_esphome_get_perf_logging_enabled(void);
+extern "C" bool lvgl_esphome_direct_blit_xrgb8888(const uint8_t *src, int src_stride, int x, int y, int width,
+                                                    int height);
+extern "C" bool lvgl_esphome_direct_blit_xrgb8888_coherent(const uint8_t *src, int src_stride, int x, int y,
+                                                             int width, int height);
+extern "C" bool lvgl_esphome_direct_regions_pause(bool paused, uint32_t timeout_ms);
 extern "C" bool esphome_mipi_dsi_wait_fifo_margin(uint32_t min_depth, uint32_t timeout_us) __attribute__((weak));
 
 namespace esphome {
@@ -82,6 +87,7 @@ struct LottieContext {
     bool display_back_buffer_internal;
     bool frame_cache_internal;
     bool prepared_frame_ready;
+    volatile bool playback_completed;
     StackType_t *task_stack;    // PSRAM – 64 KB
     StaticTask_t *task_tcb;     // internal RAM
     TaskHandle_t task_handle;
@@ -163,6 +169,15 @@ inline int32_t lottie_first_renderable_frame(const LottieContext *ctx) {
     // ThorVG rejects frame 0 for at least some trim-path animations. Starting
     // from the first renderable frame also avoids a blank prepared canvas.
     return ctx->start_frame + 1;
+}
+
+inline int32_t lottie_last_renderable_frame(const LottieContext *ctx) {
+    if (ctx == nullptr || ctx->end_frame <= ctx->start_frame) {
+        return ctx != nullptr ? ctx->start_frame : 0;
+    }
+    // Lottie's out-point is exclusive. Rendering it can publish the blank
+    // frame immediately following the visible animation.
+    return std::max(ctx->start_frame, ctx->end_frame - 1);
 }
 
 inline void lottie_fill_display_buffer(LottieContext *ctx, uint8_t *target, size_t bytes) {
@@ -408,10 +423,11 @@ inline bool lottie_prepare_frame_cache(LottieContext *ctx) {
     }
 
     const int32_t first_frame = lottie_first_renderable_frame(ctx);
-    if (ctx->end_frame <= first_frame) {
+    const int32_t last_frame = lottie_last_renderable_frame(ctx);
+    if (last_frame < first_frame) {
         return false;
     }
-    const int32_t total_frames = ctx->end_frame - first_frame;
+    const int32_t total_frames = last_frame - first_frame;
     const uint32_t target_frames =
         std::max<uint32_t>(2, (ctx->duration_ms * LOTTIE_FRAME_CACHE_TARGET_FPS + 999U) / 1000U + 1U);
     const uint32_t frame_count = std::min<uint32_t>(static_cast<uint32_t>(total_frames) + 1U, target_frames);
@@ -464,7 +480,7 @@ inline bool lottie_prepare_frame_cache(LottieContext *ctx) {
     ctx->frame_cache_count = frame_count;
     ctx->frame_cache_internal = false;
     ESP_LOGI(LOTTIE_PERF_TAG, "prepared frame cache: frames=%u bytes=%u first=%d last=%d",
-             (unsigned) frame_count, (unsigned) cache_bytes, (int) first_frame, (int) ctx->end_frame);
+             (unsigned) frame_count, (unsigned) cache_bytes, (int) first_frame, (int) last_frame);
     return true;
 }
 
@@ -476,16 +492,75 @@ inline void lottie_publish_cached_frame(LottieContext *ctx, uint32_t index) {
     uint8_t *frame = ctx->frame_cache + ctx->frame_cache_stride * index;
     const size_t display_bytes = lottie_display_buffer_bytes(ctx);
 
-    // Keep one stable canvas source for the complete playback. Repeatedly
-    // calling lv_canvas_set_buffer() drops LVGL's image cache and rewires the
-    // source descriptor on every frame; with an active draw unit that can also
-    // wait for the previous source and stall the animation after frame zero.
-    // The boot canvas is small, so copying the prepared frame is cheaper and
-    // leaves LVGL/PPA with a stable, race-free source pointer.
+    // Cached frames are immutable and were written back when the cache was
+    // prepared. Let PPA read the selected cache slot directly. The previous
+    // path copied every frame into pixel_buffer and synchronized it again,
+    // doubling PSRAM traffic during the visible boot animation.
+    const int64_t started_us = esp_timer_get_time();
+    lv_area_t coords{};
+    bool visible = false;
     lv_lock();
-    memcpy(ctx->pixel_buffer, frame, display_bytes);
-    lv_obj_invalidate(ctx->obj);
+    if (lv_obj_is_valid(ctx->obj)) {
+        visible = lv_obj_is_visible(ctx->obj);
+        lv_obj_get_coords(ctx->obj, &coords);
+    }
     lv_unlock();
+
+    bool presented_direct = false;
+    if (visible && lv_area_get_width(&coords) == static_cast<int32_t>(ctx->width) &&
+        lv_area_get_height(&coords) == static_cast<int32_t>(ctx->height)) {
+        const int stride = static_cast<int>(lv_draw_buf_width_to_stride(ctx->width, LV_COLOR_FORMAT_XRGB8888));
+        presented_direct = lvgl_esphome_direct_blit_xrgb8888_coherent(
+            frame, stride, coords.x1, coords.y1, ctx->width, ctx->height);
+    }
+
+    if (!presented_direct) {
+        lv_lock();
+        memcpy(ctx->pixel_buffer, frame, display_bytes);
+        if (lv_obj_is_valid(ctx->obj)) {
+            lv_obj_invalidate(ctx->obj);
+        }
+        lv_unlock();
+    }
+
+    if (lvgl_esphome_get_perf_logging_enabled() != 0) {
+        static uint32_t frames = 0;
+        static uint32_t direct_frames = 0;
+        static uint64_t total_us = 0;
+        static uint32_t max_us = 0;
+        static int64_t last_frame_us = 0;
+        static uint32_t max_gap_us = 0;
+        static uint32_t max_gap_index = 0;
+        static int64_t window_us = 0;
+        const int64_t now_us = esp_timer_get_time();
+        const uint32_t elapsed_us = static_cast<uint32_t>(now_us - started_us);
+        const uint32_t gap_us = last_frame_us == 0 ? 0 : static_cast<uint32_t>(now_us - last_frame_us);
+        last_frame_us = now_us;
+        if (gap_us > max_gap_us) {
+            max_gap_us = gap_us;
+            max_gap_index = index;
+        }
+        frames++;
+        direct_frames += presented_direct ? 1U : 0U;
+        total_us += elapsed_us;
+        max_us = std::max(max_us, elapsed_us);
+        if (window_us == 0) window_us = now_us;
+        if (now_us - window_us >= 2000000) {
+            ESP_LOGI(LOTTIE_PERF_TAG,
+                     "cache2s: frames=%u direct=%u avg=%uus max=%uus gap_max=%uus@%u",
+                     static_cast<unsigned>(frames), static_cast<unsigned>(direct_frames),
+                     static_cast<unsigned>(total_us / std::max<uint32_t>(1U, frames)),
+                     static_cast<unsigned>(max_us), static_cast<unsigned>(max_gap_us),
+                     static_cast<unsigned>(max_gap_index));
+            frames = 0;
+            direct_frames = 0;
+            total_us = 0;
+            max_us = 0;
+            max_gap_us = 0;
+            max_gap_index = 0;
+            window_us = now_us;
+        }
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -660,7 +735,7 @@ inline void lottie_load_task(void *param) {
         } else {
             if (elapsed_ms >= ctx->duration_ms) {
                 lv_lock();
-                ctx->exec_cb(ctx->anim_var, ctx->end_frame);
+                ctx->exec_cb(ctx->anim_var, lottie_last_renderable_frame(ctx));
                 lottie_sync_canvas_buffer(ctx);
                 lv_unlock();
                 LV_LOG_INFO("Animation complete");
@@ -819,6 +894,7 @@ inline void lottie_render_task(void *param) {
             last_frame = -1;
             last_cache_index = -1;
             completed = false;
+            ctx->playback_completed = false;
         }
 
         if (!ctx->auto_start || completed) {
@@ -844,7 +920,7 @@ inline void lottie_render_task(void *param) {
             completed = true;
         }
 
-        int32_t frame = ctx->end_frame;
+        int32_t frame = lottie_last_renderable_frame(ctx);
         if (!completed) {
             frame = ctx->start_frame + static_cast<int32_t>(
                 static_cast<int64_t>(total_frames) * phase_ms / ctx->duration_ms);
@@ -909,6 +985,11 @@ inline void lottie_render_task(void *param) {
             }
             last_frame = frame;
         }
+
+        // Publish completion only after the final frame has reached the
+        // presentation buffer. Boot sequencing can then retain that frame
+        // without guessing the animation duration in YAML.
+        if (completed) ctx->playback_completed = true;
 
         const int64_t log_now_us = esp_timer_get_time();
         if (lvgl_esphome_get_perf_logging_enabled() != 0 &&
@@ -1089,11 +1170,16 @@ inline bool lottie_launch(LottieContext *ctx) {
     ctx->stop_requested = false;
     #if CONFIG_FREERTOS_UNICORE
     constexpr BaseType_t render_core = tskNO_AFFINITY;
-    #else
-    // ESPHome's loopTask (and therefore LVGL) is pinned to core 1. Keep
-    // ThorVG on core 0 so an expensive source frame can never starve the UI.
+    #elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0) && CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0
+    constexpr BaseType_t render_core = 1;
+    #elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1) && CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1
     constexpr BaseType_t render_core = 0;
+    #else
+    constexpr BaseType_t render_core = 1;
     #endif
+    // Keep ThorVG on the core opposite ESPHome's main loop. This build pins
+    // app_main to CPU0, so hard-coding CPU0 here made every vector frame
+    // compete with LVGL scheduling and component callbacks.
     ctx->task_handle = xTaskCreateStaticPinnedToCore(
         lottie_render_task, "lottie_anim",
         LOTTIE_TASK_STACK_SIZE / sizeof(StackType_t),
@@ -1192,6 +1278,7 @@ inline void lottie_screen_loaded_cb(lv_event_t *e) {
 // --------------------------------------------------------------------------
 inline void lottie_restart(LottieContext *ctx) {
     if (ctx && ctx->task_handle) {
+        ctx->playback_completed = false;
         ctx->restart_requested = true;
         xTaskNotifyGive(ctx->task_handle);
         LV_LOG_INFO("Restart requested (will reset on next frame)");
@@ -1227,6 +1314,7 @@ inline void lottie_prepare(LottieContext *ctx) {
   }
   ctx->runtime_hidden = true;
   ctx->auto_start = false;
+  ctx->playback_completed = false;
   lv_obj_add_flag(ctx->obj, LV_OBJ_FLAG_HIDDEN);
   if (ctx->pixel_buffer == nullptr) {
     lottie_launch(ctx);
@@ -1237,6 +1325,107 @@ inline bool lottie_is_ready(const LottieContext *ctx) {
   if (ctx == nullptr || ctx->obj == nullptr || ctx->pixel_buffer == nullptr || !ctx->prepared_frame_ready) {
     return false;
   }
+  return true;
+}
+
+inline bool lottie_is_complete(const LottieContext *ctx) {
+  return ctx == nullptr || ctx->playback_completed;
+}
+
+// Release only the optional pre-rendered frame cache after a one-shot
+// animation has completed. The final pixel buffer remains attached to the
+// widget, so the completed frame stays visible while the reclaimed PSRAM can
+// be used to warm the rest of the UI.
+inline bool lottie_release_completed_frame_cache(LottieContext *ctx, bool preserve_peak_coverage = false) {
+  if (ctx == nullptr || !ctx->playback_completed || ctx->frame_cache == nullptr) {
+    return false;
+  }
+
+  // Cached frames are submitted to the asynchronous direct-region worker.
+  // Drain that queue before taking ownership of the final slot; otherwise a
+  // queued PPA read can outlive frame_cache and the following normal LVGL
+  // refresh redraws a blank/stale canvas over the completed trace.
+  if (!lvgl_esphome_direct_regions_pause(true, 200)) {
+    ESP_LOGW(LOTTIE_PERF_TAG, "final frame handoff: direct-region barrier timed out");
+    return false;
+  }
+
+  // Cached playback presents immutable frames directly to DSI, so the
+  // canvas-owned pixel buffer can still contain an earlier frame. Preserve
+  // the final visible frame there before releasing the cache; otherwise the
+  // next normal LVGL refresh redraws the stale canvas and the completed trace
+  // disappears during the boot-to-home handoff.
+  if (ctx->pixel_buffer != nullptr && ctx->frame_cache_count != 0 && ctx->frame_cache_stride != 0) {
+    uint32_t retained_index = ctx->frame_cache_count - 1U;
+    uint32_t retained_coverage = 0;
+    uint32_t final_coverage = 0;
+    if (preserve_peak_coverage && lottie_uses_direct_xrgb(ctx)) {
+      const uint32_t background =
+          0xFF000000U |
+          (static_cast<uint32_t>(ctx->opaque_background.red) << 16) |
+          (static_cast<uint32_t>(ctx->opaque_background.green) << 8) |
+          static_cast<uint32_t>(ctx->opaque_background.blue);
+      const size_t pixel_count = static_cast<size_t>(ctx->width) * ctx->height;
+      // Completion artwork normally grows monotonically. Inspecting the last
+      // eight immutable cache slots is enough to reject a blank/out-point
+      // frame without scanning the complete 11 MB boot cache again.
+      const uint32_t first_index = ctx->frame_cache_count > 8U ? ctx->frame_cache_count - 8U : 0U;
+      for (uint32_t index = first_index; index < ctx->frame_cache_count; index++) {
+        const auto *pixels = reinterpret_cast<const uint32_t *>(
+            ctx->frame_cache + ctx->frame_cache_stride * static_cast<size_t>(index));
+        uint32_t coverage = 0;
+        for (size_t pixel = 0; pixel < pixel_count; pixel++)
+          coverage += pixels[pixel] != background;
+        if (index == ctx->frame_cache_count - 1U)
+          final_coverage = coverage;
+        if (coverage >= retained_coverage) {
+          retained_coverage = coverage;
+          retained_index = index;
+        }
+      }
+      ESP_LOGI(LOTTIE_PERF_TAG, "final frame retain: index=%u/%u coverage=%u final=%u",
+               (unsigned) retained_index, (unsigned) (ctx->frame_cache_count - 1U),
+               (unsigned) retained_coverage, (unsigned) final_coverage);
+    }
+    const uint8_t *final_frame =
+        ctx->frame_cache + ctx->frame_cache_stride * static_cast<size_t>(retained_index);
+    const size_t display_bytes = lottie_display_buffer_bytes(ctx);
+    lv_display_t *display = nullptr;
+    lv_lock();
+    memcpy(ctx->pixel_buffer, final_frame, display_bytes);
+    lottie_sync_buffer(ctx->pixel_buffer, display_bytes);
+    if (ctx->obj != nullptr && lv_obj_is_valid(ctx->obj)) {
+      if (ctx->flatten_to_opaque) {
+        lottie_attach_opaque_buffer(ctx);
+      } else {
+        lv_canvas_set_buffer(ctx->obj, ctx->pixel_buffer, ctx->width, ctx->height,
+                             LV_COLOR_FORMAT_ARGB8888_PREMULTIPLIED);
+        lv_draw_buf_t *draw_buf = lv_canvas_get_draw_buf(ctx->obj);
+        if (draw_buf != nullptr) {
+          lv_draw_buf_set_flag(draw_buf, LV_IMAGE_FLAGS_PREMULTIPLIED);
+        }
+      }
+      lv_obj_invalidate(ctx->obj);
+      display = lv_obj_get_display(ctx->obj);
+    }
+    lv_unlock();
+
+    // Cached frames are presented through the direct-region path. Commit the
+    // canvas-owned final frame before releasing that cache so the wordmark
+    // fade cannot redraw the stale pre-cache canvas over the completed trace.
+    if (display != nullptr) {
+      lv_lock();
+      lv_refr_now(display);
+      lv_unlock();
+    }
+  }
+
+  heap_caps_free(ctx->frame_cache);
+  ctx->frame_cache = nullptr;
+  ctx->frame_cache_stride = 0;
+  ctx->frame_cache_count = 0;
+  ctx->frame_cache_internal = false;
+  lvgl_esphome_direct_regions_pause(false, 0);
   return true;
 }
 

@@ -84,10 +84,22 @@ static inline void esphome_lvgl_rgb888_artwork_throttle(bool active, int32_t y)
 """
 
 PPA_CACHE_SYNC_HELPER = """
+extern bool esphome_lvgl_ppa_skip_cache_msync(const void *buffer, size_t size,
+                                              int flags) __attribute__((weak));
+
 static esp_err_t ppa_cache_msync_external_window(uint32_t window_start, uint32_t window_len,
-                                                 uint32_t alignment, int flags)
+                                                 uint32_t alignment, int flags, bool preserve_dirty)
 {
     if (window_start == 0 || window_len == 0 || alignment == 0) {
+        return ESP_OK;
+    }
+
+    // Let an owner of a DMA-only buffer suppress cache maintenance using the
+    // exact PPA window.  Checking after alignment can include bytes belonging
+    // to a neighbouring allocation when the buffer starts mid cache-line.
+    if (esphome_lvgl_ppa_skip_cache_msync != NULL &&
+        esphome_lvgl_ppa_skip_cache_msync((const void *)(uintptr_t)window_start,
+                                          window_len, flags)) {
         return ESP_OK;
     }
 
@@ -103,7 +115,8 @@ static esp_err_t ppa_cache_msync_external_window(uint32_t window_start, uint32_t
     }
 
     int sync_flags = flags & ~ESP_CACHE_MSYNC_FLAG_UNALIGNED;
-    if ((sync_flags & (ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_INVALIDATE)) != 0) {
+    if (preserve_dirty &&
+        (sync_flags & (ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_INVALIDATE)) != 0) {
         esp_err_t err = esp_cache_msync((void *)sync_start, sync_end - sync_start,
                                         ESP_CACHE_MSYNC_FLAG_DIR_C2M);
         if (err != ESP_OK) {
@@ -117,6 +130,16 @@ static esp_err_t ppa_cache_msync_external_window(uint32_t window_start, uint32_t
 
 
 def replace_espidf_ppa_cache_sync_helper(text):
+    # Remove declarations left by earlier runs before replacing the helper.
+    # The ESP-IDF package is cached between PlatformIO builds, so the patch
+    # must be idempotent rather than prepending another weak declaration.
+    text = re.sub(
+        r"\n*extern bool esphome_lvgl_ppa_skip_cache_msync\([^;]+?"
+        r"__attribute__\(\(weak\)\);\n",
+        "\n",
+        text,
+        flags=re.DOTALL,
+    )
     helper_start = text.find("static esp_err_t ppa_cache_msync_external_window(")
     if helper_start == -1:
         return text
@@ -279,30 +302,59 @@ def patch_espidf_ppa_cache_sync_source(src):
         "esp_cache_msync((void *)in_ext_window, in_ext_window_len, "
         "ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);":
             "ppa_cache_msync_external_window(in_ext_window, in_ext_window_len, "
-            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
+            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M, false);",
         "esp_cache_msync((void *)out_ext_window_aligned, "
         "PPA_ALIGN_UP(out_ext_window_len + (out_ext_window - out_ext_window_aligned), "
         "buf_alignment_size), ESP_CACHE_MSYNC_FLAG_DIR_M2C);":
             "ppa_cache_msync_external_window(out_ext_window, out_ext_window_len, "
-            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);",
+            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C, "
+            "config->out.block_offset_x != 0 || new_block_w != config->out.pic_w);",
         "esp_cache_msync((void *)in_bg_ext_window_aligned, "
         "PPA_ALIGN_UP(in_bg_ext_window_len + (in_bg_ext_window - in_bg_ext_window_aligned), "
         "buf_alignment_size), ESP_CACHE_MSYNC_FLAG_DIR_C2M);":
             "ppa_cache_msync_external_window(in_bg_ext_window, in_bg_ext_window_len, "
-            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
+            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M, false);",
         "esp_cache_msync((void *)in_fg_ext_window_aligned, "
         "PPA_ALIGN_UP(in_fg_ext_window_len + (in_fg_ext_window - in_fg_ext_window_aligned), "
         "buf_alignment_size), ESP_CACHE_MSYNC_FLAG_DIR_C2M);":
             "ppa_cache_msync_external_window(in_fg_ext_window, in_fg_ext_window_len, "
-            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
+            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M, false);",
         "esp_cache_msync((void *)out_ext_window_aligned, "
         "PPA_ALIGN_UP(out_ext_window_len + (out_ext_window - out_ext_window_aligned), "
         "buf_alignment_size), ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE);":
             "ppa_cache_msync_external_window(out_ext_window, out_ext_window_len, "
-            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE);",
+            "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE, true);",
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
+
+    # Upgrade sources patched by an earlier version of this script. SRM can
+    # discard dirty cache lines only when it overwrites complete output rows;
+    # partial blend output must preserve pixels outside the target block.
+    text = text.replace(
+        "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
+        "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M, false);",
+    )
+    preserve_srm_output = (
+        "config->out.block_offset_x != 0 || new_block_w != config->out.pic_w"
+        if src.name == "ppa_srm.c"
+        else "true"
+    )
+    text = text.replace(
+        "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);",
+        "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C, "
+        f"{preserve_srm_output});",
+    )
+    if src.name != "ppa_srm.c":
+        text = text.replace(
+            "config->out.block_offset_x != 0 || new_block_w != config->out.pic_w",
+            "true",
+        )
+    text = text.replace(
+        "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE);",
+        "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | "
+        "ESP_CACHE_MSYNC_FLAG_INVALIDATE, true);",
+    )
 
     if text == original:
         return
