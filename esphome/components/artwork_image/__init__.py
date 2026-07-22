@@ -45,6 +45,8 @@ CODEOWNERS = ["@jtenniswood"]
 MULTI_CONF = True
 
 CONF_ON_DOWNLOAD_FINISHED = "on_download_finished"
+CONF_ON_DECODE_START = "on_decode_start"
+CONF_ON_DECODE_FINISHED = "on_decode_finished"
 CONF_ALLOW_INSECURE_LOCAL_URLS = "allow_insecure_local_urls"
 CONF_PLACEHOLDER = "placeholder"
 CONF_TRANSPARENCY = "transparency"
@@ -183,7 +185,7 @@ ARTWORK_IMAGE_SCHEMA = (
                 *IMAGE_FORMATS, upper=True
             ),
             cv.Optional(CONF_PLACEHOLDER): cv.use_id(Image_),
-            cv.Optional(CONF_BUFFER_SIZE, default=65536): cv.int_range(256, 524288),
+            cv.Optional(CONF_BUFFER_SIZE, default=65536): cv.int_range(256, 2 * 1024 * 1024),
             cv.Optional(CONF_ALLOW_INSECURE_LOCAL_URLS, default=False): cv.boolean,
             cv.Optional(CONF_DARKEN, default=0): cv.int_range(0, 99),
             cv.Optional(CONF_HARDWARE_JPEG, default=True): cv.boolean,
@@ -193,6 +195,8 @@ ARTWORK_IMAGE_SCHEMA = (
             cv.Optional(CONF_SENDSPIN_SLOT, default=0): cv.int_range(0, 3),
             cv.Optional(CONF_SENDSPIN_PAUSED, default=False): cv.boolean,
             cv.Optional(CONF_ON_DOWNLOAD_FINISHED): automation.validate_automation({}),
+            cv.Optional(CONF_ON_DECODE_START): automation.validate_automation({}),
+            cv.Optional(CONF_ON_DECODE_FINISHED): automation.validate_automation({}),
             cv.Optional(CONF_ON_ERROR): automation.validate_automation({}),
         }
     )
@@ -256,6 +260,12 @@ RELEASE_IMAGE_SCHEMA = automation.maybe_simple_id(
 
 
 _CALLBACK_AUTOMATIONS = (
+    automation.CallbackAutomation(CONF_ON_DECODE_START, "add_on_decode_start_callback"),
+    automation.CallbackAutomation(
+        CONF_ON_DECODE_FINISHED,
+        "add_on_decode_finished_callback",
+        [(bool, "successful")],
+    ),
     automation.CallbackAutomation(
         CONF_ON_DOWNLOAD_FINISHED, "add_on_finished_callback", [(bool, "cached")]
     ),

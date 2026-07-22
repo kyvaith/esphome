@@ -268,11 +268,10 @@ size_t DownloadBuffer::resize(size_t size) {
   } else {
     ESP_LOGE(TAG, "allocation of %zu bytes failed. Biggest block in heap: %zu Bytes", size,
              this->allocator_.get_max_free_block_size());
-    this->allocator_.deallocate(this->buffer_, this->size_);
-    this->buffer_ = nullptr;
-    this->size_ = 0;
-    this->reset();
-    return 0;
+    // Keep the existing allocation usable. A failed growth attempt must not
+    // discard already downloaded bytes or turn a recoverable request into
+    // permanent buffer loss.
+    return this->size_;
   }
 }
 

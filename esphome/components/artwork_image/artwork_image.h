@@ -9,14 +9,15 @@
 #include "artwork_url.h"
 #include "image_decoder.h"
 
-#ifdef USE_SENDSPIN_ARTWORK
-#include "esphome/components/sendspin/sendspin_hub.h"
-#include <sendspin/config.h>
-#include <atomic>
 #if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+#include <atomic>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #endif
+
+#ifdef USE_SENDSPIN_ARTWORK
+#include "esphome/components/sendspin/sendspin_hub.h"
+#include <sendspin/config.h>
 #endif
 
 namespace esphome {
@@ -108,6 +109,12 @@ class ArtworkImage : public PollingComponent,
   void set_sendspin_paused(bool paused);
 #endif
 
+  /** Reserve the reusable encoded-image input buffer at a caller-selected time. */
+  bool reserve_download_buffer();
+
+  /** Reserve the ESP-IDF HTTP client used for local artwork without starting a request. */
+  bool reserve_local_http_client(const std::string &url);
+
   /**
    * Release the buffer storing the image. The image will need to be downloaded again
    * to be able to be displayed.
@@ -115,11 +122,14 @@ class ArtworkImage : public PollingComponent,
   void release(bool immediate = false);
 
   /**
-   * Return a non-displayed staging buffer for hardware JPEG output.
-   *
-   * DSI scans the active buffer continuously, so DMA2D/JPEG must not write into
-   * that same PSRAM region while it is visible.
+   * Reuse the current full-size hardware-JPEG buffer as the next decode target.
+   * The caller must keep every renderer that can read the image quiescent until
+   * the decode and post-processing transaction has completed.
    */
+  uint8_t *try_reuse_active_buffer_for_decode(int width, int height, int content_width, int content_height);
+  void cancel_reused_active_buffer_decode();
+
+  /** Return a non-displayed staging buffer for the first hardware JPEG decode. */
   uint8_t *try_get_staging_buffer_for_decode(int width, int height, int content_width, int content_height);
   void cancel_staging_buffer_decode();
   void mark_decode_buffer_written_by_dma() { this->decode_buffer_written_by_dma_ = true; }
@@ -135,6 +145,14 @@ class ArtworkImage : public PollingComponent,
   template<typename F> void add_on_finished_callback(F &&callback) {
     this->download_finished_callback_.add(std::forward<F>(callback));
   }
+  template<typename F> void add_on_decode_start_callback(F &&callback) {
+    this->decode_start_callback_.add(std::forward<F>(callback));
+  }
+  template<typename F> void add_on_decode_finished_callback(F &&callback) {
+    this->decode_finished_callback_.add(std::forward<F>(callback));
+  }
+  bool begin_decode_callbacks();
+  void complete_decode_callbacks(bool successful);
   template<typename F> void add_on_error_callback(F &&callback) {
     this->download_error_callback_.add(std::forward<F>(callback));
   }
@@ -169,7 +187,13 @@ class ArtworkImage : public PollingComponent,
   bool detect_heic_();
   bool create_decoder_(ImageFormat format, size_t total_size);
   bool start_response_download_();
-  bool is_busy_() const { return this->downloader_ != nullptr || this->decoder_ != nullptr; }
+  bool is_busy_() const {
+    return this->downloader_ != nullptr || this->decoder_ != nullptr
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+           || this->http_jpeg_decode_busy_.load(std::memory_order_acquire)
+#endif
+        ;
+  }
   void queue_pending_update_(const std::string &url);
   void start_pending_update_();
   void log_state_(const char *stage);
@@ -218,6 +242,19 @@ class ArtworkImage : public PollingComponent,
   bool decode_buffered_data_();
   void finish_download_();
   void fail_download_();
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  static void http_jpeg_decode_worker_task_(void *arg);
+  bool start_http_jpeg_decode_worker_();
+  bool queue_local_http_open_();
+  bool process_local_http_open_result_();
+  bool queue_local_http_headers_();
+  bool process_local_http_headers_result_(int &result);
+  bool queue_local_http_read_(size_t size);
+  bool process_local_http_read_result_(int &result);
+  bool queue_http_jpeg_decode_();
+  bool process_http_jpeg_decode_result_();
+  void finish_deferred_release_();
+#endif
 #ifdef USE_SENDSPIN_ARTWORK
   void process_pending_sendspin_();
   void queue_sendspin_process_();
@@ -244,15 +281,21 @@ class ArtworkImage : public PollingComponent,
 
   void end_connection_();
 
+  CallbackManager<void()> decode_start_callback_{};
+  CallbackManager<void(bool)> decode_finished_callback_{};
+  std::atomic<bool> decode_callbacks_active_{false};
   CallbackManager<void(bool)> download_finished_callback_{};
   CallbackManager<void()> download_error_callback_{};
 
   std::shared_ptr<http_request::HttpContainer> downloader_{nullptr};
 #ifdef USE_ESP_IDF
   LocalHttpContainer *local_downloader_{nullptr};
+  std::shared_ptr<LocalHttpContainer> local_http_cache_{nullptr};
   bool local_headers_ready_pending_start_{false};
+  uint32_t local_headers_ready_ms_{0};
 #endif
   std::unique_ptr<ImageDecoder> decoder_{nullptr};
+  ImageFormat active_format_{ImageFormat::AUTO};
 
   uint8_t *buffer_;
   bool buffer_uses_jpeg_allocator_{false};
@@ -343,6 +386,27 @@ class ArtworkImage : public PollingComponent,
   uint32_t last_download_read_stress_ms_{0};
   bool update_pending_{false};
   std::string pending_url_{""};
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  TaskHandle_t http_jpeg_decode_task_{nullptr};
+  StackType_t *http_jpeg_decode_task_stack_{nullptr};
+  StaticTask_t *http_jpeg_decode_task_storage_{nullptr};
+  std::atomic<bool> http_jpeg_decode_busy_{false};
+  std::atomic<bool> http_jpeg_decode_done_{false};
+  std::atomic<int> http_jpeg_decode_result_{0};
+  size_t http_jpeg_decode_input_size_{0};
+  bool release_after_http_decode_{false};
+  bool release_after_http_decode_immediate_{false};
+  std::atomic<bool> local_http_open_busy_{false};
+  std::atomic<bool> local_http_open_done_{false};
+  std::atomic<int> local_http_open_result_{ESP_FAIL};
+  std::atomic<bool> local_http_headers_busy_{false};
+  std::atomic<bool> local_http_headers_done_{false};
+  std::atomic<int> local_http_headers_result_{0};
+  std::atomic<bool> local_http_read_busy_{false};
+  std::atomic<bool> local_http_read_done_{false};
+  std::atomic<int> local_http_read_result_{0};
+  size_t local_http_read_size_{0};
+#endif
 #ifdef USE_SENDSPIN_ARTWORK
   sendspin_::SendspinHub *sendspin_hub_{nullptr};
   uint8_t sendspin_slot_{0};
@@ -359,7 +423,10 @@ class ArtworkImage : public PollingComponent,
   bool pending_sendspin_clear_{false};
 #if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
   TaskHandle_t sendspin_decode_task_{nullptr};
+  StackType_t *sendspin_decode_task_stack_{nullptr};
+  StaticTask_t *sendspin_decode_task_storage_{nullptr};
   std::atomic<bool> sendspin_decode_busy_{false};
+  std::atomic<bool> sendspin_decode_owns_callbacks_{false};
   std::vector<uint8_t> sendspin_decode_data_{};
 #endif
 #endif

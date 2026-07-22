@@ -93,6 +93,7 @@ class ImageDecoder {
 
   bool is_finished() const { return this->download_size_ > 0 && this->decoded_bytes_ >= this->download_size_; }
   bool has_unknown_download_size() const { return this->download_size_ == 0; }
+  size_t get_download_size() const { return this->download_size_; }
   void set_download_size(size_t download_size) { this->download_size_ = download_size; }
 
  protected:

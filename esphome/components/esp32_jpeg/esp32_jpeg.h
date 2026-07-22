@@ -73,6 +73,10 @@ struct EncodeConfig {
   DownSampling down_sampling{DownSampling::YUV420};
   uint8_t quality{80};
   bool pixel_reverse{false};
+  // Zero/-1 retain the component defaults. Per-operation overrides keep
+  // fullscreen snapshot traffic from starving a continuously scanned display.
+  uint16_t dma2d_burst_length{0};
+  int8_t dma2d_descriptor_burst{-1};
   int timeout_ms{40};
 };
 
@@ -82,6 +86,8 @@ struct DecodeConfig {
   ColorConversionStandard color_conversion{ColorConversionStandard::BT601};
   bool direct_output{false};
   bool skip_output_cache_sync{false};
+  uint16_t dma2d_burst_length{0};
+  int8_t dma2d_descriptor_burst{-1};
   int timeout_ms{40};
 };
 
@@ -110,6 +116,13 @@ esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_si
 esp_err_t decode_allocated(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_size, size_t output_size,
                            uint8_t **output, size_t *written = nullptr);
 esp_err_t preallocate_decoder(int timeout_ms);
+void release_preallocated_encoder();
+void set_decoder_dma2d_burst_length(uint16_t burst_length);
+uint16_t get_decoder_dma2d_burst_length();
+void set_decoder_dma2d_descriptor_burst(bool enabled);
+bool get_decoder_dma2d_descriptor_burst();
+void set_decoder_dma2d_qos(uint16_t burstiness, uint8_t peak_level, uint8_t transaction_level,
+                            uint8_t write_priority, uint8_t read_priority);
 
 }  // namespace esphome::esp32_jpeg
 
