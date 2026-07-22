@@ -5,6 +5,8 @@
 
 // only applicable on ESP32-P4
 #ifdef USE_ESP32_VARIANT_ESP32P4
+#include <atomic>
+
 #include "esphome/core/component.h"
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
@@ -41,11 +43,27 @@ const uint8_t MADCTL_YFLIP = 0x01;  // Mirror the display vertically
 struct MipiDsiCallbackContext {
   SemaphoreHandle_t color_trans_done{};
   SemaphoreHandle_t refresh_done{};
+  SemaphoreHandle_t vblank_ready{};
   SemaphoreHandle_t async_flush_done{};
   volatile bool *async_flush_pending{};
+  volatile uint32_t *refresh_done_us{};
+  volatile uint32_t *refresh_interval_us{};
+  volatile uint32_t *refresh_interval_max_us{};
+  volatile uint32_t *refresh_late_count{};
+  const uint32_t *refresh_late_threshold_us{};
 };
 
+static constexpr size_t MIPI_DSI_FRAME_BUFFER_COUNT = 3;
+
 using AsyncFlushReadyCallback = void (*)(void *);
+
+enum class Dma2dRegionResult : uint8_t {
+  UNAVAILABLE,
+  BUSY,
+  SUBMITTED,
+  COMPLETE,
+  FAILED,
+};
 
 struct AsyncFlushPerfStats {
   uint32_t flushes{};
@@ -103,10 +121,33 @@ class MipiDsi : public display::Display {
   void set_use_dma2d(bool use_dma2d) { this->use_dma2d_ = use_dma2d; }
   void set_async_lvgl_flush(bool async_lvgl_flush) { this->async_lvgl_flush_ = async_lvgl_flush; }
   uint8_t *get_frame_buffer() const { return this->frame_buffers_[0]; }
-  uint8_t *get_frame_buffer(size_t index) const { return index < 2 ? this->frame_buffers_[index] : nullptr; }
+  uint8_t *get_frame_buffer(size_t index) const {
+    return index < MIPI_DSI_FRAME_BUFFER_COUNT ? this->frame_buffers_[index] : nullptr;
+  }
+  uint8_t *get_presented_frame_buffer() const { return this->presented_frame_buffer_.load(std::memory_order_acquire); }
+  uint8_t *get_queued_frame_buffer() const { return this->queued_frame_buffer_.load(std::memory_order_acquire); }
+  uint8_t *get_staged_frame_buffer() const { return this->staged_frame_buffer_.load(std::memory_order_acquire); }
+  uint8_t *get_idle_frame_buffer() const {
+    auto *presented = this->get_presented_frame_buffer();
+    if (presented == this->frame_buffers_[0])
+      return this->frame_buffers_[1];
+    if (presented == this->frame_buffers_[1])
+      return this->frame_buffers_[0];
+    return this->frame_buffers_[1];
+  }
   size_t get_frame_buffer_size() const { return this->width_ * this->height_ * this->get_bytes_per_pixel_(); }
   size_t get_bytes_per_pixel() const { return this->get_bytes_per_pixel_(); }
   bool wait_for_refresh_done(uint32_t timeout_ms = 50);
+  uint8_t *get_direct_render_frame_buffer(const uint8_t *exclude_a = nullptr,
+                                           const uint8_t *exclude_b = nullptr) const;
+  uint8_t *wait_for_direct_render_frame_buffer(const uint8_t *exclude_a = nullptr,
+                                                const uint8_t *exclude_b = nullptr,
+                                                uint32_t timeout_ms = 50);
+  bool queue_direct_frame_buffer(uint8_t *frame_buffer, uint32_t timeout_ms = 50,
+                                 bool wait_for_active = true);
+  bool wait_for_direct_frame_queue_idle(uint32_t timeout_ms = 50);
+  bool IRAM_ATTR on_frame_buffer_staged_from_isr(esp_lcd_panel_handle_t panel, uint8_t *frame_buffer);
+  bool IRAM_ATTR on_frame_buffer_active_from_isr(esp_lcd_panel_handle_t panel, uint8_t *frame_buffer);
 
   void smark_failed(const LogString *message, esp_err_t err);
 
@@ -120,11 +161,22 @@ class MipiDsi : public display::Display {
   bool draw_pixels_at_async(int x_start, int y_start, int w, int h, const uint8_t *ptr, display::ColorOrder order,
                             display::ColorBitness bitness, bool big_endian, int x_offset, int y_offset, int x_pad,
                             AsyncFlushReadyCallback ready_callback, void *ready_arg);
+  Dma2dRegionResult draw_pixels_at_dma2d_blocking(int x_start, int y_start, int w, int h, const uint8_t *ptr,
+                                                   display::ColorOrder order, display::ColorBitness bitness,
+                                                   uint32_t queue_timeout_ms = 2);
+  Dma2dRegionResult draw_pixels_at_dma2d_async(int x_start, int y_start, int w, int h, const uint8_t *ptr,
+                                               display::ColorOrder order, display::ColorBitness bitness,
+                                               AsyncFlushReadyCallback ready_callback, void *ready_arg);
   bool present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end);
   void consume_async_flush_perf(AsyncFlushPerfStats *stats);
   uint32_t consume_underrun_count();
   void mark_stress_window(const char *label, uint32_t duration_ms);
   bool wait_for_fifo_margin(uint32_t min_depth, uint32_t timeout_us);
+  bool wait_for_vblank_fifo_margin(uint32_t min_depth, uint32_t timeout_us, uint32_t window_start_us,
+                                   uint32_t window_end_us, uint32_t reservation_us);
+  bool is_vblank_guard_active() const {
+    return this->handle_ != nullptr && this->vblank_lock_ != nullptr && this->last_refresh_done_us_ != 0;
+  }
 
   void draw_pixel_at(int x, int y, Color color) override;
   void fill(Color color) override;
@@ -141,6 +193,7 @@ class MipiDsi : public display::Display {
   void start_async_flush_task_();
   static void async_flush_task_trampoline(void *arg);
   void async_flush_task_();
+  static void blocking_region_ready_(void *arg);
   void start_dsi_diagnostics_task_();
   static void dsi_diagnostics_task_trampoline(void *arg);
   void dsi_diagnostics_task_();
@@ -174,11 +227,26 @@ class MipiDsi : public display::Display {
   esp_lcd_dsi_bus_handle_t bus_handle_{};
   esp_lcd_panel_io_handle_t io_handle_{};
   SemaphoreHandle_t io_lock_{};
+  SemaphoreHandle_t draw_submission_lock_{};
   SemaphoreHandle_t refresh_lock_{};
+  SemaphoreHandle_t vblank_lock_{};
+  SemaphoreHandle_t frame_active_lock_{};
   SemaphoreHandle_t async_flush_done_{};
+  SemaphoreHandle_t blocking_region_done_{};
   TaskHandle_t async_flush_task_handle_{};
   TaskHandle_t dsi_diagnostics_task_handle_{};
   MipiDsiCallbackContext callback_context_{};
+  volatile uint32_t last_refresh_done_us_{0};
+  volatile uint32_t last_refresh_interval_us_{0};
+  volatile uint32_t max_refresh_interval_us_{0};
+  volatile uint32_t refresh_late_count_{0};
+  uint32_t expected_frame_interval_us_{0};
+  uint32_t refresh_late_threshold_us_{0};
+  uint32_t last_logged_refresh_late_count_{0};
+  uint32_t last_frame_timing_log_ms_{0};
+  portMUX_TYPE vblank_reservation_mux_ = portMUX_INITIALIZER_UNLOCKED;
+  uint32_t vblank_reservation_frame_us_{0};
+  uint32_t vblank_reserved_until_us_{0};
   AsyncFlushReadyCallback async_ready_callback_{};
   void *async_ready_arg_{};
   volatile bool async_flush_pending_{false};
@@ -208,6 +276,7 @@ class MipiDsi : public display::Display {
   uint32_t last_polled_bridge_raw_{0};
   uint32_t last_polled_host_status0_{0};
   uint32_t last_polled_host_status1_{0};
+  uint32_t last_dma_lli_lookup_failures_{0};
   uint32_t last_dsi_monitor_log_ms_{0};
   volatile uint32_t dsi_monitor_samples_{0};
   volatile uint32_t dsi_monitor_nonzero_{0};
@@ -224,7 +293,6 @@ class MipiDsi : public display::Display {
   volatile uint32_t dsi_monitor_or_bridge_raw_{0};
   volatile uint32_t dsi_monitor_or_host_status0_{0};
   volatile uint32_t dsi_monitor_or_host_status1_{0};
-  uint32_t dsi_monitor_last_fifo_zero_log_ms_{0};
   bool dsi_stress_active_{false};
   char dsi_stress_label_[32]{};
   char dsi_recent_stress_label_[32]{};
@@ -250,7 +318,13 @@ class MipiDsi : public display::Display {
   volatile uint32_t dsi_stress_or_host_status1_{0};
   uint32_t last_diag_event_count_{0};
   uint32_t last_diag_log_ms_{0};
-  uint8_t *frame_buffers_[2]{nullptr, nullptr};
+  bool IRAM_ATTR is_frame_buffer_(const uint8_t *frame_buffer) const;
+
+  uint8_t *frame_buffers_[MIPI_DSI_FRAME_BUFFER_COUNT]{nullptr, nullptr, nullptr};
+  std::atomic<uint8_t *> presented_frame_buffer_{nullptr};
+  std::atomic<uint8_t *> active_frame_buffer_{nullptr};
+  std::atomic<uint8_t *> queued_frame_buffer_{nullptr};
+  std::atomic<uint8_t *> staged_frame_buffer_{nullptr};
   uint8_t *buffer_{nullptr};
   uint16_t x_low_{1};
   uint16_t y_low_{1};
