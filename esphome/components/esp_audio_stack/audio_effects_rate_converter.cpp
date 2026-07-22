@@ -145,6 +145,32 @@ bool distribute_channels(int16_t *const *ch, uint8_t nch, size_t count, int16_t 
   return true;
 }
 
+bool decimate_i16_average(const int16_t *in, size_t in_count, uint32_t ratio, int16_t *out,
+                          size_t expected_out, const char *scope) {
+  if (ratio <= 1) {
+    if (in != out)
+      memcpy(out, in, expected_out * sizeof(int16_t));
+    return true;
+  }
+
+  const size_t needed = expected_out * ratio;
+  if (in_count < needed) {
+    ESP_LOGE(TAG, "safe decimator %s underflow: in=%u needed=%u ratio=%u out=%u",
+             scope, static_cast<unsigned>(in_count), static_cast<unsigned>(needed),
+             static_cast<unsigned>(ratio), static_cast<unsigned>(expected_out));
+    return false;
+  }
+
+  for (size_t i = 0; i < expected_out; i++) {
+    int32_t acc = 0;
+    const size_t base = i * ratio;
+    for (uint32_t r = 0; r < ratio; r++)
+      acc += in[base + r];
+    out[i] = static_cast<int16_t>(acc / static_cast<int32_t>(ratio));
+  }
+  return true;
+}
+
 class RateCvtHandle {
  public:
   ~RateCvtHandle() { this->close(); }
@@ -271,17 +297,12 @@ class AudioEffectsRateConverterImpl {
     }
     if (this->ratio_ <= 1)
       return true;
-    return ensure_buffer(this->scratch_, this->scratch_cap_, in_count, "RateCvt") &&
-           this->rate_cvt_.ready();
+    return true;
   }
 
   bool process(const int16_t *in, int16_t *out, size_t in_count) {
-    if (this->ratio_ <= 1) {
-      memcpy(out, in, in_count * sizeof(int16_t));
-      return true;
-    }
     const size_t out_count = in_count / this->ratio_;
-    return this->rate_cvt_.process(const_cast<int16_t *>(in), in_count, out, out_count, "mono");
+    return decimate_i16_average(in, in_count, this->ratio_, out, out_count, "mono");
   }
 
   bool process_strided(const int16_t *in, int16_t *out, size_t out_count, size_t stride, size_t offset) {
@@ -344,10 +365,15 @@ class MultiChannelAudioEffectsRateConverterImpl {
     this->src_rate_ = src_rate;
     this->dest_rate_ = dest_rate;
     this->channels_ = std::min<uint8_t>(num_channels, MAX_RATE_CVT_CHANNELS);
-    this->rate_cvt_.init(ratio, src_rate, dest_rate, this->channels_, complexity, perf_type);
+    for (uint8_t c = 0; c < MAX_RATE_CVT_CHANNELS; c++) {
+      this->rate_cvt_ch_[c].init(ratio, src_rate, dest_rate, 1, complexity, perf_type);
+    }
   }
 
-  void reset() { this->rate_cvt_.reset(); }
+  void reset() {
+    for (auto &rate_cvt : this->rate_cvt_ch_)
+      rate_cvt.reset();
+  }
 
   bool prepare(size_t in_count, size_t out_count, uint8_t num_channels,
                uint8_t source_channels, bool source_32bit) {
@@ -358,7 +384,7 @@ class MultiChannelAudioEffectsRateConverterImpl {
       return false;
     if (this->ratio_ <= 1)
       return true;
-    return this->ensure_output_buffers_(nch, out_count) && this->rate_cvt_.ready();
+    return this->ensure_output_buffers_(nch, out_count);
   }
 
   bool process_multi(const int16_t *in, size_t out_count, size_t stride, const uint8_t *offsets,
@@ -394,8 +420,10 @@ class MultiChannelAudioEffectsRateConverterImpl {
 
     if (!this->ensure_output_buffers_(this->channels_, out_count))
       return false;
-    if (!this->rate_cvt_.process_deintlv(selected, in_count, this->out_ch_, out_count, "multi"))
-      return false;
+    for (uint8_t c = 0; c < this->channels_; c++) {
+      if (!decimate_i16_average(selected[c], in_count, this->ratio_, this->out_ch_[c], out_count, "multi-ch"))
+        return false;
+    }
     return distribute_channels(this->out_ch_, this->channels_, out_count, mic_interleaved,
                                mic_mono, ref_out, num_mic_ch);
   }
@@ -471,7 +499,7 @@ class MultiChannelAudioEffectsRateConverterImpl {
   uint32_t src_rate_{0};
   uint32_t dest_rate_{0};
   uint8_t channels_{0};
-  RateCvtHandle rate_cvt_;
+  RateCvtHandle rate_cvt_ch_[MAX_RATE_CVT_CHANNELS];
   BitCvtHandle bit_cvt_;
   int16_t *deintlv_ch_[MAX_DEINTLV_CH]{};
   size_t deintlv_cap_[MAX_DEINTLV_CH]{};

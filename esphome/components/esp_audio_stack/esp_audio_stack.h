@@ -106,9 +106,9 @@ class AudioEffectsRateConverter {
 #endif
 
 #ifdef USE_ESP_AUDIO_STACK_MULTI_RX
-// Multi-channel sample-rate converter: converts N channels from TDM/stereo
-// rx_buffer in one pass. One esp_ae_rate_cvt handle processes all selected
-// channels so mic/ref latency stays coupled. Max 3 channels (MMR: mic1 + mic2 + ref).
+// Multi-channel sample-rate converter: deinterleaves selected channels from
+// TDM/stereo rx_buffer, then rate-converts each selected channel with its own
+// esp_ae_rate_cvt handle. Max 3 channels (MMR: mic1 + mic2 + ref).
 class MultiChannelAudioEffectsRateConverter {
  public:
   MultiChannelAudioEffectsRateConverter();
@@ -163,10 +163,9 @@ class ESPAudioStack : public Component {
   void setup() override;
   void loop() override;
   void dump_config() override;
-  // Run just before companion processors at PROCESSOR priority so the I2S DMA
-  // buffers can be reserved before AFE setup consumes/fragment internal memory.
-  // HARDWARE (=800) is still too early for codec buses.
-  float get_setup_priority() const override { return setup_priority::PROCESSOR + 1.0f; }
+  // Reserve I2S DMA after hardware buses/codecs are initialized, but before
+  // DATA-priority boot automations can fragment the internal DMA heap.
+  float get_setup_priority() const override { return 700.0f; }
 
   // Pin setters
   void set_lrclk_pin(int pin) { this->lrclk_pin_ = pin; }
