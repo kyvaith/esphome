@@ -680,7 +680,10 @@ def _wrap_to_code(name, comp, yaml_util):
     async def wrapped(conf):
         cg.add(cg.LineComment(f"{name}:"))
         if comp.config_schema is not None:
-            conf_str = yaml_util.dump(conf)
+            # The configuration is emitted only as a source comment. Keep its
+            # key order deterministic so identical codegen runs do not touch
+            # main.cpp and force an expensive recompilation.
+            conf_str = yaml_util.dump(conf, sort_keys=True)
             conf_str = conf_str.replace("//", "")
             # remove tailing \ to avoid multi-line comment warning
             conf_str = conf_str.replace("\\\n", "\n")
