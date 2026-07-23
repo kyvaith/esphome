@@ -72,6 +72,7 @@ class LvglNavigation {
   std::vector<LvPageType *> home_pages_{};
   std::vector<LvglApplication *> applications_{};
   GestureRouter gesture_router_{};
+  LvglApplication *gesture_application_{};
   TouchContext touch_context_{TouchContext::NONE};
   int last_home_page_index_{};
   float home_commit_ratio_{0.25f};

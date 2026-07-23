@@ -46,6 +46,7 @@ void LvglNavigation::touch_begin(int32_t x, int32_t y) {
     const int32_t height = this->parent_->get_height();
     const int32_t edge_start = height - static_cast<int32_t>(std::lround(height * this->close_edge_ratio_));
     if (y >= edge_start) {
+      this->gesture_application_ = application;
       this->touch_context_ = TouchContext::APPLICATION_CLOSE;
       this->gesture_router_.begin(x, y, GestureAxis::VERTICAL);
     }
@@ -69,6 +70,13 @@ bool LvglNavigation::touch_update(int32_t x, int32_t y) {
       this->snapshot_compositor_->begin_home(this->last_home_page_index_);
     if (this->snapshot_compositor_->is_home_active())
       this->snapshot_compositor_->update_home(sample.delta_x);
+  } else if (this->touch_context_ == TouchContext::APPLICATION_CLOSE && sample.captured &&
+             this->snapshot_compositor_ != nullptr) {
+    if (sample.just_captured && this->gesture_application_ != nullptr)
+      this->snapshot_compositor_->begin_application_close(this->gesture_application_->get_page(),
+                                                          this->last_home_page_index_);
+    if (this->snapshot_compositor_->is_application_active())
+      this->snapshot_compositor_->update_application_close(sample.delta_y);
   }
   return sample.captured;
 }
@@ -78,8 +86,10 @@ bool LvglNavigation::touch_end() {
     return false;
 
   const TouchContext context = this->touch_context_;
+  auto *gesture_application = this->gesture_application_;
   const GestureSample sample = this->gesture_router_.finish();
   this->touch_context_ = TouchContext::NONE;
+  this->gesture_application_ = nullptr;
   if (!sample.captured)
     return false;
 
@@ -101,40 +111,63 @@ bool LvglNavigation::touch_end() {
   } else if (context == TouchContext::APPLICATION_CLOSE) {
     const int32_t threshold = std::max<int32_t>(
         1, static_cast<int32_t>(std::lround(this->parent_->get_height() * this->close_commit_ratio_)));
-    if (sample.delta_y <= -threshold)
+    const bool close = sample.delta_y <= -threshold;
+    if (this->snapshot_compositor_ != nullptr && this->snapshot_compositor_->is_application_active()) {
+      this->snapshot_compositor_->settle_application_close(close);
+    } else if (close && gesture_application != nullptr) {
       this->close_application();
+    }
   }
   return true;
 }
 
 void LvglNavigation::touch_cancel() {
-  if (this->snapshot_compositor_ != nullptr)
-    this->snapshot_compositor_->cancel_home();
+  if (this->snapshot_compositor_ != nullptr) {
+    if (this->snapshot_compositor_->is_application_active())
+      this->snapshot_compositor_->settle_application_close(false);
+    else
+      this->snapshot_compositor_->cancel_home();
+  }
   this->reset_touch_();
 }
 
 void LvglNavigation::reset_touch_() {
   this->gesture_router_.cancel();
+  this->gesture_application_ = nullptr;
   this->touch_context_ = TouchContext::NONE;
 }
 
 void LvglNavigation::open_application(LvglApplication *application) {
   if (application == nullptr || application->get_page() == nullptr)
     return;
-  if (this->snapshot_compositor_ != nullptr)
+  if (this->snapshot_compositor_ != nullptr) {
     this->snapshot_compositor_->cancel_home();
+    this->snapshot_compositor_->cancel_application();
+  }
   if (const int home_index = this->find_home_page_index_(); home_index >= 0)
     this->last_home_page_index_ = home_index;
+  if (this->snapshot_compositor_ != nullptr &&
+      this->snapshot_compositor_->open_application(application->get_page(), this->last_home_page_index_))
+    return;
   this->parent_->show_page(application->get_page()->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
 }
 
-void LvglNavigation::close_application() { this->show_home(); }
+void LvglNavigation::close_application() {
+  auto *application = this->find_active_application_();
+  if (application != nullptr && this->snapshot_compositor_ != nullptr &&
+      this->snapshot_compositor_->begin_application_close(application->get_page(), this->last_home_page_index_) &&
+      this->snapshot_compositor_->settle_application_close(true))
+    return;
+  this->show_home();
+}
 
 void LvglNavigation::show_home() {
   if (this->home_pages_.empty())
     return;
-  if (this->snapshot_compositor_ != nullptr)
+  if (this->snapshot_compositor_ != nullptr) {
     this->snapshot_compositor_->cancel_home();
+    this->snapshot_compositor_->cancel_application();
+  }
   const int target = std::clamp(this->last_home_page_index_, 0, static_cast<int>(this->home_pages_.size()) - 1);
   this->parent_->show_page(this->home_pages_[target]->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
 }

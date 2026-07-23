@@ -1,6 +1,12 @@
 from esphome import automation, codegen as cg
 import esphome.config_validation as cv
-from esphome.const import CONF_COMPRESSION, CONF_ID, CONF_PAGES
+from esphome.const import (
+    CONF_CLOSE_DURATION,
+    CONF_COMPRESSION,
+    CONF_ID,
+    CONF_OPEN_DURATION,
+    CONF_PAGES,
+)
 
 from ..navigation import CONF_APPLICATIONS, CONF_HOME, CONF_PAGE
 from ..types import (
@@ -14,15 +20,33 @@ from ..types import (
 )
 
 CONF_DECODED_SLOTS = "decoded_slots"
+CONF_APPLICATION_TRANSITIONS = "application_transitions"
+CONF_CLOSE_TARGET_X = "close_target_x"
+CONF_CLOSE_TARGET_Y = "close_target_y"
 CONF_INTERNAL_COMPOSITOR_ID = "internal_compositor_id"
 CONF_MAX_ENTRIES = "max_entries"
 CONF_PRELOAD = "preload"
 CONF_QUALITY = "quality"
 CONF_SETTLE_DURATION = "settle_duration"
 CONF_SNAPSHOT_COMPOSITOR = "snapshot_compositor"
+CONF_START_SIZE = "start_size"
 
 COMPRESSION_NONE = "none"
 COMPRESSION_JPEG = "jpeg"
+
+APPLICATION_TRANSITIONS_SCHEMA = cv.Schema(
+    {
+        cv.Optional(
+            CONF_OPEN_DURATION, default="500ms"
+        ): cv.positive_time_period_milliseconds,
+        cv.Optional(
+            CONF_CLOSE_DURATION, default="500ms"
+        ): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_START_SIZE, default="1%"): cv.percentage,
+        cv.Optional(CONF_CLOSE_TARGET_X, default="50%"): cv.percentage,
+        cv.Optional(CONF_CLOSE_TARGET_Y, default="75%"): cv.percentage,
+    }
+)
 
 
 def _validate_compression(value):
@@ -46,6 +70,7 @@ SNAPSHOT_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_SETTLE_DURATION, default="220ms"
         ): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_APPLICATION_TRANSITIONS): APPLICATION_TRANSITIONS_SCHEMA,
         cv.Optional(CONF_PAGES, default=[]): cv.ensure_list(cv.use_id(lv_page_t)),
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -106,6 +131,25 @@ async def snapshot_to_code(lv_component, config, navigation_config):
         for page_id in navigation_config[CONF_HOME][CONF_PAGES]:
             page = await cg.get_variable(page_id)
             cg.add(compositor.add_home_page(page))
+        if transitions := snapshot_config.get(CONF_APPLICATION_TRANSITIONS):
+            cg.add(compositor.set_application_transitions_enabled(True))
+            cg.add(
+                compositor.set_application_open_duration(
+                    transitions[CONF_OPEN_DURATION].total_milliseconds
+                )
+            )
+            cg.add(
+                compositor.set_application_close_duration(
+                    transitions[CONF_CLOSE_DURATION].total_milliseconds
+                )
+            )
+            cg.add(compositor.set_application_start_ratio(transitions[CONF_START_SIZE]))
+            cg.add(
+                compositor.set_application_close_target(
+                    transitions[CONF_CLOSE_TARGET_X],
+                    transitions[CONF_CLOSE_TARGET_Y],
+                )
+            )
         cg.add(navigation.set_snapshot_compositor(compositor))
 
 
