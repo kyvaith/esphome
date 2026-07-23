@@ -43,6 +43,16 @@ lvgl:
               - lvgl.lottie.start: test_lottie
               - lvgl.lottie.pause: test_lottie
               - lvgl.lottie.stop: test_lottie
+              - lvgl_image_presenter.pause: test_image_presenter
+              - lvgl_image_presenter.resume: test_image_presenter
+              - lvgl_image_presenter.restart: test_image_presenter
+              - lvgl_image_presenter.reset: test_image_presenter
+              - lvgl_image_presenter.pause_for_snapshot: test_image_presenter
+              - lvgl_image_presenter.complete_snapshot_handoff: test_image_presenter
+              - lvgl_image_presenter.transition:
+                  id: test_image_presenter
+                  source: presenter_test_image
+                  duration: 500ms
               - lvgl.navigation.open: test_application
     - id: home_page_two
       widgets:

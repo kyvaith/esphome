@@ -1,9 +1,11 @@
+from esphome import automation
 import esphome.codegen as cg
+from esphome.components.image import Image_
 from esphome.components.lvgl.lvcode import LvContext
 from esphome.components.lvgl.types import lv_image_t
 from esphome.components.lvgl.widgets import get_widgets, wait_for_widgets
 import esphome.config_validation as cv
-from esphome.const import CONF_ID
+from esphome.const import CONF_DURATION, CONF_ID, CONF_SOURCE
 
 CODEOWNERS = ["@kyvaith"]
 DEPENDENCIES = ["lvgl"]
@@ -19,8 +21,41 @@ CONF_ZOOM_END = "zoom_end"
 CONF_ZOOM_START = "zoom_start"
 
 lvgl_image_presenter_ns = cg.esphome_ns.namespace("lvgl_image_presenter")
-LvglImagePresenter = lvgl_image_presenter_ns.class_(
-    "LvglImagePresenter", cg.Component
+LvglImagePresenter = lvgl_image_presenter_ns.class_("LvglImagePresenter", cg.Component)
+LvglImagePresenterRestartAction = lvgl_image_presenter_ns.class_(
+    "LvglImagePresenterRestartAction",
+    automation.Action,
+    cg.Parented.template(LvglImagePresenter),
+)
+LvglImagePresenterPauseAction = lvgl_image_presenter_ns.class_(
+    "LvglImagePresenterPauseAction",
+    automation.Action,
+    cg.Parented.template(LvglImagePresenter),
+)
+LvglImagePresenterResumeAction = lvgl_image_presenter_ns.class_(
+    "LvglImagePresenterResumeAction",
+    automation.Action,
+    cg.Parented.template(LvglImagePresenter),
+)
+LvglImagePresenterResetAction = lvgl_image_presenter_ns.class_(
+    "LvglImagePresenterResetAction",
+    automation.Action,
+    cg.Parented.template(LvglImagePresenter),
+)
+LvglImagePresenterPauseForSnapshotAction = lvgl_image_presenter_ns.class_(
+    "LvglImagePresenterPauseForSnapshotAction",
+    automation.Action,
+    cg.Parented.template(LvglImagePresenter),
+)
+LvglImagePresenterCompleteSnapshotHandoffAction = lvgl_image_presenter_ns.class_(
+    "LvglImagePresenterCompleteSnapshotHandoffAction",
+    automation.Action,
+    cg.Parented.template(LvglImagePresenter),
+)
+LvglImagePresenterTransitionAction = lvgl_image_presenter_ns.class_(
+    "LvglImagePresenterTransitionAction",
+    automation.Action,
+    cg.Parented.template(LvglImagePresenter),
 )
 
 
@@ -46,12 +81,8 @@ CONFIG_SCHEMA = cv.All(
                     max=cv.TimePeriod(milliseconds=100),
                 ),
             ),
-            cv.Optional(CONF_ZOOM_START, default=1.0): cv.float_range(
-                min=1.0, max=3.0
-            ),
-            cv.Optional(CONF_ZOOM_END, default=1.125): cv.float_range(
-                min=1.0, max=3.0
-            ),
+            cv.Optional(CONF_ZOOM_START, default=1.0): cv.float_range(min=1.0, max=3.0),
+            cv.Optional(CONF_ZOOM_END, default=1.125): cv.float_range(min=1.0, max=3.0),
             cv.Optional(CONF_PAN_LIMIT, default="75%"): cv.percentage,
             cv.Optional(CONF_FADE_THROUGH_BLACK, default=False): cv.boolean,
         }
@@ -79,3 +110,79 @@ async def to_code(config):
     await wait_for_widgets()
     async with LvContext() as ctx:
         ctx.add(var.set_obj(widget.obj))
+
+
+PRESENTER_ACTION_SCHEMA = automation.maybe_simple_id(
+    {
+        cv.GenerateID(): cv.use_id(LvglImagePresenter),
+    }
+)
+
+
+@automation.register_action(
+    "lvgl_image_presenter.restart",
+    LvglImagePresenterRestartAction,
+    PRESENTER_ACTION_SCHEMA,
+    synchronous=True,
+)
+@automation.register_action(
+    "lvgl_image_presenter.pause",
+    LvglImagePresenterPauseAction,
+    PRESENTER_ACTION_SCHEMA,
+    synchronous=True,
+)
+@automation.register_action(
+    "lvgl_image_presenter.resume",
+    LvglImagePresenterResumeAction,
+    PRESENTER_ACTION_SCHEMA,
+    synchronous=True,
+)
+@automation.register_action(
+    "lvgl_image_presenter.reset",
+    LvglImagePresenterResetAction,
+    PRESENTER_ACTION_SCHEMA,
+    synchronous=True,
+)
+@automation.register_action(
+    "lvgl_image_presenter.pause_for_snapshot",
+    LvglImagePresenterPauseForSnapshotAction,
+    PRESENTER_ACTION_SCHEMA,
+    synchronous=True,
+)
+@automation.register_action(
+    "lvgl_image_presenter.complete_snapshot_handoff",
+    LvglImagePresenterCompleteSnapshotHandoffAction,
+    PRESENTER_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def presenter_action_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    return var
+
+
+PRESENTER_TRANSITION_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.use_id(LvglImagePresenter),
+        cv.Required(CONF_SOURCE): cv.use_id(Image_),
+        cv.Optional(CONF_DURATION, default="800ms"): cv.templatable(
+            cv.positive_time_period_milliseconds
+        ),
+    }
+)
+
+
+@automation.register_action(
+    "lvgl_image_presenter.transition",
+    LvglImagePresenterTransitionAction,
+    PRESENTER_TRANSITION_SCHEMA,
+    synchronous=True,
+)
+async def presenter_transition_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    source = await cg.get_variable(config[CONF_SOURCE])
+    cg.add(var.set_source(source))
+    duration = await cg.templatable(config[CONF_DURATION], args, cg.uint32)
+    cg.add(var.set_duration(duration))
+    return var
