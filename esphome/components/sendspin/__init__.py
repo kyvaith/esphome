@@ -25,6 +25,8 @@ CONF_SENDSPIN_ID = "sendspin_id"
 CONF_INITIAL_STATIC_DELAY = "initial_static_delay"
 CONF_FIXED_DELAY = "fixed_delay"
 CONF_DECODE_MEMORY = "decode_memory"
+CONF_SUPPORTED_CODECS = "supported_codecs"
+CONF_SUPPORTED_CHANNELS = "supported_channels"
 
 # sendspin-cpp library lives in the global `sendspin` namespace.
 sendspin_library_ns = cg.global_ns.namespace("sendspin")
@@ -35,6 +37,12 @@ CODEC_FORMAT_FLAC = SendspinCodecFormat.enum("FLAC")
 CODEC_FORMAT_OPUS = SendspinCodecFormat.enum("OPUS")
 CODEC_FORMAT_PCM = SendspinCodecFormat.enum("PCM")
 CODEC_FORMAT_UNSUPPORTED = SendspinCodecFormat.enum("UNSUPPORTED")
+
+SUPPORTED_CODEC_ENUM = {
+    "flac": CODEC_FORMAT_FLAC,
+    "opus": CODEC_FORMAT_OPUS,
+    "pcm": CODEC_FORMAT_PCM,
+}
 
 # Library Structs
 AudioSupportedFormatObject = sendspin_library_ns.struct("AudioSupportedFormatObject")
@@ -232,11 +240,16 @@ async def to_code(config: ConfigType) -> None:
         player_cfg = data.player_config
         sample_rate = player_cfg[CONF_SAMPLE_RATE]
 
-        # OPUS only supports 48 kHz audio
-        codecs = [CODEC_FORMAT_FLAC]
-        if sample_rate == 48000:
-            codecs.append(CODEC_FORMAT_OPUS)
-        codecs.append(CODEC_FORMAT_PCM)
+        configured_codecs = player_cfg.get(CONF_SUPPORTED_CODECS)
+        if configured_codecs is None:
+            # Preserve the legacy defaults when no explicit format list is supplied.
+            codecs = [CODEC_FORMAT_FLAC]
+            if sample_rate == 48000:
+                codecs.append(CODEC_FORMAT_OPUS)
+            codecs.append(CODEC_FORMAT_PCM)
+        else:
+            codecs = [SUPPORTED_CODEC_ENUM[codec] for codec in configured_codecs]
+        channels = player_cfg.get(CONF_SUPPORTED_CHANNELS) or [2, 1]
 
         def _audio_format(codec, channels):
             return cg.StructInitializer(
@@ -248,7 +261,9 @@ async def to_code(config: ConfigType) -> None:
             )
 
         audio_format_structs = [
-            _audio_format(codec, channels) for codec in codecs for channels in (2, 1)
+            _audio_format(codec, channel_count)
+            for codec in codecs
+            for channel_count in channels
         ]
 
         psram_stack = player_cfg.get(CONF_TASK_STACK_IN_PSRAM, False)

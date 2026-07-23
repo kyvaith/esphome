@@ -17,6 +17,8 @@ from .. import (
     CONF_FIXED_DELAY,
     CONF_INITIAL_STATIC_DELAY,
     CONF_SENDSPIN_ID,
+    CONF_SUPPORTED_CHANNELS,
+    CONF_SUPPORTED_CODECS,
     MEMORY_LOCATIONS,
     SendspinHub,
     register_player_config,
@@ -59,8 +61,29 @@ def _register(config: ConfigType) -> ConfigType:
             CONF_FIXED_DELAY: config[CONF_FIXED_DELAY],
             CONF_TASK_STACK_IN_PSRAM: config.get(CONF_TASK_STACK_IN_PSRAM, False),
             CONF_DECODE_MEMORY: config.get(CONF_DECODE_MEMORY),
+            CONF_SUPPORTED_CODECS: config.get(CONF_SUPPORTED_CODECS),
+            CONF_SUPPORTED_CHANNELS: config.get(CONF_SUPPORTED_CHANNELS),
         }
     )
+    return config
+
+
+def _validate_supported_formats(config: ConfigType) -> ConfigType:
+    codecs = config.get(CONF_SUPPORTED_CODECS)
+    if codecs is not None:
+        if len(codecs) != len(set(codecs)):
+            raise cv.Invalid("Codec names must be unique", path=[CONF_SUPPORTED_CODECS])
+        if "opus" in codecs and config[CONF_SAMPLE_RATE] != 48000:
+            raise cv.Invalid(
+                "Opus is only supported at a 48 kHz sample rate",
+                path=[CONF_SUPPORTED_CODECS],
+            )
+
+    channels = config.get(CONF_SUPPORTED_CHANNELS)
+    if channels is not None and len(channels) != len(set(channels)):
+        raise cv.Invalid(
+            "Channel counts must be unique", path=[CONF_SUPPORTED_CHANNELS]
+        )
     return config
 
 
@@ -85,8 +108,17 @@ CONFIG_SCHEMA = cv.All(
                 min=16000, max=96000
             ),
             cv.Optional(CONF_DECODE_MEMORY): cv.one_of(*MEMORY_LOCATIONS, lower=True),
+            cv.Optional(CONF_SUPPORTED_CODECS): cv.All(
+                cv.ensure_list(cv.one_of("flac", "opus", "pcm", lower=True)),
+                cv.Length(min=1),
+            ),
+            cv.Optional(CONF_SUPPORTED_CHANNELS): cv.All(
+                cv.ensure_list(cv.int_range(min=1, max=2)),
+                cv.Length(min=1),
+            ),
         }
     ),
+    _validate_supported_formats,
     cv.only_on_esp32,
     _register,
 )
