@@ -64,6 +64,7 @@ lvgl:
     max_entries: 4
     decoded_slots: 3
     preload: true
+    settle_duration: 220ms
 
 psram:
 
