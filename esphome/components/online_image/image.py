@@ -136,6 +136,7 @@ async def setup_online_image(config: ConfigType) -> None:
     )
     await cg.register_component(var, config)
     await cg.register_parented(var, config[CONF_HTTP_REQUEST_ID])
+    cg.add(var.set_decoder_type(settings.decoder_type_enum))
 
     for key, value in config.get(CONF_REQUEST_HEADERS, {}).items():
         if isinstance(value, Lambda):
