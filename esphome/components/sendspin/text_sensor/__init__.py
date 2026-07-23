@@ -21,6 +21,7 @@ SENDSPIN_TEXT_METADATA_TYPES = {
     "artist": SendspinTextMetadataTypes.ARTIST,
     "album": SendspinTextMetadataTypes.ALBUM,
     "album_artist": SendspinTextMetadataTypes.ALBUM_ARTIST,
+    "artwork_url": SendspinTextMetadataTypes.ARTWORK_URL,
 }
 
 
