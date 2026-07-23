@@ -26,6 +26,10 @@
 #include <utility>
 #include <vector>
 
+#ifdef USE_LVGL_DIAGNOSTICS
+#include "lvgl_diagnostics.h"
+#endif
+
 #ifdef USE_ESP32_VARIANT_ESP32P4
 #include "driver/ppa.h"
 #endif
@@ -318,6 +322,9 @@ class LvglComponent final : public PollingComponent {
 
   uint16_t get_width() const { return lv_display_get_horizontal_resolution(this->disp_); }
   uint16_t get_height() const { return lv_display_get_vertical_resolution(this->disp_); }
+#ifdef USE_LVGL_DIAGNOSTICS
+  LvglDiagnostics *get_diagnostics() { return &this->diagnostics_; }
+#endif
 
  protected:
   void set_resolution_() const;
@@ -367,6 +374,9 @@ class LvglComponent final : public PollingComponent {
   LvglNavigation *navigation_{};
   bool big_endian_{};
   std::map<lv_group_t *, lv_obj_t *> focus_marks_{};
+#ifdef USE_LVGL_DIAGNOSTICS
+  LvglDiagnostics diagnostics_{};
+#endif
 
   CallbackManager<void(uint32_t)> idle_callbacks_{};
   Trigger<> *pause_callback_{};

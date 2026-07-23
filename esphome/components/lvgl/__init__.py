@@ -150,6 +150,7 @@ AUTO_LOAD = ["key_provider"]
 CODEOWNERS = ["@clydebarrow"]
 HELLO_WORLD_FILE = "hello_world.yaml"
 CONF_DIRECT_MODE = "direct_mode"
+CONF_DIAGNOSTICS = "diagnostics"
 CONF_USE_PPA = "use_ppa"
 CONF_USE_PPA_IMG = "use_ppa_img"
 
@@ -379,6 +380,8 @@ async def to_code(configs):
     if use_ppa:
         df.add_define("LV_PPA_BURST_LENGTH", "128")
     df.add_define("LV_USE_PPA_IMG", "1" if use_ppa_img else "0")
+    if config_0[CONF_DIAGNOSTICS]:
+        cg.add_define("USE_LVGL_DIAGNOSTICS")
     if snapshot_config is not None:
         cg.add_define("USE_LVGL_SNAPSHOT_STORE")
         df.add_define("LV_USE_SNAPSHOT", "1")
@@ -825,6 +828,7 @@ LVGL_TOP_LEVEL_SCHEMA = (
             cv.GenerateID(df.CONF_DEFAULT_GROUP): cv.declare_id(lv_group_t),
             cv.Optional(df.CONF_RESUME_ON_INPUT, default=True): cv.boolean,
             cv.Optional(df.CONF_PAUSED, default=False): cv.boolean,
+            cv.Optional(CONF_DIAGNOSTICS, default=False): cv.boolean,
             cv.Optional(CONF_USE_PPA, default=False): cv.boolean,
             cv.Optional(CONF_USE_PPA_IMG, default=False): cv.boolean,
         }

@@ -461,6 +461,9 @@ void LvglComponent::draw_buffer_(const lv_area_t *area, lv_color_data *ptr) {
 }
 
 void LvglComponent::flush_cb_(lv_display_t *disp_drv, const lv_area_t *area, uint8_t *color_p) {
+#ifdef USE_LVGL_DIAGNOSTICS
+  const uint32_t started_us = micros();
+#endif
   // no guard here for display busy, since LVGL will not call flush_cb until the refresh timer fires,
   // and while the display is busy this is reset to 5 minutes. If that expires and the display is still
   // busy there are bigger problems.
@@ -470,6 +473,9 @@ void LvglComponent::flush_cb_(lv_display_t *disp_drv, const lv_area_t *area, uin
       ESP_LOGE(TAG, "Failed to present direct framebuffer");
     }
     lv_display_flush_ready(disp_drv);
+#ifdef USE_LVGL_DIAGNOSTICS
+    this->diagnostics_.note_flush(micros() - started_us);
+#endif
     return;
   }
   if (!this->paused_) {
@@ -479,6 +485,9 @@ void LvglComponent::flush_cb_(lv_display_t *disp_drv, const lv_area_t *area, uin
              (int) lv_area_get_width(area), (int) lv_area_get_height(area), (int) (millis() - now));
   }
   lv_display_flush_ready(disp_drv);
+#ifdef USE_LVGL_DIAGNOSTICS
+  this->diagnostics_.note_flush(micros() - started_us);
+#endif
 }
 
 IdleTrigger::IdleTrigger(LvglComponent *parent, TemplatableFn<uint32_t> timeout) : timeout_(timeout) {
@@ -928,6 +937,9 @@ void LvglComponent::setup() {
   this->show_page(0, LV_SCREEN_LOAD_ANIM_NONE, 0);
   lv_display_trigger_activity(this->disp_);
   this->update_orientation_();
+#ifdef USE_LVGL_DIAGNOSTICS
+  this->diagnostics_.attach(this->disp_, this->direct_mode_);
+#endif
 }
 
 void LvglComponent::update() {
@@ -964,7 +976,15 @@ void LvglComponent::loop() {
       lv_timer_ready(this->refr_timer_);
     }
   }
+#ifdef USE_LVGL_DIAGNOSTICS
+  const uint32_t started_us = micros();
+#endif
   lv_timer_handler();
+#ifdef USE_LVGL_DIAGNOSTICS
+  const uint32_t finished_us = micros();
+  this->diagnostics_.note_handler(finished_us - started_us);
+  this->diagnostics_.update(finished_us);
+#endif
 }
 
 #ifdef USE_LVGL_ANIMIMG
