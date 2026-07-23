@@ -364,6 +364,7 @@ bool MipiDsi::begin_frame_buffer_session(uint32_t timeout_ms) {
       this->last_submitted_frame_buffer_ != nullptr ? this->last_submitted_frame_buffer_ : this->frame_buffers_[0];
   this->session_leased_frame_buffer_ = nullptr;
   this->session_pending_frame_buffer_ = nullptr;
+  this->session_leased_write_mode_ = display::FrameBufferWriteMode::CPU;
   this->frame_buffer_session_generation_++;
   if (this->frame_buffer_session_generation_ == 0)
     this->frame_buffer_session_generation_++;
@@ -371,7 +372,8 @@ bool MipiDsi::begin_frame_buffer_session(uint32_t timeout_ms) {
   return true;
 }
 
-bool MipiDsi::acquire_frame_buffer(display::FrameBufferLease *lease, uint32_t timeout_ms) {
+bool MipiDsi::acquire_frame_buffer(display::FrameBufferLease *lease, display::FrameBufferWriteMode write_mode,
+                                   uint32_t timeout_ms) {
   if (lease == nullptr || !this->frame_buffer_session_active_ || this->session_leased_frame_buffer_ != nullptr ||
       this->session_pending_frame_buffer_ != nullptr) {
     return false;
@@ -397,7 +399,17 @@ bool MipiDsi::acquire_frame_buffer(display::FrameBufferLease *lease, uint32_t ti
     vTaskDelay(1);
   }
 
+  if (write_mode == display::FrameBufferWriteMode::DMA) {
+    const esp_err_t err = esp_cache_msync(frame_buffer, this->get_frame_buffer_size(),
+                                          ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+    if (err != ESP_OK) {
+      ESP_LOGW(TAG, "framebuffer DMA ownership transfer failed: %s", esp_err_to_name(err));
+      return false;
+    }
+  }
+
   this->session_leased_frame_buffer_ = frame_buffer;
+  this->session_leased_write_mode_ = write_mode;
   *lease = {
       .owner = this,
       .data = frame_buffer,
@@ -408,6 +420,7 @@ bool MipiDsi::acquire_frame_buffer(display::FrameBufferLease *lease, uint32_t ti
       .bitness = this->get_frame_buffer_bitness(),
       .color_order = this->color_mode_,
       .big_endian = false,
+      .write_mode = write_mode,
       .index = index,
       .generation = this->frame_buffer_session_generation_,
   };
@@ -425,20 +438,23 @@ void MipiDsi::clear_frame_buffer_lease_(display::FrameBufferLease *lease) const 
     *lease = {};
 }
 
-bool MipiDsi::submit_frame_buffer_(uint8_t *frame_buffer, int y_start, int y_end) {
+bool MipiDsi::submit_frame_buffer_(uint8_t *frame_buffer, int y_start, int y_end,
+                                   display::FrameBufferWriteMode write_mode) {
   if (frame_buffer == nullptr || y_end < y_start)
     return false;
   y_start = std::max(0, y_start);
   y_end = std::min<int>(this->height_ - 1, y_end);
   if (y_end < y_start)
     return false;
-  esp_err_t err = esp_cache_msync(frame_buffer, this->get_frame_buffer_size(),
-                                  ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
-  if (err != ESP_OK) {
-    ESP_LOGW(TAG, "framebuffer cache sync failed: %s", esp_err_to_name(err));
-    return false;
+  if (write_mode == display::FrameBufferWriteMode::CPU) {
+    const esp_err_t sync_err = esp_cache_msync(frame_buffer, this->get_frame_buffer_size(),
+                                               ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+    if (sync_err != ESP_OK) {
+      ESP_LOGW(TAG, "framebuffer cache sync failed: %s", esp_err_to_name(sync_err));
+      return false;
+    }
   }
-  err = esp_lcd_panel_draw_bitmap(this->handle_, 0, y_start, this->width_, y_end + 1, frame_buffer);
+  const esp_err_t err = esp_lcd_panel_draw_bitmap(this->handle_, 0, y_start, this->width_, y_end + 1, frame_buffer);
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "present_frame_buffer failed: %s", esp_err_to_name(err));
     return false;
@@ -456,6 +472,7 @@ bool MipiDsi::finish_pending_frame_buffer_(uint32_t timeout_ms) {
   this->session_active_frame_buffer_ = this->session_pending_frame_buffer_;
   this->session_pending_frame_buffer_ = nullptr;
   this->session_leased_frame_buffer_ = nullptr;
+  this->session_leased_write_mode_ = display::FrameBufferWriteMode::CPU;
   return true;
 }
 
@@ -470,7 +487,7 @@ bool MipiDsi::present_frame_buffer_lease(display::FrameBufferLease *lease, uint3
     return true;
   }
   if (this->session_pending_frame_buffer_ != nullptr || !this->wait_for_async_flush_(timeout_ms) ||
-      !this->submit_frame_buffer_(frame_buffer, 0, this->height_ - 1)) {
+      !this->submit_frame_buffer_(frame_buffer, 0, this->height_ - 1, this->session_leased_write_mode_)) {
     return false;
   }
   this->session_pending_frame_buffer_ = frame_buffer;
@@ -484,6 +501,7 @@ bool MipiDsi::release_frame_buffer(display::FrameBufferLease *lease) {
   if (!this->validate_frame_buffer_lease_(lease) || this->session_pending_frame_buffer_ != nullptr)
     return false;
   this->session_leased_frame_buffer_ = nullptr;
+  this->session_leased_write_mode_ = display::FrameBufferWriteMode::CPU;
   this->clear_frame_buffer_lease_(lease);
   return true;
 }
@@ -498,6 +516,7 @@ bool MipiDsi::end_frame_buffer_session(uint32_t timeout_ms) {
   this->frame_buffer_session_active_ = false;
   this->session_active_frame_buffer_ = nullptr;
   this->session_pending_frame_buffer_ = nullptr;
+  this->session_leased_write_mode_ = display::FrameBufferWriteMode::CPU;
   xSemaphoreGive(this->frame_buffer_session_lock_);
   return true;
 }
