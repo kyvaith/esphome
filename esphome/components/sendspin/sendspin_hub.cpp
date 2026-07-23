@@ -186,7 +186,10 @@ void SendspinHub::on_image_decode(uint8_t slot, const uint8_t *data, size_t leng
 }
 
 // THREAD CONTEXT: Main loop (fired from client_->loop() once the server display timestamp is reached)
-void SendspinHub::on_image_display(uint8_t slot) { this->artwork_image_display_callbacks_.call(slot); }
+void SendspinHub::on_image_display(uint8_t slot, uint32_t lateness_ms) {
+  (void) lateness_ms;
+  this->artwork_image_display_callbacks_.call(slot);
+}
 
 // THREAD CONTEXT: Main loop (fired from client_->loop())
 void SendspinHub::on_image_clear(uint8_t slot) { this->artwork_image_clear_callbacks_.call(slot); }

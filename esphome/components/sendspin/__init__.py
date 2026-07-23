@@ -247,7 +247,6 @@ async def to_code(config: ConfigType) -> None:
         preference_structs = [
             cg.StructInitializer(
                 ImageSlotPreference,
-                ("slot", pref[CONF_SLOT]),
                 ("source", pref[CONF_SOURCE]),
                 ("format", pref[CONF_FORMAT]),
                 ("width", pref[CONF_WIDTH]),

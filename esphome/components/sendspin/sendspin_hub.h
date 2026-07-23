@@ -194,14 +194,14 @@ class SendspinHub final : public Component,
 #ifdef USE_SENDSPIN_ARTWORK
   void on_image_decode(uint8_t slot, const uint8_t *data, size_t length, sendspin::SendspinImageFormat format) override;
 
-  void on_image_display(uint8_t slot) override;
+  void on_image_display(uint8_t slot, uint32_t lateness_ms) override;
 
   void on_image_clear(uint8_t slot) override;
 
   sendspin::ArtworkRoleConfig artwork_config_{};
 
   // Callback fan-out to child components; they filter by slot as needed.
-  // decode and display fire from the library's artwork thread; clear fires from the main loop.
+  // Decode runs on the artwork thread; display and clear run from the main loop.
   CallbackManager<void(uint8_t, const uint8_t *, size_t, sendspin::SendspinImageFormat)>
       artwork_image_decode_callbacks_{};
   CallbackManager<void(uint8_t)> artwork_image_display_callbacks_{};
