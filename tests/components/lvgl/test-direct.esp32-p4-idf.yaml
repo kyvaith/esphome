@@ -14,9 +14,29 @@ lvgl:
   diagnostics: true
   use_ppa: true
   widgets:
-    - label:
-        align: CENTER
-        text: Direct framebuffer
+    - image:
+        id: direct_presenter_widget
+        src: direct_presenter_image
+        width: 100%
+        height: 100%
+
+image:
+  - platform: file
+    id: direct_presenter_image
+    file: "$component_dir/logo-text.svg"
+    type: RGB
+    resize: 128x128
+
+lvgl_image_presenter:
+  id: direct_presenter
+  widget: direct_presenter_widget
+  source: direct_presenter_image
+  direct: true
+  phase_duration: 10s
+  frame_interval: 34ms
+  zoom_start: 1.05
+  zoom_end: 1.05
+  pan_limit: 50%
 
 psram:
 
