@@ -80,6 +80,14 @@ lvgl:
       - id: test_application
         page: application_page
         close_gesture: true
+        on_open:
+          - logger.log: Application opening
+        on_opened:
+          - logger.log: Application opened
+        on_close:
+          - logger.log: Application closing
+        on_closed:
+          - logger.log: Application closed
   snapshot_compositor:
     id: test_snapshots
     compression: jpeg
