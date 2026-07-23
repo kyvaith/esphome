@@ -45,9 +45,13 @@ namespace esphome::lvgl {
 
 #if LV_COLOR_DEPTH == 16
 using lv_color_data = uint16_t;
-#endif
-#if LV_COLOR_DEPTH == 32
-using lv_color_data = uint32_t;
+static constexpr size_t LV_BYTES_PER_PIXEL = 2;
+static constexpr lv_color_format_t LV_DRAW_COLOR_FORMAT = LV_COLOR_FORMAT_RGB565;
+#elif LV_COLOR_DEPTH == 32
+// LVGL's RGB888 draw format is packed (three bytes per pixel).
+using lv_color_data = uint8_t;
+static constexpr size_t LV_BYTES_PER_PIXEL = 3;
+static constexpr lv_color_format_t LV_DRAW_COLOR_FORMAT = LV_COLOR_FORMAT_RGB888;
 #endif
 
 extern lv_event_code_t lv_update_event;  // NOLINT
