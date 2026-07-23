@@ -13,12 +13,23 @@ lvgl:
   direct_mode: true
   diagnostics: true
   use_ppa: true
-  widgets:
-    - image:
-        id: direct_presenter_widget
-        src: direct_presenter_image
-        width: 100%
-        height: 100%
+  pages:
+    - id: direct_home_one
+      widgets:
+        - image:
+            id: direct_presenter_widget
+            src: direct_presenter_image
+            width: 100%
+            height: 100%
+    - id: direct_home_two
+      widgets:
+        - label:
+            text: Home 2
+  navigation:
+    home:
+      pages:
+        - direct_home_one
+        - direct_home_two
 
 image:
   - platform: file

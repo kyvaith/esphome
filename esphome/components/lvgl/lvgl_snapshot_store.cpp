@@ -24,33 +24,37 @@ void LvglSnapshotStore::dump_config() {
   ESP_LOGCONFIG(TAG, "  JPEG quality: %u", this->quality_);
   ESP_LOGCONFIG(TAG, "  Maximum entries: %u", static_cast<unsigned>(this->max_entries_));
   ESP_LOGCONFIG(TAG, "  Decoded slots: %u", static_cast<unsigned>(this->decoded_slot_count_));
-  ESP_LOGCONFIG(TAG, "  Registered pages: %u", static_cast<unsigned>(this->entries_.size()));
+  ESP_LOGCONFIG(TAG, "  Registered views: %u", static_cast<unsigned>(this->entries_.size()));
   ESP_LOGCONFIG(TAG, "  Preload: %s", YESNO(this->preload_));
 }
 
 void LvglSnapshotStore::on_shutdown() { this->clear(); }
 
-bool LvglSnapshotStore::register_page(LvPageType *page) {
-  if (page == nullptr || page->obj == nullptr)
+bool LvglSnapshotStore::register_page(LvPageType *page) { return page != nullptr && this->register_object(page->obj); }
+
+bool LvglSnapshotStore::register_object(lv_obj_t *object) {
+  if (object == nullptr)
     return false;
-  if (this->find_entry_(page) != nullptr)
+  if (this->find_entry_(object) != nullptr)
     return true;
   if (this->entries_.size() >= this->max_entries_) {
-    ESP_LOGE(TAG, "Cannot register page: maximum entry count (%u) reached", static_cast<unsigned>(this->max_entries_));
+    ESP_LOGE(TAG, "Cannot register view: maximum entry count (%u) reached", static_cast<unsigned>(this->max_entries_));
     return false;
   }
 
   this->entries_.emplace_back();
-  this->entries_.back().page = page;
+  this->entries_.back().object = object;
   return true;
 }
 
-bool LvglSnapshotStore::capture(LvPageType *page) {
-  auto *entry = this->find_entry_(page);
+bool LvglSnapshotStore::capture(LvPageType *page) { return page != nullptr && this->capture_object(page->obj); }
+
+bool LvglSnapshotStore::capture_object(lv_obj_t *object) {
+  auto *entry = this->find_entry_(object);
   if (entry == nullptr) {
-    if (!this->register_page(page))
+    if (!this->register_object(object))
       return false;
-    entry = this->find_entry_(page);
+    entry = this->find_entry_(object);
   }
   return entry != nullptr && this->capture_entry_(*entry);
 }
@@ -62,11 +66,13 @@ bool LvglSnapshotStore::capture_all() {
   return success;
 }
 
-bool LvglSnapshotStore::invalidate(LvPageType *page) {
-  auto *entry = this->find_entry_(page);
+bool LvglSnapshotStore::invalidate(LvPageType *page) { return page != nullptr && this->invalidate_object(page->obj); }
+
+bool LvglSnapshotStore::invalidate_object(lv_obj_t *object) {
+  auto *entry = this->find_entry_(object);
   if (entry == nullptr)
     return false;
-  if (entry->references != 0 || !this->release_slot_(page))
+  if (entry->references != 0 || !this->release_slot_(object))
     return false;
   this->clear_entry_(*entry);
   return true;
@@ -84,7 +90,11 @@ void LvglSnapshotStore::clear() {
 }
 
 lv_draw_buf_t *LvglSnapshotStore::acquire(LvPageType *page) {
-  auto *entry = this->find_entry_(page);
+  return page == nullptr ? nullptr : this->acquire_object(page->obj);
+}
+
+lv_draw_buf_t *LvglSnapshotStore::acquire_object(lv_obj_t *object) {
+  auto *entry = this->find_entry_(object);
   if (entry == nullptr)
     return nullptr;
 
@@ -97,7 +107,7 @@ lv_draw_buf_t *LvglSnapshotStore::acquire(LvPageType *page) {
 #ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
   if (entry->jpeg.empty())
     return nullptr;
-  if (auto *slot = this->find_slot_(page)) {
+  if (auto *slot = this->find_slot_(object)) {
     if (slot->generation == entry->generation) {
       slot->references++;
       slot->last_access = this->access_clock_;
@@ -111,7 +121,7 @@ lv_draw_buf_t *LvglSnapshotStore::acquire(LvPageType *page) {
   auto *slot = this->select_slot_();
   if (slot == nullptr || !this->prepare_slot_(*slot, *entry) || !this->decode_(*entry, slot->buffer))
     return nullptr;
-  slot->owner = page;
+  slot->owner = object;
   slot->generation = entry->generation;
   slot->last_access = this->access_clock_;
   slot->references = 1;
@@ -122,12 +132,17 @@ lv_draw_buf_t *LvglSnapshotStore::acquire(LvPageType *page) {
 }
 
 void LvglSnapshotStore::release(LvPageType *page) {
-  auto *entry = this->find_entry_(page);
+  if (page != nullptr)
+    this->release_object(page->obj);
+}
+
+void LvglSnapshotStore::release_object(lv_obj_t *object) {
+  auto *entry = this->find_entry_(object);
   if (entry != nullptr && entry->raw != nullptr && entry->references != 0) {
     entry->references--;
     return;
   }
-  if (auto *slot = this->find_slot_(page); slot != nullptr && slot->references != 0)
+  if (auto *slot = this->find_slot_(object); slot != nullptr && slot->references != 0)
     slot->references--;
 }
 
@@ -160,21 +175,21 @@ size_t LvglSnapshotStore::get_cached_count() const {
   return count;
 }
 
-LvglSnapshotStore::Entry *LvglSnapshotStore::find_entry_(LvPageType *page) {
+LvglSnapshotStore::Entry *LvglSnapshotStore::find_entry_(lv_obj_t *object) {
   const auto it = std::find_if(this->entries_.begin(), this->entries_.end(),
-                               [page](const Entry &entry) { return entry.page == page; });
+                               [object](const Entry &entry) { return entry.object == object; });
   return it == this->entries_.end() ? nullptr : &*it;
 }
 
-const LvglSnapshotStore::Entry *LvglSnapshotStore::find_entry_(LvPageType *page) const {
+const LvglSnapshotStore::Entry *LvglSnapshotStore::find_entry_(lv_obj_t *object) const {
   const auto it = std::find_if(this->entries_.begin(), this->entries_.end(),
-                               [page](const Entry &entry) { return entry.page == page; });
+                               [object](const Entry &entry) { return entry.object == object; });
   return it == this->entries_.end() ? nullptr : &*it;
 }
 
-LvglSnapshotStore::DecodedSlot *LvglSnapshotStore::find_slot_(LvPageType *page) {
+LvglSnapshotStore::DecodedSlot *LvglSnapshotStore::find_slot_(lv_obj_t *object) {
   const auto it = std::find_if(this->decoded_slots_.begin(), this->decoded_slots_.end(),
-                               [page](const DecodedSlot &slot) { return slot.owner == page; });
+                               [object](const DecodedSlot &slot) { return slot.owner == object; });
   return it == this->decoded_slots_.end() ? nullptr : &*it;
 }
 
@@ -209,8 +224,8 @@ bool LvglSnapshotStore::prepare_slot_(DecodedSlot &slot, const Entry &entry) {
   return slot.buffer != nullptr && slot.buffer->data != nullptr;
 }
 
-bool LvglSnapshotStore::release_slot_(LvPageType *page) {
-  auto *slot = this->find_slot_(page);
+bool LvglSnapshotStore::release_slot_(lv_obj_t *object) {
+  auto *slot = this->find_slot_(object);
   if (slot == nullptr)
     return true;
   if (slot->references != 0)
@@ -220,14 +235,19 @@ bool LvglSnapshotStore::release_slot_(LvPageType *page) {
 }
 
 bool LvglSnapshotStore::capture_entry_(Entry &entry) {
-  if (entry.page == nullptr || entry.page->obj == nullptr || entry.references != 0 || !this->release_slot_(entry.page))
+  if (entry.object == nullptr || entry.references != 0 || !this->release_slot_(entry.object))
     return false;
 
-  auto *snapshot = lv_snapshot_take(entry.page->obj, this->snapshot_color_format_());
+  const bool was_hidden = lv_obj_has_flag(entry.object, LV_OBJ_FLAG_HIDDEN);
+  if (was_hidden)
+    lv_obj_remove_flag(entry.object, LV_OBJ_FLAG_HIDDEN);
+  auto *snapshot = lv_snapshot_take(entry.object, this->snapshot_color_format_());
+  if (was_hidden)
+    lv_obj_add_flag(entry.object, LV_OBJ_FLAG_HIDDEN);
   if (snapshot == nullptr || snapshot->data == nullptr) {
     if (snapshot != nullptr)
       lv_draw_buf_destroy(snapshot);
-    ESP_LOGW(TAG, "Failed to capture page snapshot");
+    ESP_LOGW(TAG, "Failed to capture view snapshot");
     return false;
   }
 

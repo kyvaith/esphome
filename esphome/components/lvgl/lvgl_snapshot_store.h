@@ -48,6 +48,11 @@ class LvglSnapshotStore final : public Component {
 
   lv_draw_buf_t *acquire(LvPageType *page);
   void release(LvPageType *page);
+  bool register_object(lv_obj_t *object);
+  bool capture_object(lv_obj_t *object);
+  bool invalidate_object(lv_obj_t *object);
+  lv_draw_buf_t *acquire_object(lv_obj_t *object);
+  void release_object(lv_obj_t *object);
 
   size_t get_memory_bytes() const;
   size_t get_cached_count() const;
@@ -55,7 +60,7 @@ class LvglSnapshotStore final : public Component {
 
  protected:
   struct Entry {
-    LvPageType *page{};
+    lv_obj_t *object{};
     lv_draw_buf_t *raw{};
 #ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
     esp32_jpeg::JpegBuffer jpeg{};
@@ -71,18 +76,18 @@ class LvglSnapshotStore final : public Component {
 
   struct DecodedSlot {
     lv_draw_buf_t *buffer{};
-    LvPageType *owner{};
+    lv_obj_t *owner{};
     uint32_t generation{};
     uint32_t last_access{};
     uint16_t references{};
   };
 
-  Entry *find_entry_(LvPageType *page);
-  const Entry *find_entry_(LvPageType *page) const;
-  DecodedSlot *find_slot_(LvPageType *page);
+  Entry *find_entry_(lv_obj_t *object);
+  const Entry *find_entry_(lv_obj_t *object) const;
+  DecodedSlot *find_slot_(lv_obj_t *object);
   DecodedSlot *select_slot_();
   bool prepare_slot_(DecodedSlot &slot, const Entry &entry);
-  bool release_slot_(LvPageType *page);
+  bool release_slot_(lv_obj_t *object);
   bool capture_entry_(Entry &entry);
   void clear_entry_(Entry &entry);
   void clear_slot_(DecodedSlot &slot);
