@@ -173,9 +173,14 @@ jpeg_yuv_rgb_conv_std_t to_color_standard(ColorConversionStandard standard) {
 }  // namespace
 
 void Esp32JpegComponent::setup() {
-  // Keep the hardware block free at boot. The decoder is created on demand so
-  // the encoder used by LVGL snapshot compression can still acquire the JPEG
-  // peripheral when it needs to compact snapshots into PSRAM-friendly storage.
+  // Allocate the JPEG decoder while the internal DMA heap is still contiguous.
+  // Artwork decode happens during playback, when the heap is usually too
+  // fragmented to create the hardware decoder on demand without falling back
+  // to a much slower software decode.
+  esp_err_t err = preallocate_decoder(this->decoder_timeout_ms_);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "JPEG decoder preallocation failed: %s", esp_err_to_name(err));
+  }
 }
 
 void Esp32JpegComponent::dump_config() { ESP_LOGCONFIG(TAG, "ESP32 JPEG hardware accelerator"); }
