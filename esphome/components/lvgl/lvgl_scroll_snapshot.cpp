@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstdlib>
 
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+
 namespace esphome::lvgl {
 
 static const char *const TAG = "lvgl.snapshot_scroll";
@@ -423,3 +425,5 @@ void LvglScrollSnapshotController::hide_overlay_() {
 }
 
 }  // namespace esphome::lvgl
+
+#endif
