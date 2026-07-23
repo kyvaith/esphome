@@ -73,6 +73,10 @@ struct EncodeConfig {
   DownSampling down_sampling{DownSampling::YUV420};
   uint8_t quality{80};
   bool pixel_reverse{false};
+  // Reuse one full-size hardware output buffer across a batch of encodes.
+  // Disable this for occasional runtime encodes when retaining that scratch
+  // allocation would cost more memory than the compressed image itself.
+  bool retain_output_buffer{true};
   // Zero/-1 retain the component defaults. Per-operation overrides keep
   // fullscreen snapshot traffic from starving a continuously scanned display.
   uint16_t dma2d_burst_length{0};
@@ -116,6 +120,7 @@ esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_si
 esp_err_t decode_allocated(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_size, size_t output_size,
                            uint8_t **output, size_t *written = nullptr);
 esp_err_t preallocate_decoder(int timeout_ms);
+void release_preallocated_encoder_output();
 void release_preallocated_encoder();
 void set_decoder_dma2d_burst_length(uint16_t burst_length);
 uint16_t get_decoder_dma2d_burst_length();
