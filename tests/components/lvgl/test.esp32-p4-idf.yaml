@@ -1,11 +1,104 @@
+packages:
+  i2c: !include ../../test_build_components/common/i2c/esp32-p4-idf.yaml
+
 display:
   - platform: mipi_dsi
+    id: p4_display
     model: WAVESHARE-ESP32-P4-WIFI6-TOUCH-LCD-3.4C
+touchscreen:
+  - platform: gt911
+    id: navigation_touchscreen
+    i2c_id: i2c_bus
+    display: p4_display
+
 lvgl:
   byte_order: little_endian
+  color_depth: 32
   rotation: 90
+  use_ppa: true
+  use_ppa_img: true
+  touchscreens:
+    - navigation_touchscreen
+  pages:
+    - id: home_page_one
+      widgets:
+        - button:
+            widgets:
+              - label:
+                  text: Open
+            on_click:
+              - lvgl.navigation.open: test_application
+    - id: home_page_two
+      widgets:
+        - label:
+            text: Home 2
+    - id: application_page
+      widgets:
+        - obj:
+            id: application_scroll_root
+            width: 100%
+            height: 100%
+            scrollable: true
+            scrollbar_mode: "off"
+            widgets:
+              - button:
+                  widgets:
+                    - label:
+                        text: Close
+                  on_click:
+                    - lvgl.snapshot.capture:
+                        id: test_snapshots
+                        page: application_page
+                    - lvgl.snapshot.invalidate:
+                        id: test_snapshots
+                        page: application_page
+                    - lvgl.snapshot.capture_all: test_snapshots
+                    - lvgl.snapshot.clear: test_snapshots
+                    - lvgl.snapshot_scroll.prepare: test_scroll_snapshot
+                    - lvgl.snapshot_scroll.refresh: test_scroll_snapshot
+                    - lvgl.snapshot_scroll.release: test_scroll_snapshot
+                    - lvgl.navigation.close: test_navigation
+              - label:
+                  y: 900
+                  text: End of scroll content
+  navigation:
+    id: test_navigation
+    home:
+      pages:
+        - home_page_one
+        - home_page_two
+    applications:
+      - id: test_application
+        page: application_page
+        close_gesture: true
+  snapshot_compositor:
+    id: test_snapshots
+    compression: jpeg
+    quality: 95
+    max_entries: 4
+    decoded_slots: 3
+    preload: true
+    settle_duration: 220ms
+    application_transitions:
+      open_duration: 500ms
+      close_duration: 500ms
+      start_size: 1%
+      close_target_x: 50%
+      close_target_y: 75%
+    scroll_regions:
+      - id: test_scroll_snapshot
+        application: test_application
+        widget: application_scroll_root
+        preload: true
+        max_content_size: 8MB
+        overscroll: 15%
+        momentum_duration: 560ms
+        bounce_duration: 320ms
+        max_inertia_duration: 900ms
 
 psram:
+
+esp32_jpeg:
 
 esp_ldo:
   - channel: 3

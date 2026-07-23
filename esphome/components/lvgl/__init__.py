@@ -32,6 +32,7 @@ from esphome.components.psram import DOMAIN as PSRAM_DOMAIN
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_BUFFER_SIZE,
+    CONF_COMPRESSION,
     CONF_ESPHOME,
     CONF_GROUP,
     CONF_ID,
@@ -74,6 +75,7 @@ from .gradient import GRADIENT_SCHEMA, gradients_to_code
 from .keypads import KEYPADS_CONFIG, keypads_to_code
 from .lv_validation import lv_bool
 from .lvcode import LvContext, LvglComponent, lv_event_t_ptr, lvgl_static
+from .navigation import CONF_NAVIGATION, NAVIGATION_SCHEMA, navigation_to_code
 from .schemas import (
     BASE_PROPS,
     DISP_BG_SCHEMA,
@@ -87,6 +89,12 @@ from .schemas import (
     container_schema,
     container_schema_value,
     obj_dict,
+)
+from .snapshot import (
+    COMPRESSION_JPEG,
+    CONF_SNAPSHOT_COMPOSITOR,
+    SNAPSHOT_SCHEMA,
+    snapshot_to_code,
 )
 from .styles import styles_to_code, theme_to_code
 from .touchscreens import touchscreen_schema, touchscreens_to_code
@@ -141,6 +149,8 @@ DEPENDENCIES = ["display"]
 AUTO_LOAD = ["key_provider"]
 CODEOWNERS = ["@clydebarrow"]
 HELLO_WORLD_FILE = "hello_world.yaml"
+CONF_USE_PPA = "use_ppa"
+CONF_USE_PPA_IMG = "use_ppa_img"
 
 
 SIMPLE_TRIGGERS = (
@@ -267,6 +277,7 @@ def final_validation(config_list):
 
         if (pages := config.get(CONF_PAGES)) and all(p[df.CONF_SKIP] for p in pages):
             raise cv.Invalid("At least one page must not be skipped")
+
         buffer_frac = config[CONF_BUFFER_SIZE]
         if CORE.is_esp32 and buffer_frac > 0.5 and PSRAM_DOMAIN not in global_config:
             df.LOGGER.warning("buffer_size: may need to be reduced without PSRAM")
@@ -301,15 +312,22 @@ def final_validation(config_list):
 
 async def to_code(configs):
     config_0 = configs[0]
+    use_ppa = config_0.get(CONF_USE_PPA, False)
+    use_ppa_img = config_0.get(CONF_USE_PPA_IMG, False)
+    snapshot_config = config_0.get(CONF_SNAPSHOT_COMPOSITOR)
+    if use_ppa_img:
+        use_ppa = True
+    ppa_supported = CORE.is_esp32 and get_esp32_variant() == VARIANT_ESP32P4
+    if use_ppa and not ppa_supported:
+        raise cv.Invalid("LVGL PPA acceleration is only supported on ESP32-P4")
     # Global configuration
     if CORE.is_esp32:
         # Skip compiling lvgl examples
         add_idf_sdkconfig_option("CONFIG_LV_BUILD_EXAMPLES", False)
         add_idf_sdkconfig_option("CONFIG_LV_BUILD_DEMOS", False)
-        if get_esp32_variant() == VARIANT_ESP32P4:
+        if ppa_supported:
             add_idf_sdkconfig_option("CONFIG_LV_DRAW_BUF_ALIGN", 64)
-            # disable use of PPA for fills until upstream bugs fixed
-            df.add_define("LV_USE_PPA", "0")
+            df.add_define("LV_USE_PPA", "1" if use_ppa else "0")
             df.add_define("LV_DRAW_BUF_ALIGN", "64")
         else:
             df.add_define("LV_DRAW_BUF_ALIGN", "32")
@@ -324,6 +342,15 @@ async def to_code(configs):
     df.add_define("LV_USE_STDLIB_MALLOC", "LV_STDLIB_CUSTOM")
     df.add_define("LV_DEF_REFR_PERIOD", "16")
     cg.add_define("USE_LVGL")
+    if use_ppa:
+        df.add_define("LV_PPA_BURST_LENGTH", "128")
+    df.add_define("LV_USE_PPA_IMG", "1" if use_ppa_img else "0")
+    if snapshot_config is not None:
+        cg.add_define("USE_LVGL_SNAPSHOT_STORE")
+        df.add_define("LV_USE_SNAPSHOT", "1")
+        add_lv_use(CONF_IMAGE)
+        if snapshot_config[CONF_COMPRESSION] == COMPRESSION_JPEG:
+            cg.add_define("USE_LVGL_SNAPSHOT_JPEG_CACHE")
     # suppress default enabling of extra widgets
     # cg.add_define("LV_KCONFIG_PRESENT")
     # Always enable - lots of things use it.
@@ -436,6 +463,12 @@ async def to_code(configs):
             await set_obj_properties(lv_scr_act, config)
             await add_widgets(lv_scr_act, config)
             await add_pages(lv_component, config)
+            await navigation_to_code(lv_component, config)
+            await snapshot_to_code(
+                lv_component,
+                config,
+                config.get(CONF_NAVIGATION),
+            )
             await layers_to_code(lv_component, config)
             await lvgl_update(lv_component, config)
             await msgboxes_to_code(lv_component, config)
@@ -604,7 +637,7 @@ LVGL_TOP_LEVEL_SCHEMA = (
             cv.GenerateID(CONF_ID): cv.declare_id(LvglComponent),
             cv.GenerateID(CONF_ALIGN_TO_LAMBDA_ID): cv.declare_id(lv_lambda_t),
             cv.GenerateID(df.CONF_DISPLAYS): display_schema,
-            cv.Optional(CONF_COLOR_DEPTH, default=16): cv.one_of(16),
+            cv.Optional(CONF_COLOR_DEPTH, default=16): cv.one_of(16, 32),
             cv.Optional(df.CONF_DEFAULT_FONT, default="montserrat_14"): lvalid.lv_font,
             cv.Optional(df.CONF_FULL_REFRESH, default=False): cv.boolean,
             cv.Optional(df.CONF_UPDATE_WHEN_DISPLAY_IDLE, default=False): cv.boolean,
@@ -650,11 +683,15 @@ LVGL_TOP_LEVEL_SCHEMA = (
             cv.Optional(df.CONF_THEME): _theme_schema,
             cv.Optional(df.CONF_GRADIENTS): GRADIENT_SCHEMA,
             cv.Optional(df.CONF_TOUCHSCREENS, default=None): touchscreen_schema,
+            cv.Optional(CONF_NAVIGATION): NAVIGATION_SCHEMA,
+            cv.Optional(CONF_SNAPSHOT_COMPOSITOR): SNAPSHOT_SCHEMA,
             cv.Optional(df.CONF_ENCODERS, default=None): ENCODERS_CONFIG,
             cv.Optional(df.CONF_KEYPADS, default=None): KEYPADS_CONFIG,
             cv.GenerateID(df.CONF_DEFAULT_GROUP): cv.declare_id(lv_group_t),
             cv.Optional(df.CONF_RESUME_ON_INPUT, default=True): cv.boolean,
             cv.Optional(df.CONF_PAUSED, default=False): cv.boolean,
+            cv.Optional(CONF_USE_PPA, default=False): cv.boolean,
+            cv.Optional(CONF_USE_PPA_IMG, default=False): cv.boolean,
         }
     )
     .extend(DISP_BG_SCHEMA)
