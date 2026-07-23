@@ -58,7 +58,26 @@ generic_image:
     type: RGB
     resize: 800x800
     source: ALBUM
+    defer_decode: true
+    paused: true
+    retain_on_clear: true
+    buffer_size: 262144
+    on_decode_start:
+      - logger.log: "Album art decode started"
     on_image_display:
       - logger.log: "Album art displayed"
     on_image_error:
       - logger.log: "Album art error"
+  - platform: sendspin
+    id: direct_artist_art
+    format: JPEG
+    decoder: ESP32_JPEG
+    type: RGB565
+    resize: 96x96
+    source: ARTIST
+
+script:
+  - id: exercise_image_lifecycle
+    then:
+      - sendspin.image.pause: album_art
+      - sendspin.image.resume: album_art

@@ -26,6 +26,7 @@ DOMAIN = "sendspin"
 
 CONF_SENDSPIN_ID = "sendspin_id"
 CONF_SLOT = "slot"
+CONF_REQUIRE_FRAME_DONE = "require_frame_done"
 
 CONF_INITIAL_STATIC_DELAY = "initial_static_delay"
 CONF_FIXED_DELAY = "fixed_delay"
@@ -251,6 +252,7 @@ async def to_code(config: ConfigType) -> None:
                 ("format", pref[CONF_FORMAT]),
                 ("width", pref[CONF_WIDTH]),
                 ("height", pref[CONF_HEIGHT]),
+                ("require_frame_done", pref.get(CONF_REQUIRE_FRAME_DONE, False)),
             )
             for pref in data.artwork_preferences
         ]

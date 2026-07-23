@@ -38,7 +38,8 @@ void SendspinHub::setup() {
   this->client_->set_persistence_provider(this);
 
 #ifdef USE_SENDSPIN_ARTWORK
-  this->client_->add_artwork(this->artwork_config_).set_listener(this);
+  this->artwork_role_ = &this->client_->add_artwork(this->artwork_config_);
+  this->artwork_role_->set_listener(this);
 #endif
 
 #ifdef USE_SENDSPIN_CONTROLLER
