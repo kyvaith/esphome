@@ -95,11 +95,8 @@ class EspAfe : public Component, public AudioProcessor {
     return false;
   }
   FrameSpec frame_spec() const override;
-  bool process(const int16_t *in_mic, const int16_t *in_ref, int16_t *out,
-               uint8_t mic_channels_in = 1) override;
-  uint32_t frame_spec_revision() const override {
-    return this->frame_spec_revision_.load(std::memory_order_acquire);
-  }
+  bool process(const int16_t *in_mic, const int16_t *in_ref, int16_t *out, uint8_t mic_channels_in = 1) override;
+  uint32_t frame_spec_revision() const override { return this->frame_spec_revision_.load(std::memory_order_acquire); }
   FeatureControl feature_control(AudioFeature feature) const override;
   bool set_feature(AudioFeature feature, bool enabled) override;
   ProcessorTelemetry telemetry() const override;
@@ -161,9 +158,7 @@ class EspAfe : public Component, public AudioProcessor {
   bool disable_agc();
 
   bool is_aec_enabled() const { return this->aec_enabled_.load(std::memory_order_relaxed); }
-  bool is_se_enabled() const {
-    return this->mic_num_ >= 2;
-  }
+  bool is_se_enabled() const { return this->mic_num_ >= 2; }
   bool is_ns_enabled() const { return this->ns_enabled_.load(std::memory_order_relaxed); }
   bool is_vad_enabled() const { return this->vad_enabled_.load(std::memory_order_relaxed); }
   bool is_agc_enabled() const { return this->agc_enabled_.load(std::memory_order_relaxed); }
@@ -175,9 +170,12 @@ class EspAfe : public Component, public AudioProcessor {
     // afe_type_: 0 = SR, 1 = VC, 3 = FD (esp-sr 2.4+); afe_mode_: 0 = LOW_COST, 1 = HIGH_PERF.
     const bool high = (this->afe_mode_ == 1);
     switch (this->afe_type_) {
-      case 0:  return high ? "sr_high_perf" : "sr_low_cost";
-      case 3:  return high ? "fd_high_perf" : "fd_low_cost";
-      default: return high ? "voip_high_perf" : "voip_low_cost";
+      case 0:
+        return high ? "sr_high_perf" : "sr_low_cost";
+      case 3:
+        return high ? "fd_high_perf" : "fd_low_cost";
+      default:
+        return high ? "voip_high_perf" : "voip_low_cost";
     }
   }
   bool is_voice_present() const { return this->voice_present_.load(std::memory_order_relaxed); }
@@ -191,9 +189,7 @@ class EspAfe : public Component, public AudioProcessor {
   bool request_reinit_by_name(const std::string &name);
   bool request_reinit_by_name(const char *name);
   bool is_reconfigure_idle() const;
-  bool get_last_reconfigure_ok() const {
-    return this->last_reconfigure_ok_.load(std::memory_order_acquire);
-  }
+  bool get_last_reconfigure_ok() const { return this->last_reconfigure_ok_.load(std::memory_order_acquire); }
 
   ~EspAfe() override;
 
@@ -245,10 +241,8 @@ class EspAfe : public Component, public AudioProcessor {
   // running the pipeline is pointless, so recreate_instance_ and the runtime
   // toggle paths tear the instance down instead of rebuilding it.
   bool all_features_disabled_() const {
-    return !this->aec_enabled_.load(std::memory_order_relaxed) &&
-           !this->ns_enabled_.load(std::memory_order_relaxed) &&
-           !this->agc_enabled_.load(std::memory_order_relaxed) &&
-           !this->vad_enabled_.load(std::memory_order_relaxed) &&
+    return !this->aec_enabled_.load(std::memory_order_relaxed) && !this->ns_enabled_.load(std::memory_order_relaxed) &&
+           !this->agc_enabled_.load(std::memory_order_relaxed) && !this->vad_enabled_.load(std::memory_order_relaxed) &&
            !this->is_se_enabled();
   }
 
@@ -274,8 +268,8 @@ class EspAfe : public Component, public AudioProcessor {
   // Feed buffer: interleaved [mic, ref, ...], [mic1, mic2, ref, ...] or
   // [mic1, mic2, N, ref, ...] depending on esp-sr input_format.
   int16_t *feed_buf_{nullptr};
-  int feed_chunksize_{0};   // per-channel samples expected by feed()
-  int fetch_chunksize_{0};  // mono output samples returned by fetch()
+  int feed_chunksize_{0};     // per-channel samples expected by feed()
+  int fetch_chunksize_{0};    // mono output samples returned by fetch()
   int process_chunksize_{0};  // external process() input chunk size
   int total_channels_{2};
   int staged_input_samples_{0};
@@ -306,16 +300,13 @@ class EspAfe : public Component, public AudioProcessor {
 #endif
 
 #ifdef USE_ESP_AFE_GMF_PATH
-  static esp_gmf_err_io_t gmf_input_acquire_cb_(void *ctx, esp_gmf_payload_t *load,
-                                                uint32_t wanted_size, int wait_ticks);
-  static esp_gmf_err_io_t gmf_input_release_cb_(void *ctx, esp_gmf_payload_t *load,
+  static esp_gmf_err_io_t gmf_input_acquire_cb_(void *ctx, esp_gmf_payload_t *load, uint32_t wanted_size,
                                                 int wait_ticks);
-  static esp_gmf_err_io_t gmf_output_acquire_cb_(void *ctx, esp_gmf_payload_t *load,
-                                                 uint32_t wanted_size, int wait_ticks);
-  static esp_gmf_err_io_t gmf_output_release_cb_(void *ctx, esp_gmf_payload_t *load,
+  static esp_gmf_err_io_t gmf_input_release_cb_(void *ctx, esp_gmf_payload_t *load, int wait_ticks);
+  static esp_gmf_err_io_t gmf_output_acquire_cb_(void *ctx, esp_gmf_payload_t *load, uint32_t wanted_size,
                                                  int wait_ticks);
-  esp_gmf_err_io_t gmf_input_acquire_(esp_gmf_payload_t *load, uint32_t wanted_size,
-                                      int wait_ticks);
+  static esp_gmf_err_io_t gmf_output_release_cb_(void *ctx, esp_gmf_payload_t *load, int wait_ticks);
+  esp_gmf_err_io_t gmf_input_acquire_(esp_gmf_payload_t *load, uint32_t wanted_size, int wait_ticks);
   esp_gmf_err_io_t gmf_output_release_(esp_gmf_payload_t *load, int wait_ticks);
 #endif
   void handle_manager_result_(afe_fetch_result_t *result);
@@ -326,8 +317,7 @@ class EspAfe : public Component, public AudioProcessor {
   void stop_direct_fetch_task_();
 #endif
 #ifdef USE_ESP_AFE_GMF_PATH
-  static void gmf_event_cb_(esp_gmf_element_handle_t el, esp_gmf_afe_evt_t *event,
-                            void *user_data);
+  static void gmf_event_cb_(esp_gmf_element_handle_t el, esp_gmf_afe_evt_t *event, void *user_data);
 #endif
   bool start_pipeline_();
   bool pause_pipeline_();
@@ -342,9 +332,9 @@ class EspAfe : public Component, public AudioProcessor {
   audio_processor::RingBufferPtr fetch_output_ring_;
 
   // Config (set from Python, used in setup())
-  int afe_type_{0};         // AFE_TYPE_SR
-  int afe_mode_{0};         // AFE_MODE_LOW_COST
-  int mic_num_{1};  // physical microphone channels available from transport
+  int afe_type_{0};  // AFE_TYPE_SR
+  int afe_mode_{0};  // AFE_MODE_LOW_COST
+  int mic_num_{1};   // physical microphone channels available from transport
   // Feature flags exposed to UI toggles. std::atomic so a torn snapshot
   // across the 5 flags in all_features_disabled_() can't trigger a
   // spurious teardown if a future caller reads them off the main loop.
@@ -376,9 +366,9 @@ class EspAfe : public Component, public AudioProcessor {
   int fetch_task_priority_{5};
   int fetch_task_stack_size_{3072};
   char input_format_override_[5]{};
-  bool feed_buf_in_psram_{false};   // ~3 KB scratch (default internal, ~41 us/frame faster on Core 0)
-  bool feed_ring_in_psram_{false};  // ~12 KB staging ring (default internal, ~20 us/frame faster on Core 0)
-  bool fetch_ring_in_psram_{false}; // ~4 KB output ring (default internal, ~6.8 us/frame faster on Core 0)
+  bool feed_buf_in_psram_{false};    // ~3 KB scratch (default internal, ~41 us/frame faster on Core 0)
+  bool feed_ring_in_psram_{false};   // ~12 KB staging ring (default internal, ~20 us/frame faster on Core 0)
+  bool fetch_ring_in_psram_{false};  // ~4 KB output ring (default internal, ~6.8 us/frame faster on Core 0)
 
   // config_mutex_ serialises config-change paths (recreate_instance_,
   // set_aec_enabled_runtime_, destructor). It is NOT taken by process() on
@@ -421,12 +411,12 @@ class EspAfe : public Component, public AudioProcessor {
   bool output_rms_sensor_enabled_{false};
   int warmup_remaining_{3};
   // Feed/fetch diagnostics.
-  std::atomic<uint32_t> input_ring_drop_{0}; // process() could not enqueue (NOSPLIT full)
-  std::atomic<uint32_t> feed_ok_{0};         // GMF input port accepted a frame
-  std::atomic<uint32_t> feed_rejected_{0};   // GMF input port timed out or saw a bad frame
-  std::atomic<uint32_t> fetch_ok_{0};        // GMF output port drained a frame
-  std::atomic<uint32_t> fetch_timeout_{0};   // GMF fetch returned no usable frame
-  std::atomic<uint32_t> output_ring_drop_{0};// fetch_output_ring_ full
+  std::atomic<uint32_t> input_ring_drop_{0};   // process() could not enqueue (NOSPLIT full)
+  std::atomic<uint32_t> feed_ok_{0};           // GMF input port accepted a frame
+  std::atomic<uint32_t> feed_rejected_{0};     // GMF input port timed out or saw a bad frame
+  std::atomic<uint32_t> fetch_ok_{0};          // GMF output port drained a frame
+  std::atomic<uint32_t> fetch_timeout_{0};     // GMF fetch returned no usable frame
+  std::atomic<uint32_t> output_ring_drop_{0};  // fetch_output_ring_ full
   std::atomic<uint32_t> feed_queue_frames_{0};
   std::atomic<uint32_t> feed_queue_peak_{0};
   std::atomic<uint32_t> fetch_queue_frames_{0};
@@ -590,13 +580,10 @@ class AfeOutputRmsSensor : public sensor::Sensor, public PollingComponent, publi
 };
 
 // Action: esp_afe.set_mode
-template<typename... Ts>
-class SetModeAction : public Action<Ts...>, public Parented<EspAfe> {
+template<typename... Ts> class SetModeAction : public Action<Ts...>, public Parented<EspAfe> {
  public:
   TEMPLATABLE_VALUE(std::string, mode)
-  void play(const Ts &...x) override {
-    this->parent_->request_reinit_by_name(this->mode_.value(x...));
-  }
+  void play(const Ts &...x) override { this->parent_->request_reinit_by_name(this->mode_.value(x...)); }
 };
 
 }  // namespace esp_afe

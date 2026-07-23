@@ -21,9 +21,12 @@ namespace {
 
 const char *policy_str(RingBufferPolicy p) {
   switch (p) {
-    case RingBufferPolicy::INTERNAL: return "internal";
-    case RingBufferPolicy::PREFER_PSRAM: return "prefer_psram";
-    case RingBufferPolicy::PSRAM_ONLY: return "psram_only";
+    case RingBufferPolicy::INTERNAL:
+      return "internal";
+    case RingBufferPolicy::PREFER_PSRAM:
+      return "prefer_psram";
+    case RingBufferPolicy::PSRAM_ONLY:
+      return "psram_only";
   }
   return "?";
 }
@@ -143,8 +146,8 @@ static RingBufferPtr create_ring_buffer_with_type(size_t len, RingBufferPolicy p
   }
 
   if (!ok) {
-    ESP_LOGE(TAG, "ringbuffer '%s': alloc %u bytes FAILED (policy=%s)",
-             name, static_cast<unsigned>(len), policy_str(policy));
+    ESP_LOGE(TAG, "ringbuffer '%s': alloc %u bytes FAILED (policy=%s)", name, static_cast<unsigned>(len),
+             policy_str(policy));
     return nullptr;
   }
 
@@ -152,9 +155,8 @@ static RingBufferPtr create_ring_buffer_with_type(size_t len, RingBufferPolicy p
   // fallback hit, so never trust the requested policy alone.
   const void *storage = rb->probe_storage();
   const char *placement = esp_ptr_internal(storage) ? "internal" : "psram";
-  ESP_LOGI(TAG, "ringbuffer '%s': size=%u policy=%s type=%s placement=%s",
-           name, static_cast<unsigned>(len), policy_str(policy),
-           type == RINGBUF_TYPE_NOSPLIT ? "nosplit" : "bytebuf", placement);
+  ESP_LOGI(TAG, "ringbuffer '%s': size=%u policy=%s type=%s placement=%s", name, static_cast<unsigned>(len),
+           policy_str(policy), type == RINGBUF_TYPE_NOSPLIT ? "nosplit" : "bytebuf", placement);
 
   return rb;
 }

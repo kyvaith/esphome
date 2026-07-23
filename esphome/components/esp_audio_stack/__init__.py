@@ -8,11 +8,10 @@ Multi-rate support: set output_sample_rate to convert mic audio internally.
   output_sample_rate: mic/AEC/MWW/VA rate (e.g. 16000, must divide sample_rate evenly)
 If output_sample_rate is omitted, no rate conversion occurs (backward compatible).
 """
-import esphome.codegen as cg
-import esphome.config_validation as cv
+
 from esphome import automation, pins
+import esphome.codegen as cg
 from esphome.components import i2c
-from esphome.const import CONF_ADDRESS, CONF_I2C_ID, CONF_ID, CONF_NUM_CHANNELS, CONF_SAMPLE_RATE
 from esphome.components.esp32 import (
     add_idf_component,
     add_idf_sdkconfig_option,
@@ -30,6 +29,23 @@ from esphome.components.esp32.const import (
     VARIANT_ESP32S2,
     VARIANT_ESP32S3,
 )
+import esphome.config_validation as cv
+from esphome.const import (
+    CONF_ADDRESS,
+    CONF_BITS_PER_SAMPLE,
+    CONF_BUFFER_SIZE,
+    CONF_I2C_ID,
+    CONF_ID,
+    CONF_INPUT,
+    CONF_NUM_CHANNELS,
+    CONF_ON_IDLE,
+    CONF_ON_START,
+    CONF_ON_STATE,
+    CONF_OUTPUT,
+    CONF_SAMPLE_RATE,
+    CONF_TASK_STACK_IN_PSRAM,
+    CONF_TYPE,
+)
 
 CODEOWNERS = ["@n-IA-hane"]
 DEPENDENCIES = ["esp32"]
@@ -44,9 +60,8 @@ CONF_OUTPUT_SAMPLE_RATE = "output_sample_rate"
 CONF_PROCESSOR_ID = "processor_id"
 CONF_INPUT_GAIN = "input_gain"
 CONF_MASTER_VOLUME_MIN_DB = "master_volume_min_db"
-CONF_USE_STEREO_AEC_REF = "use_stereo_aec_reference"
+CONF_USE_STEREO_AEC_REFERENCE = "use_stereo_aec_reference"
 CONF_REFERENCE_CHANNEL = "reference_channel"
-CONF_BITS_PER_SAMPLE = "bits_per_sample"
 CONF_SLOT_BIT_WIDTH = "slot_bit_width"
 CONF_CORRECT_DC_OFFSET = "correct_dc_offset"
 CONF_MIC_CHANNEL = "mic_channel"
@@ -75,8 +90,8 @@ CONF_SPEAKER_CHANNELS = "speaker_channels"
 CONF_BUFFERS_IN_PSRAM = "buffers_in_psram"
 CONF_AEC_REF_RING_IN_PSRAM = "aec_ref_ring_in_psram"
 CONF_AUDIO_TASK_STACK_IN_PSRAM = "audio_task_stack_in_psram"
-CONF_AEC_REFERENCE_MODE = "aec_reference"
-CONF_AEC_REF_BUFFER_MS = "aec_reference_buffer_ms"
+CONF_AEC_REFERENCE = "aec_reference"
+CONF_AEC_REFERENCE_BUFFER_MS = "aec_reference_buffer_ms"
 CONF_TELEMETRY = "telemetry"
 CONF_TELEMETRY_LOG_INTERVAL_FRAMES = "telemetry_log_interval_frames"
 CONF_AUDIO_EFFECTS = "audio_effects"
@@ -86,23 +101,15 @@ CONF_GMF_IO = "gmf_io"
 CONF_READER = "reader"
 CONF_WRITER = "writer"
 CONF_IO_SIZE = "io_size"
-CONF_BUFFER_SIZE = "buffer_size"
-CONF_TASK_STACK_IN_PSRAM = "task_stack_in_psram"
 CONF_SPEED_MONITOR = "speed_monitor"
 CONF_TASK_TIMEOUT_MS = "task_timeout_ms"
 CONF_CODEC = "codec"
-CONF_INPUT = "input"
-CONF_OUTPUT = "output"
-CONF_TYPE = "type"
 CONF_MIC_SELECTED = "mic_selected"
 CONF_GAIN_DB = "gain_db"
 CONF_REF_CHANNEL = "ref_channel"
 CONF_REF_GAIN_DB = "ref_gain_db"
 CONF_USE_MCLK = "use_mclk"
 CONF_NO_DAC_REF = "no_dac_ref"
-CONF_ON_START = "on_start"
-CONF_ON_IDLE = "on_idle"
-CONF_ON_STATE = "on_state"
 CONF_ON_MIC_START = "on_mic_start"
 CONF_ON_MIC_IDLE = "on_mic_idle"
 CONF_ON_SPEAKER_START = "on_speaker_start"
@@ -123,21 +130,26 @@ I2S_OPTIONAL_MCLK = cv.Any(
     pins.internal_gpio_output_pin_number,
 )
 
-I2S_RX_BUS_SCHEMA = cv.Schema({
-    cv.Required(CONF_I2S_NUM): cv.int_range(min=0, max=2),
-    cv.Required(CONF_I2S_LRCLK_PIN): pins.internal_gpio_output_pin_number,
-    cv.Required(CONF_I2S_BCLK_PIN): pins.internal_gpio_output_pin_number,
-    cv.Optional(CONF_I2S_MCLK_PIN, default=-1): I2S_OPTIONAL_MCLK,
-    cv.Required(CONF_I2S_DIN_PIN): pins.internal_gpio_input_pin_number,
-})
+I2S_RX_BUS_SCHEMA = cv.Schema(
+    {
+        cv.Required(CONF_I2S_NUM): cv.int_range(min=0, max=2),
+        cv.Required(CONF_I2S_LRCLK_PIN): pins.internal_gpio_output_pin_number,
+        cv.Required(CONF_I2S_BCLK_PIN): pins.internal_gpio_output_pin_number,
+        cv.Optional(CONF_I2S_MCLK_PIN, default=-1): I2S_OPTIONAL_MCLK,
+        cv.Required(CONF_I2S_DIN_PIN): pins.internal_gpio_input_pin_number,
+    }
+)
 
-I2S_TX_BUS_SCHEMA = cv.Schema({
-    cv.Required(CONF_I2S_NUM): cv.int_range(min=0, max=2),
-    cv.Required(CONF_I2S_LRCLK_PIN): pins.internal_gpio_output_pin_number,
-    cv.Required(CONF_I2S_BCLK_PIN): pins.internal_gpio_output_pin_number,
-    cv.Optional(CONF_I2S_MCLK_PIN, default=-1): I2S_OPTIONAL_MCLK,
-    cv.Required(CONF_I2S_DOUT_PIN): pins.internal_gpio_output_pin_number,
-})
+I2S_TX_BUS_SCHEMA = cv.Schema(
+    {
+        cv.Required(CONF_I2S_NUM): cv.int_range(min=0, max=2),
+        cv.Required(CONF_I2S_LRCLK_PIN): pins.internal_gpio_output_pin_number,
+        cv.Required(CONF_I2S_BCLK_PIN): pins.internal_gpio_output_pin_number,
+        cv.Optional(CONF_I2S_MCLK_PIN, default=-1): I2S_OPTIONAL_MCLK,
+        cv.Required(CONF_I2S_DOUT_PIN): pins.internal_gpio_output_pin_number,
+    }
+)
+
 
 def _validate_gmf_io_direction(config):
     io_size = config[CONF_IO_SIZE]
@@ -153,51 +165,79 @@ def _validate_gmf_io_direction(config):
 
 
 GMF_IO_DIRECTION_SCHEMA = cv.All(
-    cv.Schema({
-        # Official gmf_io knobs. All defaults are Espressif's zero/default values:
-        # zero task/buffer means synchronous IO in the caller task; non-zero task
-        # and buffer settings enable GMF's async data-bus mode.
-        cv.Optional(CONF_IO_SIZE, default=0): cv.int_range(min=0, max=262144),
-        cv.Optional(CONF_BUFFER_SIZE, default=0): cv.int_range(min=0, max=1048576),
-        cv.Optional(CONF_TASK_STACK_SIZE, default=0): cv.int_range(min=0, max=32768),
-        cv.Optional(CONF_TASK_PRIORITY, default=0): cv.int_range(min=0, max=24),
-        cv.Optional(CONF_TASK_CORE, default=0): cv.int_range(min=0, max=1),
-        cv.Optional(CONF_TASK_STACK_IN_PSRAM, default=False): cv.boolean,
-        cv.Optional(CONF_SPEED_MONITOR, default=False): cv.boolean,
-        cv.Optional(CONF_TASK_TIMEOUT_MS, default=0): cv.int_range(min=0, max=60000),
-    }),
+    cv.Schema(
+        {
+            # Official gmf_io knobs. All defaults are Espressif's zero/default values:
+            # zero task/buffer means synchronous IO in the caller task; non-zero task
+            # and buffer settings enable GMF's async data-bus mode.
+            cv.Optional(CONF_IO_SIZE, default=0): cv.int_range(min=0, max=262144),
+            cv.Optional(CONF_BUFFER_SIZE, default=0): cv.int_range(min=0, max=1048576),
+            cv.Optional(CONF_TASK_STACK_SIZE, default=0): cv.int_range(
+                min=0, max=32768
+            ),
+            cv.Optional(CONF_TASK_PRIORITY, default=0): cv.int_range(min=0, max=24),
+            cv.Optional(CONF_TASK_CORE, default=0): cv.int_range(min=0, max=1),
+            cv.Optional(CONF_TASK_STACK_IN_PSRAM, default=False): cv.boolean,
+            cv.Optional(CONF_SPEED_MONITOR, default=False): cv.boolean,
+            cv.Optional(CONF_TASK_TIMEOUT_MS, default=0): cv.int_range(
+                min=0, max=60000
+            ),
+        }
+    ),
     _validate_gmf_io_direction,
 )
 
 CODEC_INPUT_SCHEMA = cv.typed_schema(
     {
-        "es7210": cv.Schema({
-            cv.Optional(CONF_ADDRESS, default=0x40): cv.i2c_address,
-            cv.Optional(CONF_MIC_SELECTED, default=0x0F): cv.hex_uint8_t,
-            cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(min=0.0, max=37.5),
-            cv.Optional(CONF_REF_CHANNEL): cv.int_range(min=0, max=15),
-            cv.Optional(CONF_REF_GAIN_DB, default=0.0): cv.float_range(min=0.0, max=37.5),
-        }),
-        "es8311": cv.Schema({
-            cv.Optional(CONF_ADDRESS, default=0x18): cv.i2c_address,
-            cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(min=0.0, max=37.5),
-            cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
-            cv.Optional(CONF_NO_DAC_REF, default=False): cv.boolean,
-        }),
-        "es8388": cv.Schema({
-            cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
-            cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(min=0.0, max=37.5),
-        }),
-        "es8374": cv.Schema({
-            cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
-            cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(min=0.0, max=37.5),
-        }),
-        "es8389": cv.Schema({
-            cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
-            cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(min=0.0, max=37.5),
-            cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
-            cv.Optional(CONF_NO_DAC_REF, default=False): cv.boolean,
-        }),
+        "es7210": cv.Schema(
+            {
+                cv.Optional(CONF_ADDRESS, default=0x40): cv.i2c_address,
+                cv.Optional(CONF_MIC_SELECTED, default=0x0F): cv.hex_uint8_t,
+                cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(
+                    min=0.0, max=37.5
+                ),
+                cv.Optional(CONF_REF_CHANNEL): cv.int_range(min=0, max=15),
+                cv.Optional(CONF_REF_GAIN_DB, default=0.0): cv.float_range(
+                    min=0.0, max=37.5
+                ),
+            }
+        ),
+        "es8311": cv.Schema(
+            {
+                cv.Optional(CONF_ADDRESS, default=0x18): cv.i2c_address,
+                cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(
+                    min=0.0, max=37.5
+                ),
+                cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
+                cv.Optional(CONF_NO_DAC_REF, default=False): cv.boolean,
+            }
+        ),
+        "es8388": cv.Schema(
+            {
+                cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
+                cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(
+                    min=0.0, max=37.5
+                ),
+            }
+        ),
+        "es8374": cv.Schema(
+            {
+                cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
+                cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(
+                    min=0.0, max=37.5
+                ),
+            }
+        ),
+        "es8389": cv.Schema(
+            {
+                cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
+                cv.Optional(CONF_GAIN_DB, default=30.0): cv.float_range(
+                    min=0.0, max=37.5
+                ),
+                cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
+                cv.Optional(CONF_NO_DAC_REF, default=False): cv.boolean,
+            }
+        ),
     },
     lower=True,
     default_type="es7210",
@@ -205,22 +245,30 @@ CODEC_INPUT_SCHEMA = cv.typed_schema(
 
 CODEC_OUTPUT_SCHEMA = cv.typed_schema(
     {
-        "es8311": cv.Schema({
-            cv.Optional(CONF_ADDRESS, default=0x18): cv.i2c_address,
-            cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
-            cv.Optional(CONF_NO_DAC_REF, default=True): cv.boolean,
-        }),
-        "es8388": cv.Schema({
-            cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
-        }),
-        "es8374": cv.Schema({
-            cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
-        }),
-        "es8389": cv.Schema({
-            cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
-            cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
-            cv.Optional(CONF_NO_DAC_REF, default=True): cv.boolean,
-        }),
+        "es8311": cv.Schema(
+            {
+                cv.Optional(CONF_ADDRESS, default=0x18): cv.i2c_address,
+                cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
+                cv.Optional(CONF_NO_DAC_REF, default=True): cv.boolean,
+            }
+        ),
+        "es8388": cv.Schema(
+            {
+                cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
+            }
+        ),
+        "es8374": cv.Schema(
+            {
+                cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
+            }
+        ),
+        "es8389": cv.Schema(
+            {
+                cv.Optional(CONF_ADDRESS, default=0x20): cv.i2c_address,
+                cv.Optional(CONF_USE_MCLK, default=True): cv.boolean,
+                cv.Optional(CONF_NO_DAC_REF, default=True): cv.boolean,
+            }
+        ),
     },
     lower=True,
     default_type="es8311",
@@ -231,8 +279,12 @@ ESPAudioStack = esp_audio_stack_ns.class_("ESPAudioStack", cg.Component)
 StartAction = esp_audio_stack_ns.class_("StartAction", automation.Action)
 StopAction = esp_audio_stack_ns.class_("StopAction", automation.Action)
 StopAndWaitAction = esp_audio_stack_ns.class_("StopAndWaitAction", automation.Action)
-SuspendOtaWatchdogAction = esp_audio_stack_ns.class_("SuspendOtaWatchdogAction", automation.Action)
-RestoreOtaWatchdogAction = esp_audio_stack_ns.class_("RestoreOtaWatchdogAction", automation.Action)
+SuspendOtaWatchdogAction = esp_audio_stack_ns.class_(
+    "SuspendOtaWatchdogAction", automation.Action
+)
+RestoreOtaWatchdogAction = esp_audio_stack_ns.class_(
+    "RestoreOtaWatchdogAction", automation.Action
+)
 IsIdleCondition = esp_audio_stack_ns.class_("IsIdleCondition", automation.Condition)
 
 # AudioProcessor abstract interface (defined in audio_processor/audio_processor.h)
@@ -254,8 +306,13 @@ I2S_PORTS = {
 
 # SoC variants with TDM support (from SOC_I2S_SUPPORTS_TDM in soc_caps.h)
 TDM_VARIANTS = {
-    VARIANT_ESP32C3, VARIANT_ESP32C5, VARIANT_ESP32C6, VARIANT_ESP32C61,
-    VARIANT_ESP32H2, VARIANT_ESP32S3, VARIANT_ESP32P4,
+    VARIANT_ESP32C3,
+    VARIANT_ESP32C5,
+    VARIANT_ESP32C6,
+    VARIANT_ESP32C61,
+    VARIANT_ESP32H2,
+    VARIANT_ESP32S3,
+    VARIANT_ESP32P4,
 }
 
 
@@ -281,7 +338,7 @@ def _validate_tdm_config(config):
     """Validate TDM reference configuration."""
     use_tdm = config.get(CONF_USE_TDM_REFERENCE, False)
     use_tdm_bus = use_tdm or CONF_TDM_MIC_SLOTS in config
-    use_stereo = config.get(CONF_USE_STEREO_AEC_REF, False)
+    use_stereo = config.get(CONF_USE_STEREO_AEC_REFERENCE, False)
 
     if use_tdm and use_stereo:
         raise cv.Invalid(
@@ -290,7 +347,9 @@ def _validate_tdm_config(config):
 
     if use_tdm_bus:
         if config.get(CONF_SPEAKER_CHANNELS, 1) != 1:
-            raise cv.Invalid("speaker_channels: 2 is only supported on STD I2S, not TDM")
+            raise cv.Invalid(
+                "speaker_channels: 2 is only supported on STD I2S, not TDM"
+            )
         total_slots = config.get(CONF_TDM_TOTAL_SLOTS, 4)
         ref_slot = config.get(CONF_TDM_REF_SLOT, 1)
         tx_slot = config.get(CONF_TDM_TX_SLOT, 0)
@@ -312,7 +371,9 @@ def _validate_tdm_config(config):
                 f"(highest slot index)"
             )
     elif config.get(CONF_SPEAKER_CHANNELS, 1) > config.get(CONF_NUM_CHANNELS, 1):
-        raise cv.Invalid("speaker_channels: 2 requires num_channels: 2 on the physical TX bus")
+        raise cv.Invalid(
+            "speaker_channels: 2 requires num_channels: 2 on the physical TX bus"
+        )
 
     return config
 
@@ -320,7 +381,9 @@ def _validate_tdm_config(config):
 def _validate_pcm_format(config):
     """Validate that PCM short/long formats require TDM mode."""
     fmt = config.get(CONF_I2S_COMM_FMT, "philips")
-    use_tdm_bus = config.get(CONF_USE_TDM_REFERENCE, False) or CONF_TDM_MIC_SLOTS in config
+    use_tdm_bus = (
+        config.get(CONF_USE_TDM_REFERENCE, False) or CONF_TDM_MIC_SLOTS in config
+    )
     if fmt in ("pcm_short", "pcm_long") and not use_tdm_bus:
         raise cv.Invalid(
             f"i2s_comm_fmt '{fmt}' requires TDM slots "
@@ -341,14 +404,21 @@ def _validate_dual_bus_config(config):
             raise cv.Invalid("rx_bus/tx_bus dual-bus mode does not support TDM yet")
         if config[CONF_RX_BUS][CONF_I2S_NUM] == config[CONF_TX_BUS][CONF_I2S_NUM]:
             raise cv.Invalid("rx_bus and tx_bus must use different i2s_num values")
-        for pin_key in (CONF_I2S_LRCLK_PIN, CONF_I2S_BCLK_PIN, CONF_I2S_DIN_PIN, CONF_I2S_DOUT_PIN):
+        for pin_key in (
+            CONF_I2S_LRCLK_PIN,
+            CONF_I2S_BCLK_PIN,
+            CONF_I2S_DIN_PIN,
+            CONF_I2S_DOUT_PIN,
+        ):
             if config.get(pin_key, -1) != -1:
                 raise cv.Invalid(
                     f"{pin_key} must be set inside rx_bus/tx_bus when dual-bus mode is used"
                 )
     else:
         if config.get(CONF_I2S_LRCLK_PIN, -1) == -1:
-            raise cv.Invalid("i2s_lrclk_pin is required when rx_bus/tx_bus are not used")
+            raise cv.Invalid(
+                "i2s_lrclk_pin is required when rx_bus/tx_bus are not used"
+            )
         if config.get(CONF_I2S_BCLK_PIN, -1) == -1:
             raise cv.Invalid("i2s_bclk_pin is required when rx_bus/tx_bus are not used")
 
@@ -356,138 +426,187 @@ def _validate_dual_bus_config(config):
 
 
 CONFIG_SCHEMA = cv.All(
-    cv.Schema({
-        cv.GenerateID(): cv.declare_id(ESPAudioStack),
-        cv.Optional(CONF_I2S_LRCLK_PIN, default=-1): cv.Any(
-            cv.int_range(min=-1, max=-1),
-            pins.internal_gpio_output_pin_number,
-        ),
-        cv.Optional(CONF_I2S_BCLK_PIN, default=-1): cv.Any(
-            cv.int_range(min=-1, max=-1),
-            pins.internal_gpio_output_pin_number,
-        ),
-        cv.Optional(CONF_I2S_MCLK_PIN, default=-1): I2S_OPTIONAL_MCLK,
-        cv.Optional(CONF_I2S_DIN_PIN, default=-1): cv.Any(
-            cv.int_range(min=-1, max=-1),
-            pins.internal_gpio_input_pin_number,
-        ),
-        cv.Optional(CONF_I2S_DOUT_PIN, default=-1): cv.Any(
-            cv.int_range(min=-1, max=-1),
-            pins.internal_gpio_output_pin_number,
-        ),
-        cv.Optional(CONF_SAMPLE_RATE, default=16000): cv.int_range(min=8000, max=48000),
-        cv.Optional(CONF_BITS_PER_SAMPLE, default=16): cv.one_of(16, 24, 32, int=True),
-        cv.Optional(CONF_SLOT_BIT_WIDTH, default="auto"): cv.Any(
-            cv.one_of("auto", lower=True),
-            cv.one_of(16, 24, 32, int=True),
-        ),
-        cv.Optional(CONF_CORRECT_DC_OFFSET, default=False): cv.boolean,
-        cv.Optional(CONF_NUM_CHANNELS, default=1): cv.one_of(1, 2, int=True),
-        cv.Optional(CONF_SPEAKER_CHANNELS, default=1): cv.one_of(1, 2, int=True),
-        cv.Optional(CONF_MIC_CHANNEL, default="left"): cv.one_of("left", "right", lower=True),
-        cv.Optional(CONF_RX_SLOT_MODE, default="mono"): cv.one_of("mono", "stereo", lower=True),
-        cv.Optional(CONF_TX_CHANNEL, default="left"): cv.one_of("left", "right", lower=True),
-        cv.Optional(CONF_I2S_MODE, default="primary"): cv.one_of("primary", "secondary", lower=True),
-        cv.Optional(CONF_USE_APLL, default=False): cv.boolean,
-        cv.Optional(CONF_I2S_NUM, default=0): cv.int_range(min=0, max=2),
-        cv.Optional(CONF_RX_BUS): I2S_RX_BUS_SCHEMA,
-        cv.Optional(CONF_TX_BUS): I2S_TX_BUS_SCHEMA,
-        cv.Optional(CONF_MCLK_MULTIPLE, default=256): cv.one_of(128, 256, 384, 512, int=True),
-        cv.Optional(CONF_I2S_COMM_FMT, default="philips"): cv.one_of(
-            "philips", "msb", "pcm_short", "pcm_long", lower=True,
-        ),
-        # Output sample rate for mic/AEC/MWW/VA (converted from bus rate).
-        # If omitted, equals sample_rate (no rate conversion).
-        cv.Optional(CONF_OUTPUT_SAMPLE_RATE): cv.int_range(min=8000, max=48000),
-        cv.Optional(CONF_PROCESSOR_ID): cv.use_id(AudioProcessor),
-        # Input gain before the processor: <1.0 attenuates hot mics,
-        # >1.0 amplifies weak mics. This is gain staging, not a separate mic output.
-        cv.Optional(CONF_INPUT_GAIN, default=1.0): cv.float_range(min=0.01, max=32.0),
-        # 0% remains hard mute. This controls how loud mid-range percentages feel:
-        # -49 dB matches ESPHome's software curve, while codec-dev defaults near
-        # -50 dB if this option is omitted on hardware codec outputs.
-        cv.Optional(CONF_MASTER_VOLUME_MIN_DB): cv.float_range(min=-96.0, max=0.0),
-        # ES8311 digital feedback: RX is stereo with L=ADC(mic), R=DAC(reference)
-        # when no_dac_ref is false. Espressif's driver writes REG44=0x58,
-        # documented in-source as "ADCL + DACR".
-        cv.Optional(CONF_USE_STEREO_AEC_REF, default=False): cv.boolean,
-        # Which stereo channel carries the AEC reference (default: left)
-        cv.Optional(CONF_REFERENCE_CHANNEL, default="left"): cv.one_of("left", "right", lower=True),
-        # TDM hardware reference: ES7210 in TDM mode with one slot carrying DAC feedback
-        cv.Optional(CONF_USE_TDM_REFERENCE, default=False): cv.boolean,
-        cv.Optional(CONF_TDM_TOTAL_SLOTS, default=4): cv.int_range(min=2, max=8),
-        cv.Optional(CONF_TDM_MIC_SLOT, default=0): cv.int_range(min=0, max=7),
-        cv.Optional(CONF_TDM_MIC_SLOTS): cv.All(
-            cv.ensure_list(cv.int_range(min=0, max=7)),
-            cv.Length(min=1, max=2),
-        ),
-        cv.Optional(CONF_TDM_REF_SLOT, default=1): cv.int_range(min=0, max=7),
-        cv.Optional(CONF_TDM_TX_SLOT, default=0): cv.int_range(min=0, max=7),
-        # Audio task tuning (advanced)
-        cv.Optional(CONF_TASK_PRIORITY, default=19): cv.int_range(min=1, max=24),
-        cv.Optional(CONF_TASK_CORE, default=0): cv.int_range(min=-1, max=1),
-        cv.Optional(CONF_TASK_STACK_SIZE, default=8192): cv.int_range(min=4096, max=32768),
-        # Official IDF i2s_chan_config_t DMA knobs. If dma_frame_num is omitted,
-        # the component keeps the historical ~10 ms/descriptor auto sizing.
-        cv.Optional(CONF_DMA_DESC_NUM, default=6): cv.int_range(min=2, max=16),
-        cv.Optional(CONF_DMA_FRAME_NUM): cv.int_range(min=64, max=4092),
-        # Use PSRAM for non-DMA audio buffers (saves ~15KB internal RAM).
-        # Requires PSRAM. DMA buffers (I2S RX/TX) always use internal RAM.
-        cv.Optional(CONF_BUFFERS_IN_PSRAM, default=False): cv.boolean,
-        # Place the audio task's own stack in PSRAM. Saves ~8KB internal RAM
-        # but increases per-frame latency because every function return has
-        # to traverse PSRAM. Only enable on boards that need the internal
-        # headroom (e.g. waveshare-s3 running 2-mic Speech Enhancement plus
-        # concurrent TLS streams). Requires CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y.
-        cv.Optional(CONF_AUDIO_TASK_STACK_IN_PSRAM, default=False): cv.boolean,
-        # AEC reference mode for no-codec setups (ignored if stereo/TDM ref is configured):
-        #   ring_buffer: Espressif ADF TYPE2-style software reference, default
-        #   previous_frame: light mode using the previous TX frame, no TYPE2 ring
-        cv.Optional(CONF_AEC_REFERENCE_MODE, default="ring_buffer"): cv.one_of(
-            "previous_frame", "ring_buffer", lower=True,
-        ),
-        # Ring buffer capacity in ms (only used with aec_reference: ring_buffer)
-        cv.Optional(CONF_AEC_REF_BUFFER_MS, default=80): cv.int_range(min=32, max=500),
-        # Place AEC reference ring buffer in PSRAM. Default false = internal RAM
-        # (~13.6 us/frame faster on Core 0, costs ~3-5 KB internal). Set true to
-        # save internal RAM at the cost of Core 0 PSRAM traffic.
-        cv.Optional(CONF_AEC_REF_RING_IN_PSRAM, default=False): cv.boolean,
-        # Enable per-stage cycle counting and diagnostics (debug only, adds overhead)
-        cv.Optional(CONF_TELEMETRY, default=False): cv.boolean,
-        cv.Optional(CONF_TELEMETRY_LOG_INTERVAL_FRAMES, default=128): cv.int_range(min=1, max=8192),
-        cv.Optional(CONF_AUDIO_EFFECTS, default={}): cv.Schema({
-            cv.Optional(CONF_RATE_CVT_COMPLEXITY, default=3): cv.int_range(min=1, max=3),
-            cv.Optional(CONF_RATE_CVT_PERF_TYPE, default="speed"): cv.one_of(
-                *RATE_CVT_PERF_TYPES, lower=True,
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(ESPAudioStack),
+            cv.Optional(CONF_I2S_LRCLK_PIN, default=-1): cv.Any(
+                cv.int_range(min=-1, max=-1),
+                pins.internal_gpio_output_pin_number,
             ),
-        }),
-        cv.Optional(CONF_GMF_IO, default={}): cv.Schema({
-            cv.Optional(CONF_READER, default={}): GMF_IO_DIRECTION_SCHEMA,
-            cv.Optional(CONF_WRITER, default={}): GMF_IO_DIRECTION_SCHEMA,
-        }),
-        cv.Optional(CONF_CODEC): cv.Schema({
-            cv.GenerateID(CONF_I2C_ID): cv.use_id(i2c.I2CBus),
-            cv.Optional(CONF_INPUT): CODEC_INPUT_SCHEMA,
-            cv.Optional(CONF_OUTPUT): CODEC_OUTPUT_SCHEMA,
-        }),
-        # Lifecycle hooks for board-level power policy. Use the speaker hooks
-        # for amp power gating; the generic audio-stack hooks also fire on mic-only
-        # activity such as wake-word listeners.
-        cv.Optional(CONF_ON_START): automation.validate_automation(single=True),
-        cv.Optional(CONF_ON_IDLE): automation.validate_automation(single=True),
-        # Minimal runtime state machine. `state` is one of:
-        # idle, mic, speaker, duplex.
-        cv.Optional(CONF_ON_STATE): automation.validate_automation(single=True),
-        cv.Optional(CONF_ON_MIC_START): automation.validate_automation(single=True),
-        cv.Optional(CONF_ON_MIC_IDLE): automation.validate_automation(single=True),
-        cv.Optional(CONF_ON_SPEAKER_START): automation.validate_automation(single=True),
-        cv.Optional(CONF_ON_SPEAKER_IDLE): automation.validate_automation(single=True),
-        # Semantic aliases for board amplifier/power-enable control. They fire
-        # on the same edges as speaker playback, but keep YAML intent separate
-        # from the ESPHome speaker abstraction.
-        cv.Optional(CONF_ON_AMPLIFIER_REQUIRED): automation.validate_automation(single=True),
-        cv.Optional(CONF_ON_AMPLIFIER_IDLE): automation.validate_automation(single=True),
-    }).extend(cv.COMPONENT_SCHEMA),
+            cv.Optional(CONF_I2S_BCLK_PIN, default=-1): cv.Any(
+                cv.int_range(min=-1, max=-1),
+                pins.internal_gpio_output_pin_number,
+            ),
+            cv.Optional(CONF_I2S_MCLK_PIN, default=-1): I2S_OPTIONAL_MCLK,
+            cv.Optional(CONF_I2S_DIN_PIN, default=-1): cv.Any(
+                cv.int_range(min=-1, max=-1),
+                pins.internal_gpio_input_pin_number,
+            ),
+            cv.Optional(CONF_I2S_DOUT_PIN, default=-1): cv.Any(
+                cv.int_range(min=-1, max=-1),
+                pins.internal_gpio_output_pin_number,
+            ),
+            cv.Optional(CONF_SAMPLE_RATE, default=16000): cv.int_range(
+                min=8000, max=48000
+            ),
+            cv.Optional(CONF_BITS_PER_SAMPLE, default=16): cv.one_of(
+                16, 24, 32, int=True
+            ),
+            cv.Optional(CONF_SLOT_BIT_WIDTH, default="auto"): cv.Any(
+                cv.one_of("auto", lower=True),
+                cv.one_of(16, 24, 32, int=True),
+            ),
+            cv.Optional(CONF_CORRECT_DC_OFFSET, default=False): cv.boolean,
+            cv.Optional(CONF_NUM_CHANNELS, default=1): cv.one_of(1, 2, int=True),
+            cv.Optional(CONF_SPEAKER_CHANNELS, default=1): cv.one_of(1, 2, int=True),
+            cv.Optional(CONF_MIC_CHANNEL, default="left"): cv.one_of(
+                "left", "right", lower=True
+            ),
+            cv.Optional(CONF_RX_SLOT_MODE, default="mono"): cv.one_of(
+                "mono", "stereo", lower=True
+            ),
+            cv.Optional(CONF_TX_CHANNEL, default="left"): cv.one_of(
+                "left", "right", lower=True
+            ),
+            cv.Optional(CONF_I2S_MODE, default="primary"): cv.one_of(
+                "primary", "secondary", lower=True
+            ),
+            cv.Optional(CONF_USE_APLL, default=False): cv.boolean,
+            cv.Optional(CONF_I2S_NUM, default=0): cv.int_range(min=0, max=2),
+            cv.Optional(CONF_RX_BUS): I2S_RX_BUS_SCHEMA,
+            cv.Optional(CONF_TX_BUS): I2S_TX_BUS_SCHEMA,
+            cv.Optional(CONF_MCLK_MULTIPLE, default=256): cv.one_of(
+                128, 256, 384, 512, int=True
+            ),
+            cv.Optional(CONF_I2S_COMM_FMT, default="philips"): cv.one_of(
+                "philips",
+                "msb",
+                "pcm_short",
+                "pcm_long",
+                lower=True,
+            ),
+            # Output sample rate for mic/AEC/MWW/VA (converted from bus rate).
+            # If omitted, equals sample_rate (no rate conversion).
+            cv.Optional(CONF_OUTPUT_SAMPLE_RATE): cv.int_range(min=8000, max=48000),
+            cv.Optional(CONF_PROCESSOR_ID): cv.use_id(AudioProcessor),
+            # Input gain before the processor: <1.0 attenuates hot mics,
+            # >1.0 amplifies weak mics. This is gain staging, not a separate mic output.
+            cv.Optional(CONF_INPUT_GAIN, default=1.0): cv.float_range(
+                min=0.01, max=32.0
+            ),
+            # 0% remains hard mute. This controls how loud mid-range percentages feel:
+            # -49 dB matches ESPHome's software curve, while codec-dev defaults near
+            # -50 dB if this option is omitted on hardware codec outputs.
+            cv.Optional(CONF_MASTER_VOLUME_MIN_DB): cv.float_range(min=-96.0, max=0.0),
+            # ES8311 digital feedback: RX is stereo with L=ADC(mic), R=DAC(reference)
+            # when no_dac_ref is false. Espressif's driver writes REG44=0x58,
+            # documented in-source as "ADCL + DACR".
+            cv.Optional(CONF_USE_STEREO_AEC_REFERENCE, default=False): cv.boolean,
+            # Which stereo channel carries the AEC reference (default: left)
+            cv.Optional(CONF_REFERENCE_CHANNEL, default="left"): cv.one_of(
+                "left", "right", lower=True
+            ),
+            # TDM hardware reference: ES7210 in TDM mode with one slot carrying DAC feedback
+            cv.Optional(CONF_USE_TDM_REFERENCE, default=False): cv.boolean,
+            cv.Optional(CONF_TDM_TOTAL_SLOTS, default=4): cv.int_range(min=2, max=8),
+            cv.Optional(CONF_TDM_MIC_SLOT, default=0): cv.int_range(min=0, max=7),
+            cv.Optional(CONF_TDM_MIC_SLOTS): cv.All(
+                cv.ensure_list(cv.int_range(min=0, max=7)),
+                cv.Length(min=1, max=2),
+            ),
+            cv.Optional(CONF_TDM_REF_SLOT, default=1): cv.int_range(min=0, max=7),
+            cv.Optional(CONF_TDM_TX_SLOT, default=0): cv.int_range(min=0, max=7),
+            # Audio task tuning (advanced)
+            cv.Optional(CONF_TASK_PRIORITY, default=19): cv.int_range(min=1, max=24),
+            cv.Optional(CONF_TASK_CORE, default=0): cv.int_range(min=-1, max=1),
+            cv.Optional(CONF_TASK_STACK_SIZE, default=8192): cv.int_range(
+                min=4096, max=32768
+            ),
+            # Official IDF i2s_chan_config_t DMA knobs. If dma_frame_num is omitted,
+            # the component keeps the historical ~10 ms/descriptor auto sizing.
+            cv.Optional(CONF_DMA_DESC_NUM, default=6): cv.int_range(min=2, max=16),
+            cv.Optional(CONF_DMA_FRAME_NUM): cv.int_range(min=64, max=4092),
+            # Use PSRAM for non-DMA audio buffers (saves ~15KB internal RAM).
+            # Requires PSRAM. DMA buffers (I2S RX/TX) always use internal RAM.
+            cv.Optional(CONF_BUFFERS_IN_PSRAM, default=False): cv.boolean,
+            # Place the audio task's own stack in PSRAM. Saves ~8KB internal RAM
+            # but increases per-frame latency because every function return has
+            # to traverse PSRAM. Only enable on boards that need the internal
+            # headroom (e.g. waveshare-s3 running 2-mic Speech Enhancement plus
+            # concurrent TLS streams). Requires CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y.
+            cv.Optional(CONF_AUDIO_TASK_STACK_IN_PSRAM, default=False): cv.boolean,
+            # AEC reference mode for no-codec setups (ignored if stereo/TDM ref is configured):
+            #   ring_buffer: Espressif ADF TYPE2-style software reference, default
+            #   previous_frame: light mode using the previous TX frame, no TYPE2 ring
+            cv.Optional(CONF_AEC_REFERENCE, default="ring_buffer"): cv.one_of(
+                "previous_frame",
+                "ring_buffer",
+                lower=True,
+            ),
+            # Ring buffer capacity in ms (only used with aec_reference: ring_buffer)
+            cv.Optional(CONF_AEC_REFERENCE_BUFFER_MS, default=80): cv.int_range(
+                min=32, max=500
+            ),
+            # Place AEC reference ring buffer in PSRAM. Default false = internal RAM
+            # (~13.6 us/frame faster on Core 0, costs ~3-5 KB internal). Set true to
+            # save internal RAM at the cost of Core 0 PSRAM traffic.
+            cv.Optional(CONF_AEC_REF_RING_IN_PSRAM, default=False): cv.boolean,
+            # Enable per-stage cycle counting and diagnostics (debug only, adds overhead)
+            cv.Optional(CONF_TELEMETRY, default=False): cv.boolean,
+            cv.Optional(CONF_TELEMETRY_LOG_INTERVAL_FRAMES, default=128): cv.int_range(
+                min=1, max=8192
+            ),
+            cv.Optional(CONF_AUDIO_EFFECTS, default={}): cv.Schema(
+                {
+                    cv.Optional(CONF_RATE_CVT_COMPLEXITY, default=3): cv.int_range(
+                        min=1, max=3
+                    ),
+                    cv.Optional(CONF_RATE_CVT_PERF_TYPE, default="speed"): cv.one_of(
+                        *RATE_CVT_PERF_TYPES,
+                        lower=True,
+                    ),
+                }
+            ),
+            cv.Optional(CONF_GMF_IO, default={}): cv.Schema(
+                {
+                    cv.Optional(CONF_READER, default={}): GMF_IO_DIRECTION_SCHEMA,
+                    cv.Optional(CONF_WRITER, default={}): GMF_IO_DIRECTION_SCHEMA,
+                }
+            ),
+            cv.Optional(CONF_CODEC): cv.Schema(
+                {
+                    cv.GenerateID(CONF_I2C_ID): cv.use_id(i2c.I2CBus),
+                    cv.Optional(CONF_INPUT): CODEC_INPUT_SCHEMA,
+                    cv.Optional(CONF_OUTPUT): CODEC_OUTPUT_SCHEMA,
+                }
+            ),
+            # Lifecycle hooks for board-level power policy. Use the speaker hooks
+            # for amp power gating; the generic audio-stack hooks also fire on mic-only
+            # activity such as wake-word listeners.
+            cv.Optional(CONF_ON_START): automation.validate_automation(single=True),
+            cv.Optional(CONF_ON_IDLE): automation.validate_automation(single=True),
+            # Minimal runtime state machine. `state` is one of:
+            # idle, mic, speaker, duplex.
+            cv.Optional(CONF_ON_STATE): automation.validate_automation(single=True),
+            cv.Optional(CONF_ON_MIC_START): automation.validate_automation(single=True),
+            cv.Optional(CONF_ON_MIC_IDLE): automation.validate_automation(single=True),
+            cv.Optional(CONF_ON_SPEAKER_START): automation.validate_automation(
+                single=True
+            ),
+            cv.Optional(CONF_ON_SPEAKER_IDLE): automation.validate_automation(
+                single=True
+            ),
+            # Semantic aliases for board amplifier/power-enable control. They fire
+            # on the same edges as speaker playback, but keep YAML intent separate
+            # from the ESPHome speaker abstraction.
+            cv.Optional(CONF_ON_AMPLIFIER_REQUIRED): automation.validate_automation(
+                single=True
+            ),
+            cv.Optional(CONF_ON_AMPLIFIER_IDLE): automation.validate_automation(
+                single=True
+            ),
+        }
+    ).extend(cv.COMPONENT_SCHEMA),
     _validate_sample_rates,
     _validate_tdm_config,
     _validate_pcm_format,
@@ -504,7 +623,9 @@ def _final_validate(config):
     max_ports = I2S_PORTS[variant]
     if CONF_RX_BUS in config:
         if max_ports < 2:
-            raise cv.Invalid(f"rx_bus/tx_bus dual-bus mode requires at least two I2S ports on {variant}")
+            raise cv.Invalid(
+                f"rx_bus/tx_bus dual-bus mode requires at least two I2S ports on {variant}"
+            )
         for bus_key in (CONF_RX_BUS, CONF_TX_BUS):
             i2s_num = config[bus_key][CONF_I2S_NUM]
             if i2s_num >= max_ports:
@@ -520,7 +641,9 @@ def _final_validate(config):
                 f"(max port index: {max_ports - 1})"
             )
 
-    use_tdm_bus = config.get(CONF_USE_TDM_REFERENCE, False) or CONF_TDM_MIC_SLOTS in config
+    use_tdm_bus = (
+        config.get(CONF_USE_TDM_REFERENCE, False) or CONF_TDM_MIC_SLOTS in config
+    )
     if use_tdm_bus and variant not in TDM_VARIANTS:
         raise cv.Invalid(
             f"TDM options require TDM support, but {variant} does not have SOC_I2S_SUPPORTS_TDM"
@@ -528,8 +651,12 @@ def _final_validate(config):
 
     # Single-core SoCs cannot pin to Core 1
     SINGLE_CORE_VARIANTS = {
-        VARIANT_ESP32C3, VARIANT_ESP32C5, VARIANT_ESP32C6, VARIANT_ESP32C61,
-        VARIANT_ESP32H2, VARIANT_ESP32S2,
+        VARIANT_ESP32C3,
+        VARIANT_ESP32C5,
+        VARIANT_ESP32C6,
+        VARIANT_ESP32C61,
+        VARIANT_ESP32H2,
+        VARIANT_ESP32S2,
     }
     task_core = config.get(CONF_TASK_CORE, 0)
     if task_core > 0 and variant in SINGLE_CORE_VARIANTS:
@@ -546,15 +673,17 @@ def _final_validate(config):
                 "(single-core SoC)"
             )
         if CONF_CODEC not in config:
-            active_gmf_io = any((
-                direction_conf.get(CONF_IO_SIZE, 0),
-                direction_conf.get(CONF_BUFFER_SIZE, 0),
-                direction_conf.get(CONF_TASK_STACK_SIZE, 0),
-                direction_conf.get(CONF_TASK_PRIORITY, 0),
-                direction_conf.get(CONF_TASK_STACK_IN_PSRAM, False),
-                direction_conf.get(CONF_SPEED_MONITOR, False),
-                direction_conf.get(CONF_TASK_TIMEOUT_MS, 0),
-            ))
+            active_gmf_io = any(
+                (
+                    direction_conf.get(CONF_IO_SIZE, 0),
+                    direction_conf.get(CONF_BUFFER_SIZE, 0),
+                    direction_conf.get(CONF_TASK_STACK_SIZE, 0),
+                    direction_conf.get(CONF_TASK_PRIORITY, 0),
+                    direction_conf.get(CONF_TASK_STACK_IN_PSRAM, False),
+                    direction_conf.get(CONF_SPEED_MONITOR, False),
+                    direction_conf.get(CONF_TASK_TIMEOUT_MS, 0),
+                )
+            )
             if active_gmf_io:
                 raise cv.Invalid(
                     f"gmf_io.{direction} requires codec:. No-codec profiles use "
@@ -571,6 +700,7 @@ def _final_validate(config):
         )
 
     from esphome.core import CORE
+
     full_config = CORE.config or {}
 
     # esp_aec and esp_afe are mutually exclusive: both provide AudioProcessor
@@ -589,9 +719,19 @@ def _final_validate(config):
 
     intercom_configs = full_config.get("intercom_api", [])
     if intercom_configs:
-        has_audio_stack_processor = CONF_PROCESSOR_ID in config and config.get(CONF_PROCESSOR_ID) is not None
-        for ic in (intercom_configs if isinstance(intercom_configs, list) else [intercom_configs]):
-            if isinstance(ic, dict) and ic.get("processor_id") is not None and has_audio_stack_processor:
+        has_audio_stack_processor = (
+            CONF_PROCESSOR_ID in config and config.get(CONF_PROCESSOR_ID) is not None
+        )
+        for ic in (
+            intercom_configs
+            if isinstance(intercom_configs, list)
+            else [intercom_configs]
+        ):
+            if (
+                isinstance(ic, dict)
+                and ic.get("processor_id") is not None
+                and has_audio_stack_processor
+            ):
                 raise cv.Invalid(
                     "Both esp_audio_stack and intercom_api have processor_id configured. "
                     "This causes a race condition on the audio processor. "
@@ -613,7 +753,7 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     use_tdm_bus = config[CONF_USE_TDM_REFERENCE] or CONF_TDM_MIC_SLOTS in config
     use_tdm_ref = config[CONF_USE_TDM_REFERENCE]
-    use_stereo_ref = config[CONF_USE_STEREO_AEC_REF]
+    use_stereo_ref = config[CONF_USE_STEREO_AEC_REFERENCE]
     has_processor = CONF_PROCESSOR_ID in config
     output_rate = config.get(CONF_OUTPUT_SAMPLE_RATE, config[CONF_SAMPLE_RATE])
     use_rate_cvt = output_rate != config[CONF_SAMPLE_RATE]
@@ -623,19 +763,21 @@ async def to_code(config):
     use_multi_rx = use_tdm_bus or use_stereo_ref or use_rx_slot_stereo
     use_mono_rx_effects = not use_multi_rx and (use_rate_cvt or use_32bit)
     use_mono_ref = has_processor and not use_tdm_ref and not use_stereo_ref
-    use_ring_ref = use_mono_ref and config[CONF_AEC_REFERENCE_MODE] == "ring_buffer"
-    use_previous_frame_ref = use_mono_ref and config[CONF_AEC_REFERENCE_MODE] == "previous_frame"
+    use_ring_ref = use_mono_ref and config[CONF_AEC_REFERENCE] == "ring_buffer"
+    use_previous_frame_ref = (
+        use_mono_ref and config[CONF_AEC_REFERENCE] == "previous_frame"
+    )
 
     # esp_audio_stack refactor policy: track Espressif registry latest by default.
     # ESPHome requires `ref`; "*" maps to an unpinned/latest registry version.
     # Replace it only when a concrete upstream regression is documented.
     has_hardware_codec = CONF_CODEC in config
     has_output_codec = has_hardware_codec and CONF_OUTPUT in config[CONF_CODEC]
-    add_idf_component(name="esphome/esp-audio-libs", ref="*")
-    add_idf_component(name="espressif/esp_audio_effects", ref="*")
+    add_idf_component(name="esphome/esp-audio-libs", ref="3.2.1")
+    add_idf_component(name="espressif/esp_audio_effects", ref="1.4.0")
     if has_hardware_codec:
-        add_idf_component(name="espressif/esp_codec_dev", ref="*")
-        add_idf_component(name="espressif/gmf_io", ref="*")
+        add_idf_component(name="espressif/esp_codec_dev", ref="1.6.2")
+        add_idf_component(name="espressif/gmf_io", ref="1.0.0")
     await cg.register_component(var, config)
 
     # Define USE_ESP_AUDIO_STACK so other components know it's available
@@ -709,20 +851,24 @@ async def to_code(config):
     if CONF_RX_BUS in config:
         rx_bus = config[CONF_RX_BUS]
         tx_bus = config[CONF_TX_BUS]
-        cg.add(var.configure_rx_bus(
-            rx_bus[CONF_I2S_NUM],
-            rx_bus[CONF_I2S_LRCLK_PIN],
-            rx_bus[CONF_I2S_BCLK_PIN],
-            rx_bus[CONF_I2S_MCLK_PIN],
-            rx_bus[CONF_I2S_DIN_PIN],
-        ))
-        cg.add(var.configure_tx_bus(
-            tx_bus[CONF_I2S_NUM],
-            tx_bus[CONF_I2S_LRCLK_PIN],
-            tx_bus[CONF_I2S_BCLK_PIN],
-            tx_bus[CONF_I2S_MCLK_PIN],
-            tx_bus[CONF_I2S_DOUT_PIN],
-        ))
+        cg.add(
+            var.configure_rx_bus(
+                rx_bus[CONF_I2S_NUM],
+                rx_bus[CONF_I2S_LRCLK_PIN],
+                rx_bus[CONF_I2S_BCLK_PIN],
+                rx_bus[CONF_I2S_MCLK_PIN],
+                rx_bus[CONF_I2S_DIN_PIN],
+            )
+        )
+        cg.add(
+            var.configure_tx_bus(
+                tx_bus[CONF_I2S_NUM],
+                tx_bus[CONF_I2S_LRCLK_PIN],
+                tx_bus[CONF_I2S_BCLK_PIN],
+                tx_bus[CONF_I2S_MCLK_PIN],
+                tx_bus[CONF_I2S_DOUT_PIN],
+            )
+        )
 
     # Map comm format string to enum index
     comm_fmt_map = {"philips": 0, "msb": 1, "pcm_short": 2, "pcm_long": 3}
@@ -749,7 +895,7 @@ async def to_code(config):
         cg.add(var.set_master_volume_min_db(config[CONF_MASTER_VOLUME_MIN_DB]))
 
     # ES8311 digital feedback mode: stereo RX with L=mic, R=ref
-    cg.add(var.set_use_stereo_aec_reference(config[CONF_USE_STEREO_AEC_REF]))
+    cg.add(var.set_use_stereo_aec_reference(config[CONF_USE_STEREO_AEC_REFERENCE]))
 
     # Reference channel selection (left or right)
     cg.add(var.set_reference_channel_right(config[CONF_REFERENCE_CHANNEL] == "right"))
@@ -776,44 +922,54 @@ async def to_code(config):
             input_conf = codec_conf[CONF_INPUT]
             if input_conf[CONF_TYPE] == "es7210":
                 has_ref_gain = CONF_REF_CHANNEL in input_conf
-                cg.add(var.configure_es7210_codec(
-                    input_conf[CONF_ADDRESS],
-                    input_conf[CONF_MIC_SELECTED],
-                    input_conf[CONF_GAIN_DB],
-                    has_ref_gain,
-                    input_conf.get(CONF_REF_CHANNEL, 0),
-                    input_conf[CONF_REF_GAIN_DB],
-                ))
+                cg.add(
+                    var.configure_es7210_codec(
+                        input_conf[CONF_ADDRESS],
+                        input_conf[CONF_MIC_SELECTED],
+                        input_conf[CONF_GAIN_DB],
+                        has_ref_gain,
+                        input_conf.get(CONF_REF_CHANNEL, 0),
+                        input_conf[CONF_REF_GAIN_DB],
+                    )
+                )
             elif input_conf[CONF_TYPE] == "es8311":
-                cg.add(var.configure_es8311_input_codec(
-                    input_conf[CONF_ADDRESS],
-                    input_conf.get(CONF_USE_MCLK, True),
-                    input_conf.get(CONF_NO_DAC_REF, False),
-                    input_conf[CONF_GAIN_DB],
-                ))
+                cg.add(
+                    var.configure_es8311_input_codec(
+                        input_conf[CONF_ADDRESS],
+                        input_conf.get(CONF_USE_MCLK, True),
+                        input_conf.get(CONF_NO_DAC_REF, False),
+                        input_conf[CONF_GAIN_DB],
+                    )
+                )
             else:
-                cg.add(var.configure_input_codec(
-                    CODEC_KIND[input_conf[CONF_TYPE]],
-                    input_conf[CONF_ADDRESS],
-                    input_conf.get(CONF_USE_MCLK, True),
-                    input_conf.get(CONF_NO_DAC_REF, False),
-                    input_conf[CONF_GAIN_DB],
-                ))
+                cg.add(
+                    var.configure_input_codec(
+                        CODEC_KIND[input_conf[CONF_TYPE]],
+                        input_conf[CONF_ADDRESS],
+                        input_conf.get(CONF_USE_MCLK, True),
+                        input_conf.get(CONF_NO_DAC_REF, False),
+                        input_conf[CONF_GAIN_DB],
+                    )
+                )
         if CONF_OUTPUT in codec_conf:
             output_conf = codec_conf[CONF_OUTPUT]
             if output_conf[CONF_TYPE] == "es8311":
-                cg.add(var.configure_es8311_codec(
-                    output_conf[CONF_ADDRESS],
-                    output_conf.get(CONF_USE_MCLK, True),
-                    output_conf.get(CONF_NO_DAC_REF, True),
-                ))
+                cg.add(
+                    var.configure_es8311_codec(
+                        output_conf[CONF_ADDRESS],
+                        output_conf.get(CONF_USE_MCLK, True),
+                        output_conf.get(CONF_NO_DAC_REF, True),
+                    )
+                )
             else:
-                cg.add(var.configure_output_codec(
-                    CODEC_KIND[output_conf[CONF_TYPE]],
-                    output_conf[CONF_ADDRESS],
-                    output_conf.get(CONF_USE_MCLK, True),
-                    output_conf.get(CONF_NO_DAC_REF, True),
-                ))
+                cg.add(
+                    var.configure_output_codec(
+                        CODEC_KIND[output_conf[CONF_TYPE]],
+                        output_conf[CONF_ADDRESS],
+                        output_conf.get(CONF_USE_MCLK, True),
+                        output_conf.get(CONF_NO_DAC_REF, True),
+                    )
+                )
 
     # Audio task tuning
     _add_config_setters(
@@ -832,23 +988,29 @@ async def to_code(config):
         cg.add(var.set_dma_frame_num(config[CONF_DMA_FRAME_NUM]))
     audio_effects = config[CONF_AUDIO_EFFECTS]
     cg.add(var.set_rate_cvt_complexity(audio_effects[CONF_RATE_CVT_COMPLEXITY]))
-    cg.add(var.set_rate_cvt_perf_type(0 if audio_effects[CONF_RATE_CVT_PERF_TYPE] == "memory" else 1))
+    cg.add(
+        var.set_rate_cvt_perf_type(
+            0 if audio_effects[CONF_RATE_CVT_PERF_TYPE] == "memory" else 1
+        )
+    )
     if has_hardware_codec:
         for direction, setter in (
             (CONF_READER, var.configure_gmf_reader_io),
             (CONF_WRITER, var.configure_gmf_writer_io),
         ):
             io_conf = gmf_io[direction]
-            cg.add(setter(
-                io_conf[CONF_IO_SIZE],
-                io_conf[CONF_BUFFER_SIZE],
-                io_conf[CONF_TASK_STACK_SIZE],
-                io_conf[CONF_TASK_PRIORITY],
-                io_conf[CONF_TASK_CORE],
-                io_conf[CONF_TASK_STACK_IN_PSRAM],
-                io_conf[CONF_SPEED_MONITOR],
-                io_conf[CONF_TASK_TIMEOUT_MS],
-            ))
+            cg.add(
+                setter(
+                    io_conf[CONF_IO_SIZE],
+                    io_conf[CONF_BUFFER_SIZE],
+                    io_conf[CONF_TASK_STACK_SIZE],
+                    io_conf[CONF_TASK_PRIORITY],
+                    io_conf[CONF_TASK_CORE],
+                    io_conf[CONF_TASK_STACK_IN_PSRAM],
+                    io_conf[CONF_SPEED_MONITOR],
+                    io_conf[CONF_TASK_TIMEOUT_MS],
+                )
+            )
 
     # AEC reference mode is compile-time selected for no-codec setups:
     # ring_buffer pulls in the Espressif/ADF TYPE2-style software reference,
@@ -858,7 +1020,7 @@ async def to_code(config):
             var,
             config,
             (
-                (CONF_AEC_REF_BUFFER_MS, var.set_aec_ref_buffer_ms),
+                (CONF_AEC_REFERENCE_BUFFER_MS, var.set_aec_ref_buffer_ms),
                 (CONF_AEC_REF_RING_IN_PSRAM, var.set_aec_ref_ring_in_psram),
             ),
         )
@@ -866,7 +1028,11 @@ async def to_code(config):
     # Telemetry: per-stage cycle counting and diagnostics
     if config[CONF_TELEMETRY]:
         cg.add_define("USE_ESP_AUDIO_STACK_TELEMETRY")
-        cg.add(var.set_telemetry_log_interval_frames(config[CONF_TELEMETRY_LOG_INTERVAL_FRAMES]))
+        cg.add(
+            var.set_telemetry_log_interval_frames(
+                config[CONF_TELEMETRY_LOG_INTERVAL_FRAMES]
+            )
+        )
 
     for key, trigger_getter, args in (
         (CONF_ON_START, var.get_start_trigger, []),
@@ -896,13 +1062,19 @@ ESP_AUDIO_STACK_ACTION_SCHEMA = automation.maybe_simple_id(
 
 
 @automation.register_action(
-    "esp_audio_stack.start", StartAction, ESP_AUDIO_STACK_ACTION_SCHEMA, synchronous=True
+    "esp_audio_stack.start",
+    StartAction,
+    ESP_AUDIO_STACK_ACTION_SCHEMA,
+    synchronous=True,
 )
 @automation.register_action(
     "esp_audio_stack.stop", StopAction, ESP_AUDIO_STACK_ACTION_SCHEMA, synchronous=True
 )
 @automation.register_action(
-    "esp_audio_stack.stop_and_wait", StopAndWaitAction, ESP_AUDIO_STACK_ACTION_SCHEMA, synchronous=True
+    "esp_audio_stack.stop_and_wait",
+    StopAndWaitAction,
+    ESP_AUDIO_STACK_ACTION_SCHEMA,
+    synchronous=True,
 )
 @automation.register_action(
     "esp_audio_stack.suspend_ota_watchdog",

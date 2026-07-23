@@ -45,8 +45,8 @@ class BitCvtHandle {
   ~BitCvtHandle() { this->close(); }
 
   void init(uint32_t sample_rate, uint8_t channel, uint8_t src_bits, uint8_t dest_bits) {
-    if (this->sample_rate_ == sample_rate && this->channel_ == channel &&
-        this->src_bits_ == src_bits && this->dest_bits_ == dest_bits) {
+    if (this->sample_rate_ == sample_rate && this->channel_ == channel && this->src_bits_ == src_bits &&
+        this->dest_bits_ == dest_bits) {
       return;
     }
     this->sample_rate_ = sample_rate;
@@ -77,10 +77,9 @@ class BitCvtHandle {
     if (err == ESP_AE_ERR_OK && this->handle_ != nullptr)
       return true;
 
-    ESP_LOGE(TAG, "esp_ae_bit_cvt_open failed: err=%d rate=%u ch=%u src=%u dest=%u",
-             static_cast<int>(err), static_cast<unsigned>(this->sample_rate_),
-             static_cast<unsigned>(this->channel_), static_cast<unsigned>(this->src_bits_),
-             static_cast<unsigned>(this->dest_bits_));
+    ESP_LOGE(TAG, "esp_ae_bit_cvt_open failed: err=%d rate=%u ch=%u src=%u dest=%u", static_cast<int>(err),
+             static_cast<unsigned>(this->sample_rate_), static_cast<unsigned>(this->channel_),
+             static_cast<unsigned>(this->src_bits_), static_cast<unsigned>(this->dest_bits_));
     return false;
   }
 
@@ -93,14 +92,12 @@ class BitCvtHandle {
     }
     if (!this->ready())
       return false;
-    const esp_ae_err_t err = esp_ae_bit_cvt_process(this->handle_, sample_num,
-                                                    const_cast<void *>(in), out);
+    const esp_ae_err_t err = esp_ae_bit_cvt_process(this->handle_, sample_num, const_cast<void *>(in), out);
     if (err == ESP_AE_ERR_OK)
       return true;
-    ESP_LOGE(TAG, "esp_ae_bit_cvt %s failed: err=%d samples=%u ch=%u src=%u dest=%u",
-             scope, static_cast<int>(err), static_cast<unsigned>(sample_num),
-             static_cast<unsigned>(this->channel_), static_cast<unsigned>(this->src_bits_),
-             static_cast<unsigned>(this->dest_bits_));
+    ESP_LOGE(TAG, "esp_ae_bit_cvt %s failed: err=%d samples=%u ch=%u src=%u dest=%u", scope, static_cast<int>(err),
+             static_cast<unsigned>(sample_num), static_cast<unsigned>(this->channel_),
+             static_cast<unsigned>(this->src_bits_), static_cast<unsigned>(this->dest_bits_));
     return false;
   }
 
@@ -119,8 +116,8 @@ class BitCvtHandle {
   esp_ae_bit_cvt_handle_t handle_{nullptr};
 };
 
-bool distribute_channels(int16_t *const *ch, uint8_t nch, size_t count, int16_t *mic_interleaved,
-                         int16_t *mic_mono, int16_t *ref_out, uint8_t num_mic_ch) {
+bool distribute_channels(int16_t *const *ch, uint8_t nch, size_t count, int16_t *mic_interleaved, int16_t *mic_mono,
+                         int16_t *ref_out, uint8_t num_mic_ch) {
   if (nch == 0 || ch[0] == nullptr)
     return false;
   if (mic_mono != nullptr)
@@ -129,11 +126,10 @@ bool distribute_channels(int16_t *const *ch, uint8_t nch, size_t count, int16_t 
   if (num_mic_ch >= 2 && nch >= 2) {
     if (mic_interleaved != nullptr) {
       esp_ae_sample_t mic_in[2] = {ch[0], ch[1]};
-      const esp_ae_err_t err = esp_ae_intlv_process(2, 16, static_cast<uint32_t>(count),
-                                                    mic_in, mic_interleaved);
+      const esp_ae_err_t err = esp_ae_intlv_process(2, 16, static_cast<uint32_t>(count), mic_in, mic_interleaved);
       if (err != ESP_AE_ERR_OK) {
-        ESP_LOGE(TAG, "esp_ae_intlv_process mic failed: err=%d samples=%u",
-                 static_cast<int>(err), static_cast<unsigned>(count));
+        ESP_LOGE(TAG, "esp_ae_intlv_process mic failed: err=%d samples=%u", static_cast<int>(err),
+                 static_cast<unsigned>(count));
         return false;
       }
     }
@@ -145,8 +141,8 @@ bool distribute_channels(int16_t *const *ch, uint8_t nch, size_t count, int16_t 
   return true;
 }
 
-bool decimate_i16_average(const int16_t *in, size_t in_count, uint32_t ratio, int16_t *out,
-                          size_t expected_out, const char *scope) {
+bool decimate_i16_average(const int16_t *in, size_t in_count, uint32_t ratio, int16_t *out, size_t expected_out,
+                          const char *scope) {
   if (ratio <= 1) {
     if (in != out)
       memcpy(out, in, expected_out * sizeof(int16_t));
@@ -155,9 +151,9 @@ bool decimate_i16_average(const int16_t *in, size_t in_count, uint32_t ratio, in
 
   const size_t needed = expected_out * ratio;
   if (in_count < needed) {
-    ESP_LOGE(TAG, "safe decimator %s underflow: in=%u needed=%u ratio=%u out=%u",
-             scope, static_cast<unsigned>(in_count), static_cast<unsigned>(needed),
-             static_cast<unsigned>(ratio), static_cast<unsigned>(expected_out));
+    ESP_LOGE(TAG, "safe decimator %s underflow: in=%u needed=%u ratio=%u out=%u", scope,
+             static_cast<unsigned>(in_count), static_cast<unsigned>(needed), static_cast<unsigned>(ratio),
+             static_cast<unsigned>(expected_out));
     return false;
   }
 
@@ -175,8 +171,8 @@ class RateCvtHandle {
  public:
   ~RateCvtHandle() { this->close(); }
 
-  void init(uint32_t ratio, uint32_t src_rate, uint32_t dest_rate, uint8_t channels,
-            uint8_t complexity, uint8_t perf_type) {
+  void init(uint32_t ratio, uint32_t src_rate, uint32_t dest_rate, uint8_t channels, uint8_t complexity,
+            uint8_t perf_type) {
     this->ratio_ = ratio;
     this->src_rate_ = src_rate;
     this->dest_rate_ = dest_rate;
@@ -194,11 +190,9 @@ class RateCvtHandle {
       return true;
     if (this->handle_ != nullptr)
       return true;
-    if (this->src_rate_ == 0 || this->dest_rate_ == 0 || this->src_rate_ == this->dest_rate_ ||
-        this->channels_ == 0) {
-      ESP_LOGE(TAG, "invalid esp_ae_rate_cvt config: src=%u dest=%u ch=%u",
-               static_cast<unsigned>(this->src_rate_), static_cast<unsigned>(this->dest_rate_),
-               static_cast<unsigned>(this->channels_));
+    if (this->src_rate_ == 0 || this->dest_rate_ == 0 || this->src_rate_ == this->dest_rate_ || this->channels_ == 0) {
+      ESP_LOGE(TAG, "invalid esp_ae_rate_cvt config: src=%u dest=%u ch=%u", static_cast<unsigned>(this->src_rate_),
+               static_cast<unsigned>(this->dest_rate_), static_cast<unsigned>(this->channels_));
       return false;
     }
 
@@ -213,9 +207,9 @@ class RateCvtHandle {
     if (err == ESP_AE_ERR_OK && this->handle_ != nullptr)
       return true;
 
-    ESP_LOGE(TAG, "esp_ae_rate_cvt_open failed: err=%d src=%u dest=%u ch=%u",
-             static_cast<int>(err), static_cast<unsigned>(this->src_rate_),
-             static_cast<unsigned>(this->dest_rate_), static_cast<unsigned>(this->channels_));
+    ESP_LOGE(TAG, "esp_ae_rate_cvt_open failed: err=%d src=%u dest=%u ch=%u", static_cast<int>(err),
+             static_cast<unsigned>(this->src_rate_), static_cast<unsigned>(this->dest_rate_),
+             static_cast<unsigned>(this->channels_));
     return false;
   }
 
@@ -223,8 +217,8 @@ class RateCvtHandle {
     if (!this->ready())
       return false;
     uint32_t out_samples = static_cast<uint32_t>(expected_out);
-    const esp_ae_err_t err = esp_ae_rate_cvt_process(this->handle_, in, static_cast<uint32_t>(in_count),
-                                                     out, &out_samples);
+    const esp_ae_err_t err =
+        esp_ae_rate_cvt_process(this->handle_, in, static_cast<uint32_t>(in_count), out, &out_samples);
     return this->check_(scope, err, out_samples, expected_out);
   }
 
@@ -238,8 +232,7 @@ class RateCvtHandle {
       out_args[i] = out[i];
     }
     uint32_t out_samples = static_cast<uint32_t>(expected_out);
-    const esp_ae_err_t err = esp_ae_rate_cvt_deintlv_process(this->handle_, in_args,
-                                                             static_cast<uint32_t>(in_count),
+    const esp_ae_err_t err = esp_ae_rate_cvt_deintlv_process(this->handle_, in_args, static_cast<uint32_t>(in_count),
                                                              out_args, &out_samples);
     return this->check_(scope, err, out_samples, expected_out);
   }
@@ -248,9 +241,8 @@ class RateCvtHandle {
   bool check_(const char *scope, esp_ae_err_t err, uint32_t actual, size_t expected) {
     if (err == ESP_AE_ERR_OK && actual == expected)
       return true;
-    ESP_LOGE(TAG, "esp_ae_rate_cvt %s failed/misaligned: err=%d out=%u expected=%u ch=%u",
-             scope, static_cast<int>(err), static_cast<unsigned>(actual),
-             static_cast<unsigned>(expected), static_cast<unsigned>(this->channels_));
+    ESP_LOGE(TAG, "esp_ae_rate_cvt %s failed/misaligned: err=%d out=%u expected=%u ch=%u", scope, static_cast<int>(err),
+             static_cast<unsigned>(actual), static_cast<unsigned>(expected), static_cast<unsigned>(this->channels_));
     return false;
   }
 
@@ -359,8 +351,8 @@ class MultiChannelAudioEffectsRateConverterImpl {
       heap_caps_free(this->bit_scratch_);
   }
 
-  void init(uint32_t ratio, uint8_t num_channels, uint32_t src_rate, uint32_t dest_rate,
-            uint8_t complexity, uint8_t perf_type) {
+  void init(uint32_t ratio, uint8_t num_channels, uint32_t src_rate, uint32_t dest_rate, uint8_t complexity,
+            uint8_t perf_type) {
     this->ratio_ = ratio;
     this->src_rate_ = src_rate;
     this->dest_rate_ = dest_rate;
@@ -375,8 +367,7 @@ class MultiChannelAudioEffectsRateConverterImpl {
       rate_cvt.reset();
   }
 
-  bool prepare(size_t in_count, size_t out_count, uint8_t num_channels,
-               uint8_t source_channels, bool source_32bit) {
+  bool prepare(size_t in_count, size_t out_count, uint8_t num_channels, uint8_t source_channels, bool source_32bit) {
     const uint8_t nch = std::min<uint8_t>(num_channels, MAX_RATE_CVT_CHANNELS);
     if (!this->ensure_deintlv_buffers_(source_channels, in_count))
       return false;
@@ -389,21 +380,19 @@ class MultiChannelAudioEffectsRateConverterImpl {
 
   bool process_multi(const int16_t *in, size_t out_count, size_t stride, const uint8_t *offsets,
                      int16_t *mic_interleaved, int16_t *mic_mono, int16_t *ref_out, uint8_t num_mic_ch) {
-    return this->process_multi_t_(in, out_count, stride, offsets, mic_interleaved, mic_mono,
-                                  ref_out, num_mic_ch, false);
+    return this->process_multi_t_(in, out_count, stride, offsets, mic_interleaved, mic_mono, ref_out, num_mic_ch,
+                                  false);
   }
 
   bool process_multi_32(const int32_t *in, size_t out_count, size_t stride, const uint8_t *offsets,
                         int16_t *mic_interleaved, int16_t *mic_mono, int16_t *ref_out, uint8_t num_mic_ch) {
-    return this->process_multi_t_(in, out_count, stride, offsets, mic_interleaved, mic_mono,
-                                  ref_out, num_mic_ch, true);
+    return this->process_multi_t_(in, out_count, stride, offsets, mic_interleaved, mic_mono, ref_out, num_mic_ch, true);
   }
 
  private:
   template<typename T>
-  bool process_multi_t_(const T *in, size_t out_count, size_t stride, const uint8_t *offsets,
-                        int16_t *mic_interleaved, int16_t *mic_mono, int16_t *ref_out,
-                        uint8_t num_mic_ch, bool source_32bit) {
+  bool process_multi_t_(const T *in, size_t out_count, size_t stride, const uint8_t *offsets, int16_t *mic_interleaved,
+                        int16_t *mic_mono, int16_t *ref_out, uint8_t num_mic_ch, bool source_32bit) {
     const size_t in_count = out_count * this->ratio_;
     if (!this->deinterleave_selected_(in, in_count, stride, offsets, source_32bit))
       return false;
@@ -414,8 +403,7 @@ class MultiChannelAudioEffectsRateConverterImpl {
     }
 
     if (this->ratio_ <= 1) {
-      return distribute_channels(selected, this->channels_, out_count, mic_interleaved,
-                                 mic_mono, ref_out, num_mic_ch);
+      return distribute_channels(selected, this->channels_, out_count, mic_interleaved, mic_mono, ref_out, num_mic_ch);
     }
 
     if (!this->ensure_output_buffers_(this->channels_, out_count))
@@ -424,22 +412,20 @@ class MultiChannelAudioEffectsRateConverterImpl {
       if (!decimate_i16_average(selected[c], in_count, this->ratio_, this->out_ch_[c], out_count, "multi-ch"))
         return false;
     }
-    return distribute_channels(this->out_ch_, this->channels_, out_count, mic_interleaved,
-                               mic_mono, ref_out, num_mic_ch);
+    return distribute_channels(this->out_ch_, this->channels_, out_count, mic_interleaved, mic_mono, ref_out,
+                               num_mic_ch);
   }
 
   template<typename T>
-  bool deinterleave_selected_(const T *in, size_t in_count, size_t stride,
-                              const uint8_t *offsets, bool source_32bit) {
+  bool deinterleave_selected_(const T *in, size_t in_count, size_t stride, const uint8_t *offsets, bool source_32bit) {
     if (stride == 0 || stride > MAX_DEINTLV_CH) {
-      ESP_LOGE(TAG, "unsupported source channel count for esp_ae_deintlv: %u",
-               static_cast<unsigned>(stride));
+      ESP_LOGE(TAG, "unsupported source channel count for esp_ae_deintlv: %u", static_cast<unsigned>(stride));
       return false;
     }
     for (uint8_t c = 0; c < this->channels_; c++) {
       if (offsets[c] >= stride) {
-        ESP_LOGE(TAG, "channel offset %u outside source channel count %u",
-                 static_cast<unsigned>(offsets[c]), static_cast<unsigned>(stride));
+        ESP_LOGE(TAG, "channel offset %u outside source channel count %u", static_cast<unsigned>(offsets[c]),
+                 static_cast<unsigned>(stride));
         return false;
       }
     }
@@ -459,13 +445,12 @@ class MultiChannelAudioEffectsRateConverterImpl {
     for (uint8_t c = 0; c < stride; c++) {
       out_args[c] = this->deintlv_ch_[c];
     }
-    const esp_ae_err_t err = esp_ae_deintlv_process(static_cast<uint8_t>(stride), 16,
-                                                    static_cast<uint32_t>(in_count),
+    const esp_ae_err_t err = esp_ae_deintlv_process(static_cast<uint8_t>(stride), 16, static_cast<uint32_t>(in_count),
                                                     const_cast<void *>(deintlv_input), out_args);
     if (err == ESP_AE_ERR_OK)
       return true;
-    ESP_LOGE(TAG, "esp_ae_deintlv_process failed: err=%d samples=%u ch=%u",
-             static_cast<int>(err), static_cast<unsigned>(in_count), static_cast<unsigned>(stride));
+    ESP_LOGE(TAG, "esp_ae_deintlv_process failed: err=%d samples=%u ch=%u", static_cast<int>(err),
+             static_cast<unsigned>(in_count), static_cast<unsigned>(stride));
     return false;
   }
 
@@ -513,8 +498,8 @@ class MultiChannelAudioEffectsRateConverterImpl {
 #if defined(USE_ESP_AUDIO_STACK_MONO_RX) || defined(USE_ESP_AUDIO_STACK_MONO_REF)
 AudioEffectsRateConverter::AudioEffectsRateConverter() : impl_(std::make_unique<AudioEffectsRateConverterImpl>()) {}
 AudioEffectsRateConverter::~AudioEffectsRateConverter() = default;
-void AudioEffectsRateConverter::init(uint32_t ratio, uint32_t src_rate, uint32_t dest_rate,
-                        uint8_t complexity, uint8_t perf_type) {
+void AudioEffectsRateConverter::init(uint32_t ratio, uint32_t src_rate, uint32_t dest_rate, uint8_t complexity,
+                                     uint8_t perf_type) {
   this->impl_->init(ratio, src_rate, dest_rate, complexity, perf_type);
 }
 void AudioEffectsRateConverter::reset() { this->impl_->reset(); }
@@ -524,12 +509,12 @@ bool AudioEffectsRateConverter::prepare(size_t in_count, bool source_32bit) {
 bool AudioEffectsRateConverter::process(const int16_t *in, int16_t *out, size_t in_count) {
   return this->impl_->process(in, out, in_count);
 }
-bool AudioEffectsRateConverter::process_strided(const int16_t *in, int16_t *out, size_t out_count,
-                                   size_t stride, size_t offset) {
+bool AudioEffectsRateConverter::process_strided(const int16_t *in, int16_t *out, size_t out_count, size_t stride,
+                                                size_t offset) {
   return this->impl_->process_strided(in, out, out_count, stride, offset);
 }
-bool AudioEffectsRateConverter::process_strided_32(const int32_t *in, int16_t *out, size_t out_count,
-                                      size_t stride, size_t offset) {
+bool AudioEffectsRateConverter::process_strided_32(const int32_t *in, int16_t *out, size_t out_count, size_t stride,
+                                                   size_t offset) {
   return this->impl_->process_strided_32(in, out, out_count, stride, offset);
 }
 #endif
@@ -538,27 +523,26 @@ bool AudioEffectsRateConverter::process_strided_32(const int32_t *in, int16_t *o
 MultiChannelAudioEffectsRateConverter::MultiChannelAudioEffectsRateConverter()
     : impl_(std::make_unique<MultiChannelAudioEffectsRateConverterImpl>()) {}
 MultiChannelAudioEffectsRateConverter::~MultiChannelAudioEffectsRateConverter() = default;
-void MultiChannelAudioEffectsRateConverter::init(uint32_t ratio, uint8_t num_channels,
-                                    uint32_t src_rate, uint32_t dest_rate,
-                                    uint8_t complexity, uint8_t perf_type) {
+void MultiChannelAudioEffectsRateConverter::init(uint32_t ratio, uint8_t num_channels, uint32_t src_rate,
+                                                 uint32_t dest_rate, uint8_t complexity, uint8_t perf_type) {
   this->impl_->init(ratio, num_channels, src_rate, dest_rate, complexity, perf_type);
 }
 void MultiChannelAudioEffectsRateConverter::reset() { this->impl_->reset(); }
 bool MultiChannelAudioEffectsRateConverter::prepare(size_t in_count, size_t out_count, uint8_t num_channels,
-                                       uint8_t source_channels, bool source_32bit) {
+                                                    uint8_t source_channels, bool source_32bit) {
   return this->impl_->prepare(in_count, out_count, num_channels, source_channels, source_32bit);
 }
 bool MultiChannelAudioEffectsRateConverter::process_multi(const int16_t *in, size_t out_count, size_t in_stride,
-                                             const uint8_t *channel_offsets, int16_t *mic_interleaved,
-                                             int16_t *mic_mono, int16_t *ref_out, uint8_t num_mic_ch) {
-  return this->impl_->process_multi(in, out_count, in_stride, channel_offsets, mic_interleaved, mic_mono,
-                                    ref_out, num_mic_ch);
+                                                          const uint8_t *channel_offsets, int16_t *mic_interleaved,
+                                                          int16_t *mic_mono, int16_t *ref_out, uint8_t num_mic_ch) {
+  return this->impl_->process_multi(in, out_count, in_stride, channel_offsets, mic_interleaved, mic_mono, ref_out,
+                                    num_mic_ch);
 }
 bool MultiChannelAudioEffectsRateConverter::process_multi_32(const int32_t *in, size_t out_count, size_t in_stride,
-                                                const uint8_t *channel_offsets, int16_t *mic_interleaved,
-                                                int16_t *mic_mono, int16_t *ref_out, uint8_t num_mic_ch) {
-  return this->impl_->process_multi_32(in, out_count, in_stride, channel_offsets, mic_interleaved, mic_mono,
-                                       ref_out, num_mic_ch);
+                                                             const uint8_t *channel_offsets, int16_t *mic_interleaved,
+                                                             int16_t *mic_mono, int16_t *ref_out, uint8_t num_mic_ch) {
+  return this->impl_->process_multi_32(in, out_count, in_stride, channel_offsets, mic_interleaved, mic_mono, ref_out,
+                                       num_mic_ch);
 }
 #endif
 

@@ -56,6 +56,7 @@ esphome/components/audio_dac/* @kbx81
 esphome/components/audio_file/* @kahrendt
 esphome/components/audio_file/media_source/* @kahrendt
 esphome/components/audio_http/* @kahrendt
+esphome/components/audio_processor/* @n-IA-hane
 esphome/components/axs15231/* @clydebarrow
 esphome/components/b_parasite/* @rbaron
 esphome/components/ballu/* @bazuchan
@@ -180,6 +181,10 @@ esphome/components/esp32_jpeg/* @kyvaith
 esphome/components/esp32_rmt/* @jesserockz
 esphome/components/esp32_rmt_led_strip/* @jesserockz
 esphome/components/esp8266/* @esphome/core
+esphome/components/esp_afe/* @n-IA-hane
+esphome/components/esp_audio_stack/* @n-IA-hane
+esphome/components/esp_audio_stack/microphone/* @n-IA-hane
+esphome/components/esp_audio_stack/speaker/* @n-IA-hane
 esphome/components/esp_ldo/* @clydebarrow
 esphome/components/espnow/* @jesserockz
 esphome/components/espnow/packet_transport/* @EasilyBoredEngineer

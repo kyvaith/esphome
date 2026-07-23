@@ -79,8 +79,7 @@ class AudioProcessor {
   /// @param mic_channels_in  how many mic channels are interleaved in in_mic
   /// @return true if processed by DSP, false if not processed (implementation
   ///         may emit silence rather than raw audio)
-  virtual bool process(const int16_t *in_mic, const int16_t *in_ref, int16_t *out,
-                       uint8_t mic_channels_in = 1) = 0;
+  virtual bool process(const int16_t *in_mic, const int16_t *in_ref, int16_t *out, uint8_t mic_channels_in = 1) = 0;
 
   /// Query how a feature can be controlled.
   virtual FeatureControl feature_control(AudioFeature feature) const = 0;

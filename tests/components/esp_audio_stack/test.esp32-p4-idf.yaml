@@ -1,0 +1,61 @@
+packages:
+  i2c: !include ../../test_build_components/common/i2c/esp32-p4-idf.yaml
+
+psram:
+
+esp_afe:
+  id: afe_processor
+  type: fd
+  mode: low_cost
+  mic_num: 1
+  input_format: mr
+  aec_enabled: true
+  ns_enabled: false
+  se_enabled: false
+  vad_enabled: false
+  agc_enabled: false
+  task_core: 1
+  feed_task_core: 0
+  fetch_task_core: 1
+
+esp_audio_stack:
+  id: audio_stack
+  i2s_lrclk_pin: GPIO10
+  i2s_bclk_pin: GPIO12
+  i2s_mclk_pin: GPIO13
+  i2s_din_pin: GPIO11
+  i2s_dout_pin: GPIO9
+  sample_rate: 48000
+  output_sample_rate: 16000
+  bits_per_sample: 16
+  slot_bit_width: 16
+  processor_id: afe_processor
+  tdm_total_slots: 4
+  tdm_mic_slots: [0, 2]
+  tdm_ref_slot: 1
+  use_tdm_reference: true
+  codec:
+    i2c_id: i2c_bus
+    input:
+      type: es7210
+      address: 0x40
+    output:
+      type: es8311
+      address: 0x18
+
+microphone:
+  - platform: esp_audio_stack
+    id: test_microphone
+    esp_audio_stack_id: audio_stack
+
+speaker:
+  - platform: esp_audio_stack
+    id: test_speaker
+    esp_audio_stack_id: audio_stack
+    timeout: never
+
+binary_sensor:
+  - platform: esp_afe
+    esp_afe_id: afe_processor
+    vad:
+      id: test_vad

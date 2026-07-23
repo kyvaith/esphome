@@ -114,8 +114,7 @@ static int ctrl_read_reg(const audio_codec_ctrl_if_t *ctrl, int reg, int reg_len
   if (!encode_reg(reg, reg_len, reg_buf)) {
     return ESP_CODEC_DEV_INVALID_ARG;
   }
-  auto result = self->bus->write_readv(self->address, reg_buf, reg_len,
-                                       static_cast<uint8_t *>(data), data_len);
+  auto result = self->bus->write_readv(self->address, reg_buf, reg_len, static_cast<uint8_t *>(data), data_len);
   return result == i2c::NO_ERROR ? ESP_CODEC_DEV_OK : ESP_CODEC_DEV_READ_FAIL;
 }
 
@@ -236,8 +235,7 @@ const char *CodecDevBackend::output_codec_name() const {
 }
 
 const audio_codec_if_t *CodecDevBackend::new_generic_codec_(const GenericCodecConfig &config, bool input,
-                                                            uint16_t mclk_div,
-                                                            const audio_codec_ctrl_if_t **ctrl) {
+                                                            uint16_t mclk_div, const audio_codec_ctrl_if_t **ctrl) {
   if (!config.enabled || ctrl == nullptr) {
     return nullptr;
   }
@@ -307,8 +305,7 @@ const audio_codec_if_t *CodecDevBackend::new_generic_codec_(const GenericCodecCo
 }
 
 bool CodecDevBackend::open_gmf_io_(esp_codec_dev_handle_t dev, esp_gmf_io_dir_t dir, const char *name,
-                                   const GmfIoConfig &gmf_config, esp_gmf_io_handle_t *io,
-                                   bool *io_open) {
+                                   const GmfIoConfig &gmf_config, esp_gmf_io_handle_t *io, bool *io_open) {
   if (dev == nullptr || io == nullptr || io_open == nullptr) {
     return false;
   }
@@ -351,8 +348,7 @@ bool CodecDevBackend::open_gmf_io_(esp_codec_dev_handle_t dev, esp_gmf_io_dir_t 
 
   *io = new_io;
   *io_open = true;
-  ESP_LOGD(TAG,
-           "GMF codec %s IO open (io_size=%u buffer_size=%u task_stack=%u prio=%u core=%u psram=%s speed=%s)",
+  ESP_LOGD(TAG, "GMF codec %s IO open (io_size=%u buffer_size=%u task_stack=%u prio=%u core=%u psram=%s speed=%s)",
            name, static_cast<unsigned>(gmf_config.io_size), static_cast<unsigned>(gmf_config.buffer_size),
            static_cast<unsigned>(gmf_config.task_stack_size), static_cast<unsigned>(gmf_config.task_priority),
            static_cast<unsigned>(gmf_config.task_core), gmf_config.task_stack_in_psram ? "yes" : "no",
@@ -375,9 +371,8 @@ void CodecDevBackend::close_gmf_io_(esp_gmf_io_handle_t *io, bool *io_open) {
   *io = nullptr;
 }
 
-bool CodecDevBackend::setup(uint8_t tx_i2s_port, uint8_t rx_i2s_port,
-                            i2s_chan_handle_t tx_handle, i2s_chan_handle_t rx_handle,
-                            i2s_clock_src_t clk_src, uint32_t mclk_multiple) {
+bool CodecDevBackend::setup(uint8_t tx_i2s_port, uint8_t rx_i2s_port, i2s_chan_handle_t tx_handle,
+                            i2s_chan_handle_t rx_handle, i2s_clock_src_t clk_src, uint32_t mclk_multiple) {
   this->teardown();
   const uint16_t codec_mclk_div = mclk_multiple == 0 ? 256 : static_cast<uint16_t>(mclk_multiple);
 
@@ -459,8 +454,7 @@ bool CodecDevBackend::setup(uint8_t tx_i2s_port, uint8_t rx_i2s_port,
     return false;
 #endif
   } else if (rx_handle != nullptr && this->input_codec_.enabled) {
-    this->rx_codec_if_ =
-        this->new_generic_codec_(this->input_codec_, true, codec_mclk_div, &this->input_codec_ctrl_);
+    this->rx_codec_if_ = this->new_generic_codec_(this->input_codec_, true, codec_mclk_div, &this->input_codec_ctrl_);
     if (this->rx_codec_if_ == nullptr) {
       ESP_LOGE(TAG, "Failed to create %s ADC codec interface", this->input_codec_name());
       return false;
@@ -512,12 +506,11 @@ bool CodecDevBackend::setup(uint8_t tx_i2s_port, uint8_t rx_i2s_port,
 
   this->prepared_ = true;
 #ifdef USE_ESP_AUDIO_STACK_DUAL_BUS
-  ESP_LOGI(TAG, "esp_codec_dev backend ready (rx_codec=%s, tx_codec=%s, data_if=%s)",
-           this->input_codec_name(), this->output_codec_name(),
-           shared_i2s_data ? "shared" : "split");
+  ESP_LOGI(TAG, "esp_codec_dev backend ready (rx_codec=%s, tx_codec=%s, data_if=%s)", this->input_codec_name(),
+           this->output_codec_name(), shared_i2s_data ? "shared" : "split");
 #else
-  ESP_LOGI(TAG, "esp_codec_dev backend ready (rx_codec=%s, tx_codec=%s)",
-           this->input_codec_name(), this->output_codec_name());
+  ESP_LOGI(TAG, "esp_codec_dev backend ready (rx_codec=%s, tx_codec=%s)", this->input_codec_name(),
+           this->output_codec_name());
 #endif
   return true;
 }
@@ -561,8 +554,8 @@ bool CodecDevBackend::open(const SampleConfig *tx_config, const SampleConfig *rx
     }
   }
   if (this->tx_dev_ != nullptr && tx_config != nullptr &&
-      !this->open_gmf_io_(this->tx_dev_, ESP_GMF_IO_DIR_WRITER, "audio_stack_tx", this->gmf_writer_,
-                          &this->tx_io_, &this->tx_io_open_)) {
+      !this->open_gmf_io_(this->tx_dev_, ESP_GMF_IO_DIR_WRITER, "audio_stack_tx", this->gmf_writer_, &this->tx_io_,
+                          &this->tx_io_open_)) {
     if (this->rx_dev_ != nullptr) {
       esp_codec_dev_close(this->rx_dev_);
     }
@@ -572,8 +565,8 @@ bool CodecDevBackend::open(const SampleConfig *tx_config, const SampleConfig *rx
     return false;
   }
   if (this->rx_dev_ != nullptr && rx_config != nullptr &&
-      !this->open_gmf_io_(this->rx_dev_, ESP_GMF_IO_DIR_READER, "audio_stack_rx", this->gmf_reader_,
-                          &this->rx_io_, &this->rx_io_open_)) {
+      !this->open_gmf_io_(this->rx_dev_, ESP_GMF_IO_DIR_READER, "audio_stack_rx", this->gmf_reader_, &this->rx_io_,
+                          &this->rx_io_open_)) {
     this->close_gmf_io_(&this->tx_io_, &this->tx_io_open_);
     if (this->rx_dev_ != nullptr) {
       esp_codec_dev_close(this->rx_dev_);
@@ -665,8 +658,10 @@ void CodecDevBackend::set_output_volume_curve(float min_db) {
   if (!std::isfinite(min_db)) {
     return;
   }
-  if (min_db < -96.0f) min_db = -96.0f;
-  if (min_db > 0.0f) min_db = 0.0f;
+  if (min_db < -96.0f)
+    min_db = -96.0f;
+  if (min_db > 0.0f)
+    min_db = 0.0f;
   this->output_volume_min_db_ = min_db;
   this->output_volume_curve_configured_ = true;
   this->apply_output_volume_curve_();

@@ -15,9 +15,7 @@
 namespace esphome {
 namespace esp_audio_stack {
 
-class ESPAudioStackMicrophone : public microphone::Microphone,
-                                  public Component,
-                                  public Parented<ESPAudioStack> {
+class ESPAudioStackMicrophone : public microphone::Microphone, public Component, public Parented<ESPAudioStack> {
  public:
   void setup() override;
   void loop() override;

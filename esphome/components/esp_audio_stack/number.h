@@ -1,9 +1,11 @@
 #pragma once
 
-#ifdef USE_ESP32
+#if defined(USE_ESP32) && defined(USE_NUMBER)
 
 #include "esphome/components/number/number.h"
+#ifdef USE_SPEAKER
 #include "esphome/components/speaker/speaker.h"
+#endif
 #include "esphome/core/component.h"
 #include "esphome/core/preferences.h"
 #include "esp_audio_stack.h"
@@ -30,16 +32,16 @@ class MicGainNumber : public number::Number, public Component {
     }
   }
 
-  void dump_config() override {
-    ESP_LOGCONFIG("audio_stack.mic_gain", "Mic Gain Number (post-processor dB, range %.1f..%.1f)",
-                  this->min_db_, this->max_db_);
-  }
+  void dump_config() override;
 
  protected:
   float clamp_db_(float value) const {
-    if (!std::isfinite(value)) return 0.0f;
-    if (value < this->min_db_) return this->min_db_;
-    if (value > this->max_db_) return this->max_db_;
+    if (!std::isfinite(value))
+      return 0.0f;
+    if (value < this->min_db_)
+      return this->min_db_;
+    if (value > this->max_db_)
+      return this->max_db_;
     return value;
   }
 
@@ -68,7 +70,9 @@ class MicGainNumber : public number::Number, public Component {
 class MasterVolumeNumber : public number::Number, public Component {
  public:
   void set_parent(ESPAudioStack *parent) { this->parent_ = parent; }
+#ifdef USE_SPEAKER
   void set_speaker(speaker::Speaker *speaker) { this->speaker_ = speaker; }
+#endif
 
   void setup() override {
     float value;
@@ -79,21 +83,24 @@ class MasterVolumeNumber : public number::Number, public Component {
       this->publish_state(value);
     } else if (this->parent_ != nullptr) {
       this->publish_state(this->parent_->get_master_volume() * 100.0f);
-    } else if (this->speaker_ != nullptr) {
+    }
+#ifdef USE_SPEAKER
+    else if (this->speaker_ != nullptr) {
       this->publish_state(this->speaker_->get_volume() * 100.0f);
     }
+#endif
   }
 
-  void dump_config() override {
-    ESP_LOGCONFIG("audio_stack.master_volume", "Master Volume Number%s",
-                  this->speaker_ != nullptr ? " (speaker-backed)" : "");
-  }
+  void dump_config() override;
 
  protected:
   static float clamp_percent_(float value) {
-    if (!std::isfinite(value)) return 0.0f;
-    if (value < 0.0f) return 0.0f;
-    if (value > 100.0f) return 100.0f;
+    if (!std::isfinite(value))
+      return 0.0f;
+    if (value < 0.0f)
+      return 0.0f;
+    if (value > 100.0f)
+      return 100.0f;
     return value;
   }
 
@@ -101,13 +108,20 @@ class MasterVolumeNumber : public number::Number, public Component {
     float volume = value / 100.0f;
     if (this->parent_ != nullptr) {
       this->parent_->set_master_volume(volume);
-    } else if (this->speaker_ != nullptr) {
+    }
+#ifdef USE_SPEAKER
+    else if (this->speaker_ != nullptr) {
       this->speaker_->set_volume(volume);
     }
+#endif
   }
 
   void control(float value) override {
-    if (this->speaker_ != nullptr || this->parent_ != nullptr) {
+    if (this->parent_ != nullptr
+#ifdef USE_SPEAKER
+        || this->speaker_ != nullptr
+#endif
+    ) {
       value = clamp_percent_(value);
       this->apply_(value);
       this->publish_state(value);
@@ -116,11 +130,13 @@ class MasterVolumeNumber : public number::Number, public Component {
   }
 
   ESPAudioStack *parent_{nullptr};
+#ifdef USE_SPEAKER
   speaker::Speaker *speaker_{nullptr};
+#endif
   ESPPreferenceObject pref_;
 };
 
 }  // namespace esp_audio_stack
 }  // namespace esphome
 
-#endif  // USE_ESP32
+#endif  // USE_ESP32 && USE_NUMBER

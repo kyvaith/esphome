@@ -38,13 +38,12 @@ void ESPAudioStackMicrophone::setup() {
 
   // Standard microphone output is always post-processor. MWW, VA and
   // intercom all consume the same cleaned stream.
-  this->parent_->add_mic_data_callback(
-      [this](const uint8_t *data, size_t len) { this->on_audio_data_(data, len); });
+  this->parent_->add_mic_data_callback([this](const uint8_t *data, size_t len) { this->on_audio_data_(data, len); });
 }
 
 void ESPAudioStackMicrophone::dump_config() {
   ESP_LOGCONFIG(TAG, "ESP Audio Stack Microphone:");
-  ESP_LOGCONFIG(TAG, "  Sample Rate: %u Hz", this->parent_->get_output_sample_rate());
+  ESP_LOGCONFIG(TAG, "  Sample Rate: %u Hz", (unsigned) this->parent_->get_output_sample_rate());
   ESP_LOGCONFIG(TAG, "  Bits Per Sample: 16");
   ESP_LOGCONFIG(TAG, "  Channels: 1 (mono)");
 }
@@ -93,8 +92,8 @@ void ESPAudioStackMicrophone::on_audio_data_(const uint8_t *data, size_t len) {
   }
 
   if (len > this->audio_buffer_.capacity()) {
-    LOG_W_THROTTLED("Mic callback frame too large: %u > %u bytes; dropping",
-                    (unsigned) len, (unsigned) this->audio_buffer_.capacity());
+    LOG_W_THROTTLED("Mic callback frame too large: %u > %u bytes; dropping", (unsigned) len,
+                    (unsigned) this->audio_buffer_.capacity());
     return;
   }
   this->audio_buffer_.resize(len);
@@ -107,9 +106,11 @@ void ESPAudioStackMicrophone::on_audio_data_(const uint8_t *data, size_t len) {
   // ESPHome's base Microphone wrapper allocates a temporary zero vector when
   // mute_state_ is true. We have already zero-filled the preallocated callback
   // buffer, so clear the flag only while dispatching to avoid RT-task heap churn.
-  if (muted) this->mute_state_ = false;
+  if (muted)
+    this->mute_state_ = false;
   this->data_callbacks_.call(this->audio_buffer_);
-  if (muted) this->mute_state_ = true;
+  if (muted)
+    this->mute_state_ = true;
 }
 
 void ESPAudioStackMicrophone::loop() {
