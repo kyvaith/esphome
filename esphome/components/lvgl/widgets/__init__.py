@@ -16,11 +16,12 @@ from esphome.const import (
 )
 from esphome.core import ID, EsphomeError, TimePeriod
 from esphome.coroutine import FakeAwaitable
-from esphome.cpp_generator import MockObj
+from esphome.cpp_generator import MockObj, RawStatement
 from esphome.schema_extractors import EnableSchemaExtraction
 from esphome.types import Expression
 
 from ..defines import (
+    ANIM_PATHS,
     CONF_FLEX_ALIGN_CROSS,
     CONF_FLEX_ALIGN_MAIN,
     CONF_FLEX_ALIGN_TRACK,
@@ -34,6 +35,9 @@ from ..defines import (
     CONF_PAD_COLUMN,
     CONF_PAD_ROW,
     CONF_SCALE,
+    CONF_STYLE_TRANSITION_DELAY,
+    CONF_STYLE_TRANSITION_PATH,
+    CONF_STYLE_TRANSITION_TIME,
     CONF_STYLES,
     CONF_WIDGETS,
     LOGGER,
@@ -505,6 +509,13 @@ def collect_props(config):
                 props[CONF_SCALE + "_y"] = config[prop]
             else:
                 props[prop] = config[prop]
+    for prop in (
+        CONF_STYLE_TRANSITION_TIME,
+        CONF_STYLE_TRANSITION_DELAY,
+        CONF_STYLE_TRANSITION_PATH,
+    ):
+        if prop in config:
+            props[prop] = config[prop]
     return props
 
 
@@ -612,6 +623,19 @@ async def set_obj_properties(w: Widget, config):
         _set_layout_options(w, layout, base_name)
     parts = collect_parts(config)
     for part, states in parts.items():
+        transition_props = set()
+        for state_props in states.values():
+            for prop in state_props:
+                if prop not in ALL_STYLES:
+                    continue
+                remapped = remap_property(prop)
+                if remapped == "pad_all":
+                    transition_props.update(
+                        ("pad_top", "pad_bottom", "pad_left", "pad_right")
+                    )
+                else:
+                    transition_props.add(remapped)
+
         part = "LV_PART_" + part.upper()
         for state, props in states.items():
             state = "LV_STATE_" + state.upper()
@@ -630,6 +654,50 @@ async def set_obj_properties(w: Widget, config):
                     value = await ALL_STYLES[prop].process(value)
                 prop_r = remap_property(prop)
                 w.set_style(prop_r, value, lv_state)
+            transition_time = props.get(CONF_STYLE_TRANSITION_TIME)
+            if transition_time is not None and transition_props:
+                transition_delay = props.get(CONF_STYLE_TRANSITION_DELAY)
+                transition_path = props.get(CONF_STYLE_TRANSITION_PATH, "ease_in_out")
+                path_function = ANIM_PATHS[transition_path]
+                time_ms = int(transition_time.total_milliseconds)
+                delay_ms = (
+                    int(transition_delay.total_milliseconds)
+                    if transition_delay is not None
+                    else 0
+                )
+                widget_id = str(config[CONF_ID])
+                state_name = state.removeprefix("LV_STATE_").lower()
+                part_name = part.removeprefix("LV_PART_").lower()
+                variable_prefix = f"{widget_id}_{part_name}_{state_name}"
+                props_variable = f"{variable_prefix}_transition_props"
+                descriptor_variable = f"{variable_prefix}_transition_descriptor"
+                prop_enums = sorted(
+                    f"LV_STYLE_{prop.upper()}" for prop in transition_props
+                )
+                prop_list = "{" + ", ".join((*prop_enums, "0")) + "}"
+                lv_add(
+                    RawStatement(
+                        "static const lv_style_prop_t "
+                        f"{props_variable}[] = {prop_list};"
+                    )
+                )
+                lv_add(
+                    RawStatement(
+                        f"static lv_style_transition_dsc_t {descriptor_variable};"
+                    )
+                )
+                lv_add(
+                    RawStatement(
+                        f"lv_style_transition_dsc_init(&{descriptor_variable}, "
+                        f"{props_variable}, {path_function}, {time_ms}, "
+                        f"{delay_ms}, nullptr);"
+                    )
+                )
+                w.set_style(
+                    "transition",
+                    literal(f"&{descriptor_variable}"),
+                    lv_state,
+                )
     if group := config.get(CONF_GROUP):
         group = await cg.get_variable(group)
         lv.group_add_obj(group, w.obj)

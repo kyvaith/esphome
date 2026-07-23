@@ -897,3 +897,18 @@ LV_DEFINES = (
     "LV_WAYLAND_USE_EGL", "LV_WAYLAND_USE_G2D", "LV_WAYLAND_USE_SHM", "LV_LINUX_DRM_USE_EGL",
     "LV_USE_LZ4", "LV_USE_THORVG", "LV_SDL_USE_EGL", "LV_USE_EGL", "LV_LABEL_LONG_TXT_HINT", "LV_LABEL_TEXT_SELECTION",
 ) + tuple(f"LV_DRAW_SW_SUPPORT_{f}" for f in LV_COLOR_FORMATS)
+
+# Optional animation applied when an object's LVGL state changes.
+CONF_STYLE_TRANSITION_TIME = "style_transition_time"
+CONF_STYLE_TRANSITION_DELAY = "style_transition_delay"
+CONF_STYLE_TRANSITION_PATH = "style_transition_path"
+
+ANIM_PATHS = {
+    "linear": "lv_anim_path_linear",
+    "ease_in": "lv_anim_path_ease_in",
+    "ease_out": "lv_anim_path_ease_out",
+    "ease_in_out": "lv_anim_path_ease_in_out",
+    "overshoot": "lv_anim_path_overshoot",
+    "bounce": "lv_anim_path_bounce",
+    "step": "lv_anim_path_step",
+}

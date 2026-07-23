@@ -655,6 +655,9 @@ lvgl:
             shadow_offset_y: !lambda return 6;
             shadow_spread: !lambda return 6;
             shadow_width: !lambda return 6;
+            style_transition_time: 150ms
+            style_transition_delay: 10ms
+            style_transition_path: ease_out
             pressed:
               bg_color: light_blue
             checkable: true
