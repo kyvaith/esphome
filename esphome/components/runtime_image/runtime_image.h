@@ -163,6 +163,8 @@ class RuntimeImage : public image::Image {
    */
   uint32_t get_generation() const;
   BufferWriter get_buffer_writer() const override;
+  bool acquire_buffer(image::ImageBufferLease *lease) const override;
+  bool release_buffer(image::ImageBufferLease *lease) const override;
 
   /**
    * @brief Get the image format.

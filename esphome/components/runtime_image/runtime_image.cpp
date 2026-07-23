@@ -325,6 +325,38 @@ BufferWriter RuntimeImage::get_buffer_writer() const {
   return this->buffer_writer_;
 }
 
+bool RuntimeImage::acquire_buffer(image::ImageBufferLease *lease) const {
+  if (lease == nullptr)
+    return false;
+  this->buffer_mutex_.lock();
+  if (this->buffer_ == nullptr || this->buffer_width_ <= 0 || this->buffer_height_ <= 0) {
+    this->buffer_mutex_.unlock();
+    return false;
+  }
+  const size_t stride = (static_cast<size_t>(this->get_bpp()) * this->buffer_width_ + 7U) / 8U;
+  *lease = {
+      .owner = this,
+      .data = this->buffer_,
+      .size = stride * static_cast<size_t>(this->buffer_height_),
+      .stride = stride,
+      .width = this->buffer_width_,
+      .height = this->buffer_height_,
+      .type = this->type_,
+      .transparency = this->transparency_,
+      .writer = this->buffer_writer_,
+      .generation = this->generation_,
+  };
+  return true;
+}
+
+bool RuntimeImage::release_buffer(image::ImageBufferLease *lease) const {
+  if (lease == nullptr || lease->owner != this)
+    return false;
+  *lease = {};
+  this->buffer_mutex_.unlock();
+  return true;
+}
+
 void RuntimeImage::release() {
   LockGuard lock(this->buffer_mutex_);
   // Public release is serialized with worker-task decoding.
