@@ -13,3 +13,6 @@ text_sensor:
   - platform: sendspin
     name: "Album Artist"
     type: album_artist
+  - platform: sendspin
+    name: "Artwork URL"
+    type: artwork_url
