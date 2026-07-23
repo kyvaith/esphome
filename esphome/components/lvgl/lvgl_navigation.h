@@ -23,16 +23,34 @@ class LvglApplication {
   void set_page(LvPageType *page) { this->page_ = page; }
   void set_close_gesture_enabled(bool enabled) { this->close_gesture_enabled_ = enabled; }
   void set_scroll_snapshot(LvglScrollSnapshotController *controller) { this->scroll_snapshot_ = controller; }
+  template<typename F> void add_on_open_callback(F &&callback) { this->open_callbacks_.add(std::forward<F>(callback)); }
+  template<typename F> void add_on_opened_callback(F &&callback) {
+    this->opened_callbacks_.add(std::forward<F>(callback));
+  }
+  template<typename F> void add_on_close_callback(F &&callback) {
+    this->close_callbacks_.add(std::forward<F>(callback));
+  }
+  template<typename F> void add_on_closed_callback(F &&callback) {
+    this->closed_callbacks_.add(std::forward<F>(callback));
+  }
 
   LvglNavigation *get_parent() const { return this->parent_; }
   LvPageType *get_page() const { return this->page_; }
   LvglScrollSnapshotController *get_scroll_snapshot() const { return this->scroll_snapshot_; }
   bool is_close_gesture_enabled() const { return this->close_gesture_enabled_; }
+  void call_on_open_callbacks() { this->open_callbacks_.call(); }
+  void call_on_opened_callbacks() { this->opened_callbacks_.call(); }
+  void call_on_close_callbacks() { this->close_callbacks_.call(); }
+  void call_on_closed_callbacks() { this->closed_callbacks_.call(); }
 
  protected:
   LvglNavigation *parent_{};
   LvPageType *page_{};
   LvglScrollSnapshotController *scroll_snapshot_{};
+  LazyCallbackManager<void()> open_callbacks_{};
+  LazyCallbackManager<void()> opened_callbacks_{};
+  LazyCallbackManager<void()> close_callbacks_{};
+  LazyCallbackManager<void()> closed_callbacks_{};
   bool close_gesture_enabled_{true};
 };
 
@@ -63,6 +81,7 @@ class LvglNavigation {
   bool is_application_open(const LvglApplication *application) const;
   LvglApplication *get_active_application() const;
   void activate_home_view(int index);
+  void complete_application_transition(LvPageType *page, bool opening, bool close_committed);
 
  protected:
   enum class TouchContext : uint8_t {
@@ -75,6 +94,7 @@ class LvglNavigation {
   int find_home_view_index_() const;
   size_t get_home_view_count_() const;
   LvglApplication *find_active_application_() const;
+  LvglApplication *find_application_(const LvPageType *page) const;
   void reset_touch_();
 
   LvglComponent *parent_{};

@@ -68,6 +68,14 @@ LvglApplication *LvglNavigation::find_active_application_() const {
   return nullptr;
 }
 
+LvglApplication *LvglNavigation::find_application_(const LvPageType *page) const {
+  for (auto *application : this->applications_) {
+    if (application != nullptr && application->get_page() == page)
+      return application;
+  }
+  return nullptr;
+}
+
 void LvglNavigation::touch_begin(int32_t x, int32_t y) {
   this->reset_touch_();
 
@@ -170,12 +178,23 @@ bool LvglNavigation::touch_end() {
     const bool close = sample.delta_y <= -threshold;
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
     if (this->snapshot_compositor_ != nullptr && this->snapshot_compositor_->is_application_active()) {
-      this->snapshot_compositor_->settle_application_close(close);
+      if (close && gesture_application != nullptr)
+        gesture_application->call_on_close_callbacks();
+      if (!this->snapshot_compositor_->settle_application_close(close)) {
+        this->snapshot_compositor_->cancel_application();
+        if (close && gesture_application != nullptr) {
+          this->activate_home_view(this->last_home_page_index_);
+          gesture_application->call_on_closed_callbacks();
+        }
+      }
       return true;
     }
 #endif
-    if (close && gesture_application != nullptr)
-      this->close_application();
+    if (close && gesture_application != nullptr) {
+      gesture_application->call_on_close_callbacks();
+      this->activate_home_view(this->last_home_page_index_);
+      gesture_application->call_on_closed_callbacks();
+    }
     return true;
   }
 
@@ -222,21 +241,35 @@ void LvglNavigation::open_application(LvglApplication *application) {
     this->last_home_page_index_ = home_index;
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->snapshot_compositor_ != nullptr &&
-      this->snapshot_compositor_->open_application(application->get_page(), this->last_home_page_index_))
+      this->snapshot_compositor_->open_application(application->get_page(), this->last_home_page_index_)) {
+    application->call_on_open_callbacks();
     return;
+  }
 #endif
+  application->call_on_open_callbacks();
   this->parent_->show_page(application->get_page()->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
+  application->call_on_opened_callbacks();
 }
 
 void LvglNavigation::close_application() {
-#if LV_USE_SNAPSHOT && LV_USE_IMAGE
   auto *application = this->find_active_application_();
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (application != nullptr && this->snapshot_compositor_ != nullptr &&
-      this->snapshot_compositor_->begin_application_close(application->get_page(), this->last_home_page_index_) &&
-      this->snapshot_compositor_->settle_application_close(true))
+      this->snapshot_compositor_->begin_application_close(application->get_page(), this->last_home_page_index_)) {
+    application->call_on_close_callbacks();
+    if (this->snapshot_compositor_->settle_application_close(true))
+      return;
+    this->snapshot_compositor_->cancel_application();
+    this->activate_home_view(this->last_home_page_index_);
+    application->call_on_closed_callbacks();
     return;
+  }
 #endif
+  if (application != nullptr)
+    application->call_on_close_callbacks();
   this->show_home();
+  if (application != nullptr)
+    application->call_on_closed_callbacks();
 }
 
 void LvglNavigation::show_home() {
@@ -257,6 +290,16 @@ bool LvglNavigation::is_application_open(const LvglApplication *application) con
 }
 
 LvglApplication *LvglNavigation::get_active_application() const { return this->find_active_application_(); }
+
+void LvglNavigation::complete_application_transition(LvPageType *page, bool opening, bool close_committed) {
+  auto *application = this->find_application_(page);
+  if (application == nullptr)
+    return;
+  if (opening)
+    application->call_on_opened_callbacks();
+  else if (close_committed)
+    application->call_on_closed_callbacks();
+}
 
 size_t LvglNavigation::get_home_view_count_() const {
   return this->home_widgets_.empty() ? this->home_pages_.size() : this->home_widgets_.size();

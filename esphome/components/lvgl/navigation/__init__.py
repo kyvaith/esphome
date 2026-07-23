@@ -1,6 +1,6 @@
 from esphome import automation, codegen as cg
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_PAGES
+from esphome.const import CONF_ID, CONF_ON_OPEN, CONF_PAGES
 
 from ..defines import CONF_WIDGETS
 from ..lvcode import lv_add
@@ -24,6 +24,9 @@ CONF_CLOSE_GESTURE = "close_gesture"
 CONF_HOME = "home"
 CONF_HOME_COMMIT_THRESHOLD = "home_commit_threshold"
 CONF_NAVIGATION = "navigation"
+CONF_ON_CLOSE = "on_close"
+CONF_ON_CLOSED = "on_closed"
+CONF_ON_OPENED = "on_opened"
 CONF_PAGE = "page"
 CONF_SWIPE_START_DISTANCE = "swipe_start_distance"
 
@@ -33,7 +36,18 @@ APPLICATION_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(LvglApplication),
         cv.Required(CONF_PAGE): cv.use_id(lv_page_t),
         cv.Optional(CONF_CLOSE_GESTURE, default=True): cv.boolean,
+        cv.Optional(CONF_ON_OPEN): automation.validate_automation({}),
+        cv.Optional(CONF_ON_OPENED): automation.validate_automation({}),
+        cv.Optional(CONF_ON_CLOSE): automation.validate_automation({}),
+        cv.Optional(CONF_ON_CLOSED): automation.validate_automation({}),
     }
+)
+
+APPLICATION_CALLBACK_AUTOMATIONS = (
+    automation.CallbackAutomation(CONF_ON_OPEN, "add_on_open_callback"),
+    automation.CallbackAutomation(CONF_ON_OPENED, "add_on_opened_callback"),
+    automation.CallbackAutomation(CONF_ON_CLOSE, "add_on_close_callback"),
+    automation.CallbackAutomation(CONF_ON_CLOSED, "add_on_closed_callback"),
 )
 
 
@@ -156,6 +170,9 @@ async def navigation_to_code(lv_component, config):
             application.set_close_gesture_enabled(
                 application_config[CONF_CLOSE_GESTURE]
             )
+        )
+        await automation.build_callback_automations(
+            application, application_config, APPLICATION_CALLBACK_AUTOMATIONS
         )
         lv_add(navigation.add_application(application))
 

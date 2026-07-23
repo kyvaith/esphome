@@ -381,12 +381,17 @@ void LvglSnapshotCompositor::complete_application_() {
   if (!this->application_active_)
     return;
 
+  auto *page = this->application_page_;
+  const bool opening = this->application_opening_;
+  const bool close_committed = this->application_close_committed_;
   if (this->application_opening_ || !this->application_close_committed_)
     this->parent_->show_page(this->application_page_->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
   lv_obj_add_flag(this->application_mask_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(this->overlay_, LV_OBJ_FLAG_HIDDEN);
   if (this->display_ != nullptr)
     lv_refr_now(this->display_);
+  if (this->navigation_ != nullptr)
+    this->navigation_->complete_application_transition(page, opening, close_committed);
   this->release_application_();
 }
 
