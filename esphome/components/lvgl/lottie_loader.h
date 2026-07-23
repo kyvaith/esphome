@@ -40,6 +40,8 @@ struct LottieContext {
   bool auto_start;
   uint32_t width;
   uint32_t height;
+  bool flatten_to_opaque;
+  lv_color_t opaque_background;
 
   // --- Animation params (captured on first load, reused on re-loads) ---
   lv_anim_exec_xcb_t exec_cb;
@@ -95,6 +97,26 @@ inline void lottie_sync_canvas_buffer(LottieContext *ctx) {
 
   esp_cache_msync(reinterpret_cast<void *>(start), end - start,
                   ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+}
+
+inline void lottie_flatten_opaque_frame(LottieContext *ctx) {
+  if (ctx == nullptr || !ctx->flatten_to_opaque || ctx->pixel_buffer == nullptr) {
+    return;
+  }
+
+  const uint8_t bg_b = ctx->opaque_background.blue;
+  const uint8_t bg_g = ctx->opaque_background.green;
+  const uint8_t bg_r = ctx->opaque_background.red;
+  uint8_t *pixel = ctx->pixel_buffer;
+  const size_t pixel_count = static_cast<size_t>(ctx->width) * ctx->height;
+
+  for (size_t index = 0; index < pixel_count; index++, pixel += 4) {
+    const uint16_t inv_alpha = 255U - pixel[3];
+    pixel[0] += static_cast<uint8_t>((inv_alpha * bg_b + 127U) / 255U);
+    pixel[1] += static_cast<uint8_t>((inv_alpha * bg_g + 127U) / 255U);
+    pixel[2] += static_cast<uint8_t>((inv_alpha * bg_r + 127U) / 255U);
+    pixel[3] = 255;
+  }
 }
 
 inline uint8_t *lottie_alloc_pixel_buffer(size_t alloc_bytes, bool *internal) {
@@ -207,6 +229,7 @@ inline void lottie_load_task(void *param) {
   // the blank buffer created in lottie_launch().
   if (ctx->data_loaded && ctx->exec_cb != nullptr && ctx->anim_var != nullptr && ctx->end_frame > ctx->start_frame) {
     ctx->exec_cb(ctx->anim_var, ctx->start_frame);
+    lottie_flatten_opaque_frame(ctx);
     lottie_sync_canvas_buffer(ctx);
     lv_obj_invalidate(ctx->obj);
   }
@@ -268,6 +291,7 @@ inline void lottie_load_task(void *param) {
         ctx->restart_requested = false;
         lv_lock();
         ctx->exec_cb(ctx->anim_var, ctx->start_frame);
+        lottie_flatten_opaque_frame(ctx);
         lottie_sync_canvas_buffer(ctx);
         lv_obj_invalidate(ctx->obj);
         lv_unlock();
@@ -293,6 +317,7 @@ inline void lottie_load_task(void *param) {
       if (elapsed_ms >= ctx->duration_ms) {
         lv_lock();
         ctx->exec_cb(ctx->anim_var, ctx->end_frame);
+        lottie_flatten_opaque_frame(ctx);
         lottie_sync_canvas_buffer(ctx);
         lv_unlock();
         LV_LOG_TRACE("Animation complete");
@@ -306,6 +331,7 @@ inline void lottie_load_task(void *param) {
     bool perf_log_enabled = false;
     int64_t render_start_us = perf_log_enabled ? esp_timer_get_time() : 0;
     ctx->exec_cb(ctx->anim_var, frame);
+    lottie_flatten_opaque_frame(ctx);
     int64_t sync_start_us = perf_log_enabled ? esp_timer_get_time() : 0;
     lottie_sync_canvas_buffer(ctx);
     int64_t sync_end_us = perf_log_enabled ? esp_timer_get_time() : 0;
@@ -572,7 +598,8 @@ inline void lottie_hide(LottieContext *ctx) {
 // Call under lv_lock (from LVGL init code).
 // --------------------------------------------------------------------------
 inline bool lottie_init(lv_obj_t *obj, const void *data, size_t data_size, const char *file_path, uint32_t width,
-                        uint32_t height, bool loop, bool auto_start, bool user_wants_hidden) {
+                        uint32_t height, bool loop, bool auto_start, bool user_wants_hidden,
+                        bool flatten_to_opaque = false, lv_color_t opaque_background = lv_color_hex(0x000000)) {
   LottieContext *ctx =
       static_cast<LottieContext *>(heap_caps_malloc(sizeof(LottieContext), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   if (ctx == nullptr) {
@@ -588,6 +615,8 @@ inline bool lottie_init(lv_obj_t *obj, const void *data, size_t data_size, const
   ctx->auto_start = auto_start;
   ctx->width = width;
   ctx->height = height;
+  ctx->flatten_to_opaque = flatten_to_opaque;
+  ctx->opaque_background = opaque_background;
   ctx->user_wants_hidden = user_wants_hidden;  // Save user's 'hidden' config from YAML
   ctx->runtime_hidden = user_wants_hidden;     // Initially matches YAML config
 

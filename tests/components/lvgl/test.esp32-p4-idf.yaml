@@ -29,6 +29,7 @@ lvgl:
             height: 32
             loop: false
             auto_start: false
+            opaque_background: 0x102030
         - button:
             widgets:
               - label:
