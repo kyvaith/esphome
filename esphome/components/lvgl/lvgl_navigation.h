@@ -13,6 +13,7 @@ namespace esphome::lvgl {
 class LvglComponent;
 class LvPageType;
 class LvglNavigation;
+class LvglSnapshotCompositor;
 
 class LvglApplication {
  public:
@@ -41,6 +42,7 @@ class LvglNavigation {
   void set_home_commit_ratio(float ratio) { this->home_commit_ratio_ = ratio; }
   void set_close_edge_ratio(float ratio) { this->close_edge_ratio_ = ratio; }
   void set_close_commit_ratio(float ratio) { this->close_commit_ratio_ = ratio; }
+  void set_snapshot_compositor(LvglSnapshotCompositor *compositor) { this->snapshot_compositor_ = compositor; }
 
   void touch_begin(int32_t x, int32_t y);
   bool touch_update(int32_t x, int32_t y);
@@ -66,6 +68,7 @@ class LvglNavigation {
   void reset_touch_();
 
   LvglComponent *parent_{};
+  LvglSnapshotCompositor *snapshot_compositor_{};
   std::vector<LvPageType *> home_pages_{};
   std::vector<LvglApplication *> applications_{};
   GestureRouter gesture_router_{};

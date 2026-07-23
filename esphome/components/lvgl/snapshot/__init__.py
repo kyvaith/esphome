@@ -4,6 +4,7 @@ from esphome.const import CONF_COMPRESSION, CONF_ID, CONF_PAGES
 
 from ..navigation import CONF_APPLICATIONS, CONF_HOME, CONF_PAGE
 from ..types import (
+    LvglSnapshotCompositor,
     LvglSnapshotStore,
     SnapshotCaptureAction,
     SnapshotCaptureAllAction,
@@ -13,9 +14,11 @@ from ..types import (
 )
 
 CONF_DECODED_SLOTS = "decoded_slots"
+CONF_INTERNAL_COMPOSITOR_ID = "internal_compositor_id"
 CONF_MAX_ENTRIES = "max_entries"
 CONF_PRELOAD = "preload"
 CONF_QUALITY = "quality"
+CONF_SETTLE_DURATION = "settle_duration"
 CONF_SNAPSHOT_COMPOSITOR = "snapshot_compositor"
 
 COMPRESSION_NONE = "none"
@@ -32,11 +35,17 @@ def _validate_compression(value):
 SNAPSHOT_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(LvglSnapshotStore),
+        cv.GenerateID(CONF_INTERNAL_COMPOSITOR_ID): cv.declare_id(
+            LvglSnapshotCompositor
+        ),
         cv.Optional(CONF_COMPRESSION, default=COMPRESSION_NONE): _validate_compression,
         cv.Optional(CONF_QUALITY, default=90): cv.int_range(min=1, max=100),
         cv.Optional(CONF_MAX_ENTRIES, default=16): cv.int_range(min=1, max=64),
         cv.Optional(CONF_DECODED_SLOTS, default=3): cv.int_range(min=1, max=8),
         cv.Optional(CONF_PRELOAD, default=False): cv.boolean,
+        cv.Optional(
+            CONF_SETTLE_DURATION, default="220ms"
+        ): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_PAGES, default=[]): cv.ensure_list(cv.use_id(lv_page_t)),
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -81,6 +90,23 @@ async def snapshot_to_code(lv_component, config, navigation_config):
     for page_id in page_ids:
         page = await cg.get_variable(page_id)
         cg.add(store.register_page(page))
+
+    if navigation_config is not None:
+        navigation = await cg.get_variable(navigation_config[CONF_ID])
+        compositor = cg.new_Pvariable(
+            snapshot_config[CONF_INTERNAL_COMPOSITOR_ID],
+            lv_component,
+            store,
+        )
+        cg.add(
+            compositor.set_settle_duration(
+                snapshot_config[CONF_SETTLE_DURATION].total_milliseconds
+            )
+        )
+        for page_id in navigation_config[CONF_HOME][CONF_PAGES]:
+            page = await cg.get_variable(page_id)
+            cg.add(compositor.add_home_page(page))
+        cg.add(navigation.set_snapshot_compositor(compositor))
 
 
 SNAPSHOT_PAGE_ACTION_SCHEMA = cv.Schema(

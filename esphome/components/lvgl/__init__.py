@@ -348,6 +348,7 @@ async def to_code(configs):
     if snapshot_config is not None:
         cg.add_define("USE_LVGL_SNAPSHOT_STORE")
         df.add_define("LV_USE_SNAPSHOT", "1")
+        add_lv_use(CONF_IMAGE)
         if snapshot_config[CONF_COMPRESSION] == COMPRESSION_JPEG:
             cg.add_define("USE_LVGL_SNAPSHOT_JPEG_CACHE")
     # suppress default enabling of extra widgets

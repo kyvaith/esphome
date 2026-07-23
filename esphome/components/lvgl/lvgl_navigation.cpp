@@ -1,6 +1,7 @@
 #include "lvgl_navigation.h"
 
-#include "esphome/components/lvgl/lvgl_esphome.h"
+#include "lvgl_esphome.h"
+#include "lvgl_snapshot_compositor.h"
 
 #include <algorithm>
 #include <cmath>
@@ -62,7 +63,14 @@ void LvglNavigation::touch_begin(int32_t x, int32_t y) {
 bool LvglNavigation::touch_update(int32_t x, int32_t y) {
   if (this->touch_context_ == TouchContext::NONE)
     return false;
-  return this->gesture_router_.update(x, y).captured;
+  const auto &sample = this->gesture_router_.update(x, y);
+  if (this->touch_context_ == TouchContext::HOME && sample.captured && this->snapshot_compositor_ != nullptr) {
+    if (sample.just_captured)
+      this->snapshot_compositor_->begin_home(this->last_home_page_index_);
+    if (this->snapshot_compositor_->is_home_active())
+      this->snapshot_compositor_->update_home(sample.delta_x);
+  }
+  return sample.captured;
 }
 
 bool LvglNavigation::touch_end() {
@@ -76,15 +84,19 @@ bool LvglNavigation::touch_end() {
     return false;
 
   if (context == TouchContext::HOME && !this->home_pages_.empty()) {
+    const int current = this->find_home_page_index_();
+    int target = current;
     const int32_t threshold =
         std::max<int32_t>(1, static_cast<int32_t>(std::lround(this->parent_->get_width() * this->home_commit_ratio_)));
-    if (std::abs(sample.delta_x) >= threshold) {
-      const int current = this->find_home_page_index_();
-      const int target = current + (sample.delta_x < 0 ? 1 : -1);
-      if (current >= 0 && target >= 0 && target < static_cast<int>(this->home_pages_.size())) {
-        this->last_home_page_index_ = target;
+    if (current >= 0 && std::abs(sample.delta_x) >= threshold) {
+      const int candidate = current + (sample.delta_x < 0 ? 1 : -1);
+      if (candidate >= 0 && candidate < static_cast<int>(this->home_pages_.size()))
+        target = candidate;
+    }
+    if (current >= 0 && target >= 0) {
+      this->last_home_page_index_ = target;
+      if (this->snapshot_compositor_ == nullptr || !this->snapshot_compositor_->settle_home(target))
         this->parent_->show_page(this->home_pages_[target]->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
-      }
     }
   } else if (context == TouchContext::APPLICATION_CLOSE) {
     const int32_t threshold = std::max<int32_t>(
@@ -95,7 +107,11 @@ bool LvglNavigation::touch_end() {
   return true;
 }
 
-void LvglNavigation::touch_cancel() { this->reset_touch_(); }
+void LvglNavigation::touch_cancel() {
+  if (this->snapshot_compositor_ != nullptr)
+    this->snapshot_compositor_->cancel_home();
+  this->reset_touch_();
+}
 
 void LvglNavigation::reset_touch_() {
   this->gesture_router_.cancel();
@@ -105,6 +121,8 @@ void LvglNavigation::reset_touch_() {
 void LvglNavigation::open_application(LvglApplication *application) {
   if (application == nullptr || application->get_page() == nullptr)
     return;
+  if (this->snapshot_compositor_ != nullptr)
+    this->snapshot_compositor_->cancel_home();
   if (const int home_index = this->find_home_page_index_(); home_index >= 0)
     this->last_home_page_index_ = home_index;
   this->parent_->show_page(application->get_page()->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
@@ -115,6 +133,8 @@ void LvglNavigation::close_application() { this->show_home(); }
 void LvglNavigation::show_home() {
   if (this->home_pages_.empty())
     return;
+  if (this->snapshot_compositor_ != nullptr)
+    this->snapshot_compositor_->cancel_home();
   const int target = std::clamp(this->last_home_page_index_, 0, static_cast<int>(this->home_pages_.size()) - 1);
   this->parent_->show_page(this->home_pages_[target]->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
 }
