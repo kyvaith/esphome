@@ -34,31 +34,45 @@ void SendspinImage::setup() {
 // THREAD CONTEXT: Dedicated artwork decode thread (via SendspinHub's decode callback).
 // Decode synchronously into the back buffer; heavy CPU work is allowed here.
 void SendspinImage::on_decode_(const uint8_t *data, size_t length) {
-  this->begin_decode(length);
+  if (!this->begin_decode(length)) {
+    ESP_LOGE(TAG, "Failed to initialize image decoder");
+    this->defer_image_error_();
+    return;
+  }
   size_t total_consumed = 0;
   while (total_consumed < length) {
     int consumed = this->feed_data(const_cast<uint8_t *>(data) + total_consumed, length - total_consumed);
-    if (consumed < 0) {
+    if (consumed <= 0) {
       ESP_LOGE(TAG, "Error decoding image data at offset %zu", total_consumed);
-      this->image_error_callback_.call();
+      this->abort_decode();
+      this->defer_image_error_();
       return;
     }
     total_consumed += consumed;
   }
-  if (!this->end_decode()) {
+  if (!this->end_decode(false)) {
     ESP_LOGE(TAG, "Failed to finalize image after decoding");
-    this->image_error_callback_.call();
+    this->abort_decode();
+    this->defer_image_error_();
     return;
   }
 }
 
 // THREAD CONTEXT: Main loop (fired once the server display timestamp is reached)
-void SendspinImage::on_display_() { this->image_display_callback_.call(); }
+void SendspinImage::on_display_() {
+  if (this->publish_pending()) {
+    this->image_display_callback_.call();
+  }
+}
 
 // THREAD CONTEXT: Main loop
 void SendspinImage::on_clear_() {
   this->release();
   this->image_display_callback_.call();
+}
+
+void SendspinImage::defer_image_error_() {
+  this->defer("image_error", [this]() { this->image_error_callback_.call(); });
 }
 
 }  // namespace esphome::sendspin_

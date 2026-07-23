@@ -147,6 +147,7 @@ async def to_code(config: ConfigType) -> None:
     await cg.register_component(var, config)
     await cg.register_parented(var, config[CONF_SENDSPIN_ID])
 
+    cg.add(var.set_decoder_type(settings.decoder_type_enum))
     cg.add(var.set_slot(config[CONF_SLOT]))
     cg.add(var.set_image_source(IMAGE_SOURCES[config[CONF_SOURCE]]))
 

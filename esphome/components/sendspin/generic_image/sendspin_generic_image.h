@@ -36,6 +36,8 @@ class SendspinImage : public SendspinChild, public runtime_image::RuntimeImage {
   void on_display_();
   // Main loop thread. Releases the decoded image and refires the display trigger so listeners re-render.
   void on_clear_();
+  // Any thread. Schedules the error automation on the main loop.
+  void defer_image_error_();
 
   LazyCallbackManager<void()> image_display_callback_{};
   LazyCallbackManager<void()> image_error_callback_{};

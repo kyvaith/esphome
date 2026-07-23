@@ -10,8 +10,11 @@
 #ifdef USE_RUNTIME_IMAGE_BMP
 #include "bmp_decoder.h"
 #endif
-#ifdef USE_RUNTIME_IMAGE_JPEG
+#ifdef USE_RUNTIME_IMAGE_JPEG_SOFTWARE
 #include "jpeg_decoder.h"
+#endif
+#ifdef USE_RUNTIME_IMAGE_ESP32_JPEG
+#include "esp32_jpeg_decoder.h"
 #endif
 #ifdef USE_RUNTIME_IMAGE_PNG
 #include "png_decoder.h"
@@ -48,6 +51,20 @@ RuntimeImage::RuntimeImage(ImageFormat format, image::ImageType type, image::Tra
 
 RuntimeImage::~RuntimeImage() { this->release(); }
 
+int RuntimeImage::get_buffer_width() const {
+  if (!this->progressive_display_ && this->decoder_ != nullptr) {
+    return this->decode_buffer_width_;
+  }
+  return this->buffer_width_;
+}
+
+int RuntimeImage::get_buffer_height() const {
+  if (!this->progressive_display_ && this->decoder_ != nullptr) {
+    return this->decode_buffer_height_;
+  }
+  return this->buffer_height_;
+}
+
 int RuntimeImage::resize(int width, int height) {
   // Use fixed dimensions if specified (0 means auto-resize)
   int target_width = this->fixed_width_ ? this->fixed_width_ : width;
@@ -72,18 +89,22 @@ int RuntimeImage::resize(int width, int height) {
 }
 
 void RuntimeImage::draw_pixel(int x, int y, const Color &color) {
-  if (!this->buffer_) {
+  uint8_t *target_buffer = this->progressive_display_ ? this->buffer_ : this->decode_buffer_;
+  const int target_width = this->progressive_display_ ? this->buffer_width_ : this->decode_buffer_width_;
+  const int target_height = this->progressive_display_ ? this->buffer_height_ : this->decode_buffer_height_;
+
+  if (!target_buffer) {
     ESP_LOGE(TAG, "Buffer not allocated!");
     return;
   }
-  if (x < 0 || y < 0 || x >= this->buffer_width_ || y >= this->buffer_height_) {
+  if (x < 0 || y < 0 || x >= target_width || y >= target_height) {
     ESP_LOGE(TAG, "Tried to paint a pixel (%d,%d) outside the image!", x, y);
     return;
   }
 
   switch (this->type_) {
     case image::IMAGE_TYPE_BINARY: {
-      const uint32_t width_8 = ((this->buffer_width_ + 7u) / 8u) * 8u;
+      const uint32_t width_8 = ((target_width + 7u) / 8u) * 8u;
       uint32_t pos = x + y * width_8;
       auto bitno = 0x80 >> (pos % 8u);
       pos /= 8u;
@@ -91,14 +112,14 @@ void RuntimeImage::draw_pixel(int x, int y, const Color &color) {
       if (this->has_transparency() && color.w < 0x80)
         on = false;
       if (on) {
-        this->buffer_[pos] |= bitno;
+        target_buffer[pos] |= bitno;
       } else {
-        this->buffer_[pos] &= ~bitno;
+        target_buffer[pos] &= ~bitno;
       }
       break;
     }
     case image::IMAGE_TYPE_GRAYSCALE: {
-      uint32_t pos = this->get_position_(x, y);
+      const uint32_t pos = x + y * target_width;
       auto gray = static_cast<uint8_t>(0.2125 * color.r + 0.7154 * color.g + 0.0721 * color.b);
       if (this->transparency_ == image::TRANSPARENCY_CHROMA_KEY) {
         if (gray == 1) {
@@ -111,36 +132,36 @@ void RuntimeImage::draw_pixel(int x, int y, const Color &color) {
         if (color.w != 0xFF)
           gray = color.w;
       }
-      this->buffer_[pos] = gray;
+      target_buffer[pos] = gray;
       break;
     }
     case image::IMAGE_TYPE_RGB565: {
-      const size_t pos = (x + y * this->buffer_width_) * 2;
+      const size_t pos = (x + y * target_width) * 2;
       Color mapped_color = color;
       this->map_chroma_key(mapped_color);
       uint16_t rgb565 = display::ColorUtil::color_to_565(mapped_color);
       if (this->is_big_endian_) {
-        this->buffer_[pos + 0] = static_cast<uint8_t>((rgb565 >> 8) & 0xFF);
-        this->buffer_[pos + 1] = static_cast<uint8_t>(rgb565 & 0xFF);
+        target_buffer[pos + 0] = static_cast<uint8_t>((rgb565 >> 8) & 0xFF);
+        target_buffer[pos + 1] = static_cast<uint8_t>(rgb565 & 0xFF);
       } else {
-        this->buffer_[pos + 0] = static_cast<uint8_t>(rgb565 & 0xFF);
-        this->buffer_[pos + 1] = static_cast<uint8_t>((rgb565 >> 8) & 0xFF);
+        target_buffer[pos + 0] = static_cast<uint8_t>(rgb565 & 0xFF);
+        target_buffer[pos + 1] = static_cast<uint8_t>((rgb565 >> 8) & 0xFF);
       }
       if (this->transparency_ == image::TRANSPARENCY_ALPHA_CHANNEL) {
-        const size_t alpha_pos = pos / 2 + this->buffer_width_ * this->buffer_height_ * 2;
-        this->buffer_[alpha_pos] = color.w;
+        const size_t alpha_pos = pos / 2 + target_width * target_height * 2;
+        target_buffer[alpha_pos] = color.w;
       }
       break;
     }
     case image::IMAGE_TYPE_RGB: {
-      uint32_t pos = this->get_position_(x, y);
+      const uint32_t pos = (x + y * target_width) * this->get_bpp() / 8;
       Color mapped_color = color;
       this->map_chroma_key(mapped_color);
-      this->buffer_[pos + 0] = mapped_color.b;
-      this->buffer_[pos + 1] = mapped_color.g;
-      this->buffer_[pos + 2] = mapped_color.r;
+      target_buffer[pos + 0] = mapped_color.b;
+      target_buffer[pos + 1] = mapped_color.g;
+      target_buffer[pos + 2] = mapped_color.r;
       if (this->transparency_ == image::TRANSPARENCY_ALPHA_CHANNEL) {
-        this->buffer_[pos + 3] = color.w;
+        target_buffer[pos + 3] = color.w;
       }
       break;
     }
@@ -172,11 +193,14 @@ void RuntimeImage::draw(int x, int y, display::Display *display, Color color_on,
 }
 
 bool RuntimeImage::begin_decode(size_t expected_size) {
+  LockGuard lock(this->buffer_mutex_);
   if (this->decoder_) {
     ESP_LOGW(TAG, "Decoding already in progress");
     return false;
   }
 
+  this->release_decode_buffer_();
+  this->pending_image_ = false;
   this->decoder_ = this->create_decoder_();
   if (!this->decoder_) {
     ESP_LOGE(TAG, "Failed to create decoder for format %d", this->format_);
@@ -191,6 +215,7 @@ bool RuntimeImage::begin_decode(size_t expected_size) {
   if (result < 0) {
     ESP_LOGE(TAG, "Failed to prepare decoder: %d", result);
     this->decoder_ = nullptr;
+    this->release_decode_buffer_();
     return false;
   }
 
@@ -198,6 +223,7 @@ bool RuntimeImage::begin_decode(size_t expected_size) {
 }
 
 int RuntimeImage::feed_data(uint8_t *data, size_t len) {
+  LockGuard lock(this->buffer_mutex_);
   if (!this->decoder_) {
     ESP_LOGE(TAG, "No decoder initialized");
     return -1;
@@ -211,24 +237,43 @@ int RuntimeImage::feed_data(uint8_t *data, size_t len) {
   return consumed;
 }
 
-bool RuntimeImage::end_decode() {
+bool RuntimeImage::end_decode(bool publish) {
+  LockGuard lock(this->buffer_mutex_);
   if (!this->decoder_) {
     return false;
   }
 
-  // Finalize the image for display
-  if (!this->progressive_display_) {
-    // Only now make the image visible
-    this->width_ = this->buffer_width_;
-    this->height_ = this->buffer_height_;
-    this->data_start_ = this->buffer_;
-  }
-
-  // Clean up decoder
+  const size_t decoded_bytes = this->decoded_bytes_;
   this->decoder_ = nullptr;
 
-  ESP_LOGD(TAG, "Decoding complete: %dx%d, %zu bytes", this->width_, this->height_, this->decoded_bytes_);
+  if (!this->progressive_display_) {
+    if (this->decode_buffer_ == nullptr || this->decode_buffer_width_ <= 0 || this->decode_buffer_height_ <= 0) {
+      ESP_LOGE(TAG, "Decoder completed without an image buffer");
+      this->release_decode_buffer_();
+      return false;
+    }
+    this->pending_image_ = true;
+    if (publish && !this->publish_pending_locked_()) {
+      return false;
+    }
+  }
+
+  const int decoded_width = this->progressive_display_ || publish ? this->width_ : this->decode_buffer_width_;
+  const int decoded_height = this->progressive_display_ || publish ? this->height_ : this->decode_buffer_height_;
+  ESP_LOGD(TAG, "Decoding complete: %dx%d, %zu bytes", decoded_width, decoded_height, decoded_bytes);
   return true;
+}
+
+void RuntimeImage::abort_decode() {
+  LockGuard lock(this->buffer_mutex_);
+  this->decoder_ = nullptr;
+  this->pending_image_ = false;
+  this->release_decode_buffer_();
+}
+
+bool RuntimeImage::publish_pending() {
+  LockGuard lock(this->buffer_mutex_);
+  return this->publish_pending_locked_();
 }
 
 bool RuntimeImage::is_decode_finished() const {
@@ -239,11 +284,12 @@ bool RuntimeImage::is_decode_finished() const {
 }
 
 void RuntimeImage::release() {
-  this->release_buffer_();
-  // Reset decoder separately — release() can be called from within the decoder
-  // (via set_size -> resize -> resize_buffer_), so we must not destroy the decoder here.
-  // The decoder lifecycle is managed by begin_decode()/end_decode().
+  LockGuard lock(this->buffer_mutex_);
+  // Public release is serialized with worker-task decoding.
   this->decoder_ = nullptr;
+  this->pending_image_ = false;
+  this->release_decode_buffer_();
+  this->release_buffer_();
 }
 
 void RuntimeImage::release_buffer_() {
@@ -263,6 +309,42 @@ void RuntimeImage::release_buffer_() {
   }
 }
 
+void RuntimeImage::release_decode_buffer_() {
+  if (this->decode_buffer_ == nullptr) {
+    this->decode_buffer_width_ = 0;
+    this->decode_buffer_height_ = 0;
+    return;
+  }
+
+  ESP_LOGV(TAG, "Releasing decode buffer of size %zu",
+           this->get_buffer_size_(this->decode_buffer_width_, this->decode_buffer_height_));
+  RAMAllocator<uint8_t> allocator;
+  allocator.deallocate(this->decode_buffer_,
+                       this->get_buffer_size_(this->decode_buffer_width_, this->decode_buffer_height_));
+  this->decode_buffer_ = nullptr;
+  this->decode_buffer_width_ = 0;
+  this->decode_buffer_height_ = 0;
+}
+
+bool RuntimeImage::publish_pending_locked_() {
+  if (!this->pending_image_ || this->decode_buffer_ == nullptr) {
+    return false;
+  }
+
+  this->release_buffer_();
+  this->buffer_ = this->decode_buffer_;
+  this->buffer_width_ = this->decode_buffer_width_;
+  this->buffer_height_ = this->decode_buffer_height_;
+  this->decode_buffer_ = nullptr;
+  this->decode_buffer_width_ = 0;
+  this->decode_buffer_height_ = 0;
+  this->pending_image_ = false;
+  this->width_ = this->buffer_width_;
+  this->height_ = this->buffer_height_;
+  this->data_start_ = this->buffer_;
+  return true;
+}
+
 size_t RuntimeImage::resize_buffer_(int width, int height) {
   size_t new_size = this->get_buffer_size_(width, height);
 
@@ -271,33 +353,70 @@ size_t RuntimeImage::resize_buffer_(int width, int height) {
     return 0;
   }
 
-  if (this->buffer_ && this->buffer_width_ == width && this->buffer_height_ == height) {
+  uint8_t *&target_buffer = this->progressive_display_ ? this->buffer_ : this->decode_buffer_;
+  int &target_width = this->progressive_display_ ? this->buffer_width_ : this->decode_buffer_width_;
+  int &target_height = this->progressive_display_ ? this->buffer_height_ : this->decode_buffer_height_;
+
+  if (target_buffer && target_width == width && target_height == height) {
     // Buffer already allocated with correct size
     return new_size;
   }
 
   // Release old buffer if dimensions changed
-  if (this->buffer_) {
-    this->release_buffer_();
+  if (target_buffer) {
+    if (this->progressive_display_) {
+      this->release_buffer_();
+    } else {
+      this->release_decode_buffer_();
+    }
   }
 
   ESP_LOGD(TAG, "Allocating buffer: %dx%d, %zu bytes", width, height, new_size);
   RAMAllocator<uint8_t> allocator;
-  this->buffer_ = allocator.allocate(new_size);
+  target_buffer = allocator.allocate(new_size);
 
-  if (!this->buffer_) {
+  if (!target_buffer) {
     ESP_LOGE(TAG, "Failed to allocate %zu bytes. Largest free block: %zu", new_size,
              allocator.get_max_free_block_size());
     return 0;
   }
 
   // Clear buffer
-  memset(this->buffer_, 0, new_size);
+  memset(target_buffer, 0, new_size);
 
-  this->buffer_width_ = width;
-  this->buffer_height_ = height;
+  target_width = width;
+  target_height = height;
 
   return new_size;
+}
+
+bool RuntimeImage::accepts_decoded_dimensions(int width, int height) const {
+  if (width <= 0 || height <= 0) {
+    return false;
+  }
+
+  int target_width = this->fixed_width_ ? this->fixed_width_ : width;
+  int target_height = this->fixed_height_ ? this->fixed_height_ : height;
+  if (this->fixed_width_ && this->fixed_height_) {
+    const float scale =
+        std::min(static_cast<float>(this->fixed_width_) / width, static_cast<float>(this->fixed_height_) / height);
+    target_width = static_cast<int>(width * scale);
+    target_height = static_cast<int>(height * scale);
+  }
+  return target_width == width && target_height == height;
+}
+
+bool RuntimeImage::adopt_decode_buffer(uint8_t *buffer, int width, int height) {
+  if (buffer == nullptr || this->progressive_display_ || !this->accepts_decoded_dimensions(width, height) ||
+      this->get_buffer_size_(width, height) == 0) {
+    return false;
+  }
+
+  this->release_decode_buffer_();
+  this->decode_buffer_ = buffer;
+  this->decode_buffer_width_ = width;
+  this->decode_buffer_height_ = height;
+  return true;
 }
 
 size_t RuntimeImage::get_buffer_size_(int width, int height) const {
@@ -312,7 +431,7 @@ size_t RuntimeImage::get_buffer_size_(int width, int height) const {
   return (static_cast<size_t>(this->get_bpp()) * width + 7u) / 8u * height;
 }
 
-int RuntimeImage::get_position_(int x, int y) const { return (x + y * this->buffer_width_) * this->get_bpp() / 8; }
+int RuntimeImage::get_position_(int x, int y) const { return (x + y * this->get_buffer_width()) * this->get_bpp() / 8; }
 
 std::unique_ptr<ImageDecoder> RuntimeImage::create_decoder_() {
   switch (this->format_) {
@@ -322,16 +441,27 @@ std::unique_ptr<ImageDecoder> RuntimeImage::create_decoder_() {
 #endif
 #ifdef USE_RUNTIME_IMAGE_JPEG
     case JPEG:
+#ifdef USE_RUNTIME_IMAGE_ESP32_JPEG
+      if (this->decoder_type_ == DecoderType::ESP32_JPEG) {
+        return make_unique<Esp32JpegDecoder>(this);
+      }
+#endif
+#ifdef USE_RUNTIME_IMAGE_JPEG_SOFTWARE
       return make_unique<JpegDecoder>(this);
+#else
+      break;
+#endif
 #endif
 #ifdef USE_RUNTIME_IMAGE_PNG
     case PNG:
       return make_unique<PngDecoder>(this);
 #endif
     default:
-      ESP_LOGE(TAG, "Unsupported image format: %d", this->format_);
-      return nullptr;
+      break;
   }
+  ESP_LOGE(TAG, "Unsupported image format or decoder: format=%d decoder=%d", this->format_,
+           static_cast<int>(this->decoder_type_));
+  return nullptr;
 }
 
 }  // namespace esphome::runtime_image
