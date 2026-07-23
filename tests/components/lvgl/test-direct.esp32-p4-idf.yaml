@@ -11,6 +11,7 @@ lvgl:
   buffer_size: 100%
   color_depth: 32
   direct_mode: true
+  diagnostics: true
   use_ppa: true
   widgets:
     - label:
