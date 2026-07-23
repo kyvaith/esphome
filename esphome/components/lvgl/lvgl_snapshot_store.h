@@ -3,6 +3,7 @@
 #include "esphome/components/lvgl/lvgl_esphome.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
+#include "esphome/core/helpers.h"
 
 #ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
 #include "esphome/components/esp32_jpeg/esp32_jpeg.h"
@@ -10,8 +11,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <vector>
-
 namespace esphome::lvgl {
 
 enum class SnapshotCompression : uint8_t {
@@ -32,11 +31,13 @@ class LvglSnapshotStore final : public Component {
   void set_quality(uint8_t quality) { this->quality_ = quality; }
   void set_max_entries(size_t max_entries) {
     this->max_entries_ = max_entries;
-    this->entries_.reserve(max_entries);
+    this->entries_.init(max_entries);
   }
   void set_decoded_slots(size_t decoded_slots) {
     this->decoded_slot_count_ = decoded_slots;
-    this->decoded_slots_.reserve(decoded_slots);
+    this->decoded_slots_.init(decoded_slots);
+    for (size_t i = 0; i < decoded_slots; i++)
+      this->decoded_slots_.emplace_back();
   }
   void set_preload(bool preload) { this->preload_ = preload; }
 
@@ -104,8 +105,8 @@ class LvglSnapshotStore final : public Component {
   size_t decoded_slot_count_{3};
   bool preload_{};
   uint32_t access_clock_{};
-  std::vector<Entry> entries_{};
-  std::vector<DecodedSlot> decoded_slots_{};
+  FixedVector<Entry> entries_{};
+  FixedVector<DecodedSlot> decoded_slots_{};
 };
 
 template<typename... Ts> class SnapshotCaptureAction final : public Action<Ts...> {
