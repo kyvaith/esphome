@@ -126,8 +126,8 @@ void set_decoder_dma2d_burst_length(uint16_t burst_length);
 uint16_t get_decoder_dma2d_burst_length();
 void set_decoder_dma2d_descriptor_burst(bool enabled);
 bool get_decoder_dma2d_descriptor_burst();
-void set_decoder_dma2d_qos(uint16_t burstiness, uint8_t peak_level, uint8_t transaction_level,
-                            uint8_t write_priority, uint8_t read_priority);
+void set_decoder_dma2d_qos(uint16_t burstiness, uint8_t peak_level, uint8_t transaction_level, uint8_t write_priority,
+                           uint8_t read_priority);
 
 }  // namespace esphome::esp32_jpeg
 

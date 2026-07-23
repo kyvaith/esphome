@@ -31,29 +31,34 @@
 #if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
 static volatile bool g_esphome_esp32_jpeg_skip_output_cache_msync = false;
 static volatile uint32_t g_esphome_esp32_jpeg_last_status = 0;
-#ifndef CONFIG_ESPHOME_JPEG_DMA2D_BURST_LENGTH
-#define CONFIG_ESPHOME_JPEG_DMA2D_BURST_LENGTH 128
+#ifdef CONFIG_ESPHOME_JPEG_DMA2D_BURST_LENGTH
+static constexpr uint16_t JPEG_DMA2D_BURST_LENGTH = CONFIG_ESPHOME_JPEG_DMA2D_BURST_LENGTH;
+#else
+static constexpr uint16_t JPEG_DMA2D_BURST_LENGTH = 128;
 #endif
 #ifdef CONFIG_ESPHOME_JPEG_DMA2D_DESC_BURST_DISABLE
 static std::atomic<bool> g_esphome_esp32_jpeg_dma2d_desc_burst{false};
 #else
 static std::atomic<bool> g_esphome_esp32_jpeg_dma2d_desc_burst{true};
 #endif
-static std::atomic<uint16_t> g_esphome_esp32_jpeg_dma2d_burst_length{CONFIG_ESPHOME_JPEG_DMA2D_BURST_LENGTH};
+static std::atomic<uint16_t> g_esphome_esp32_jpeg_dma2d_burst_length{JPEG_DMA2D_BURST_LENGTH};
 
-#ifndef CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BURST_LENGTH
-#define CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BURST_LENGTH 128
+#ifdef CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BURST_LENGTH
+static constexpr uint16_t JPEG_ENCODER_DMA2D_BURST_LENGTH = CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BURST_LENGTH;
+#else
+static constexpr uint16_t JPEG_ENCODER_DMA2D_BURST_LENGTH = 128;
 #endif
-#ifndef CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BAND_HEIGHT
-#define CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BAND_HEIGHT 0
+#ifdef CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BAND_HEIGHT
+static constexpr uint16_t JPEG_ENCODER_DMA2D_BAND_HEIGHT = CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BAND_HEIGHT;
+#else
+static constexpr uint16_t JPEG_ENCODER_DMA2D_BAND_HEIGHT = 0;
 #endif
 #ifdef CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_DESC_BURST_DISABLE
 static std::atomic<bool> g_esphome_esp32_jpeg_encoder_dma2d_desc_burst{false};
 #else
 static std::atomic<bool> g_esphome_esp32_jpeg_encoder_dma2d_desc_burst{true};
 #endif
-static std::atomic<uint16_t> g_esphome_esp32_jpeg_encoder_dma2d_burst_length{
-    CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BURST_LENGTH};
+static std::atomic<uint16_t> g_esphome_esp32_jpeg_encoder_dma2d_burst_length{JPEG_ENCODER_DMA2D_BURST_LENGTH};
 
 extern "C" bool esphome_esp32_jpeg_skip_output_cache_msync(void) {
   return g_esphome_esp32_jpeg_skip_output_cache_msync;
@@ -77,9 +82,7 @@ extern "C" bool esphome_esp32_jpeg_encoder_dma2d_desc_burst_enabled(void) {
   return g_esphome_esp32_jpeg_encoder_dma2d_desc_burst.load(std::memory_order_relaxed);
 }
 
-extern "C" int esphome_esp32_jpeg_encoder_dma2d_band_height(void) {
-  return CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BAND_HEIGHT;
-}
+extern "C" int esphome_esp32_jpeg_encoder_dma2d_band_height(void) { return JPEG_ENCODER_DMA2D_BAND_HEIGHT; }
 #endif
 
 namespace esphome::esp32_jpeg {
@@ -87,12 +90,14 @@ namespace {
 
 static const char *const TAG = "esp32_jpeg";
 
-#ifndef CONFIG_ESPHOME_JPEG_BUFFER_DIAGNOSTICS
-#define CONFIG_ESPHOME_JPEG_BUFFER_DIAGNOSTICS 0
+#ifdef CONFIG_ESPHOME_JPEG_BUFFER_DIAGNOSTICS
+static constexpr bool JPEG_BUFFER_DIAGNOSTICS = CONFIG_ESPHOME_JPEG_BUFFER_DIAGNOSTICS != 0;
+#else
+static constexpr bool JPEG_BUFFER_DIAGNOSTICS = false;
 #endif
 
 void log_decode_buffer_probe_(const char *stage, uint8_t *buffer, size_t size) {
-  if constexpr (!CONFIG_ESPHOME_JPEG_BUFFER_DIAGNOSTICS) {
+  if constexpr (!JPEG_BUFFER_DIAGNOSTICS) {
     (void) stage;
     (void) buffer;
     (void) size;
@@ -140,13 +145,12 @@ esp_err_t sync_external_cache_(const void *buffer, size_t size, int flags) {
     alignment = 64;
   const uintptr_t start = reinterpret_cast<uintptr_t>(buffer);
   const uintptr_t aligned_start = start & ~(static_cast<uintptr_t>(alignment) - 1U);
-  const uintptr_t aligned_end =
-      (start + size + alignment - 1U) & ~(static_cast<uintptr_t>(alignment) - 1U);
+  const uintptr_t aligned_end = (start + size + alignment - 1U) & ~(static_cast<uintptr_t>(alignment) - 1U);
   return esp_cache_msync(reinterpret_cast<void *>(aligned_start), aligned_end - aligned_start, flags);
 }
 
 esp_err_t prepare_hardware_input_(const uint8_t *jpeg, size_t jpeg_size, JpegBuffer *normalized,
-                                   const uint8_t **effective_jpeg, size_t *effective_size) {
+                                  const uint8_t **effective_jpeg, size_t *effective_size) {
   bool was_normalized = false;
   esp_err_t err = normalize_huffman_for_hardware(jpeg, jpeg_size, normalized, &was_normalized);
   if (err != ESP_OK)
@@ -215,10 +219,8 @@ esp_err_t align_hardware_decode_dimensions_(JpegBuffer *owned_input, const uint8
         max_vertical_sampling = std::max<uint8_t>(max_vertical_sampling, sampling & 0x0F);
       }
 
-      const uint16_t original_height =
-          (static_cast<uint16_t>(source[height_offset]) << 8) | source[height_offset + 1];
-      const uint16_t original_width =
-          (static_cast<uint16_t>(source[width_offset]) << 8) | source[width_offset + 1];
+      const uint16_t original_height = (static_cast<uint16_t>(source[height_offset]) << 8) | source[height_offset + 1];
+      const uint16_t original_width = (static_cast<uint16_t>(source[width_offset]) << 8) | source[width_offset + 1];
       const uint32_t horizontal_mcu = static_cast<uint32_t>(max_horizontal_sampling) * 8U;
       const uint32_t vertical_mcu = static_cast<uint32_t>(max_vertical_sampling) * 8U;
       const uint32_t aligned_width = align_up(original_width, horizontal_mcu);
@@ -246,8 +248,8 @@ esp_err_t align_hardware_decode_dimensions_(JpegBuffer *owned_input, const uint8
       mutable_jpeg[width_offset] = static_cast<uint8_t>(aligned_width >> 8);
       mutable_jpeg[width_offset + 1] = static_cast<uint8_t>(aligned_width);
       *jpeg = mutable_jpeg;
-      ESP_LOGI(TAG, "Padded JPEG SOF for ESP32-P4 hardware decode: %ux%u -> %" PRIu32 "x%" PRIu32,
-               original_width, original_height, aligned_width, aligned_height);
+      ESP_LOGI(TAG, "Padded JPEG SOF for ESP32-P4 hardware decode: %ux%u -> %" PRIu32 "x%" PRIu32, original_width,
+               original_height, aligned_width, aligned_height);
       return ESP_OK;
     }
 
@@ -285,8 +287,10 @@ constexpr size_t DECODER_INTERNAL_INPUT_MAX_BYTES = 64 * 1024;
 #else
 constexpr size_t DECODER_INTERNAL_INPUT_MAX_BYTES = CONFIG_ESPHOME_JPEG_DECODER_INTERNAL_INPUT_MAX_BYTES;
 #endif
-#ifndef CONFIG_ESPHOME_JPEG_DECODER_DIRECT_PSRAM_INPUT
-#define CONFIG_ESPHOME_JPEG_DECODER_DIRECT_PSRAM_INPUT 0
+#ifdef CONFIG_ESPHOME_JPEG_DECODER_DIRECT_PSRAM_INPUT
+constexpr bool DECODER_DIRECT_PSRAM_INPUT = CONFIG_ESPHOME_JPEG_DECODER_DIRECT_PSRAM_INPUT != 0;
+#else
+constexpr bool DECODER_DIRECT_PSRAM_INPUT = false;
 #endif
 bool encoder_dma_guard_logged = false;
 bool decoder_dma_guard_logged = false;
@@ -295,42 +299,62 @@ bool decoder_input_fallback_logged = false;
 bool decoder_direct_psram_input_logged = false;
 
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
-#ifndef CONFIG_ESPHOME_JPEG_DMA2D_AXI_BURSTINESS
-#define CONFIG_ESPHOME_JPEG_DMA2D_AXI_BURSTINESS 1
+#ifdef CONFIG_ESPHOME_JPEG_DMA2D_AXI_BURSTINESS
+constexpr uint16_t JPEG_DMA2D_AXI_BURSTINESS = CONFIG_ESPHOME_JPEG_DMA2D_AXI_BURSTINESS;
+#else
+constexpr uint16_t JPEG_DMA2D_AXI_BURSTINESS = 1;
 #endif
-#ifndef CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS
-#define CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS 8
+#ifdef CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS
+constexpr uint16_t DMA2D_AXI_BURSTINESS = CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS;
+#else
+constexpr uint16_t DMA2D_AXI_BURSTINESS = 8;
 #endif
-#ifndef CONFIG_ESPHOME_JPEG_DMA2D_PEAK_LEVEL
-#define CONFIG_ESPHOME_JPEG_DMA2D_PEAK_LEVEL 2
+#ifdef CONFIG_ESPHOME_JPEG_DMA2D_PEAK_LEVEL
+constexpr uint8_t JPEG_DMA2D_PEAK_LEVEL = CONFIG_ESPHOME_JPEG_DMA2D_PEAK_LEVEL;
+#else
+constexpr uint8_t JPEG_DMA2D_PEAK_LEVEL = 2;
 #endif
-#ifndef CONFIG_ESPHOME_JPEG_DMA2D_TRANSACTION_LEVEL
-#define CONFIG_ESPHOME_JPEG_DMA2D_TRANSACTION_LEVEL 4
+#ifdef CONFIG_ESPHOME_JPEG_DMA2D_TRANSACTION_LEVEL
+constexpr uint8_t JPEG_DMA2D_TRANSACTION_LEVEL = CONFIG_ESPHOME_JPEG_DMA2D_TRANSACTION_LEVEL;
+#else
+constexpr uint8_t JPEG_DMA2D_TRANSACTION_LEVEL = 4;
 #endif
-#ifndef CONFIG_ESPHOME_DMA2D_PEAK_LEVEL
-#define CONFIG_ESPHOME_DMA2D_PEAK_LEVEL 0
+#ifdef CONFIG_ESPHOME_DMA2D_PEAK_LEVEL
+constexpr uint8_t DMA2D_PEAK_LEVEL = CONFIG_ESPHOME_DMA2D_PEAK_LEVEL;
+#else
+constexpr uint8_t DMA2D_PEAK_LEVEL = 0;
 #endif
-#ifndef CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL
-#define CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL 1
+#ifdef CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL
+constexpr uint8_t DMA2D_TRANSACTION_LEVEL = CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL;
+#else
+constexpr uint8_t DMA2D_TRANSACTION_LEVEL = 1;
 #endif
-#ifndef CONFIG_ESPHOME_JPEG_DMA2D_WRITE_PRIORITY
-#define CONFIG_ESPHOME_JPEG_DMA2D_WRITE_PRIORITY 0
+#ifdef CONFIG_ESPHOME_JPEG_DMA2D_WRITE_PRIORITY
+constexpr uint8_t JPEG_DMA2D_WRITE_PRIORITY = CONFIG_ESPHOME_JPEG_DMA2D_WRITE_PRIORITY;
+#else
+constexpr uint8_t JPEG_DMA2D_WRITE_PRIORITY = 0;
 #endif
-#ifndef CONFIG_ESPHOME_JPEG_DMA2D_READ_PRIORITY
-#define CONFIG_ESPHOME_JPEG_DMA2D_READ_PRIORITY 0
+#ifdef CONFIG_ESPHOME_JPEG_DMA2D_READ_PRIORITY
+constexpr uint8_t JPEG_DMA2D_READ_PRIORITY = CONFIG_ESPHOME_JPEG_DMA2D_READ_PRIORITY;
+#else
+constexpr uint8_t JPEG_DMA2D_READ_PRIORITY = 0;
 #endif
-#ifndef CONFIG_ESPHOME_DMA2D_WRITE_PRIORITY
-#define CONFIG_ESPHOME_DMA2D_WRITE_PRIORITY 1
+#ifdef CONFIG_ESPHOME_DMA2D_WRITE_PRIORITY
+constexpr uint8_t DMA2D_WRITE_PRIORITY = CONFIG_ESPHOME_DMA2D_WRITE_PRIORITY;
+#else
+constexpr uint8_t DMA2D_WRITE_PRIORITY = 1;
 #endif
-#ifndef CONFIG_ESPHOME_DMA2D_READ_PRIORITY
-#define CONFIG_ESPHOME_DMA2D_READ_PRIORITY 1
+#ifdef CONFIG_ESPHOME_DMA2D_READ_PRIORITY
+constexpr uint8_t DMA2D_READ_PRIORITY = CONFIG_ESPHOME_DMA2D_READ_PRIORITY;
+#else
+constexpr uint8_t DMA2D_READ_PRIORITY = 1;
 #endif
 
-static std::atomic<uint16_t> jpeg_dma2d_axi_burstiness{CONFIG_ESPHOME_JPEG_DMA2D_AXI_BURSTINESS};
-static std::atomic<uint8_t> jpeg_dma2d_peak_level{CONFIG_ESPHOME_JPEG_DMA2D_PEAK_LEVEL};
-static std::atomic<uint8_t> jpeg_dma2d_transaction_level{CONFIG_ESPHOME_JPEG_DMA2D_TRANSACTION_LEVEL};
-static std::atomic<uint8_t> jpeg_dma2d_write_priority{CONFIG_ESPHOME_JPEG_DMA2D_WRITE_PRIORITY};
-static std::atomic<uint8_t> jpeg_dma2d_read_priority{CONFIG_ESPHOME_JPEG_DMA2D_READ_PRIORITY};
+static std::atomic<uint16_t> jpeg_dma2d_axi_burstiness{JPEG_DMA2D_AXI_BURSTINESS};
+static std::atomic<uint8_t> jpeg_dma2d_peak_level{JPEG_DMA2D_PEAK_LEVEL};
+static std::atomic<uint8_t> jpeg_dma2d_transaction_level{JPEG_DMA2D_TRANSACTION_LEVEL};
+static std::atomic<uint8_t> jpeg_dma2d_write_priority{JPEG_DMA2D_WRITE_PRIORITY};
+static std::atomic<uint8_t> jpeg_dma2d_read_priority{JPEG_DMA2D_READ_PRIORITY};
 
 class Dma2dJpegBurstGuard {
  public:
@@ -344,20 +368,18 @@ class Dma2dJpegBurstGuard {
     axi_icm_ll_set_dma2d_qos_arbiter_prio(write_priority, read_priority);
     axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, burstiness, AXI_ICM_ACCESS_READ);
     axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, burstiness, AXI_ICM_ACCESS_WRITE);
-    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, peak_level, transaction_level,
-                                             AXI_ICM_ACCESS_READ);
-    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, peak_level, transaction_level,
-                                             AXI_ICM_ACCESS_WRITE);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, peak_level, transaction_level, AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, peak_level, transaction_level, AXI_ICM_ACCESS_WRITE);
   }
 
   ~Dma2dJpegBurstGuard() {
-    axi_icm_ll_set_dma2d_qos_arbiter_prio(CONFIG_ESPHOME_DMA2D_WRITE_PRIORITY, CONFIG_ESPHOME_DMA2D_READ_PRIORITY);
-    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS, AXI_ICM_ACCESS_READ);
-    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS, AXI_ICM_ACCESS_WRITE);
-    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_PEAK_LEVEL,
-                                             CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL, AXI_ICM_ACCESS_READ);
-    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_PEAK_LEVEL,
-                                             CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL, AXI_ICM_ACCESS_WRITE);
+    axi_icm_ll_set_dma2d_qos_arbiter_prio(DMA2D_WRITE_PRIORITY, DMA2D_READ_PRIORITY);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, DMA2D_AXI_BURSTINESS, AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, DMA2D_AXI_BURSTINESS, AXI_ICM_ACCESS_WRITE);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, DMA2D_PEAK_LEVEL, DMA2D_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, DMA2D_PEAK_LEVEL, DMA2D_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_WRITE);
   }
 };
 
@@ -368,10 +390,8 @@ class Dma2dJpegTransferAbilityGuard {
     if (!this->active_)
       return;
 
-    auto &burst = encoder ? g_esphome_esp32_jpeg_encoder_dma2d_burst_length
-                          : g_esphome_esp32_jpeg_dma2d_burst_length;
-    auto &descriptor = encoder ? g_esphome_esp32_jpeg_encoder_dma2d_desc_burst
-                               : g_esphome_esp32_jpeg_dma2d_desc_burst;
+    auto &burst = encoder ? g_esphome_esp32_jpeg_encoder_dma2d_burst_length : g_esphome_esp32_jpeg_dma2d_burst_length;
+    auto &descriptor = encoder ? g_esphome_esp32_jpeg_encoder_dma2d_desc_burst : g_esphome_esp32_jpeg_dma2d_desc_burst;
     this->previous_burst_length_ = burst.load(std::memory_order_relaxed);
     this->previous_descriptor_burst_ = descriptor.load(std::memory_order_relaxed);
     if (burst_length != 0)
@@ -383,10 +403,10 @@ class Dma2dJpegTransferAbilityGuard {
   ~Dma2dJpegTransferAbilityGuard() {
     if (!this->active_)
       return;
-    auto &burst = this->encoder_ ? g_esphome_esp32_jpeg_encoder_dma2d_burst_length
-                                 : g_esphome_esp32_jpeg_dma2d_burst_length;
-    auto &descriptor = this->encoder_ ? g_esphome_esp32_jpeg_encoder_dma2d_desc_burst
-                                      : g_esphome_esp32_jpeg_dma2d_desc_burst;
+    auto &burst =
+        this->encoder_ ? g_esphome_esp32_jpeg_encoder_dma2d_burst_length : g_esphome_esp32_jpeg_dma2d_burst_length;
+    auto &descriptor =
+        this->encoder_ ? g_esphome_esp32_jpeg_encoder_dma2d_desc_burst : g_esphome_esp32_jpeg_dma2d_desc_burst;
     burst.store(this->previous_burst_length_, std::memory_order_relaxed);
     descriptor.store(this->previous_descriptor_burst_, std::memory_order_relaxed);
   }
@@ -506,19 +526,19 @@ uint8_t *allocate_decoder_input_(const uint8_t *jpeg, size_t jpeg_size, size_t *
   if (owned != nullptr)
     *owned = true;
 
-#if CONFIG_ESPHOME_JPEG_DECODER_DIRECT_PSRAM_INPUT
-  if (esp_ptr_external_ram(jpeg)) {
-    if (capacity != nullptr)
-      *capacity = jpeg_size;
-    if (owned != nullptr)
-      *owned = false;
-    if (!decoder_direct_psram_input_logged) {
-      decoder_direct_psram_input_logged = true;
-      ESP_LOGI(TAG, "JPEG decoder uses direct PSRAM input when possible");
+  if constexpr (DECODER_DIRECT_PSRAM_INPUT) {
+    if (esp_ptr_external_ram(jpeg)) {
+      if (capacity != nullptr)
+        *capacity = jpeg_size;
+      if (owned != nullptr)
+        *owned = false;
+      if (!decoder_direct_psram_input_logged) {
+        decoder_direct_psram_input_logged = true;
+        ESP_LOGI(TAG, "JPEG decoder uses direct PSRAM input when possible");
+      }
+      return const_cast<uint8_t *>(jpeg);
     }
-    return const_cast<uint8_t *>(jpeg);
   }
-#endif
 
   if (jpeg_size <= DECODER_INTERNAL_INPUT_MAX_BYTES) {
     const size_t aligned_size = align_up(jpeg_size, DECODER_INTERNAL_INPUT_ALIGNMENT);
@@ -831,8 +851,7 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
     jpeg_encode_memory_alloc_cfg_t input_mem_cfg = {
         .buffer_direction = JPEG_ENC_ALLOC_INPUT_BUFFER,
     };
-    input_data =
-        static_cast<uint8_t *>(jpeg_alloc_encoder_mem(expected_input_size, &input_mem_cfg, &input_capacity));
+    input_data = static_cast<uint8_t *>(jpeg_alloc_encoder_mem(expected_input_size, &input_mem_cfg, &input_capacity));
     owns_input = true;
     if (input_data != nullptr && input_capacity >= expected_input_size)
       std::memcpy(input_data, input, expected_input_size);
@@ -904,8 +923,7 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   }
   {
     Dma2dJpegBurstGuard qos_guard;
-    Dma2dJpegTransferAbilityGuard transfer_guard(true, config.dma2d_burst_length,
-                                                  config.dma2d_descriptor_burst);
+    Dma2dJpegTransferAbilityGuard transfer_guard(true, config.dma2d_burst_length, config.dma2d_descriptor_burst);
     err = jpeg_encoder_process(encoder, &encode_cfg, input_data, expected_input_size, output_data, output_capacity,
                                &encoded_size);
   }
@@ -1011,8 +1029,7 @@ esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_si
   err = ESP_OK;
   {
     Dma2dJpegBurstGuard burst_guard;
-    Dma2dJpegTransferAbilityGuard transfer_guard(false, config.dma2d_burst_length,
-                                                  config.dma2d_descriptor_burst);
+    Dma2dJpegTransferAbilityGuard transfer_guard(false, config.dma2d_burst_length, config.dma2d_descriptor_burst);
     Dma2dJpegOutputCacheSyncGuard cache_sync_guard(config.skip_output_cache_sync && !decoded_owned);
     err = jpeg_decoder_process(decoder, &decode_cfg, input_data, effective_size, decoded_data, decoded_capacity,
                                &decoded_size);
@@ -1117,11 +1134,9 @@ esp_err_t decode_allocated(const DecodeConfig &config, const uint8_t *jpeg, size
   err = ESP_OK;
   {
     Dma2dJpegBurstGuard burst_guard;
-    Dma2dJpegTransferAbilityGuard transfer_guard(false, config.dma2d_burst_length,
-                                                  config.dma2d_descriptor_burst);
-    err =
-        jpeg_decoder_process(decoder, &decode_cfg, input_data, effective_size, decoded_data, output_capacity,
-                             &decoded_size);
+    Dma2dJpegTransferAbilityGuard transfer_guard(false, config.dma2d_burst_length, config.dma2d_descriptor_burst);
+    err = jpeg_decoder_process(decoder, &decode_cfg, input_data, effective_size, decoded_data, output_capacity,
+                               &decoded_size);
   }
   log_decode_buffer_probe_("allocated-output", decoded_data,
                            std::min(static_cast<size_t>(decoded_size), output_capacity));
@@ -1239,8 +1254,8 @@ bool get_decoder_dma2d_descriptor_burst() {
 #endif
 }
 
-void set_decoder_dma2d_qos(uint16_t burstiness, uint8_t peak_level, uint8_t transaction_level,
-                           uint8_t write_priority, uint8_t read_priority) {
+void set_decoder_dma2d_qos(uint16_t burstiness, uint8_t peak_level, uint8_t transaction_level, uint8_t write_priority,
+                           uint8_t read_priority) {
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
   if (burstiness < 1 || burstiness > 256 || peak_level >= transaction_level || transaction_level > 11 ||
       write_priority > 15 || read_priority > 15) {
