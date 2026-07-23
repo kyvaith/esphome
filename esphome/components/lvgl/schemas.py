@@ -356,6 +356,11 @@ STYLE_SCHEMA = cv.Schema({cv.Optional(k): v for k, v in STYLE_PROPS.items()}).ex
         cv.Optional(CONF_SCROLL_DIR): df.SCROLL_DIRECTIONS.one_of,
         cv.Optional(CONF_SCROLL_SNAP_X): df.SNAP_DIRECTIONS.one_of,
         cv.Optional(CONF_SCROLL_SNAP_Y): df.SNAP_DIRECTIONS.one_of,
+        cv.Optional(df.CONF_STYLE_TRANSITION_TIME): lvalid.lv_milliseconds,
+        cv.Optional(df.CONF_STYLE_TRANSITION_DELAY): lvalid.lv_milliseconds,
+        cv.Optional(df.CONF_STYLE_TRANSITION_PATH): cv.one_of(
+            *df.ANIM_PATHS, lower=True
+        ),
     }
 )
 
