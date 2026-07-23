@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstdlib>
 
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+
 namespace esphome::lvgl {
 
 void LvglSnapshotCompositor::add_home_page(LvPageType *page) {
@@ -390,3 +392,5 @@ void LvglSnapshotCompositor::release_application_() {
 }
 
 }  // namespace esphome::lvgl
+
+#endif

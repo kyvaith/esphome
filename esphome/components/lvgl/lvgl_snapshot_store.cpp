@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <utility>
 
+#if LV_USE_SNAPSHOT
+
 namespace esphome::lvgl {
 
 static const char *const TAG = "lvgl.snapshot";
@@ -336,3 +338,5 @@ bool LvglSnapshotStore::decode_(const Entry &entry, lv_draw_buf_t *output) {
 #endif
 
 }  // namespace esphome::lvgl
+
+#endif
