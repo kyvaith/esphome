@@ -66,6 +66,7 @@ from .gradient import GRADIENT_SCHEMA, gradients_to_code
 from .keypads import KEYPADS_CONFIG, keypads_to_code
 from .lv_validation import lv_bool
 from .lvcode import LvContext, LvglComponent, lv_event_t_ptr, lvgl_static
+from .navigation import CONF_NAVIGATION, NAVIGATION_SCHEMA, navigation_to_code
 from .schemas import (
     BASE_PROPS,
     DISP_BG_SCHEMA,
@@ -590,6 +591,7 @@ async def to_code(configs):
             await set_obj_properties(lv_scr_act, config)
             await add_widgets(lv_scr_act, config)
             await add_pages(lv_component, config)
+            await navigation_to_code(lv_component, config)
             await layers_to_code(lv_component, config)
             await lvgl_update(lv_component, config)
             await msgboxes_to_code(lv_component, config)
@@ -935,6 +937,7 @@ LVGL_SCHEMA = cv.All(
                 cv.Optional(df.CONF_THEME): _theme_schema,
                 cv.Optional(df.CONF_GRADIENTS): GRADIENT_SCHEMA,
                 cv.Optional(df.CONF_TOUCHSCREENS, default=None): touchscreen_schema,
+                cv.Optional(CONF_NAVIGATION): NAVIGATION_SCHEMA,
                 cv.Optional(df.CONF_ENCODERS, default=None): ENCODERS_CONFIG,
                 cv.Optional(df.CONF_KEYPADS, default=None): KEYPADS_CONFIG,
                 cv.GenerateID(df.CONF_DEFAULT_GROUP): cv.declare_id(lv_group_t),

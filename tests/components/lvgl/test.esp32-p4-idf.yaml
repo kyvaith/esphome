@@ -1,9 +1,54 @@
+packages:
+  i2c: !include ../../test_build_components/common/i2c/esp32-p4-idf.yaml
+
 display:
   - platform: mipi_dsi
+    id: p4_display
     model: WAVESHARE-ESP32-P4-WIFI6-TOUCH-LCD-3.4C
+touchscreen:
+  - platform: gt911
+    id: navigation_touchscreen
+    i2c_id: i2c_bus
+    display: p4_display
+
 lvgl:
   byte_order: little_endian
   rotation: 90
+  use_ppa: true
+  use_ppa_img: true
+  touchscreens:
+    - navigation_touchscreen
+  pages:
+    - id: home_page_one
+      widgets:
+        - button:
+            widgets:
+              - label:
+                  text: Open
+            on_click:
+              - lvgl.navigation.open: test_application
+    - id: home_page_two
+      widgets:
+        - label:
+            text: Home 2
+    - id: application_page
+      widgets:
+        - button:
+            widgets:
+              - label:
+                  text: Close
+            on_click:
+              - lvgl.navigation.close: test_navigation
+  navigation:
+    id: test_navigation
+    home:
+      pages:
+        - home_page_one
+        - home_page_two
+    applications:
+      - id: test_application
+        page: application_page
+        close_gesture: true
 
 psram:
 

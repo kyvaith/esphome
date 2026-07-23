@@ -4,6 +4,7 @@
 #include "esphome/core/log.h"
 #include "dma2d_m2m_copy.h"
 #include "lvgl_esphome.h"
+#include "lvgl_navigation.h"
 
 #include "core/lv_obj_class_private.h"
 #include "core/lv_refr.h"
@@ -1589,6 +1590,22 @@ void LvglComponent::show_prev_page(lv_screen_load_anim_t anim, uint32_t time) {
 
 size_t LvglComponent::get_current_page() const { return this->current_page_; }
 bool LvPageType::is_showing() const { return this->parent_->get_current_page() == this->index; }
+
+void LvglComponent::navigation_touch_begin(int32_t x, int32_t y) {
+  if (this->navigation_ != nullptr)
+    this->navigation_->touch_begin(x, y);
+}
+
+bool LvglComponent::navigation_touch_update(int32_t x, int32_t y) {
+  return this->navigation_ != nullptr && this->navigation_->touch_update(x, y);
+}
+
+bool LvglComponent::navigation_touch_end() { return this->navigation_ != nullptr && this->navigation_->touch_end(); }
+
+void LvglComponent::navigation_touch_cancel() {
+  if (this->navigation_ != nullptr)
+    this->navigation_->touch_cancel();
+}
 
 void LvglComponent::draw_buffer_(const lv_area_t *area, lv_color_data *ptr) {
   auto width = lv_area_get_width(area);
@@ -7638,9 +7655,41 @@ LVTouchListener::LVTouchListener(uint16_t long_press_time, uint16_t long_press_r
 }
 
 void LVTouchListener::update(const touchscreen::TouchPoints_t &tpoints) {
-  this->touch_pressed_ = !this->parent_->is_paused() && !tpoints.empty();
-  if (this->touch_pressed_)
-    this->touch_point_ = tpoints[0];
+  const bool pressed = !this->parent_->is_paused() && !tpoints.empty();
+  if (!pressed) {
+    this->touch_pressed_ = false;
+    return;
+  }
+
+  this->touch_point_ = tpoints[0];
+  int32_t x = this->touch_point_.x;
+  int32_t y = this->touch_point_.y;
+  this->parent_->rotate_coordinates(x, y);
+  if (!this->raw_touch_active_) {
+    this->raw_touch_active_ = true;
+    this->navigation_touch_captured_ = false;
+    this->parent_->navigation_touch_begin(x, y);
+  }
+
+  const bool captured = this->parent_->navigation_touch_update(x, y);
+  if (captured && !this->navigation_touch_captured_) {
+    // The press may already belong to a clickable child. Resetting the input
+    // device at the capture boundary prevents its eventual release from being
+    // interpreted as a click.
+    lv_indev_reset(this->drv_, nullptr);
+  }
+  this->navigation_touch_captured_ |= captured;
+  this->touch_pressed_ = !this->navigation_touch_captured_;
+}
+
+void LVTouchListener::release() {
+  const bool navigation_handled = this->raw_touch_active_ && this->parent_->navigation_touch_end();
+  if (navigation_handled || this->navigation_touch_captured_)
+    lv_indev_reset(this->drv_, nullptr);
+  this->touch_pressed_ = false;
+  this->raw_touch_active_ = false;
+  this->navigation_touch_captured_ = false;
+  this->parent_->maybe_wakeup();
 }
 #endif  // USE_LVGL_TOUCHSCREEN
 
