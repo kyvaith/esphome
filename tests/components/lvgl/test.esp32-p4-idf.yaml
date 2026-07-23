@@ -30,6 +30,11 @@ lvgl:
             loop: false
             auto_start: false
             opaque_background: 0x102030
+        - image:
+            id: presenter_image_widget
+            src: presenter_test_image
+            width: 128
+            height: 128
         - button:
             widgets:
               - label:
@@ -110,6 +115,22 @@ lvgl:
 psram:
 
 esp32_jpeg:
+
+image:
+  - platform: file
+    id: presenter_test_image
+    file: "$component_dir/logo-text.svg"
+    type: RGB
+    resize: 128x128
+
+lvgl_image_presenter:
+  id: test_image_presenter
+  widget: presenter_image_widget
+  phase_duration: 10s
+  frame_interval: 34ms
+  zoom_start: 1.0
+  zoom_end: 1.1
+  pan_limit: 50%
 
 esp_ldo:
   - channel: 3
