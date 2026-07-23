@@ -32,6 +32,7 @@ from esphome.components.psram import DOMAIN as PSRAM_DOMAIN
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_BUFFER_SIZE,
+    CONF_COMPRESSION,
     CONF_ESPHOME,
     CONF_GROUP,
     CONF_ID,
@@ -88,6 +89,12 @@ from .schemas import (
     container_schema,
     container_schema_value,
     obj_dict,
+)
+from .snapshot import (
+    COMPRESSION_JPEG,
+    CONF_SNAPSHOT_COMPOSITOR,
+    SNAPSHOT_SCHEMA,
+    snapshot_to_code,
 )
 from .styles import styles_to_code, theme_to_code
 from .touchscreens import touchscreen_schema, touchscreens_to_code
@@ -307,6 +314,7 @@ async def to_code(configs):
     config_0 = configs[0]
     use_ppa = config_0.get(CONF_USE_PPA, False)
     use_ppa_img = config_0.get(CONF_USE_PPA_IMG, False)
+    snapshot_config = config_0.get(CONF_SNAPSHOT_COMPOSITOR)
     if use_ppa_img:
         use_ppa = True
     ppa_supported = CORE.is_esp32 and get_esp32_variant() == VARIANT_ESP32P4
@@ -337,6 +345,11 @@ async def to_code(configs):
     if use_ppa:
         df.add_define("LV_PPA_BURST_LENGTH", "128")
     df.add_define("LV_USE_PPA_IMG", "1" if use_ppa_img else "0")
+    if snapshot_config is not None:
+        cg.add_define("USE_LVGL_SNAPSHOT_STORE")
+        df.add_define("LV_USE_SNAPSHOT", "1")
+        if snapshot_config[CONF_COMPRESSION] == COMPRESSION_JPEG:
+            cg.add_define("USE_LVGL_SNAPSHOT_JPEG_CACHE")
     # suppress default enabling of extra widgets
     # cg.add_define("LV_KCONFIG_PRESENT")
     # Always enable - lots of things use it.
@@ -450,6 +463,11 @@ async def to_code(configs):
             await add_widgets(lv_scr_act, config)
             await add_pages(lv_component, config)
             await navigation_to_code(lv_component, config)
+            await snapshot_to_code(
+                lv_component,
+                config,
+                config.get(CONF_NAVIGATION),
+            )
             await layers_to_code(lv_component, config)
             await lvgl_update(lv_component, config)
             await msgboxes_to_code(lv_component, config)
@@ -665,6 +683,7 @@ LVGL_TOP_LEVEL_SCHEMA = (
             cv.Optional(df.CONF_GRADIENTS): GRADIENT_SCHEMA,
             cv.Optional(df.CONF_TOUCHSCREENS, default=None): touchscreen_schema,
             cv.Optional(CONF_NAVIGATION): NAVIGATION_SCHEMA,
+            cv.Optional(CONF_SNAPSHOT_COMPOSITOR): SNAPSHOT_SCHEMA,
             cv.Optional(df.CONF_ENCODERS, default=None): ENCODERS_CONFIG,
             cv.Optional(df.CONF_KEYPADS, default=None): KEYPADS_CONFIG,
             cv.GenerateID(df.CONF_DEFAULT_GROUP): cv.declare_id(lv_group_t),

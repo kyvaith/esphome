@@ -288,6 +288,7 @@ class LvglComponent final : public PollingComponent {
   bool navigation_touch_end();
   void navigation_touch_cancel();
   void set_big_endian(bool big_endian) { this->big_endian_ = big_endian; }
+  bool is_big_endian() const { return this->big_endian_; }
   size_t get_current_page() const;
   void set_focus_mark(lv_group_t *group) { this->focus_marks_[group] = lv_group_get_focused(group); }
   void restore_focus_mark(lv_group_t *group) {

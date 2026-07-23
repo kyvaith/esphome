@@ -39,6 +39,14 @@ lvgl:
               - label:
                   text: Close
             on_click:
+              - lvgl.snapshot.capture:
+                  id: test_snapshots
+                  page: application_page
+              - lvgl.snapshot.invalidate:
+                  id: test_snapshots
+                  page: application_page
+              - lvgl.snapshot.capture_all: test_snapshots
+              - lvgl.snapshot.clear: test_snapshots
               - lvgl.navigation.close: test_navigation
   navigation:
     id: test_navigation
@@ -50,8 +58,17 @@ lvgl:
       - id: test_application
         page: application_page
         close_gesture: true
+  snapshot_compositor:
+    id: test_snapshots
+    compression: jpeg
+    quality: 95
+    max_entries: 4
+    decoded_slots: 3
+    preload: true
 
 psram:
+
+esp32_jpeg:
 
 esp_ldo:
   - channel: 3
