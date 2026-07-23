@@ -303,6 +303,28 @@ size_t decoded_output_size(const PictureInfo &info, PixelFormat format) {
   return raw_image_size(align_up(info.width, 16), align_up(info.height, 16), format);
 }
 
+uint8_t *allocate_decode_output(size_t requested_size, size_t *capacity) {
+#if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
+  jpeg_decode_memory_alloc_cfg_t output_mem_cfg = {
+      .buffer_direction = JPEG_DEC_ALLOC_OUTPUT_BUFFER,
+  };
+  size_t allocated_capacity = 0;
+  uint8_t *buffer =
+      static_cast<uint8_t *>(jpeg_alloc_decoder_mem(requested_size, &output_mem_cfg, &allocated_capacity));
+  if (capacity != nullptr)
+    *capacity = allocated_capacity;
+  return buffer;
+#else
+  if (capacity != nullptr)
+    *capacity = requested_size;
+  return static_cast<uint8_t *>(heap_caps_malloc(requested_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+#endif
+}
+
+void release_decode_output(uint8_t *buffer) {
+  heap_caps_free(buffer);
+}
+
 esp_err_t get_info(const uint8_t *jpeg, size_t jpeg_size, PictureInfo *info) {
 #if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
   if (jpeg == nullptr || jpeg_size == 0 || info == nullptr)

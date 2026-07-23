@@ -100,6 +100,8 @@ size_t bytes_per_pixel(PixelFormat format);
 size_t raw_image_size(uint32_t width, uint32_t height, PixelFormat format);
 size_t decoded_output_size(const PictureInfo &info, PixelFormat format);
 
+uint8_t *allocate_decode_output(size_t requested_size, size_t *capacity = nullptr);
+void release_decode_output(uint8_t *buffer);
 esp_err_t get_info(const uint8_t *jpeg, size_t jpeg_size, PictureInfo *info);
 esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_size, JpegBuffer *output);
 esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_size, uint8_t *output, size_t output_size,
