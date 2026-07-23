@@ -136,6 +136,7 @@ class LvCompound {
 };
 
 class LvglComponent;
+class LvglNavigation;
 
 class LvPageType : public Parented<LvglComponent> {
  public:
@@ -281,6 +282,11 @@ class LvglComponent final : public PollingComponent {
   void show_next_page(lv_screen_load_anim_t anim, uint32_t time);
   void show_prev_page(lv_screen_load_anim_t anim, uint32_t time);
   void set_page_wrap(bool wrap) { this->page_wrap_ = wrap; }
+  void set_navigation(LvglNavigation *navigation) { this->navigation_ = navigation; }
+  void navigation_touch_begin(int32_t x, int32_t y);
+  bool navigation_touch_update(int32_t x, int32_t y);
+  bool navigation_touch_end();
+  void navigation_touch_cancel();
   void set_big_endian(bool big_endian) { this->big_endian_ = big_endian; }
   size_t get_current_page() const;
   void set_focus_mark(lv_group_t *group) { this->focus_marks_[group] = lv_group_get_focused(group); }
@@ -352,6 +358,7 @@ class LvglComponent final : public PollingComponent {
   size_t current_page_{0};
   bool show_snow_{};
   bool page_wrap_{true};
+  LvglNavigation *navigation_{};
   bool big_endian_{};
   std::map<lv_group_t *, lv_obj_t *> focus_marks_{};
 
@@ -403,16 +410,15 @@ class LVTouchListener final : public touchscreen::TouchListener, public Parented
  public:
   LVTouchListener(uint16_t long_press_time, uint16_t long_press_repeat_time, LvglComponent *parent);
   void update(const touchscreen::TouchPoints_t &tpoints) override;
-  void release() override {
-    touch_pressed_ = false;
-    this->parent_->maybe_wakeup();
-  }
+  void release() override;
   lv_indev_t *get_drv() { return this->drv_; }
 
  protected:
   lv_indev_t *drv_{};
   touchscreen::TouchPoint touch_point_{};
   bool touch_pressed_{};
+  bool raw_touch_active_{};
+  bool navigation_touch_captured_{};
 };
 #endif  // USE_LVGL_TOUCHSCREEN
 
