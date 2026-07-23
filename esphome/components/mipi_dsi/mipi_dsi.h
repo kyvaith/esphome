@@ -105,7 +105,9 @@ class MipiDsi : public display::Display {
   size_t get_bytes_per_pixel() const { return this->get_bytes_per_pixel_(); }
   bool wait_for_refresh_done(uint32_t timeout_ms = 50);
   bool begin_frame_buffer_session(uint32_t timeout_ms = 50) override;
-  bool acquire_frame_buffer(display::FrameBufferLease *lease, uint32_t timeout_ms = 50) override;
+  bool acquire_frame_buffer(display::FrameBufferLease *lease,
+                            display::FrameBufferWriteMode write_mode = display::FrameBufferWriteMode::CPU,
+                            uint32_t timeout_ms = 50) override;
   bool present_frame_buffer_lease(display::FrameBufferLease *lease, uint32_t timeout_ms = 50) override;
   bool release_frame_buffer(display::FrameBufferLease *lease) override;
   bool end_frame_buffer_session(uint32_t timeout_ms = 50) override;
@@ -140,7 +142,8 @@ class MipiDsi : public display::Display {
   bool ensure_async_staging_buffer_(size_t size);
   bool check_buffer_();
   bool wait_for_async_flush_(uint32_t timeout_ms);
-  bool submit_frame_buffer_(uint8_t *frame_buffer, int y_start, int y_end);
+  bool submit_frame_buffer_(uint8_t *frame_buffer, int y_start, int y_end,
+                            display::FrameBufferWriteMode write_mode = display::FrameBufferWriteMode::CPU);
   bool finish_pending_frame_buffer_(uint32_t timeout_ms);
   bool validate_frame_buffer_lease_(const display::FrameBufferLease *lease) const;
   void clear_frame_buffer_lease_(display::FrameBufferLease *lease) const;
@@ -205,6 +208,7 @@ class MipiDsi : public display::Display {
   uint8_t *session_active_frame_buffer_{};
   uint8_t *session_leased_frame_buffer_{};
   uint8_t *session_pending_frame_buffer_{};
+  display::FrameBufferWriteMode session_leased_write_mode_{display::FrameBufferWriteMode::CPU};
   uint32_t frame_buffer_session_generation_{};
   bool frame_buffer_session_active_{false};
   uint8_t *buffer_{nullptr};
