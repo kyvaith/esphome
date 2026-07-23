@@ -22,11 +22,21 @@ lvgl:
   pages:
     - id: home_page_one
       widgets:
+        - lottie:
+            id: test_lottie
+            file: "$component_dir/test.lottie.json"
+            width: 32
+            height: 32
+            loop: false
+            auto_start: false
         - button:
             widgets:
               - label:
                   text: Open
             on_click:
+              - lvgl.lottie.start: test_lottie
+              - lvgl.lottie.pause: test_lottie
+              - lvgl.lottie.stop: test_lottie
               - lvgl.navigation.open: test_application
     - id: home_page_two
       widgets:
