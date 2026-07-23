@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "esphome/components/image/image.h"
+#include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 
 #include "lvgl.h"
@@ -83,6 +85,57 @@ class LvglImagePresenter : public Component {
   uint32_t transition_elapsed_ms_{0};
   lv_opa_t base_opacity_{LV_OPA_COVER};
   std::atomic<bool> transition_failed_{false};
+};
+
+template<typename... Ts>
+class LvglImagePresenterRestartAction : public Action<Ts...>, public Parented<LvglImagePresenter> {
+ public:
+  void play(const Ts &...x) override { this->parent_->restart(); }
+};
+
+template<typename... Ts>
+class LvglImagePresenterPauseAction : public Action<Ts...>, public Parented<LvglImagePresenter> {
+ public:
+  void play(const Ts &...x) override { this->parent_->pause(); }
+};
+
+template<typename... Ts>
+class LvglImagePresenterResumeAction : public Action<Ts...>, public Parented<LvglImagePresenter> {
+ public:
+  void play(const Ts &...x) override { this->parent_->resume(); }
+};
+
+template<typename... Ts>
+class LvglImagePresenterResetAction : public Action<Ts...>, public Parented<LvglImagePresenter> {
+ public:
+  void play(const Ts &...x) override { this->parent_->reset_transform(); }
+};
+
+template<typename... Ts>
+class LvglImagePresenterPauseForSnapshotAction : public Action<Ts...>, public Parented<LvglImagePresenter> {
+ public:
+  void play(const Ts &...x) override { this->parent_->pause_for_snapshot(); }
+};
+
+template<typename... Ts>
+class LvglImagePresenterCompleteSnapshotHandoffAction : public Action<Ts...>, public Parented<LvglImagePresenter> {
+ public:
+  void play(const Ts &...x) override { this->parent_->complete_snapshot_handoff(); }
+};
+
+template<typename... Ts>
+class LvglImagePresenterTransitionAction : public Action<Ts...>, public Parented<LvglImagePresenter> {
+ public:
+  void set_source(image::Image *source) { this->source_ = source; }
+  TEMPLATABLE_VALUE(uint32_t, duration)
+
+  void play(const Ts &...x) override {
+    if (this->source_ != nullptr)
+      this->parent_->transition_to(this->source_->get_lv_image_dsc(), this->duration_.value(x...));
+  }
+
+ protected:
+  image::Image *source_{};
 };
 
 }  // namespace esphome::lvgl_image_presenter
