@@ -7,6 +7,7 @@
 
 #include "esphome/core/color.h"
 #include "esphome/core/automation.h"
+#include "esphome/core/buffer.h"
 #include "esphome/core/time.h"
 #include "esphome/core/log.h"
 #include "display_color_utils.h"
@@ -27,11 +28,6 @@ namespace esphome::display {
 
 class Display;
 
-enum class FrameBufferWriteMode : uint8_t {
-  CPU,
-  DMA,
-};
-
 /** A framebuffer temporarily owned by a renderer outside the normal display loop.
  *
  * The lease is only valid while the matching framebuffer session is active.
@@ -47,7 +43,7 @@ struct FrameBufferLease {
   ColorBitness bitness{COLOR_BITNESS_565};
   ColorOrder color_order{COLOR_ORDER_RGB};
   bool big_endian{};
-  FrameBufferWriteMode write_mode{FrameBufferWriteMode::CPU};
+  BufferWriter writer{BufferWriter::CPU};
   size_t index{};
   uint32_t generation{};
 
@@ -412,8 +408,7 @@ class Display : public PollingComponent {
    * that cannot prove framebuffer ownership leave this capability unsupported.
    */
   virtual bool begin_frame_buffer_session(uint32_t timeout_ms = 50) { return false; }
-  virtual bool acquire_frame_buffer(FrameBufferLease *lease,
-                                    FrameBufferWriteMode write_mode = FrameBufferWriteMode::CPU,
+  virtual bool acquire_frame_buffer(FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
                                     uint32_t timeout_ms = 50) {
     return false;
   }
