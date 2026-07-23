@@ -9,4 +9,9 @@ enum class BufferWriter : uint8_t {
   DMA,
 };
 
+enum class BufferReader : uint8_t {
+  CPU,
+  DMA,
+};
+
 }  // namespace esphome

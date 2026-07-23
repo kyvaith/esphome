@@ -107,6 +107,7 @@ class MipiDsi : public display::Display {
   bool begin_frame_buffer_session(uint32_t timeout_ms = 50) override;
   bool acquire_frame_buffer(display::FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
                             uint32_t timeout_ms = 50) override;
+  bool get_active_frame_buffer(display::FrameBufferView *view, BufferReader reader = BufferReader::CPU) const override;
   bool present_frame_buffer_lease(display::FrameBufferLease *lease, uint32_t timeout_ms = 50) override;
   bool release_frame_buffer(display::FrameBufferLease *lease) override;
   bool end_frame_buffer_session(uint32_t timeout_ms = 50) override;
@@ -206,6 +207,8 @@ class MipiDsi : public display::Display {
   uint8_t *session_active_frame_buffer_{};
   uint8_t *session_leased_frame_buffer_{};
   uint8_t *session_pending_frame_buffer_{};
+  BufferWriter last_submitted_frame_buffer_writer_{BufferWriter::CPU};
+  BufferWriter session_active_writer_{BufferWriter::CPU};
   BufferWriter session_leased_writer_{BufferWriter::CPU};
   uint32_t frame_buffer_session_generation_{};
   bool frame_buffer_session_active_{false};

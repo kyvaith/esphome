@@ -221,6 +221,11 @@ bool LvglComponent::acquire_presentation_frame(display::FrameBufferLease *lease,
          this->displays_[0]->acquire_frame_buffer(lease, writer, timeout_ms);
 }
 
+bool LvglComponent::get_active_presentation_frame(display::FrameBufferView *view, BufferReader reader) const {
+  return this->frame_buffer_presentation_active_.load(std::memory_order_acquire) && this->displays_.size() == 1 &&
+         this->displays_[0]->get_active_frame_buffer(view, reader);
+}
+
 bool LvglComponent::present_presentation_frame(display::FrameBufferLease *lease, uint32_t timeout_ms) {
   return this->frame_buffer_presentation_active_.load(std::memory_order_acquire) && this->displays_.size() == 1 &&
          this->displays_[0]->present_frame_buffer_lease(lease, timeout_ms);

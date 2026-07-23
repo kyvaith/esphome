@@ -364,6 +364,7 @@ bool MipiDsi::begin_frame_buffer_session(uint32_t timeout_ms) {
       this->last_submitted_frame_buffer_ != nullptr ? this->last_submitted_frame_buffer_ : this->frame_buffers_[0];
   this->session_leased_frame_buffer_ = nullptr;
   this->session_pending_frame_buffer_ = nullptr;
+  this->session_active_writer_ = this->last_submitted_frame_buffer_writer_;
   this->session_leased_writer_ = BufferWriter::CPU;
   this->frame_buffer_session_generation_++;
   if (this->frame_buffer_session_generation_ == 0)
@@ -426,6 +427,44 @@ bool MipiDsi::acquire_frame_buffer(display::FrameBufferLease *lease, BufferWrite
   return true;
 }
 
+bool MipiDsi::get_active_frame_buffer(display::FrameBufferView *view, BufferReader reader) const {
+  if (view == nullptr || !this->frame_buffer_session_active_ || this->session_active_frame_buffer_ == nullptr ||
+      this->session_pending_frame_buffer_ != nullptr) {
+    return false;
+  }
+
+  if (reader == BufferReader::CPU && this->session_active_writer_ == BufferWriter::DMA) {
+    const esp_err_t err = esp_cache_msync(this->session_active_frame_buffer_, this->get_frame_buffer_size(),
+                                          ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+    if (err != ESP_OK) {
+      ESP_LOGW(TAG, "active framebuffer CPU ownership transfer failed: %s", esp_err_to_name(err));
+      return false;
+    }
+  }
+
+  size_t index = 0;
+  while (index < this->frame_buffer_count_ && this->frame_buffers_[index] != this->session_active_frame_buffer_)
+    index++;
+  if (index == this->frame_buffer_count_)
+    return false;
+
+  *view = {
+      .owner = this,
+      .data = this->session_active_frame_buffer_,
+      .size = this->get_frame_buffer_size(),
+      .stride = this->get_frame_buffer_stride(),
+      .width = this->width_,
+      .height = this->height_,
+      .bitness = this->get_frame_buffer_bitness(),
+      .color_order = this->color_mode_,
+      .big_endian = false,
+      .writer = this->session_active_writer_,
+      .index = index,
+      .generation = this->frame_buffer_session_generation_,
+  };
+  return true;
+}
+
 bool MipiDsi::validate_frame_buffer_lease_(const display::FrameBufferLease *lease) const {
   return lease != nullptr && lease->owner == this && lease->data != nullptr && this->frame_buffer_session_active_ &&
          lease->generation == this->frame_buffer_session_generation_ &&
@@ -459,6 +498,7 @@ bool MipiDsi::submit_frame_buffer_(uint8_t *frame_buffer, int y_start, int y_end
   }
   xSemaphoreTake(this->io_lock_, portMAX_DELAY);
   this->last_submitted_frame_buffer_ = frame_buffer;
+  this->last_submitted_frame_buffer_writer_ = writer;
   return true;
 }
 
@@ -468,6 +508,7 @@ bool MipiDsi::finish_pending_frame_buffer_(uint32_t timeout_ms) {
   if (!this->wait_for_refresh_done(timeout_ms))
     return false;
   this->session_active_frame_buffer_ = this->session_pending_frame_buffer_;
+  this->session_active_writer_ = this->session_leased_writer_;
   this->session_pending_frame_buffer_ = nullptr;
   this->session_leased_frame_buffer_ = nullptr;
   this->session_leased_writer_ = BufferWriter::CPU;
@@ -514,6 +555,7 @@ bool MipiDsi::end_frame_buffer_session(uint32_t timeout_ms) {
   this->frame_buffer_session_active_ = false;
   this->session_active_frame_buffer_ = nullptr;
   this->session_pending_frame_buffer_ = nullptr;
+  this->session_active_writer_ = BufferWriter::CPU;
   this->session_leased_writer_ = BufferWriter::CPU;
   xSemaphoreGive(this->frame_buffer_session_lock_);
   return true;

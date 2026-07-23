@@ -245,6 +245,7 @@ class LvglComponent final : public PollingComponent {
   bool begin_frame_buffer_presentation(uint32_t timeout_ms = 50);
   bool acquire_presentation_frame(display::FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
                                   uint32_t timeout_ms = 50);
+  bool get_active_presentation_frame(display::FrameBufferView *view, BufferReader reader = BufferReader::CPU) const;
   bool present_presentation_frame(display::FrameBufferLease *lease, uint32_t timeout_ms = 50);
   bool release_presentation_frame(display::FrameBufferLease *lease);
   bool end_frame_buffer_presentation(uint32_t timeout_ms = 50);
