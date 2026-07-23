@@ -95,11 +95,13 @@ class MipiDsi : public display::Display {
   void set_async_lvgl_flush(bool async_lvgl_flush) { this->async_lvgl_flush_ = async_lvgl_flush; }
   void set_frame_buffer_count(size_t frame_buffer_count) { this->frame_buffer_count_ = frame_buffer_count; }
   uint8_t *get_frame_buffer() const { return this->frame_buffers_[0]; }
-  uint8_t *get_frame_buffer(size_t index) const {
+  uint8_t *get_frame_buffer(size_t index) const override {
     return index < this->frame_buffer_count_ ? this->frame_buffers_[index] : nullptr;
   }
-  size_t get_frame_buffer_count() const { return this->frame_buffer_count_; }
-  size_t get_frame_buffer_size() const { return this->width_ * this->height_ * this->get_bytes_per_pixel_(); }
+  size_t get_frame_buffer_count() const override { return this->frame_buffer_count_; }
+  size_t get_frame_buffer_size() const override { return this->width_ * this->height_ * this->get_bytes_per_pixel_(); }
+  size_t get_frame_buffer_stride() const override { return this->width_ * this->get_bytes_per_pixel_(); }
+  display::ColorBitness get_frame_buffer_bitness() const override { return this->color_depth_; }
   size_t get_bytes_per_pixel() const { return this->get_bytes_per_pixel_(); }
   bool wait_for_refresh_done(uint32_t timeout_ms = 50);
 
@@ -114,7 +116,7 @@ class MipiDsi : public display::Display {
   bool draw_pixels_at_async(int x_start, int y_start, int w, int h, const uint8_t *ptr, display::ColorOrder order,
                             display::ColorBitness bitness, bool big_endian, int x_offset, int y_offset, int x_pad,
                             AsyncFlushReadyCallback ready_callback, void *ready_arg);
-  bool present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end);
+  bool present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end) override;
   void consume_async_flush_perf(AsyncFlushPerfStats *stats);
 
   void draw_pixel_at(int x, int y, Color color) override;

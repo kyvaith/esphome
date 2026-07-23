@@ -316,7 +316,7 @@ bool LvglComponent::ppa_rotate_(const lv_color_data *src, lv_color_data *dst, ui
 
   // Align buffer size to cache line (LV_DRAW_BUF_ALIGN) as required by PPA DMA
   // the underlying buffer will be large enough as the size is also padded when allocating.
-  size_t out_buf_size = out_w * out_h * sizeof(lv_color_data);
+  size_t out_buf_size = out_w * out_h * LV_BYTES_PER_PIXEL;
   out_buf_size = LV_ROUND_UP(out_buf_size, LV_DRAW_BUF_ALIGN);
 
   ppa_srm_oper_config_t srm_config{};
@@ -328,7 +328,7 @@ bool LvglComponent::ppa_rotate_(const lv_color_data *src, lv_color_data *dst, ui
 #if LV_COLOR_DEPTH == 16
   srm_config.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
 #elif LV_COLOR_DEPTH == 32
-  srm_config.in.srm_cm = PPA_SRM_COLOR_MODE_ARGB8888;
+  srm_config.in.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
 #endif
   srm_config.out.buffer = dst;
   srm_config.out.buffer_size = out_buf_size;
@@ -337,7 +337,7 @@ bool LvglComponent::ppa_rotate_(const lv_color_data *src, lv_color_data *dst, ui
 #if LV_COLOR_DEPTH == 16
   srm_config.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
 #elif LV_COLOR_DEPTH == 32
-  srm_config.out.srm_cm = PPA_SRM_COLOR_MODE_ARGB8888;
+  srm_config.out.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
 #endif
   srm_config.rotation_angle = angle;
   srm_config.scale_x = 1.0f;
@@ -370,27 +370,57 @@ void LvglComponent::draw_buffer_(const lv_area_t *area, lv_color_data *ptr) {
     {
       switch (this->rotation_) {
         case display::DISPLAY_ROTATION_90_DEGREES:
+#if LV_COLOR_DEPTH == 32
+          for (lv_coord_t x = height; x-- != 0;) {
+            for (lv_coord_t y = 0; y != width; y++) {
+              auto out = (static_cast<size_t>(y) * height_rounded + x) * LV_BYTES_PER_PIXEL;
+              for (size_t channel = 0; channel < LV_BYTES_PER_PIXEL; channel++)
+                dst[out + channel] = *ptr++;
+            }
+          }
+#else
           for (lv_coord_t x = height; x-- != 0;) {
             for (lv_coord_t y = 0; y != width; y++) {
               dst[y * height_rounded + x] = *ptr++;
             }
           }
+#endif
           break;
 
         case display::DISPLAY_ROTATION_180_DEGREES:
+#if LV_COLOR_DEPTH == 32
+          for (lv_coord_t y = height; y-- != 0;) {
+            for (lv_coord_t x = width; x-- != 0;) {
+              auto out = (static_cast<size_t>(y) * width + x) * LV_BYTES_PER_PIXEL;
+              for (size_t channel = 0; channel < LV_BYTES_PER_PIXEL; channel++)
+                dst[out + channel] = *ptr++;
+            }
+          }
+#else
           for (lv_coord_t y = height; y-- != 0;) {
             for (lv_coord_t x = width; x-- != 0;) {
               dst[y * width + x] = *ptr++;
             }
           }
+#endif
           break;
 
         case display::DISPLAY_ROTATION_270_DEGREES:
+#if LV_COLOR_DEPTH == 32
+          for (lv_coord_t x = 0; x != height; x++) {
+            for (lv_coord_t y = width; y-- != 0;) {
+              auto out = (static_cast<size_t>(y) * height_rounded + x) * LV_BYTES_PER_PIXEL;
+              for (size_t channel = 0; channel < LV_BYTES_PER_PIXEL; channel++)
+                dst[out + channel] = *ptr++;
+            }
+          }
+#else
           for (lv_coord_t x = 0; x != height; x++) {
             for (lv_coord_t y = width; y-- != 0;) {
               dst[y * height_rounded + x] = *ptr++;
             }
           }
+#endif
           break;
 
         default:
@@ -434,6 +464,14 @@ void LvglComponent::flush_cb_(lv_display_t *disp_drv, const lv_area_t *area, uin
   // no guard here for display busy, since LVGL will not call flush_cb until the refresh timer fires,
   // and while the display is busy this is reset to 5 minutes. If that expires and the display is still
   // busy there are bigger problems.
+  if (this->direct_mode_) {
+    if (!this->paused_ && lv_display_flush_is_last(disp_drv) &&
+        !this->displays_[0]->present_frame_buffer(color_p, 0, this->height_ - 1)) {
+      ESP_LOGE(TAG, "Failed to present direct framebuffer");
+    }
+    lv_display_flush_ready(disp_drv);
+    return;
+  }
   if (!this->paused_) {
     auto now = millis();
     this->draw_buffer_(area, reinterpret_cast<lv_color_data *>(color_p));
@@ -746,6 +784,7 @@ void LvglComponent::write_random_() {
  *                    also increase memory usage.
  * @param full_refresh if true, the display will be fully refreshed on every frame.
  *                     If false, only changed areas will be updated.
+ * @param direct_mode if true, render directly into display-owned full-screen framebuffers.
  * @param draw_rounding the rounding to use when drawing. A value of 1 will draw
  *                      without any rounding, a value of 2 will round to the nearest
  *                      multiple of 2, and so on.
@@ -754,12 +793,13 @@ void LvglComponent::write_random_() {
  * @param rotation_type What rotation type to use, if any
  */
 LvglComponent::LvglComponent(std::vector<display::Display *> displays, float buffer_frac, bool full_refresh,
-                             int draw_rounding, bool resume_on_input, bool update_when_display_idle,
+                             bool direct_mode, int draw_rounding, bool resume_on_input, bool update_when_display_idle,
                              RotationType rotation_type)
     : draw_rounding(draw_rounding),
       displays_(std::move(displays)),
       buffer_frac_(buffer_frac),
       full_refresh_(full_refresh),
+      direct_mode_(direct_mode),
       resume_on_input_(resume_on_input),
       update_when_display_idle_(update_when_display_idle),
       rotation_type_(rotation_type) {
@@ -801,36 +841,53 @@ void LvglComponent::setup() {
   // cater for displays with dimensions that don't divide by the required rounding
   auto width = (this->width_ + rounding - 1) / rounding * rounding;
   auto height = (this->height_ + rounding - 1) / rounding * rounding;
-  auto frac = this->buffer_frac_;
-  if (frac == 0)
-    frac = 1;
-  auto buf_bytes = clamp_at_least(width * height / frac * LV_COLOR_DEPTH / 8, MIN_BUFFER_SIZE);
-  void *buffer = nullptr;
-  // for small buffers, try to allocate in internal memory first to improve performance
-  if (this->buffer_frac_ >= MIN_BUFFER_FRAC / 2)
-    buffer = lv_alloc_draw_buf(buf_bytes, true);  // NOLINT
-  if (buffer == nullptr)
-    buffer = lv_alloc_draw_buf(buf_bytes, false);  // NOLINT
-  // if specific buffer size not set and can't get 100%, try for a smaller one
-  if (buffer == nullptr && this->buffer_frac_ == 0) {
-    frac = MIN_BUFFER_FRAC;
-    buf_bytes /= MIN_BUFFER_FRAC;
-    buffer = lv_alloc_draw_buf(buf_bytes, false);  // NOLINT
-  }
-  this->buffer_frac_ = frac;
-  if (buffer == nullptr) {
-    this->status_set_error(LOG_STR("Memory allocation failure"));
-    this->mark_failed();
-    return;
-  }
-  this->draw_buf_ = static_cast<uint8_t *>(buffer);
   this->set_resolution_();
-  lv_display_set_color_format(this->disp_, LV_COLOR_FORMAT_RGB565);
+  lv_display_set_color_format(this->disp_, LV_DRAW_COLOR_FORMAT);
   lv_display_set_flush_cb(this->disp_, static_flush_cb);
   lv_display_set_user_data(this->disp_, this);
   lv_display_add_event_cb(this->disp_, rounder_cb, LV_EVENT_INVALIDATE_AREA, this);
-  lv_display_set_buffers(this->disp_, this->draw_buf_, nullptr, buf_bytes,
-                         this->full_refresh_ ? LV_DISPLAY_RENDER_MODE_FULL : LV_DISPLAY_RENDER_MODE_PARTIAL);
+  size_t buf_bytes;
+  if (this->direct_mode_) {
+    auto *buffer = display->get_frame_buffer(0);
+    auto *buffer2 = display->get_frame_buffer(1);
+    buf_bytes = display->get_frame_buffer_size();
+    auto stride = display->get_frame_buffer_stride();
+    if (buffer == nullptr || buffer2 == nullptr || buf_bytes == 0 || stride == 0 ||
+        display->get_frame_buffer_bitness() != LV_BITNESS) {
+      this->status_set_error(LOG_STR("Display does not expose compatible direct framebuffers"));
+      this->mark_failed();
+      return;
+    }
+    this->draw_buf_ = buffer;
+    this->buffer_frac_ = 1;
+    lv_display_set_buffers_with_stride(this->disp_, buffer, buffer2, buf_bytes, stride, LV_DISPLAY_RENDER_MODE_DIRECT);
+  } else {
+    auto frac = this->buffer_frac_;
+    if (frac == 0)
+      frac = 1;
+    buf_bytes = clamp_at_least(width * height / frac * LV_BYTES_PER_PIXEL, MIN_BUFFER_SIZE);
+    void *buffer = nullptr;
+    // for small buffers, try to allocate in internal memory first to improve performance
+    if (this->buffer_frac_ >= MIN_BUFFER_FRAC / 2)
+      buffer = lv_alloc_draw_buf(buf_bytes, true);  // NOLINT
+    if (buffer == nullptr)
+      buffer = lv_alloc_draw_buf(buf_bytes, false);  // NOLINT
+    // if specific buffer size not set and can't get 100%, try for a smaller one
+    if (buffer == nullptr && this->buffer_frac_ == 0) {
+      frac = MIN_BUFFER_FRAC;
+      buf_bytes /= MIN_BUFFER_FRAC;
+      buffer = lv_alloc_draw_buf(buf_bytes, false);  // NOLINT
+    }
+    this->buffer_frac_ = frac;
+    if (buffer == nullptr) {
+      this->status_set_error(LOG_STR("Memory allocation failure"));
+      this->mark_failed();
+      return;
+    }
+    this->draw_buf_ = static_cast<uint8_t *>(buffer);
+    lv_display_set_buffers(this->disp_, this->draw_buf_, nullptr, buf_bytes,
+                           this->full_refresh_ ? LV_DISPLAY_RENDER_MODE_FULL : LV_DISPLAY_RENDER_MODE_PARTIAL);
+  }
   if (this->rotation_type_ == ROTATION_SOFTWARE) {
     this->rotate_buf_ = static_cast<lv_color_t *>(lv_alloc_draw_buf(buf_bytes, false));  // NOLINT
     if (this->rotate_buf_ == nullptr) {

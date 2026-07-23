@@ -6,7 +6,7 @@ import pytest
 
 from esphome.components.const import BYTE_ORDER_BIG, BYTE_ORDER_LITTLE, CONF_BYTE_ORDER
 from esphome.components.display import add_metadata
-from esphome.components.lvgl import final_validation
+from esphome.components.lvgl import CONF_DIRECT_MODE, final_validation
 from esphome.config import Config
 from esphome.config_validation import Invalid
 from esphome.const import KEY_CORE, KEY_TARGET_FRAMEWORK, KEY_TARGET_PLATFORM
@@ -48,6 +48,8 @@ def _make_lvgl_config(
         "transparency_key": 0x000400,
         "draw_rounding": 2,
         "buffer_size": 0,
+        "full_refresh": False,
+        CONF_DIRECT_MODE: False,
     }
     if byte_order is not None:
         config[CONF_BYTE_ORDER] = byte_order
@@ -175,3 +177,90 @@ class TestDrawRoundingMerge:
         configs = [_make_lvgl_config(["my_disp"])]
         final_validation(configs)
         assert configs[0]["draw_rounding"] == 2
+
+
+class TestDirectMode:
+    """Test direct framebuffer validation."""
+
+    def test_compatible_display_passes(self) -> None:
+        """Two native framebuffers with matching depth are accepted."""
+        add_metadata(
+            ID("my_disp"),
+            320,
+            240,
+            frame_buffer_count=2,
+            frame_buffer_bytes_per_pixel=3,
+        )
+        configs = [_make_lvgl_config(["my_disp"])]
+        configs[0].update(
+            {
+                CONF_DIRECT_MODE: True,
+                "buffer_size": 1,
+                "color_depth": 32,
+            }
+        )
+        final_validation(configs)
+
+    @pytest.mark.parametrize(
+        ("updates", "message"),
+        [
+            ({"buffer_size": 0.5}, "full-screen buffer"),
+            ({"full_refresh": True}, "cannot be combined"),
+            ({"rotation": 90}, "software rotation"),
+        ],
+    )
+    def test_rejects_incompatible_lvgl_options(
+        self, updates: dict, message: str
+    ) -> None:
+        """Direct mode rejects modes that cannot share native buffers."""
+        add_metadata(
+            ID("my_disp"),
+            320,
+            240,
+            frame_buffer_count=2,
+            frame_buffer_bytes_per_pixel=2,
+        )
+        configs = [_make_lvgl_config(["my_disp"])]
+        configs[0].update(
+            {
+                CONF_DIRECT_MODE: True,
+                "buffer_size": 1,
+                **updates,
+            }
+        )
+        with pytest.raises(Invalid, match=message):
+            final_validation(configs)
+
+    def test_requires_two_native_framebuffers(self) -> None:
+        """A single-buffer display cannot enable direct mode."""
+        add_metadata(
+            ID("my_disp"),
+            320,
+            240,
+            frame_buffer_count=1,
+            frame_buffer_bytes_per_pixel=2,
+        )
+        configs = [_make_lvgl_config(["my_disp"])]
+        configs[0].update({CONF_DIRECT_MODE: True, "buffer_size": 1})
+        with pytest.raises(Invalid, match="at least two native framebuffers"):
+            final_validation(configs)
+
+    def test_requires_matching_color_depth(self) -> None:
+        """Packed RGB888 LVGL buffers cannot target RGB565 framebuffers."""
+        add_metadata(
+            ID("my_disp"),
+            320,
+            240,
+            frame_buffer_count=2,
+            frame_buffer_bytes_per_pixel=2,
+        )
+        configs = [_make_lvgl_config(["my_disp"])]
+        configs[0].update(
+            {
+                CONF_DIRECT_MODE: True,
+                "buffer_size": 1,
+                "color_depth": 32,
+            }
+        )
+        with pytest.raises(Invalid, match="color depths to match"):
+            final_validation(configs)

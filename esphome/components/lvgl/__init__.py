@@ -149,6 +149,7 @@ DEPENDENCIES = ["display"]
 AUTO_LOAD = ["key_provider"]
 CODEOWNERS = ["@clydebarrow"]
 HELLO_WORLD_FILE = "hello_world.yaml"
+CONF_DIRECT_MODE = "direct_mode"
 CONF_USE_PPA = "use_ppa"
 CONF_USE_PPA_IMG = "use_ppa_img"
 
@@ -281,6 +282,39 @@ def final_validation(config_list):
         buffer_frac = config[CONF_BUFFER_SIZE]
         if CORE.is_esp32 and buffer_frac > 0.5 and PSRAM_DOMAIN not in global_config:
             df.LOGGER.warning("buffer_size: may need to be reduced without PSRAM")
+        if config.get(CONF_DIRECT_MODE):
+            if len(metas) != 1:
+                raise cv.Invalid(
+                    "direct_mode requires exactly one display",
+                    [CONF_DIRECT_MODE],
+                )
+            if buffer_frac != 1:
+                raise cv.Invalid(
+                    "direct_mode requires a full-screen buffer",
+                    [CONF_BUFFER_SIZE],
+                )
+            if config[df.CONF_FULL_REFRESH]:
+                raise cv.Invalid(
+                    "direct_mode cannot be combined with full_refresh",
+                    [df.CONF_FULL_REFRESH],
+                )
+            if config.get(CONF_ROTATION, 0) != 0 or df.get_options().get(CONF_ROTATION):
+                raise cv.Invalid(
+                    "direct_mode does not support LVGL software rotation",
+                    [CONF_ROTATION],
+                )
+            metadata = metas[0]
+            if metadata.frame_buffer_count < 2:
+                raise cv.Invalid(
+                    "direct_mode requires a display with at least two native framebuffers",
+                    [CONF_DIRECT_MODE],
+                )
+            expected_bytes_per_pixel = 2 if config[CONF_COLOR_DEPTH] == 16 else 3
+            if metadata.frame_buffer_bytes_per_pixel != expected_bytes_per_pixel:
+                raise cv.Invalid(
+                    "direct_mode requires the LVGL and display color depths to match",
+                    [CONF_COLOR_DEPTH],
+                )
 
     if len(config_list) != 1:
         multi_conf_validate(config_list)
@@ -437,6 +471,7 @@ async def to_code(configs):
             displays,
             frac,
             config[df.CONF_FULL_REFRESH],
+            config[CONF_DIRECT_MODE],
             config[CONF_DRAW_ROUNDING],
             config[df.CONF_RESUME_ON_INPUT],
             config[df.CONF_UPDATE_WHEN_DISPLAY_IDLE],
@@ -739,6 +774,7 @@ LVGL_TOP_LEVEL_SCHEMA = (
             cv.Optional(CONF_COLOR_DEPTH, default=16): cv.one_of(16, 32),
             cv.Optional(df.CONF_DEFAULT_FONT, default="montserrat_14"): lvalid.lv_font,
             cv.Optional(df.CONF_FULL_REFRESH, default=False): cv.boolean,
+            cv.Optional(CONF_DIRECT_MODE, default=False): cv.boolean,
             cv.Optional(df.CONF_UPDATE_WHEN_DISPLAY_IDLE, default=False): cv.boolean,
             cv.Optional(df.CONF_REFRESH_INTERVAL): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_DRAW_ROUNDING, default=2): cv.positive_int,

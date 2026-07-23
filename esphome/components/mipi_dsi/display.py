@@ -177,6 +177,8 @@ def _config_schema(config):
         or config.get(CONF_AUTO_CLEAR_ENABLED) is True,
         rotation=config.get(CONF_ROTATION, 0),
         draw_rounding=config.get(CONF_DRAW_ROUNDING, 0),
+        frame_buffer_count=config[CONF_FRAME_BUFFER_COUNT],
+        frame_buffer_bytes_per_pixel=get_color_depth(config) // 8,
     )
     return config
 
