@@ -67,6 +67,7 @@ LvglNavigation = lvgl_ns.class_("LvglNavigation")
 LvglApplication = lvgl_ns.class_("LvglApplication")
 LvglSnapshotStore = lvgl_ns.class_("LvglSnapshotStore", Component)
 LvglSnapshotCompositor = lvgl_ns.class_("LvglSnapshotCompositor")
+LvglScrollSnapshotController = lvgl_ns.class_("LvglScrollSnapshotController")
 NavigationOpenAction = lvgl_ns.class_("NavigationOpenAction", automation.Action)
 NavigationCloseAction = lvgl_ns.class_("NavigationCloseAction", automation.Action)
 NavigationHomeAction = lvgl_ns.class_("NavigationHomeAction", automation.Action)
@@ -77,6 +78,15 @@ SnapshotCaptureAction = lvgl_ns.class_("SnapshotCaptureAction", automation.Actio
 SnapshotCaptureAllAction = lvgl_ns.class_("SnapshotCaptureAllAction", automation.Action)
 SnapshotInvalidateAction = lvgl_ns.class_("SnapshotInvalidateAction", automation.Action)
 SnapshotClearAction = lvgl_ns.class_("SnapshotClearAction", automation.Action)
+ScrollSnapshotPrepareAction = lvgl_ns.class_(
+    "ScrollSnapshotPrepareAction", automation.Action
+)
+ScrollSnapshotRefreshAction = lvgl_ns.class_(
+    "ScrollSnapshotRefreshAction", automation.Action
+)
+ScrollSnapshotReleaseAction = lvgl_ns.class_(
+    "ScrollSnapshotReleaseAction", automation.Action
+)
 lv_obj_t = LvType("lv_obj_t")
 lv_page_t = LvType("LvPageType", parents=(LvCompound,))
 lv_image_t = LvType("lv_image_t")
