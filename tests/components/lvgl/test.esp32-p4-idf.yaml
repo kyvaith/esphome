@@ -3,7 +3,10 @@ display:
     model: WAVESHARE-ESP32-P4-WIFI6-TOUCH-LCD-3.4C
 lvgl:
   byte_order: little_endian
+  color_depth: 32
   rotation: 90
+  use_ppa: true
+  use_ppa_img: true
 
 psram:
 
