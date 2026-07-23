@@ -123,7 +123,8 @@ int Esp32JpegDecoder::decode(uint8_t *buffer, size_t size) {
     }
   }
 
-  if (!this->image_->adopt_decode_buffer(output, info.width, info.height)) {
+  const BufferWriter writer = aligned_width == info.width ? BufferWriter::DMA : BufferWriter::CPU;
+  if (!this->image_->adopt_decode_buffer(output, info.width, info.height, writer)) {
     esp32_jpeg::release_decode_output(output);
     return DECODE_ERROR_OUT_OF_MEMORY;
   }

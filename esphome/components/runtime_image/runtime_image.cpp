@@ -92,6 +92,11 @@ void RuntimeImage::draw_pixel(int x, int y, const Color &color) {
   uint8_t *target_buffer = this->progressive_display_ ? this->buffer_ : this->decode_buffer_;
   const int target_width = this->progressive_display_ ? this->buffer_width_ : this->decode_buffer_width_;
   const int target_height = this->progressive_display_ ? this->buffer_height_ : this->decode_buffer_height_;
+  if (this->progressive_display_) {
+    this->buffer_writer_ = BufferWriter::CPU;
+  } else {
+    this->decode_buffer_writer_ = BufferWriter::CPU;
+  }
 
   if (!target_buffer) {
     ESP_LOGE(TAG, "Buffer not allocated!");
@@ -315,6 +320,11 @@ uint32_t RuntimeImage::get_generation() const {
   return this->generation_;
 }
 
+BufferWriter RuntimeImage::get_buffer_writer() const {
+  LockGuard lock(this->buffer_mutex_);
+  return this->buffer_writer_;
+}
+
 void RuntimeImage::release() {
   LockGuard lock(this->buffer_mutex_);
   // Public release is serialized with worker-task decoding.
@@ -339,16 +349,19 @@ void RuntimeImage::release_buffer_() {
     this->height_ = 0;
     this->buffer_width_ = 0;
     this->buffer_height_ = 0;
+    this->buffer_writer_ = BufferWriter::CPU;
 #ifdef USE_LVGL
     memset(&this->dsc_, 0, sizeof(this->dsc_));
 #endif
   }
+  this->buffer_writer_ = BufferWriter::CPU;
 }
 
 void RuntimeImage::release_decode_buffer_() {
   if (this->decode_buffer_ == nullptr) {
     this->decode_buffer_width_ = 0;
     this->decode_buffer_height_ = 0;
+    this->decode_buffer_writer_ = BufferWriter::CPU;
     return;
   }
 
@@ -360,6 +373,7 @@ void RuntimeImage::release_decode_buffer_() {
   this->decode_buffer_ = nullptr;
   this->decode_buffer_width_ = 0;
   this->decode_buffer_height_ = 0;
+  this->decode_buffer_writer_ = BufferWriter::CPU;
 }
 
 bool RuntimeImage::publish_pending_locked_() {
@@ -371,9 +385,11 @@ bool RuntimeImage::publish_pending_locked_() {
   this->buffer_ = this->decode_buffer_;
   this->buffer_width_ = this->decode_buffer_width_;
   this->buffer_height_ = this->decode_buffer_height_;
+  this->buffer_writer_ = this->decode_buffer_writer_;
   this->decode_buffer_ = nullptr;
   this->decode_buffer_width_ = 0;
   this->decode_buffer_height_ = 0;
+  this->decode_buffer_writer_ = BufferWriter::CPU;
   this->pending_image_ = false;
   this->width_ = this->buffer_width_;
   this->height_ = this->buffer_height_;
@@ -393,6 +409,7 @@ size_t RuntimeImage::resize_buffer_(int width, int height) {
   uint8_t *&target_buffer = this->progressive_display_ ? this->buffer_ : this->decode_buffer_;
   int &target_width = this->progressive_display_ ? this->buffer_width_ : this->decode_buffer_width_;
   int &target_height = this->progressive_display_ ? this->buffer_height_ : this->decode_buffer_height_;
+  BufferWriter &target_writer = this->progressive_display_ ? this->buffer_writer_ : this->decode_buffer_writer_;
 
   if (target_buffer && target_width == width && target_height == height) {
     // Buffer already allocated with correct size
@@ -423,6 +440,7 @@ size_t RuntimeImage::resize_buffer_(int width, int height) {
 
   target_width = width;
   target_height = height;
+  target_writer = BufferWriter::CPU;
 
   return new_size;
 }
@@ -443,7 +461,7 @@ bool RuntimeImage::accepts_decoded_dimensions(int width, int height) const {
   return target_width == width && target_height == height;
 }
 
-bool RuntimeImage::adopt_decode_buffer(uint8_t *buffer, int width, int height) {
+bool RuntimeImage::adopt_decode_buffer(uint8_t *buffer, int width, int height, BufferWriter writer) {
   if (buffer == nullptr || this->progressive_display_ || !this->accepts_decoded_dimensions(width, height) ||
       this->get_buffer_size_(width, height) == 0) {
     return false;
@@ -453,6 +471,7 @@ bool RuntimeImage::adopt_decode_buffer(uint8_t *buffer, int width, int height) {
   this->decode_buffer_ = buffer;
   this->decode_buffer_width_ = width;
   this->decode_buffer_height_ = height;
+  this->decode_buffer_writer_ = writer;
   return true;
 }
 

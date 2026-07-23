@@ -162,6 +162,7 @@ class RuntimeImage : public image::Image {
    * when the underlying image has not changed.
    */
   uint32_t get_generation() const;
+  BufferWriter get_buffer_writer() const override;
 
   /**
    * @brief Get the image format.
@@ -189,7 +190,7 @@ class RuntimeImage : public image::Image {
    *
    * Ownership transfers to RuntimeImage on success.
    */
-  bool adopt_decode_buffer(uint8_t *buffer, int width, int height);
+  bool adopt_decode_buffer(uint8_t *buffer, int width, int height, BufferWriter writer = BufferWriter::CPU);
 
   /**
    * @brief Check whether a decoder can publish the supplied dimensions without
@@ -242,6 +243,8 @@ class RuntimeImage : public image::Image {
   // Memory management
   uint8_t *buffer_{nullptr};
   uint8_t *decode_buffer_{nullptr};
+  BufferWriter buffer_writer_{BufferWriter::CPU};
+  BufferWriter decode_buffer_writer_{BufferWriter::CPU};
 
   // Decoder management
   std::unique_ptr<ImageDecoder> decoder_{nullptr};

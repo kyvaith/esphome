@@ -28,6 +28,7 @@ class Image : public display::BaseImage {
   int get_width() const override;
   int get_height() const override;
   const uint8_t *get_data_start() const { return this->data_start_; }
+  virtual BufferWriter get_buffer_writer() const { return BufferWriter::CPU; }
   ImageType get_type() const;
 
   int get_bpp() const { return this->bpp_; }
