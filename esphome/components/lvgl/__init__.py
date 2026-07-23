@@ -723,8 +723,6 @@ async def to_code(configs):
         df.add_define("LV_VG_LITE_THORVG_16PIXELS_ALIGN", "1")
         # Large stack for ThorVG rendering
         df.add_define("LV_DRAW_THREAD_STACK_SIZE", "(48 * 1024)")
-        # pngdec only needed for ThorVG image pipeline
-        cg.add_library("pngdec", "1.0.1")
         # Signal to lvgl_build_filter.py to compile ThorVG sources
         cg.add_build_flag("-DLVGL_USE_THORVG=1")
         df.LOGGER.info("ThorVG enabled (SVG/Lottie widgets detected)")
@@ -809,7 +807,7 @@ async def to_code(configs):
     # Add include path for atomic.h shim (needed for LV_USE_OS=LV_OS_FREERTOS on ESP-IDF)
     # Use absolute path so it works when LVGL compiles from .piolibdeps/
     component_dir = Path(__file__).parent
-    cg.add_build_flag(f"-I{component_dir}")
+    cg.add_build_flag(f"-I{component_dir.as_posix()}")
 
     for prop in df.get_remapped_uses():
         df.LOGGER.warning(
