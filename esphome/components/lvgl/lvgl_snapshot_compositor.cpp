@@ -1,5 +1,7 @@
 #include "lvgl_snapshot_compositor.h"
 
+#include "lvgl_navigation.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -10,24 +12,29 @@ namespace esphome::lvgl {
 
 void LvglSnapshotCompositor::add_home_page(LvPageType *page) {
   if (page != nullptr)
-    this->home_pages_.push_back(page);
+    this->add_home_view(page->obj);
+}
+
+void LvglSnapshotCompositor::add_home_view(lv_obj_t *view) {
+  if (view != nullptr)
+    this->home_views_.push_back(view);
 }
 
 bool LvglSnapshotCompositor::begin_home(int page_index) {
-  if (this->home_active_ || page_index < 0 || page_index >= static_cast<int>(this->home_pages_.size()))
+  if (this->home_active_ || page_index < 0 || page_index >= static_cast<int>(this->home_views_.size()))
     return false;
 
-  auto *page = this->home_pages_[page_index];
-  if (!this->ensure_overlay_(page) || !this->bind_surface_(this->current_, page, 0))
+  auto *view = this->home_views_[page_index];
+  if (!this->ensure_overlay_(view) || !this->bind_surface_(this->current_, view, 0))
     return false;
 
   const int32_t width = this->parent_->get_width();
-  if (page_index > 0 && !this->bind_surface_(this->previous_, this->home_pages_[page_index - 1], -width)) {
+  if (page_index > 0 && !this->bind_surface_(this->previous_, this->home_views_[page_index - 1], -width)) {
     this->release_home_();
     return false;
   }
-  if (page_index + 1 < static_cast<int>(this->home_pages_.size()) &&
-      !this->bind_surface_(this->next_, this->home_pages_[page_index + 1], width)) {
+  if (page_index + 1 < static_cast<int>(this->home_views_.size()) &&
+      !this->bind_surface_(this->next_, this->home_views_[page_index + 1], width)) {
     this->release_home_();
     return false;
   }
@@ -49,7 +56,7 @@ bool LvglSnapshotCompositor::update_home(int32_t delta_x) {
   const int32_t width = this->parent_->get_width();
   delta_x = std::clamp(delta_x, -width, width);
   if ((this->current_index_ == 0 && delta_x > 0) ||
-      (this->current_index_ + 1 == static_cast<int>(this->home_pages_.size()) && delta_x < 0))
+      (this->current_index_ + 1 == static_cast<int>(this->home_views_.size()) && delta_x < 0))
     delta_x /= 2;
   this->set_home_offset_(delta_x);
   return true;
@@ -58,7 +65,7 @@ bool LvglSnapshotCompositor::update_home(int32_t delta_x) {
 bool LvglSnapshotCompositor::settle_home(int target_index) {
   if (!this->home_active_)
     return false;
-  if (target_index < 0 || target_index >= static_cast<int>(this->home_pages_.size()))
+  if (target_index < 0 || target_index >= static_cast<int>(this->home_views_.size()))
     target_index = this->current_index_;
 
   this->target_index_ = target_index;
@@ -97,9 +104,9 @@ void LvglSnapshotCompositor::cancel_home() {
 
 bool LvglSnapshotCompositor::open_application(LvPageType *application, int home_index) {
   if (!this->application_transitions_enabled_ || this->home_active_ || this->application_active_ ||
-      application == nullptr || home_index < 0 || home_index >= static_cast<int>(this->home_pages_.size()))
+      application == nullptr || home_index < 0 || home_index >= static_cast<int>(this->home_views_.size()))
     return false;
-  if (!this->ensure_overlay_(application) || !this->bind_application_(application, false))
+  if (!this->ensure_overlay_(application->obj) || !this->bind_application_(application, false))
     return false;
 
   this->application_home_index_ = home_index;
@@ -117,9 +124,9 @@ bool LvglSnapshotCompositor::open_application(LvPageType *application, int home_
 
 bool LvglSnapshotCompositor::begin_application_close(LvPageType *application, int home_index) {
   if (!this->application_transitions_enabled_ || this->home_active_ || this->application_active_ ||
-      application == nullptr || home_index < 0 || home_index >= static_cast<int>(this->home_pages_.size()))
+      application == nullptr || home_index < 0 || home_index >= static_cast<int>(this->home_views_.size()))
     return false;
-  if (!this->ensure_overlay_(application) || !this->bind_application_(application, true))
+  if (!this->ensure_overlay_(application->obj) || !this->bind_application_(application, true))
     return false;
 
   this->application_home_index_ = home_index;
@@ -132,7 +139,8 @@ bool LvglSnapshotCompositor::begin_application_close(LvPageType *application, in
   lv_obj_move_foreground(this->overlay_);
   if (this->display_ != nullptr)
     lv_refr_now(this->display_);
-  this->parent_->show_page(this->home_pages_[home_index]->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
+  if (this->navigation_ != nullptr)
+    this->navigation_->activate_home_view(home_index);
   return true;
 }
 
@@ -176,13 +184,13 @@ void LvglSnapshotCompositor::application_animation_completed_(lv_anim_t *animati
   static_cast<LvglSnapshotCompositor *>(lv_anim_get_user_data(animation))->complete_application_();
 }
 
-bool LvglSnapshotCompositor::ensure_overlay_(LvPageType *page) {
+bool LvglSnapshotCompositor::ensure_overlay_(lv_obj_t *view) {
   if (this->overlay_ != nullptr)
     return true;
-  if (page == nullptr || page->obj == nullptr)
+  if (view == nullptr)
     return false;
 
-  this->display_ = lv_obj_get_display(page->obj);
+  this->display_ = lv_obj_get_display(view);
   auto *layer = lv_display_get_layer_top(this->display_);
   if (layer == nullptr)
     return false;
@@ -226,17 +234,23 @@ bool LvglSnapshotCompositor::ensure_overlay_(LvPageType *page) {
   return true;
 }
 
-bool LvglSnapshotCompositor::bind_surface_(Surface &surface, LvPageType *page, int32_t origin_x) {
-  if (page == nullptr || surface.image == nullptr)
+bool LvglSnapshotCompositor::bind_surface_(Surface &surface, lv_obj_t *view, int32_t origin_x) {
+  if (view == nullptr || surface.image == nullptr)
     return false;
 
-  auto *buffer = this->store_->acquire(page);
-  if (buffer == nullptr && this->store_->capture(page))
-    buffer = this->store_->acquire(page);
+  auto *buffer = this->store_->acquire_object(view);
+  if (buffer == nullptr && this->store_->capture_object(view))
+    buffer = this->store_->acquire_object(view);
   if (buffer == nullptr)
     return false;
+  if (buffer->header.w != this->parent_->get_width() || buffer->header.h != this->parent_->get_height()) {
+    ESP_LOGE("lvgl.snapshot", "Home view snapshot is %ux%u; expected %dx%d", buffer->header.w, buffer->header.h,
+             this->parent_->get_width(), this->parent_->get_height());
+    this->store_->release_object(view);
+    return false;
+  }
 
-  surface.page = page;
+  surface.view = view;
   surface.buffer = buffer;
   surface.origin_x = origin_x;
   lv_image_set_src(surface.image, buffer);
@@ -250,9 +264,9 @@ void LvglSnapshotCompositor::release_surface_(Surface &surface) {
     lv_obj_add_flag(surface.image, LV_OBJ_FLAG_HIDDEN);
     ::lv_image_set_src(surface.image, nullptr);
   }
-  if (surface.page != nullptr && surface.buffer != nullptr)
-    this->store_->release(surface.page);
-  surface.page = nullptr;
+  if (surface.view != nullptr && surface.buffer != nullptr)
+    this->store_->release_object(surface.view);
+  surface.view = nullptr;
   surface.buffer = nullptr;
   surface.origin_x = 0;
 }
@@ -269,8 +283,9 @@ void LvglSnapshotCompositor::complete_home_() {
   if (!this->home_active_)
     return;
 
-  const int target = std::clamp(this->target_index_, 0, static_cast<int>(this->home_pages_.size()) - 1);
-  this->parent_->show_page(this->home_pages_[target]->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
+  const int target = std::clamp(this->target_index_, 0, static_cast<int>(this->home_views_.size()) - 1);
+  if (this->navigation_ != nullptr)
+    this->navigation_->activate_home_view(target);
   lv_obj_add_flag(this->overlay_, LV_OBJ_FLAG_HIDDEN);
   if (this->display_ != nullptr)
     lv_refr_now(this->display_);

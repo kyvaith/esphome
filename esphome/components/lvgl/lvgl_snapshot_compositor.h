@@ -7,11 +7,15 @@
 
 namespace esphome::lvgl {
 
+class LvglNavigation;
+
 class LvglSnapshotCompositor {
  public:
   LvglSnapshotCompositor(LvglComponent *parent, LvglSnapshotStore *store) : parent_(parent), store_(store) {}
 
   void add_home_page(LvPageType *page);
+  void add_home_view(lv_obj_t *view);
+  void set_navigation(LvglNavigation *navigation) { this->navigation_ = navigation; }
   void set_settle_duration(uint32_t duration) { this->settle_duration_ = duration; }
   void set_application_transitions_enabled(bool enabled) { this->application_transitions_enabled_ = enabled; }
   void set_application_open_duration(uint32_t duration) { this->application_open_duration_ = duration; }
@@ -38,7 +42,7 @@ class LvglSnapshotCompositor {
  protected:
   struct Surface {
     lv_obj_t *image{};
-    LvPageType *page{};
+    lv_obj_t *view{};
     lv_draw_buf_t *buffer{};
     int32_t origin_x{};
   };
@@ -48,8 +52,8 @@ class LvglSnapshotCompositor {
   static void application_animation_exec_(void *var, int32_t value);
   static void application_animation_completed_(lv_anim_t *animation);
 
-  bool ensure_overlay_(LvPageType *page);
-  bool bind_surface_(Surface &surface, LvPageType *page, int32_t origin_x);
+  bool ensure_overlay_(lv_obj_t *view);
+  bool bind_surface_(Surface &surface, lv_obj_t *view, int32_t origin_x);
   void release_surface_(Surface &surface);
   void set_home_offset_(int32_t offset);
   void complete_home_();
@@ -62,7 +66,8 @@ class LvglSnapshotCompositor {
 
   LvglComponent *parent_{};
   LvglSnapshotStore *store_{};
-  std::vector<LvPageType *> home_pages_{};
+  LvglNavigation *navigation_{};
+  std::vector<lv_obj_t *> home_views_{};
   lv_obj_t *overlay_{};
   Surface previous_{};
   Surface current_{};

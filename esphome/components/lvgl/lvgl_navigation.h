@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lvgl_gesture_router.h"
+#include "lvgl_esphome.h"
 
 #include "esphome/core/automation.h"
 #include "esphome/core/helpers.h"
@@ -40,13 +41,15 @@ class LvglNavigation {
   explicit LvglNavigation(LvglComponent *parent) : parent_(parent) {}
 
   void add_home_page(LvPageType *page);
+  void set_home_widget_page(LvPageType *page) { this->home_widget_page_ = page; }
+  void add_home_widget(lv_obj_t *widget);
   void add_application(LvglApplication *application);
   void set_swipe_start_distance(uint16_t distance) { this->gesture_router_.set_start_distance(distance); }
   void set_axis_bias(uint16_t bias) { this->gesture_router_.set_axis_bias(bias); }
   void set_home_commit_ratio(float ratio) { this->home_commit_ratio_ = ratio; }
   void set_close_edge_ratio(float ratio) { this->close_edge_ratio_ = ratio; }
   void set_close_commit_ratio(float ratio) { this->close_commit_ratio_ = ratio; }
-  void set_snapshot_compositor(LvglSnapshotCompositor *compositor) { this->snapshot_compositor_ = compositor; }
+  void set_snapshot_compositor(LvglSnapshotCompositor *compositor);
 
   void touch_begin(int32_t x, int32_t y);
   bool touch_update(int32_t x, int32_t y);
@@ -59,6 +62,7 @@ class LvglNavigation {
 
   bool is_application_open(const LvglApplication *application) const;
   LvglApplication *get_active_application() const;
+  void activate_home_view(int index);
 
  protected:
   enum class TouchContext : uint8_t {
@@ -68,13 +72,16 @@ class LvglNavigation {
     APPLICATION_SCROLL,
   };
 
-  int find_home_page_index_() const;
+  int find_home_view_index_() const;
+  size_t get_home_view_count_() const;
   LvglApplication *find_active_application_() const;
   void reset_touch_();
 
   LvglComponent *parent_{};
   LvglSnapshotCompositor *snapshot_compositor_{};
   std::vector<LvPageType *> home_pages_{};
+  LvPageType *home_widget_page_{};
+  std::vector<lv_obj_t *> home_widgets_{};
   std::vector<LvglApplication *> applications_{};
   GestureRouter gesture_router_{};
   LvglApplication *gesture_application_{};

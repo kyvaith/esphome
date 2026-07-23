@@ -20,44 +20,53 @@ lvgl:
   touchscreens:
     - navigation_touchscreen
   pages:
-    - id: home_page_one
+    - id: home_widget_page
       widgets:
-        - lottie:
-            id: test_lottie
-            file: "$component_dir/test.lottie.json"
-            width: 32
-            height: 32
-            loop: false
-            auto_start: false
-            opaque_background: 0x102030
-        - image:
-            id: presenter_image_widget
-            src: presenter_test_image
-            width: 128
-            height: 128
-        - button:
+        - obj:
+            id: home_widget_one
+            width: 100%
+            height: 100%
+            widgets:
+              - lottie:
+                  id: test_lottie
+                  file: "$component_dir/test.lottie.json"
+                  width: 32
+                  height: 32
+                  loop: false
+                  auto_start: false
+                  opaque_background: 0x102030
+              - image:
+                  id: presenter_image_widget
+                  src: presenter_test_image
+                  width: 128
+                  height: 128
+              - button:
+                  widgets:
+                    - label:
+                        text: Open
+                  on_click:
+                    - lvgl.lottie.start: test_lottie
+                    - lvgl.lottie.pause: test_lottie
+                    - lvgl.lottie.stop: test_lottie
+                    - lvgl_image_presenter.pause: test_image_presenter
+                    - lvgl_image_presenter.resume: test_image_presenter
+                    - lvgl_image_presenter.restart: test_image_presenter
+                    - lvgl_image_presenter.reset: test_image_presenter
+                    - lvgl_image_presenter.pause_for_snapshot: test_image_presenter
+                    - lvgl_image_presenter.complete_snapshot_handoff: test_image_presenter
+                    - lvgl_image_presenter.transition:
+                        id: test_image_presenter
+                        source: presenter_test_image
+                        duration: 500ms
+                    - lvgl.navigation.open: test_application
+        - obj:
+            id: home_widget_two
+            width: 100%
+            height: 100%
+            hidden: true
             widgets:
               - label:
-                  text: Open
-            on_click:
-              - lvgl.lottie.start: test_lottie
-              - lvgl.lottie.pause: test_lottie
-              - lvgl.lottie.stop: test_lottie
-              - lvgl_image_presenter.pause: test_image_presenter
-              - lvgl_image_presenter.resume: test_image_presenter
-              - lvgl_image_presenter.restart: test_image_presenter
-              - lvgl_image_presenter.reset: test_image_presenter
-              - lvgl_image_presenter.pause_for_snapshot: test_image_presenter
-              - lvgl_image_presenter.complete_snapshot_handoff: test_image_presenter
-              - lvgl_image_presenter.transition:
-                  id: test_image_presenter
-                  source: presenter_test_image
-                  duration: 500ms
-              - lvgl.navigation.open: test_application
-    - id: home_page_two
-      widgets:
-        - label:
-            text: Home 2
+                  text: Home 2
     - id: application_page
       widgets:
         - obj:
@@ -90,9 +99,10 @@ lvgl:
   navigation:
     id: test_navigation
     home:
-      pages:
-        - home_page_one
-        - home_page_two
+      page: home_widget_page
+      widgets:
+        - home_widget_one
+        - home_widget_two
     applications:
       - id: test_application
         page: application_page
