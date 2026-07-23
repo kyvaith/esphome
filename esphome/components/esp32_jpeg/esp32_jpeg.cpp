@@ -847,7 +847,7 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
 
   size_t output_capacity = 0;
   uint8_t *output_data = nullptr;
-  const bool retain_output = !owns_encoder && encoder == preallocated_encoder;
+  const bool retain_output = config.retain_output_buffer && !owns_encoder && encoder == preallocated_encoder;
   if (retain_output && preallocated_encoder_output_capacity >= expected_input_size) {
     output_data = preallocated_encoder_output;
     output_capacity = preallocated_encoder_output_capacity;
@@ -1172,6 +1172,21 @@ void release_preallocated_encoder() {
     preallocated_encoder_output_capacity = 0;
   }
   ESP_LOGI(TAG, "Released preallocated JPEG encoder and output buffer; decoder remains resident");
+#endif
+}
+
+void release_preallocated_encoder_output() {
+#if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
+  JpegCodecLock lock(100);
+  if (!lock.locked())
+    return;
+
+  if (preallocated_encoder_output != nullptr) {
+    heap_caps_free(preallocated_encoder_output);
+    preallocated_encoder_output = nullptr;
+    preallocated_encoder_output_capacity = 0;
+    ESP_LOGI(TAG, "Released reusable JPEG encoder output buffer; encoder remains resident");
+  }
 #endif
 }
 
