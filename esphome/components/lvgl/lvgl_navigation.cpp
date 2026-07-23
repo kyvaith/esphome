@@ -1,6 +1,7 @@
 #include "lvgl_navigation.h"
 
 #include "lvgl_esphome.h"
+#include "lvgl_scroll_snapshot.h"
 #include "lvgl_snapshot_compositor.h"
 
 #include <algorithm>
@@ -41,13 +42,17 @@ LvglApplication *LvglNavigation::find_active_application_() const {
 void LvglNavigation::touch_begin(int32_t x, int32_t y) {
   this->reset_touch_();
 
-  if (auto *application = this->find_active_application_();
-      application != nullptr && application->is_close_gesture_enabled()) {
+  if (auto *application = this->find_active_application_(); application != nullptr) {
     const int32_t height = this->parent_->get_height();
     const int32_t edge_start = height - static_cast<int32_t>(std::lround(height * this->close_edge_ratio_));
-    if (y >= edge_start) {
+    if (application->is_close_gesture_enabled() && y >= edge_start) {
       this->gesture_application_ = application;
       this->touch_context_ = TouchContext::APPLICATION_CLOSE;
+      this->gesture_router_.begin(x, y, GestureAxis::VERTICAL);
+    } else if (auto *scroll = application->get_scroll_snapshot(); scroll != nullptr && scroll->contains(x, y)) {
+      this->gesture_application_ = application;
+      this->touch_context_ = TouchContext::APPLICATION_SCROLL;
+      scroll->touch_begin(y);
       this->gesture_router_.begin(x, y, GestureAxis::VERTICAL);
     }
     return;
@@ -77,6 +82,17 @@ bool LvglNavigation::touch_update(int32_t x, int32_t y) {
                                                           this->last_home_page_index_);
     if (this->snapshot_compositor_->is_application_active())
       this->snapshot_compositor_->update_application_close(sample.delta_y);
+  } else if (this->touch_context_ == TouchContext::APPLICATION_SCROLL && sample.captured &&
+             this->gesture_application_ != nullptr) {
+    auto *scroll = this->gesture_application_->get_scroll_snapshot();
+    if (scroll != nullptr) {
+      if (sample.just_captured && !scroll->begin()) {
+        this->reset_touch_();
+        return false;
+      }
+      if (scroll->is_active())
+        scroll->update(sample.delta_y, y, millis());
+    }
   }
   return sample.captured;
 }
@@ -117,12 +133,18 @@ bool LvglNavigation::touch_end() {
     } else if (close && gesture_application != nullptr) {
       this->close_application();
     }
+  } else if (context == TouchContext::APPLICATION_SCROLL && gesture_application != nullptr) {
+    if (auto *scroll = gesture_application->get_scroll_snapshot(); scroll != nullptr)
+      scroll->finish();
   }
   return true;
 }
 
 void LvglNavigation::touch_cancel() {
-  if (this->snapshot_compositor_ != nullptr) {
+  if (this->touch_context_ == TouchContext::APPLICATION_SCROLL && this->gesture_application_ != nullptr) {
+    if (auto *scroll = this->gesture_application_->get_scroll_snapshot(); scroll != nullptr)
+      scroll->cancel();
+  } else if (this->snapshot_compositor_ != nullptr) {
     if (this->snapshot_compositor_->is_application_active())
       this->snapshot_compositor_->settle_application_close(false);
     else

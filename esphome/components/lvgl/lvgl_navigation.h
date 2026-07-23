@@ -14,20 +14,24 @@ class LvglComponent;
 class LvPageType;
 class LvglNavigation;
 class LvglSnapshotCompositor;
+class LvglScrollSnapshotController;
 
 class LvglApplication {
  public:
   void set_parent(LvglNavigation *parent) { this->parent_ = parent; }
   void set_page(LvPageType *page) { this->page_ = page; }
   void set_close_gesture_enabled(bool enabled) { this->close_gesture_enabled_ = enabled; }
+  void set_scroll_snapshot(LvglScrollSnapshotController *controller) { this->scroll_snapshot_ = controller; }
 
   LvglNavigation *get_parent() const { return this->parent_; }
   LvPageType *get_page() const { return this->page_; }
+  LvglScrollSnapshotController *get_scroll_snapshot() const { return this->scroll_snapshot_; }
   bool is_close_gesture_enabled() const { return this->close_gesture_enabled_; }
 
  protected:
   LvglNavigation *parent_{};
   LvPageType *page_{};
+  LvglScrollSnapshotController *scroll_snapshot_{};
   bool close_gesture_enabled_{true};
 };
 
@@ -61,6 +65,7 @@ class LvglNavigation {
     NONE,
     HOME,
     APPLICATION_CLOSE,
+    APPLICATION_SCROLL,
   };
 
   int find_home_page_index_() const;

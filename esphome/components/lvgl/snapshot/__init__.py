@@ -10,15 +10,23 @@ from esphome.const import (
 
 from ..navigation import CONF_APPLICATIONS, CONF_HOME, CONF_PAGE
 from ..types import (
+    LvglApplication,
+    LvglScrollSnapshotController,
     LvglSnapshotCompositor,
     LvglSnapshotStore,
+    ScrollSnapshotPrepareAction,
+    ScrollSnapshotRefreshAction,
+    ScrollSnapshotReleaseAction,
     SnapshotCaptureAction,
     SnapshotCaptureAllAction,
     SnapshotClearAction,
     SnapshotInvalidateAction,
     lv_page_t,
+    lv_pseudo_button_t,
 )
+from ..widgets import get_widgets
 
+CONF_APPLICATION = "application"
 CONF_DECODED_SLOTS = "decoded_slots"
 CONF_APPLICATION_TRANSITIONS = "application_transitions"
 CONF_CLOSE_TARGET_X = "close_target_x"
@@ -29,7 +37,14 @@ CONF_PRELOAD = "preload"
 CONF_QUALITY = "quality"
 CONF_SETTLE_DURATION = "settle_duration"
 CONF_SNAPSHOT_COMPOSITOR = "snapshot_compositor"
+CONF_SCROLL_REGIONS = "scroll_regions"
 CONF_START_SIZE = "start_size"
+CONF_WIDGET = "widget"
+CONF_MAX_CONTENT_SIZE = "max_content_size"
+CONF_OVERSCROLL = "overscroll"
+CONF_MOMENTUM_DURATION = "momentum_duration"
+CONF_BOUNCE_DURATION = "bounce_duration"
+CONF_MAX_INERTIA_DURATION = "max_inertia_duration"
 
 COMPRESSION_NONE = "none"
 COMPRESSION_JPEG = "jpeg"
@@ -48,6 +63,39 @@ APPLICATION_TRANSITIONS_SCHEMA = cv.Schema(
     }
 )
 
+SCROLL_REGION_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(LvglScrollSnapshotController),
+        cv.Required(CONF_APPLICATION): cv.use_id(LvglApplication),
+        cv.Required(CONF_WIDGET): cv.use_id(lv_pseudo_button_t),
+        cv.Optional(CONF_PRELOAD, default=True): cv.boolean,
+        cv.Optional(CONF_MAX_CONTENT_SIZE, default="8MB"): cv.All(
+            cv.validate_bytes,
+            cv.int_range(min=65536, max=64 * 1024 * 1024),
+        ),
+        cv.Optional(CONF_OVERSCROLL, default="15%"): cv.percentage,
+        cv.Optional(
+            CONF_MOMENTUM_DURATION, default="560ms"
+        ): cv.positive_time_period_milliseconds,
+        cv.Optional(
+            CONF_BOUNCE_DURATION, default="320ms"
+        ): cv.positive_time_period_milliseconds,
+        cv.Optional(
+            CONF_MAX_INERTIA_DURATION, default="900ms"
+        ): cv.positive_time_period_milliseconds,
+    }
+)
+
+
+def _validate_scroll_regions(config):
+    applications = [region[CONF_APPLICATION] for region in config[CONF_SCROLL_REGIONS]]
+    widgets = [region[CONF_WIDGET] for region in config[CONF_SCROLL_REGIONS]]
+    if len(applications) != len(set(applications)):
+        raise cv.Invalid("Only one scroll region can be assigned to an application")
+    if len(widgets) != len(set(widgets)):
+        raise cv.Invalid("A widget can only be assigned to one scroll region")
+    return config
+
 
 def _validate_compression(value):
     value = cv.one_of(COMPRESSION_NONE, COMPRESSION_JPEG, lower=True)(value)
@@ -56,24 +104,32 @@ def _validate_compression(value):
     return value
 
 
-SNAPSHOT_SCHEMA = cv.Schema(
-    {
-        cv.GenerateID(): cv.declare_id(LvglSnapshotStore),
-        cv.GenerateID(CONF_INTERNAL_COMPOSITOR_ID): cv.declare_id(
-            LvglSnapshotCompositor
-        ),
-        cv.Optional(CONF_COMPRESSION, default=COMPRESSION_NONE): _validate_compression,
-        cv.Optional(CONF_QUALITY, default=90): cv.int_range(min=1, max=100),
-        cv.Optional(CONF_MAX_ENTRIES, default=16): cv.int_range(min=1, max=64),
-        cv.Optional(CONF_DECODED_SLOTS, default=3): cv.int_range(min=1, max=8),
-        cv.Optional(CONF_PRELOAD, default=False): cv.boolean,
-        cv.Optional(
-            CONF_SETTLE_DURATION, default="220ms"
-        ): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_APPLICATION_TRANSITIONS): APPLICATION_TRANSITIONS_SCHEMA,
-        cv.Optional(CONF_PAGES, default=[]): cv.ensure_list(cv.use_id(lv_page_t)),
-    }
-).extend(cv.COMPONENT_SCHEMA)
+SNAPSHOT_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(LvglSnapshotStore),
+            cv.GenerateID(CONF_INTERNAL_COMPOSITOR_ID): cv.declare_id(
+                LvglSnapshotCompositor
+            ),
+            cv.Optional(
+                CONF_COMPRESSION, default=COMPRESSION_NONE
+            ): _validate_compression,
+            cv.Optional(CONF_QUALITY, default=90): cv.int_range(min=1, max=100),
+            cv.Optional(CONF_MAX_ENTRIES, default=16): cv.int_range(min=1, max=64),
+            cv.Optional(CONF_DECODED_SLOTS, default=3): cv.int_range(min=1, max=8),
+            cv.Optional(CONF_PRELOAD, default=False): cv.boolean,
+            cv.Optional(
+                CONF_SETTLE_DURATION, default="220ms"
+            ): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_APPLICATION_TRANSITIONS): APPLICATION_TRANSITIONS_SCHEMA,
+            cv.Optional(CONF_SCROLL_REGIONS, default=[]): cv.ensure_list(
+                SCROLL_REGION_SCHEMA
+            ),
+            cv.Optional(CONF_PAGES, default=[]): cv.ensure_list(cv.use_id(lv_page_t)),
+        }
+    ).extend(cv.COMPONENT_SCHEMA),
+    _validate_scroll_regions,
+)
 
 
 def _registered_page_ids(config, navigation_config):
@@ -152,6 +208,42 @@ async def snapshot_to_code(lv_component, config, navigation_config):
             )
         cg.add(navigation.set_snapshot_compositor(compositor))
 
+        for region_config in snapshot_config[CONF_SCROLL_REGIONS]:
+            application = await cg.get_variable(region_config[CONF_APPLICATION])
+            widget = (
+                await get_widgets(
+                    [{CONF_ID: region_config[CONF_WIDGET]}],
+                )
+            )[0]
+            controller = cg.new_Pvariable(
+                region_config[CONF_ID],
+                lv_component,
+                application.get_page(),
+                widget.obj,
+            )
+            cg.add(controller.set_preload(region_config[CONF_PRELOAD]))
+            cg.add(
+                controller.set_max_content_bytes(region_config[CONF_MAX_CONTENT_SIZE])
+            )
+            cg.add(controller.set_overscroll_ratio(region_config[CONF_OVERSCROLL]))
+            cg.add(
+                controller.set_momentum_duration(
+                    region_config[CONF_MOMENTUM_DURATION].total_milliseconds
+                )
+            )
+            cg.add(
+                controller.set_bounce_duration(
+                    region_config[CONF_BOUNCE_DURATION].total_milliseconds
+                )
+            )
+            cg.add(
+                controller.set_max_inertia_duration(
+                    region_config[CONF_MAX_INERTIA_DURATION].total_milliseconds
+                )
+            )
+            cg.add(application.set_scroll_snapshot(controller))
+            cg.add(controller.setup())
+
 
 SNAPSHOT_PAGE_ACTION_SCHEMA = cv.Schema(
     {
@@ -210,3 +302,42 @@ async def snapshot_invalidate_to_code(config, action_id, template_arg, args):
 async def snapshot_clear_to_code(config, action_id, template_arg, args):
     store = await cg.get_variable(config[CONF_ID])
     return cg.new_Pvariable(action_id, template_arg, store)
+
+
+SCROLL_SNAPSHOT_ACTION_SCHEMA = cv.maybe_simple_value(
+    cv.Schema({cv.Required(CONF_ID): cv.use_id(LvglScrollSnapshotController)}),
+    key=CONF_ID,
+)
+
+
+@automation.register_action(
+    "lvgl.snapshot_scroll.prepare",
+    ScrollSnapshotPrepareAction,
+    SCROLL_SNAPSHOT_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def scroll_snapshot_prepare_to_code(config, action_id, template_arg, args):
+    controller = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, controller)
+
+
+@automation.register_action(
+    "lvgl.snapshot_scroll.refresh",
+    ScrollSnapshotRefreshAction,
+    SCROLL_SNAPSHOT_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def scroll_snapshot_refresh_to_code(config, action_id, template_arg, args):
+    controller = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, controller)
+
+
+@automation.register_action(
+    "lvgl.snapshot_scroll.release",
+    ScrollSnapshotReleaseAction,
+    SCROLL_SNAPSHOT_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def scroll_snapshot_release_to_code(config, action_id, template_arg, args):
+    controller = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, controller)
