@@ -50,6 +50,28 @@ struct FrameBufferLease {
   explicit operator bool() const { return this->owner != nullptr && this->data != nullptr; }
 };
 
+/** A stable read-only view of the framebuffer currently scanned out by a display.
+ *
+ * The view is only valid until the next framebuffer is presented in the
+ * matching session. It does not transfer ownership to the caller.
+ */
+struct FrameBufferView {
+  const Display *owner{};
+  const uint8_t *data{};
+  size_t size{};
+  size_t stride{};
+  size_t width{};
+  size_t height{};
+  ColorBitness bitness{COLOR_BITNESS_565};
+  ColorOrder color_order{COLOR_ORDER_RGB};
+  bool big_endian{};
+  BufferWriter writer{BufferWriter::CPU};
+  size_t index{};
+  uint32_t generation{};
+
+  explicit operator bool() const { return this->owner != nullptr && this->data != nullptr; }
+};
+
 /** TextAlign is used to tell the display class how to position a piece of text. By default
  * the coordinates you enter for the print*() functions take the upper left corner of the text
  * as the "anchor" point. You can customize this behavior to, for example, make the coordinates
@@ -410,6 +432,9 @@ class Display : public PollingComponent {
   virtual bool begin_frame_buffer_session(uint32_t timeout_ms = 50) { return false; }
   virtual bool acquire_frame_buffer(FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
                                     uint32_t timeout_ms = 50) {
+    return false;
+  }
+  virtual bool get_active_frame_buffer(FrameBufferView *view, BufferReader reader = BufferReader::CPU) const {
     return false;
   }
   virtual bool present_frame_buffer_lease(FrameBufferLease *lease, uint32_t timeout_ms = 50) { return false; }
