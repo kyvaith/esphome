@@ -104,6 +104,11 @@ class MipiDsi : public display::Display {
   display::ColorBitness get_frame_buffer_bitness() const override { return this->color_depth_; }
   size_t get_bytes_per_pixel() const { return this->get_bytes_per_pixel_(); }
   bool wait_for_refresh_done(uint32_t timeout_ms = 50);
+  bool begin_frame_buffer_session(uint32_t timeout_ms = 50) override;
+  bool acquire_frame_buffer(display::FrameBufferLease *lease, uint32_t timeout_ms = 50) override;
+  bool present_frame_buffer_lease(display::FrameBufferLease *lease, uint32_t timeout_ms = 50) override;
+  bool release_frame_buffer(display::FrameBufferLease *lease) override;
+  bool end_frame_buffer_session(uint32_t timeout_ms = 50) override;
 
   void smark_failed(const LogString *message, esp_err_t err);
 
@@ -134,6 +139,11 @@ class MipiDsi : public display::Display {
   void async_flush_task_();
   bool ensure_async_staging_buffer_(size_t size);
   bool check_buffer_();
+  bool wait_for_async_flush_(uint32_t timeout_ms);
+  bool submit_frame_buffer_(uint8_t *frame_buffer, int y_start, int y_end);
+  bool finish_pending_frame_buffer_(uint32_t timeout_ms);
+  bool validate_frame_buffer_lease_(const display::FrameBufferLease *lease) const;
+  void clear_frame_buffer_lease_(display::FrameBufferLease *lease) const;
   size_t get_bytes_per_pixel_() const { return this->color_depth_ == display::COLOR_BITNESS_888 ? 3 : 2; }
   GPIOPin *reset_pin_{nullptr};
   std::vector<GPIOPin *> enable_pins_{};
@@ -164,6 +174,7 @@ class MipiDsi : public display::Display {
   esp_lcd_panel_io_handle_t io_handle_{};
   SemaphoreHandle_t io_lock_{};
   SemaphoreHandle_t refresh_lock_{};
+  SemaphoreHandle_t frame_buffer_session_lock_{};
   SemaphoreHandle_t async_flush_done_{};
   TaskHandle_t async_flush_task_handle_{};
   MipiDsiCallbackContext callback_context_{};
@@ -190,6 +201,12 @@ class MipiDsi : public display::Display {
   uint32_t async_perf_submit_max_us_{0};
   uint32_t async_perf_done_max_us_{0};
   uint8_t *frame_buffers_[MIPI_DSI_MAX_FRAME_BUFFERS]{};
+  uint8_t *last_submitted_frame_buffer_{};
+  uint8_t *session_active_frame_buffer_{};
+  uint8_t *session_leased_frame_buffer_{};
+  uint8_t *session_pending_frame_buffer_{};
+  uint32_t frame_buffer_session_generation_{};
+  bool frame_buffer_session_active_{false};
   uint8_t *buffer_{nullptr};
   uint16_t x_low_{1};
   uint16_t y_low_{1};
