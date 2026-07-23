@@ -5528,8 +5528,32 @@ bool LvglComponent::snapshot_swipe_direct_render(lv_draw_buf_t *current, lv_draw
   uint32_t overlay_us = 0;
   auto render_to = [&](uint8_t *dst) {
     bool needs_full_sync = false;
-    needs_full_sync |= copy_visible(dst, current, current_x, &current_copy_us);
-    needs_full_sync |= copy_visible(dst, next, next_x, &next_copy_us);
+    bool batch_copied = false;
+#if CONFIG_ESPHOME_LVGL_SNAPSHOT_DMA2D_M2M
+    Dma2dM2mCopySpan spans[2]{};
+    size_t span_count = 0;
+    auto append_span = [&](const lv_draw_buf_t *src, int image_x) {
+      const int32_t dst_x1 = std::max<int32_t>(0, image_x);
+      const int32_t dst_x2 = std::min<int32_t>(this->width_, image_x + width);
+      if (dst_x2 <= dst_x1)
+        return;
+      const int32_t src_x = dst_x1 - image_x;
+      spans[span_count++] = {
+          static_cast<const uint8_t *>(src->data), static_cast<int>(src->header.stride / BYTES_PER_PIXEL),
+          static_cast<int>(src->header.h), src_x, 0, dst_x1, 0, dst_x2 - dst_x1, this->height_};
+    };
+    append_span(current, current_x);
+    append_span(next, next_x);
+    const int64_t batch_started_us = esp_timer_get_time();
+    if (span_count != 0)
+      batch_copied = dma2d_m2m_copy_rgb888_spans(spans, span_count, dst, this->width_, this->height_);
+    current_copy_us = static_cast<uint32_t>(esp_timer_get_time() - batch_started_us);
+    next_copy_us = 0;
+#endif
+    if (!batch_copied) {
+      needs_full_sync |= copy_visible(dst, current, current_x, &current_copy_us);
+      needs_full_sync |= copy_visible(dst, next, next_x, &next_copy_us);
+    }
     const int64_t overlay_started_us = esp_timer_get_time();
     const bool indicator_changed = snapshot_draw_page_indicator_rgb888(
         dst, this->width_, this->height_, s_snapshot_page_indicator_page, s_snapshot_page_indicator_count);
@@ -5542,7 +5566,7 @@ bool LvglComponent::snapshot_swipe_direct_render(lv_draw_buf_t *current, lv_draw
 
   render_to(target);
   const int64_t present_started_us = esp_timer_get_time();
-  if (!this->present_snapshot_render_buffer_(target))
+  if (!this->present_snapshot_render_buffer_(target, false))
     return false;
   const uint32_t present_us = static_cast<uint32_t>(esp_timer_get_time() - present_started_us);
 #ifdef USE_LVGL_FPS_BENCHMARK
@@ -5616,6 +5640,8 @@ bool LvglComponent::snapshot_swipe_direct_render_edge(lv_draw_buf_t *current, in
   if (target == nullptr)
     return false;
 
+  const int edge_limit = (this->width_ + 1) / 2;
+  current_x = std::clamp(current_x, -edge_limit, edge_limit);
   bool needs_full_sync = false;
   auto clear_visible = [&](int x1, int x2) {
     const int screen_w = (int) this->width_;
@@ -5623,6 +5649,26 @@ bool LvglComponent::snapshot_swipe_direct_render_edge(lv_draw_buf_t *current, in
     x2 = std::clamp(x2, 0, screen_w);
     if (x2 <= x1)
       return;
+#ifdef USE_LVGL_PPA
+    if (s_snapshot_fill_client != nullptr) {
+      ppa_fill_oper_config_t cfg = {};
+      cfg.out.buffer = target;
+      cfg.out.buffer_size = fb_bytes;
+      cfg.out.pic_w = this->width_;
+      cfg.out.pic_h = this->height_;
+      cfg.out.block_offset_x = x1;
+      cfg.out.block_offset_y = 0;
+      cfg.out.fill_cm = PPA_FILL_COLOR_MODE_RGB888;
+      cfg.fill_block_w = x2 - x1;
+      cfg.fill_block_h = this->height_;
+      color_pixel_argb8888_data_t fill_color = {};
+      fill_color.a = 0xFF;
+      cfg.fill_argb_color = fill_color;
+      cfg.mode = PPA_TRANS_MODE_BLOCKING;
+      if (ppa_do_fill(s_snapshot_fill_client, &cfg) == ESP_OK)
+        return;
+    }
+#endif
     const size_t clear_bytes = (size_t) (x2 - x1) * BYTES_PER_PIXEL;
     uint8_t *dst_row = target + (size_t) x1 * BYTES_PER_PIXEL;
     for (int y = 0; y < this->height_; y++) {
@@ -5639,11 +5685,18 @@ bool LvglComponent::snapshot_swipe_direct_render_edge(lv_draw_buf_t *current, in
       return false;
     const int32_t src_x = dst_x1 - image_x;
     const size_t copy_bytes = (size_t) (dst_x2 - dst_x1) * BYTES_PER_PIXEL;
+#if CONFIG_ESPHOME_LVGL_SNAPSHOT_DMA2D_M2M
+    if (dma2d_m2m_copy_rgb888_2d(src->data, src->header.stride / BYTES_PER_PIXEL, src->header.h, src_x, 0,
+                                 target, this->width_, this->height_, dst_x1, 0, dst_x2 - dst_x1,
+                                 this->height_)) {
+      return false;
+    }
+#endif
 #ifdef USE_LVGL_PPA
     if (s_display_srm_client != nullptr) {
       ppa_srm_oper_config_t cfg = {};
       cfg.in.buffer = src->data;
-      cfg.in.pic_w = src->header.w;
+      cfg.in.pic_w = src->header.stride / BYTES_PER_PIXEL;
       cfg.in.pic_h = src->header.h;
       cfg.in.block_w = dst_x2 - dst_x1;
       cfg.in.block_h = this->height_;
@@ -5695,7 +5748,10 @@ bool LvglComponent::snapshot_swipe_direct_render_edge(lv_draw_buf_t *current, in
     lvgl_cache_msync_external(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   else if (indicator_changed)
     snapshot_sync_page_indicator_rgb888(target, this->width_, this->height_);
-  if (!this->present_snapshot_render_buffer_(target))
+  // Match the panorama compositor: queue the completed frame and immediately
+  // compose the next one into the third DSI buffer. Waiting for this buffer to
+  // become active adds one complete refresh period to every bounce frame.
+  if (!this->present_snapshot_render_buffer_(target, false))
     return false;
 #ifdef USE_LVGL_FPS_BENCHMARK
   lvgl_esphome_note_frame();
@@ -8578,6 +8634,7 @@ struct SnapshotCacheEntry {
   lv_color_format_t cf{LV_COLOR_FORMAT_UNKNOWN};
   bool big_endian{false};
   bool decoded_from_jpeg{false};
+  bool tile_page{false};
   uint32_t generation{0};
   bool compression_in_flight{false};
 };
@@ -8631,6 +8688,17 @@ struct SnapshotPanoramaPageSource {
 #endif
 };
 
+constexpr size_t SNAPSHOT_TILE_SLOT_COUNT = 3;
+constexpr size_t SNAPSHOT_CACHE_ENTRY_COUNT = 24;
+
+struct SnapshotTileWindowCache {
+  lv_draw_buf_t *slots[SNAPSHOT_TILE_SLOT_COUNT]{nullptr, nullptr, nullptr};
+  lv_obj_t *pages[SNAPSHOT_TILE_SLOT_COUNT]{nullptr, nullptr, nullptr};
+  bool dirty[SNAPSHOT_TILE_SLOT_COUNT]{false, false, false};
+  int width{0};
+  int height{0};
+};
+
 SnapshotSwipeState snapshot_swipe_state;
 SnapshotScrollState snapshot_scroll_state;
 SnapshotAppState snapshot_app_state;
@@ -8640,17 +8708,88 @@ bool snapshot_app_prepared_close_owns_buf = false;
 lv_draw_buf_t *snapshot_app_work_buf = nullptr;
 lv_obj_t *snapshot_app_work_obj = nullptr;
 lv_draw_buf_t snapshot_app_panorama_background_view{};
+lv_draw_buf_t snapshot_swipe_panorama_page_views[2]{};
+lv_draw_buf_t snapshot_swipe_edge_panorama_view{};
 lv_draw_buf_t snapshot_app_presented_close_view{};
-SnapshotCacheEntry snapshot_cache[8];
+SnapshotCacheEntry snapshot_cache[SNAPSHOT_CACHE_ENTRY_COUNT];
 SnapshotPanoramaCacheEntry snapshot_panorama_cache[3];
+SnapshotTileWindowCache snapshot_tile_window_cache;
 lv_obj_t *snapshot_cache_pending_compress_obj = nullptr;
 uint32_t snapshot_cache_pending_compress_at = 0;
 lv_obj_t *snapshot_cache_latest_raw_app_obj = nullptr;
+
+lv_draw_buf_t *snapshot_tile_window_find(lv_obj_t *obj) {
+  if (obj == nullptr)
+    return nullptr;
+  for (size_t index = 0; index < SNAPSHOT_TILE_SLOT_COUNT; index++) {
+    if (snapshot_tile_window_cache.pages[index] == obj)
+      return snapshot_tile_window_cache.slots[index];
+  }
+  return nullptr;
+}
+
+size_t snapshot_tile_window_bytes() {
+  size_t bytes = 0;
+  for (auto *slot : snapshot_tile_window_cache.slots) {
+    if (slot != nullptr)
+      bytes += slot->data_size;
+  }
+  return bytes;
+}
+
+bool snapshot_tile_window_reserve(int width, int height) {
+  if (width <= 0 || height <= 0)
+    return false;
+  if (snapshot_tile_window_cache.width == width && snapshot_tile_window_cache.height == height) {
+    bool ready = true;
+    for (auto *slot : snapshot_tile_window_cache.slots)
+      ready = ready && slot != nullptr && slot->data != nullptr;
+    if (ready)
+      return true;
+  }
+
+  for (size_t index = 0; index < SNAPSHOT_TILE_SLOT_COUNT; index++) {
+    if (snapshot_tile_window_cache.slots[index] != nullptr)
+      lv_draw_buf_destroy(snapshot_tile_window_cache.slots[index]);
+    snapshot_tile_window_cache.slots[index] = nullptr;
+    snapshot_tile_window_cache.pages[index] = nullptr;
+    snapshot_tile_window_cache.dirty[index] = false;
+  }
+  snapshot_tile_window_cache.width = 0;
+  snapshot_tile_window_cache.height = 0;
+
+  for (size_t index = 0; index < SNAPSHOT_TILE_SLOT_COUNT; index++) {
+    auto *slot = lv_draw_buf_create(width, height, LV_COLOR_FORMAT_RGB888, width * 3);
+    if (slot == nullptr || slot->data == nullptr) {
+      if (slot != nullptr)
+        lv_draw_buf_destroy(slot);
+      for (size_t rollback = 0; rollback < index; rollback++) {
+        lv_draw_buf_destroy(snapshot_tile_window_cache.slots[rollback]);
+        snapshot_tile_window_cache.slots[rollback] = nullptr;
+        snapshot_tile_window_cache.pages[rollback] = nullptr;
+        snapshot_tile_window_cache.dirty[rollback] = false;
+      }
+      ESP_LOGW(TAG, "snapshot tiles: failed to reserve slot %u/%u", static_cast<unsigned>(index + 1),
+               static_cast<unsigned>(SNAPSHOT_TILE_SLOT_COUNT));
+      return false;
+    }
+    snapshot_tile_window_cache.slots[index] = slot;
+    snapshot_tile_window_cache.pages[index] = nullptr;
+    snapshot_tile_window_cache.dirty[index] = false;
+  }
+  snapshot_tile_window_cache.width = width;
+  snapshot_tile_window_cache.height = height;
+  ESP_LOGI(TAG, "snapshot tiles: reserved %u reusable RGB888 slots (%u KB)",
+           static_cast<unsigned>(SNAPSHOT_TILE_SLOT_COUNT),
+           static_cast<unsigned>(snapshot_tile_window_bytes() / 1024));
+  return true;
+}
 
 extern "C" size_t lvgl_esphome_snapshot_memory_bytes(void) {
   size_t raw_cache_bytes = 0;
   size_t jpeg_cache_bytes = 0;
   size_t panorama_bytes = 0;
+  const size_t tile_window_bytes = snapshot_tile_window_bytes();
   size_t app_work_bytes = snapshot_app_work_buf == nullptr ? 0 : snapshot_app_work_buf->data_size;
   size_t scroll_bytes = 0;
   size_t prepared_close_bytes = 0;
@@ -8685,7 +8824,7 @@ extern "C" size_t lvgl_esphome_snapshot_memory_bytes(void) {
 #else
   constexpr size_t app_low_res_bytes = 0;
 #endif
-  return raw_cache_bytes + jpeg_cache_bytes + panorama_bytes + app_work_bytes + scroll_bytes +
+  return raw_cache_bytes + jpeg_cache_bytes + panorama_bytes + tile_window_bytes + app_work_bytes + scroll_bytes +
          prepared_close_bytes + app_low_res_bytes;
 }
 
@@ -8693,6 +8832,7 @@ extern "C" void lvgl_esphome_snapshot_log_memory(const char *phase) {
   size_t raw_cache_bytes = 0;
   size_t jpeg_cache_bytes = 0;
   size_t panorama_bytes = 0;
+  const size_t tile_window_bytes = snapshot_tile_window_bytes();
   size_t scroll_bytes = 0;
   for (const auto &entry : snapshot_cache) {
     if (entry.buf != nullptr)
@@ -8722,9 +8862,10 @@ extern "C" void lvgl_esphome_snapshot_log_memory(const char *phase) {
   constexpr size_t app_low_res_bytes = 0;
 #endif
   ESP_LOGW("memory.snapshot",
-           "%s total=%uK panorama=%uK raw=%uK jpeg=%uK app_work=%uK scroll=%uK close=%uK lowres=%uK",
+           "%s total=%uK panorama=%uK tiles=%uK raw=%uK jpeg=%uK app_work=%uK scroll=%uK close=%uK lowres=%uK",
            phase == nullptr ? "runtime" : phase, (unsigned) (lvgl_esphome_snapshot_memory_bytes() / 1024),
-           (unsigned) (panorama_bytes / 1024), (unsigned) (raw_cache_bytes / 1024),
+           (unsigned) (panorama_bytes / 1024), (unsigned) (tile_window_bytes / 1024),
+           (unsigned) (raw_cache_bytes / 1024),
            (unsigned) (jpeg_cache_bytes / 1024), (unsigned) (app_work_bytes / 1024),
            (unsigned) (scroll_bytes / 1024), (unsigned) (prepared_close_bytes / 1024),
            (unsigned) (app_low_res_bytes / 1024));
@@ -8738,6 +8879,7 @@ constexpr bool SNAPSHOT_JPEG_CACHE_ENABLED = true;
 // Keep their cached frame visually identical to the live LVGL page; reducing
 // quality here is immediately visible as a soft opening/closing animation.
 constexpr uint32_t SNAPSHOT_JPEG_QUALITY = 100;
+bool snapshot_jpeg_bootstrap_complete = false;
 constexpr int SNAPSHOT_APP_OPEN_START_SIZE = 1;
 constexpr int SNAPSHOT_APP_OPEN_MIN_PRESENT_SIZE = 96;
 constexpr uint32_t SNAPSHOT_APP_OPEN_FIRST_FRAME_ADVANCE_MS = 16;
@@ -8811,6 +8953,7 @@ void snapshot_cache_free_entry(SnapshotCacheEntry &entry) {
   snapshot_cache_destroy_jpeg(entry);
   entry.obj = nullptr;
   entry.big_endian = false;
+  entry.tile_page = false;
   entry.generation++;
 }
 
@@ -8827,6 +8970,7 @@ void snapshot_compression_worker_task(void *) {
         .down_sampling = esp32_jpeg::DownSampling::YUV444,
         .quality = SNAPSHOT_JPEG_QUALITY,
         .pixel_reverse = worker.big_endian,
+        .retain_output_buffer = false,
         // Snapshot compression runs while DSI continuously scans PSRAM.
         // Keep each JPEG DMA2D transaction short enough to leave regular
         // service windows for the display, just like the synchronous path.
@@ -8894,6 +9038,7 @@ bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf) {
       .down_sampling = esp32_jpeg::DownSampling::YUV444,
       .quality = SNAPSHOT_JPEG_QUALITY,
       .pixel_reverse = entry.big_endian,
+      .retain_output_buffer = !snapshot_jpeg_bootstrap_complete,
       .dma2d_burst_length = 8,
       .dma2d_descriptor_burst = 0,
       .timeout_ms = 120,
@@ -9006,11 +9151,18 @@ lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
 }
 
 lv_draw_buf_t *snapshot_cache_find(lv_obj_t *obj) {
+  if (auto *tile = snapshot_tile_window_find(obj))
+    return tile;
   auto *entry = snapshot_cache_find_entry(obj);
   if (entry == nullptr)
     return nullptr;
   if (entry->buf != nullptr)
     return entry->buf;
+  // Home pages outside the three-slot working set stay JPEG-only. They are
+  // decoded into a recycled tile slot by snapshot_cache_tile_window(); never
+  // allocate a fourth display-sized raw buffer from this generic lookup.
+  if (entry->tile_page)
+    return nullptr;
   return snapshot_cache_decode_jpeg(*entry);
 }
 
@@ -9089,7 +9241,7 @@ void snapshot_cache_store_impl(lv_obj_t *obj, lv_draw_buf_t *buf, bool keep_raw_
   }
   if (slot == nullptr) {
     for (auto &entry : snapshot_cache) {
-      if (!entry.compression_in_flight) {
+      if (!entry.compression_in_flight && !entry.tile_page) {
         slot = &entry;
         break;
       }
@@ -9138,7 +9290,7 @@ bool snapshot_cache_store_compressed_view(lv_obj_t *obj, lv_draw_buf_t *buf) {
   }
   if (slot == nullptr) {
     for (auto &entry : snapshot_cache) {
-      if (!entry.compression_in_flight) {
+      if (!entry.compression_in_flight && !entry.tile_page) {
         slot = &entry;
         break;
       }
@@ -9174,7 +9326,7 @@ void snapshot_cache_store_raw_only(lv_obj_t *obj, lv_draw_buf_t *buf) {
   }
   if (slot == nullptr)
     for (auto &entry : snapshot_cache) {
-      if (!entry.compression_in_flight) {
+      if (!entry.compression_in_flight && !entry.tile_page) {
         slot = &entry;
         break;
       }
@@ -9486,10 +9638,42 @@ bool snapshot_panorama_source_from_cache(lv_obj_t *obj, int width, int scale, Sn
   return false;
 }
 
+bool snapshot_panorama_source_view(const SnapshotPanoramaPageSource &source, int width, int height,
+                                   lv_draw_buf_t *view) {
+#if defined(USE_ESP32) && LV_COLOR_DEPTH == 32
+  if (view == nullptr || source.data == nullptr || source.owner == nullptr || source.owner->buf == nullptr ||
+      source.stride == 0 || source.width < width || source.height < height)
+    return false;
+  const uint32_t panorama_width = static_cast<uint32_t>(source.stride / 3U);
+  if (lv_draw_buf_init(view, panorama_width, height, LV_COLOR_FORMAT_RGB888, static_cast<uint32_t>(source.stride),
+                       source.owner->buf, static_cast<uint32_t>(source.owner->size)) != LV_RESULT_OK) {
+    return false;
+  }
+  view->data = const_cast<uint8_t *>(source.data);
+  view->unaligned_data = const_cast<uint8_t *>(source.data);
+  view->header.w = static_cast<uint32_t>(width);
+  view->header.h = static_cast<uint32_t>(height);
+  view->data_size = static_cast<uint32_t>((static_cast<size_t>(height - 1) * source.stride) +
+                                          static_cast<size_t>(width) * 3U);
+  return true;
+#else
+  (void) source;
+  (void) width;
+  (void) height;
+  (void) view;
+  return false;
+#endif
+}
+
 lv_draw_buf_t *snapshot_app_background_from_panorama(lv_obj_t *obj) {
 #if defined(USE_ESP32) && LV_COLOR_DEPTH == 32
   if (obj == nullptr)
     return nullptr;
+  // The current Home page already lives in the fixed three-slot working set.
+  // Reuse it directly under app open/close animations; no panorama view or
+  // display-sized background copy is needed.
+  if (auto *tile = snapshot_tile_window_find(obj))
+    return tile;
   auto *display = lv_obj_get_display(obj);
   if (display == nullptr)
     return nullptr;
@@ -11419,70 +11603,235 @@ extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right
 #endif
 }
 
-extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t *page1, lv_obj_t *page2, lv_obj_t *page3,
-                                                        lv_obj_t *page4, int current_page, int width) {
-#if LV_USE_SNAPSHOT
-  if (s_snapshot_direct_active || s_snapshot_swipe_active || snapshot_app_state.active)
-    return false;
+SnapshotCacheEntry *snapshot_tile_cache_entry(lv_obj_t *page, bool create) {
+  auto *entry = snapshot_cache_find_entry(page);
+  if (entry != nullptr) {
+    if (entry->compression_in_flight)
+      return nullptr;
+    entry->tile_page = true;
+    return entry;
+  }
+  if (!create)
+    return nullptr;
 
-  lv_obj_t *pages[] = {page1, page2, page3, page4};
-  if (current_page < 1 || current_page > 4 || width <= 0)
-    return false;
+  for (auto &candidate : snapshot_cache) {
+    if (candidate.obj == nullptr && !candidate.compression_in_flight) {
+      snapshot_cache_free_entry(candidate);
+      candidate.obj = page;
+      candidate.big_endian = snapshot_cache_obj_big_endian(page);
+      candidate.tile_page = true;
+      return &candidate;
+    }
+  }
+  ESP_LOGW(TAG, "snapshot tiles: compressed page metadata capacity exhausted");
+  return nullptr;
+}
 
-  // Store the four adjacent pages in one contiguous surface. Memory use is
-  // identical to four raw page buffers, but every gesture frame becomes one
-  // PPA crop instead of two independent strip copies. The same surface serves
-  // all 1 <-> 2 <-> 3 <-> 4 transitions, so a chained gesture never rebuilds
-  // a pair cache between fingers.
-  return snapshot_panorama_cache_prepare_pages(pages, 4, width) != nullptr;
+bool snapshot_tile_cache_valid(const SnapshotCacheEntry *entry, int width, int height) {
+#ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
+  return entry != nullptr && entry->tile_page && !entry->jpeg.empty() && entry->width == static_cast<uint32_t>(width) &&
+         entry->height == static_cast<uint32_t>(height) && entry->stride == static_cast<uint32_t>(width * 3) &&
+         entry->cf == LV_COLOR_FORMAT_RGB888;
 #else
+  (void) entry;
+  (void) width;
+  (void) height;
+  return false;
+#endif
+}
+
+bool snapshot_tile_cache_encode(lv_obj_t *page, lv_draw_buf_t *source) {
+  auto *entry = snapshot_tile_cache_entry(page, true);
+  if (entry == nullptr || source == nullptr || source->data == nullptr)
+    return false;
+  entry->big_endian = snapshot_cache_obj_big_endian(page);
+  entry->tile_page = true;
+  if (!snapshot_cache_encode_jpeg(*entry, source))
+    return false;
+  entry->generation++;
+  return true;
+}
+
+int snapshot_tile_window_slot_index(lv_obj_t *page) {
+  for (size_t index = 0; index < SNAPSHOT_TILE_SLOT_COUNT; index++) {
+    if (snapshot_tile_window_cache.pages[index] == page)
+      return static_cast<int>(index);
+  }
+  return -1;
+}
+
+bool snapshot_tile_window_flush_slot(size_t slot_index) {
+  if (slot_index >= SNAPSHOT_TILE_SLOT_COUNT || !snapshot_tile_window_cache.dirty[slot_index])
+    return true;
+  auto *page = snapshot_tile_window_cache.pages[slot_index];
+  auto *slot = snapshot_tile_window_cache.slots[slot_index];
+  if (page == nullptr || slot == nullptr || !snapshot_tile_cache_encode(page, slot))
+    return false;
+  snapshot_tile_window_cache.dirty[slot_index] = false;
+  return true;
+}
+
+bool snapshot_tile_window_load_page(lv_obj_t *page, size_t slot_index, int width, int height) {
+  if (page == nullptr || slot_index >= SNAPSHOT_TILE_SLOT_COUNT)
+    return false;
+  auto *slot = snapshot_tile_window_cache.slots[slot_index];
+  if (slot == nullptr)
+    return false;
+
+  auto *entry = snapshot_tile_cache_entry(page, false);
+  bool ready = false;
+  if (snapshot_tile_cache_valid(entry, width, height)) {
+    lvgl_esphome_wait_snapshot_dsi_fifo();
+    ready = snapshot_cache_decode_jpeg_to_draw_buf(*entry, slot);
+    lvgl_esphome_wait_snapshot_dsi_fifo();
+  } else {
+    ready = snapshot_take_centered_to(page, slot) && snapshot_tile_cache_encode(page, slot);
+  }
+  if (!ready)
+    return false;
+
+  snapshot_tile_window_cache.pages[slot_index] = page;
+  snapshot_tile_window_cache.dirty[slot_index] = false;
+  return true;
+}
+
+extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int page_count, int current_page,
+                                                        int width) {
+#if LV_USE_SNAPSHOT && defined(USE_LVGL_SNAPSHOT_JPEG_CACHE)
+  if (pages == nullptr || page_count <= 0 || current_page < 1 || current_page > page_count || width <= 0 ||
+      s_snapshot_direct_active || s_snapshot_swipe_active || snapshot_app_state.active ||
+      snapshot_scroll_state.direct_render) {
+    return false;
+  }
+  for (int index = 0; index < page_count; index++) {
+    if (pages[index] == nullptr)
+      return false;
+  }
+
+  auto *display = lv_obj_get_display(pages[0]);
+  const int height = display == nullptr ? 0 : lv_display_get_vertical_resolution(display);
+  if (height <= 0)
+    return false;
+
+  // The old full panorama grew by one 1.92 MB RGB888 frame per page. Keep a
+  // fixed previous/current/next working set instead; every other page remains
+  // a compact JPEG and is decoded directly into a recycled slot.
+  for (auto &panorama : snapshot_panorama_cache)
+    snapshot_panorama_free_entry(panorama);
+  if (!snapshot_tile_window_reserve(width, height))
+    return false;
+
+  const int window_count = std::min<int>(page_count, SNAPSHOT_TILE_SLOT_COUNT);
+  const int max_start = page_count - window_count;
+  const int window_start = std::clamp(current_page - 2, 0, max_start);
+  lv_obj_t *desired_pages[SNAPSHOT_TILE_SLOT_COUNT]{nullptr, nullptr, nullptr};
+  int desired_slots[SNAPSHOT_TILE_SLOT_COUNT]{-1, -1, -1};
+  bool slot_used[SNAPSHOT_TILE_SLOT_COUNT]{false, false, false};
+
+  for (int index = 0; index < window_count; index++) {
+    desired_pages[index] = pages[window_start + index];
+    desired_slots[index] = snapshot_tile_window_slot_index(desired_pages[index]);
+    if (desired_slots[index] >= 0)
+      slot_used[desired_slots[index]] = true;
+  }
+
+  for (int index = 0; index < window_count; index++) {
+    if (desired_slots[index] >= 0)
+      continue;
+    for (size_t slot_index = 0; slot_index < SNAPSHOT_TILE_SLOT_COUNT; slot_index++) {
+      if (slot_used[slot_index])
+        continue;
+      if (!snapshot_tile_window_flush_slot(slot_index))
+        return false;
+      snapshot_tile_window_cache.pages[slot_index] = nullptr;
+      snapshot_tile_window_cache.dirty[slot_index] = false;
+      desired_slots[index] = static_cast<int>(slot_index);
+      slot_used[slot_index] = true;
+      break;
+    }
+    if (desired_slots[index] < 0)
+      return false;
+  }
+
+  for (int index = 0; index < window_count; index++) {
+    const size_t slot_index = static_cast<size_t>(desired_slots[index]);
+    if (snapshot_tile_window_cache.pages[slot_index] == desired_pages[index])
+      continue;
+    if (!snapshot_tile_window_load_page(desired_pages[index], slot_index, width, height))
+      return false;
+  }
+
+  // Build the compressed backing store for pages outside the current window
+  // once. A single existing application work buffer is reused as scratch, so
+  // adding a page does not allocate another raw full-screen surface.
+  for (int page_index = 0; page_index < page_count; page_index++) {
+    auto *entry = snapshot_tile_cache_entry(pages[page_index], false);
+    if (snapshot_tile_cache_valid(entry, width, height))
+      continue;
+    const int raw_slot = snapshot_tile_window_slot_index(pages[page_index]);
+    lv_draw_buf_t *scratch = raw_slot >= 0 ? snapshot_tile_window_cache.slots[raw_slot] : nullptr;
+    if (scratch == nullptr) {
+      if (!snapshot_app_reserve_work_buffer(pages[page_index]))
+        return false;
+      scratch = snapshot_app_work_buf;
+      if (!snapshot_take_centered_to(pages[page_index], scratch))
+        return false;
+    }
+    if (!snapshot_tile_cache_encode(pages[page_index], scratch))
+      return false;
+  }
+
+  for (size_t slot_index = 0; slot_index < SNAPSHOT_TILE_SLOT_COUNT; slot_index++) {
+    if (!slot_used[slot_index]) {
+      if (!snapshot_tile_window_flush_slot(slot_index))
+        return false;
+      snapshot_tile_window_cache.pages[slot_index] = nullptr;
+      snapshot_tile_window_cache.dirty[slot_index] = false;
+    }
+  }
+
+  if (!snapshot_jpeg_bootstrap_complete) {
+    // Boot uses one reusable full-screen encoder output allocation for all app
+    // and tile snapshots. Once every page has JPEG backing, keep only the
+    // small hardware engine and release that 1.92 MB scratch allocation.
+    snapshot_jpeg_bootstrap_complete = true;
+    esp32_jpeg::release_preallocated_encoder_output();
+  }
+
+  ESP_LOGI(TAG, "snapshot tiles: window %d-%d/%d raw=%u KB compressed-total=%u KB", window_start + 1,
+           window_start + window_count, page_count, static_cast<unsigned>(snapshot_tile_window_bytes() / 1024),
+           static_cast<unsigned>(lvgl_esphome_snapshot_memory_bytes() / 1024));
+  return true;
+#else
+  (void) pages;
+  (void) page_count;
+  (void) current_page;
+  (void) width;
   return false;
 #endif
 }
 
 extern "C" bool lvgl_esphome_snapshot_refresh_tile_page(lv_obj_t *page, int width) {
-#if defined(USE_ESP32) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32 && LV_USE_SNAPSHOT
+#if defined(USE_ESP32) && LV_COLOR_DEPTH == 32 && LV_USE_SNAPSHOT
   if (page == nullptr || width <= 0 || s_snapshot_direct_active || s_snapshot_swipe_active ||
       snapshot_app_state.active || snapshot_scroll_state.direct_render)
     return false;
 
-  SnapshotPanoramaCacheEntry *panorama = nullptr;
-  int page_index = -1;
-  for (auto &entry : snapshot_panorama_cache) {
-    if (entry.buf == nullptr || entry.width != width || entry.scale != 1)
-      continue;
-    for (int index = 0; index < entry.page_count; index++) {
-      if (entry.pages[index] == page) {
-        panorama = &entry;
-        page_index = index;
-        break;
-      }
-    }
-    if (panorama != nullptr)
-      break;
-  }
-  if (panorama == nullptr || page_index < 0 || panorama->height <= 0 ||
-      !snapshot_app_reserve_work_buffer(page) || !snapshot_take_centered_to(page, snapshot_app_work_buf)) {
+  const int slot_index = snapshot_tile_window_slot_index(page);
+  if (slot_index < 0)
     return false;
-  }
+  auto *slot = snapshot_tile_window_cache.slots[slot_index];
+  if (slot == nullptr || slot->header.w != static_cast<uint32_t>(width) || !snapshot_take_centered_to(page, slot))
+    return false;
 
-  const size_t source_size = snapshot_app_work_buf->data_size != 0
-                                 ? snapshot_app_work_buf->data_size
-                                 : static_cast<size_t>(snapshot_app_work_buf->header.stride) *
-                                       snapshot_app_work_buf->header.h;
-  lvgl_cache_msync_external(snapshot_app_work_buf->data, source_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-
-  SnapshotPanoramaPageSource source;
-  const int panorama_width = width * panorama->page_count;
-  const bool copied = snapshot_panorama_source_from_buffer(snapshot_app_work_buf, 1, &source) &&
-                      snapshot_panorama_copy_source_ppa(source, panorama->buf, panorama->size, panorama_width,
-                                                        panorama->height, page_index * width, width,
-                                                        panorama->height);
-  snapshot_app_work_obj = nullptr;
+  // Keep the live raw page immediately current. Its JPEG is refreshed lazily
+  // only if this slot is about to be recycled, coalescing repeated slider or
+  // toggle updates into one hardware encode.
+  snapshot_tile_window_cache.dirty[slot_index] = true;
   if (s_swipe_logging_enabled) {
-    ESP_LOGI(TAG, "snapshot panorama: refreshed page=%d result=%s", page_index + 1, YESNO(copied));
+    ESP_LOGI(TAG, "snapshot tiles: refreshed raw slot=%d; JPEG marked dirty", slot_index);
   }
-  return copied;
+  return true;
 #else
   (void) page;
   (void) width;
@@ -11613,6 +11962,33 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
   auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
   if (component != nullptr && SNAPSHOT_DIRECT_COMPOSITOR_ENABLED) {
     constexpr int scale = SNAPSHOT_PANORAMA_SCALE;
+    SnapshotPanoramaPageSource current_source{};
+    SnapshotPanoramaPageSource next_source{};
+    if (scale == 1 && snapshot_panorama_source_from_cache(current, width, scale, &current_source) &&
+        snapshot_panorama_source_from_cache(next, width, scale, &next_source) &&
+        snapshot_panorama_source_view(current_source, width, component->get_height(),
+                                      &snapshot_swipe_panorama_page_views[0]) &&
+        snapshot_panorama_source_view(next_source, width, component->get_height(),
+                                      &snapshot_swipe_panorama_page_views[1])) {
+      snapshot_swipe_state.current_buf = &snapshot_swipe_panorama_page_views[0];
+      snapshot_swipe_state.next_buf = &snapshot_swipe_panorama_page_views[1];
+      snapshot_swipe_state.width = width;
+      snapshot_swipe_state.current_x = 0;
+      snapshot_swipe_state.next_x = next_x;
+      snapshot_swipe_state.component = component;
+      snapshot_swipe_state.direct_render = true;
+      s_snapshot_direct_active = true;
+#ifdef USE_ESP32
+      snapshot_swipe_state.worker_enabled = snapshot_swipe_worker_activate(0, next_x);
+#endif
+      lv_obj_add_flag(current, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(next, LV_OBJ_FLAG_HIDDEN);
+      snapshot_swipe_discard_pending_refresh(component->get_disp());
+      if (s_swipe_logging_enabled) {
+        ESP_LOGI(TAG, "snapshot swipe: direct DMA2D slot compositor active, next_x=%d", next_x);
+      }
+      return true;
+    }
     lv_obj_t *left_obj = next_x > 0 ? current : next;
     lv_obj_t *right_obj = next_x > 0 ? next : current;
     int source_page_index = 0;
@@ -11761,7 +12137,26 @@ extern "C" bool lvgl_esphome_snapshot_swipe_edge_begin(lv_obj_t *current, int wi
   lv_obj_align(current, LV_ALIGN_CENTER, 0, 0);
   lv_obj_update_layout(parent);
 
-  snapshot_swipe_state.current_buf = snapshot_cache_find(current);
+  SnapshotPanoramaPageSource panorama_source{};
+  if (snapshot_panorama_source_from_cache(current, width, 1, &panorama_source) &&
+      panorama_source.owner != nullptr && panorama_source.owner->buf != nullptr && panorama_source.width == width &&
+      panorama_source.height >= component->get_height() && panorama_source.stride != 0) {
+    const int height = component->get_height();
+    const uint32_t panorama_width = static_cast<uint32_t>(panorama_source.stride / 3U);
+    if (lv_draw_buf_init(&snapshot_swipe_edge_panorama_view, panorama_width, height, LV_COLOR_FORMAT_RGB888,
+                         static_cast<uint32_t>(panorama_source.stride), panorama_source.owner->buf,
+                         static_cast<uint32_t>(panorama_source.owner->size)) == LV_RESULT_OK) {
+      snapshot_swipe_edge_panorama_view.data = const_cast<uint8_t *>(panorama_source.data);
+      snapshot_swipe_edge_panorama_view.unaligned_data = const_cast<uint8_t *>(panorama_source.data);
+      snapshot_swipe_edge_panorama_view.header.w = static_cast<uint32_t>(width);
+      snapshot_swipe_edge_panorama_view.header.h = static_cast<uint32_t>(height);
+      snapshot_swipe_edge_panorama_view.data_size = static_cast<uint32_t>(
+          (static_cast<size_t>(height - 1) * panorama_source.stride) + static_cast<size_t>(width) * 3U);
+      snapshot_swipe_state.current_buf = &snapshot_swipe_edge_panorama_view;
+    }
+  }
+  if (snapshot_swipe_state.current_buf == nullptr)
+    snapshot_swipe_state.current_buf = snapshot_cache_find(current);
   if (snapshot_swipe_state.current_buf == nullptr) {
     snapshot_swipe_state.current_buf = lv_snapshot_take(current, SNAPSHOT_CF);
     snapshot_swipe_state.owns_current_buf = true;
