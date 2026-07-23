@@ -1,0 +1,68 @@
+packages:
+  i2c: !include ../../test_build_components/common/i2c/esp32-p4-idf.yaml
+
+display:
+  - platform: mipi_dsi
+    id: material_display
+    model: WAVESHARE-ESP32-P4-WIFI6-TOUCH-LCD-3.4C
+
+touchscreen:
+  - platform: gt911
+    id: material_touchscreen
+    i2c_id: i2c_bus
+    display: material_display
+
+lvgl:
+  displays: material_display
+  touchscreens:
+    - material_touchscreen
+  widgets:
+    - button:
+        id: material_button
+        width: 160
+        height: 80
+        radius: 40
+        widgets:
+          - label:
+              text: Material
+    - obj:
+        id: material_page_indicator_container
+        width: 180
+        height: 24
+        y: 120
+        bg_opa: TRANSP
+        border_width: 0
+
+lvgl_material:
+  state_layers:
+    - id: test_state_layer
+      widget: material_button
+      color: black
+      pressed_opacity: 12%
+      enter_duration: 80ms
+      exit_duration: 120ms
+  page_indicators:
+    - id: test_page_indicator
+      container: material_page_indicator_container
+      count: 4
+      initial_page: 0
+      active_size: 24
+      inactive_size: 8
+      thickness: 8
+      gap: 8
+      active_color: white
+      inactive_color: 0x777777
+      transition_duration: 160ms
+
+interval:
+  - interval: 5s
+    then:
+      - lvgl_material.page_indicator.set:
+          id: test_page_indicator
+          value: 1
+
+psram:
+
+esp_ldo:
+  - channel: 3
+    voltage: 2.5V
