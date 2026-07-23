@@ -342,7 +342,7 @@ void LvglScrollSnapshotController::bind_images_() {
     lv_obj_remove_flag(this->tail_image_, LV_OBJ_FLAG_HIDDEN);
   } else {
     lv_obj_add_flag(this->tail_image_, LV_OBJ_FLAG_HIDDEN);
-    lv_image_set_src(this->tail_image_, nullptr);
+    ::lv_image_set_src(this->tail_image_, nullptr);
   }
 }
 
@@ -419,9 +419,9 @@ void LvglScrollSnapshotController::hide_overlay_() {
   if (this->overlay_ != nullptr)
     lv_obj_add_flag(this->overlay_, LV_OBJ_FLAG_HIDDEN);
   if (this->head_image_ != nullptr)
-    lv_image_set_src(this->head_image_, nullptr);
+    ::lv_image_set_src(this->head_image_, nullptr);
   if (this->tail_image_ != nullptr)
-    lv_image_set_src(this->tail_image_, nullptr);
+    ::lv_image_set_src(this->tail_image_, nullptr);
 }
 
 }  // namespace esphome::lvgl
