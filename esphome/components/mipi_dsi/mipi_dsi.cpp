@@ -98,7 +98,7 @@ void MipiDsi::setup() {
                                            .dpi_clock_freq_mhz = this->pclk_frequency_,
                                            .pixel_format = pixel_format,
 #endif
-                                           .num_fbs = 2,  // number of frame buffers to allocate
+                                           .num_fbs = static_cast<uint8_t>(this->frame_buffer_count_),
                                            .video_timing =
                                                {
                                                    .h_size = this->width_,
@@ -121,14 +121,27 @@ void MipiDsi::setup() {
     this->smark_failed(LOG_STR("esp_lcd_new_panel_dpi failed"), err);
     return;
   }
-  void *fb0 = nullptr;
-  void *fb1 = nullptr;
-  err = esp_lcd_dpi_panel_get_frame_buffer(this->handle_, 2, &fb0, &fb1);
-  if (err == ESP_OK && fb0 != nullptr && fb1 != nullptr) {
-    this->frame_buffers_[0] = static_cast<uint8_t *>(fb0);
-    this->frame_buffers_[1] = static_cast<uint8_t *>(fb1);
-    ESP_LOGI(TAG, "DPI framebuffers exposed at %p / %p (%zu bytes each)", this->frame_buffers_[0],
-             this->frame_buffers_[1], this->get_frame_buffer_size());
+  void *frame_buffers[MIPI_DSI_MAX_FRAME_BUFFERS]{};
+  switch (this->frame_buffer_count_) {
+    case 1:
+      err = esp_lcd_dpi_panel_get_frame_buffer(this->handle_, 1, &frame_buffers[0]);
+      break;
+    case 2:
+      err = esp_lcd_dpi_panel_get_frame_buffer(this->handle_, 2, &frame_buffers[0], &frame_buffers[1]);
+      break;
+    case 3:
+      err =
+          esp_lcd_dpi_panel_get_frame_buffer(this->handle_, 3, &frame_buffers[0], &frame_buffers[1], &frame_buffers[2]);
+      break;
+    default:
+      err = ESP_ERR_INVALID_ARG;
+      break;
+  }
+  if (err == ESP_OK && frame_buffers[0] != nullptr) {
+    for (size_t i = 0; i < this->frame_buffer_count_; i++)
+      this->frame_buffers_[i] = static_cast<uint8_t *>(frame_buffers[i]);
+    ESP_LOGI(TAG, "%zu DPI framebuffer(s) exposed (%zu bytes each)", this->frame_buffer_count_,
+             this->get_frame_buffer_size());
   } else {
     ESP_LOGW(TAG, "DPI framebuffer unavailable: %s", esp_err_to_name(err));
   }
@@ -253,9 +266,7 @@ void MipiDsi::start_async_flush_task_() {
   ESP_LOGCONFIG(TAG, "Async LVGL flush ready task enabled on core %d", (int) flush_core);
 }
 
-void MipiDsi::async_flush_task_trampoline(void *arg) {
-  static_cast<MipiDsi *>(arg)->async_flush_task_();
-}
+void MipiDsi::async_flush_task_trampoline(void *arg) { static_cast<MipiDsi *>(arg)->async_flush_task_(); }
 
 void MipiDsi::async_flush_task_() {
   while (true) {
@@ -354,9 +365,9 @@ void MipiDsi::draw_pixels_at(int x_start, int y_start, int w, int h, const uint8
 }
 
 bool MipiDsi::draw_pixels_at_async(int x_start, int y_start, int w, int h, const uint8_t *ptr,
-                                    display::ColorOrder order, display::ColorBitness bitness, bool big_endian,
-                                    int x_offset, int y_offset, int x_pad, AsyncFlushReadyCallback ready_callback,
-                                    void *ready_arg) {
+                                   display::ColorOrder order, display::ColorBitness bitness, bool big_endian,
+                                   int x_offset, int y_offset, int x_pad, AsyncFlushReadyCallback ready_callback,
+                                   void *ready_arg) {
   if (!this->async_lvgl_flush_ || this->async_flush_done_ == nullptr || this->async_flush_task_handle_ == nullptr ||
       ready_callback == nullptr)
     return false;
@@ -480,7 +491,16 @@ void MipiDsi::consume_async_flush_perf(AsyncFlushPerfStats *stats) {
 }
 
 bool MipiDsi::present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end) {
-  if (frame_buffer == nullptr || (frame_buffer != this->frame_buffers_[0] && frame_buffer != this->frame_buffers_[1]))
+  if (frame_buffer == nullptr)
+    return false;
+  bool known_frame_buffer = false;
+  for (size_t i = 0; i < this->frame_buffer_count_; i++) {
+    if (frame_buffer == this->frame_buffers_[i]) {
+      known_frame_buffer = true;
+      break;
+    }
+  }
+  if (!known_frame_buffer)
     return false;
   if (y_end < y_start)
     return false;
@@ -508,7 +528,7 @@ bool MipiDsi::present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end
 }
 
 void MipiDsi::write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,
-                                 int x_pad) {
+                                int x_pad) {
   esp_err_t err = ESP_OK;
   auto bytes_per_pixel = this->get_bytes_per_pixel_();
   auto stride = (x_offset + w + x_pad) * bytes_per_pixel;

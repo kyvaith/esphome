@@ -71,6 +71,7 @@ CONF_LANE_BIT_RATE = "lane_bit_rate"
 CONF_LANES = "lanes"
 CONF_USE_DMA2D = "use_dma2d"
 CONF_ASYNC_LVGL_FLUSH = "async_lvgl_flush"
+CONF_FRAME_BUFFER_COUNT = "frame_buffer_count"
 
 DsiDriverChip("CUSTOM")
 
@@ -132,6 +133,7 @@ def model_schema(config):
             ),
             model.option(CONF_USE_DMA2D, False): cv.boolean,
             model.option(CONF_ASYNC_LVGL_FLUSH, False): cv.boolean,
+            model.option(CONF_FRAME_BUFFER_COUNT, 1): cv.int_range(min=1, max=3),
             iseqconf: cv.ensure_list(map_sequence),
             model.option(CONF_BYTE_ORDER, BYTE_ORDER_LITTLE): cv.one_of(
                 BYTE_ORDER_LITTLE, BYTE_ORDER_BIG, lower=True
@@ -219,6 +221,7 @@ async def to_code(config):
     cg.add(var.set_lane_bit_rate(config[CONF_LANE_BIT_RATE] / 1.0e6))
     cg.add(var.set_use_dma2d(config[CONF_USE_DMA2D]))
     cg.add(var.set_async_lvgl_flush(config[CONF_ASYNC_LVGL_FLUSH]))
+    cg.add(var.set_frame_buffer_count(config[CONF_FRAME_BUFFER_COUNT]))
     if reset_pin := config.get(CONF_RESET_PIN):
         reset = await cg.gpio_pin_expression(reset_pin)
         cg.add(var.set_reset_pin(reset))

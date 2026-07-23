@@ -22,6 +22,7 @@
 namespace esphome::mipi_dsi {
 
 constexpr static const char *const TAG = "display.mipi_dsi";
+constexpr static size_t MIPI_DSI_MAX_FRAME_BUFFERS = 3;
 const uint8_t SW_RESET_CMD = 0x01;
 const uint8_t SLEEP_OUT = 0x11;
 const uint8_t SDIR_CMD = 0xC7;
@@ -92,8 +93,12 @@ class MipiDsi : public display::Display {
   void set_lanes(uint8_t lanes) { this->lanes_ = lanes; }
   void set_use_dma2d(bool use_dma2d) { this->use_dma2d_ = use_dma2d; }
   void set_async_lvgl_flush(bool async_lvgl_flush) { this->async_lvgl_flush_ = async_lvgl_flush; }
+  void set_frame_buffer_count(size_t frame_buffer_count) { this->frame_buffer_count_ = frame_buffer_count; }
   uint8_t *get_frame_buffer() const { return this->frame_buffers_[0]; }
-  uint8_t *get_frame_buffer(size_t index) const { return index < 2 ? this->frame_buffers_[index] : nullptr; }
+  uint8_t *get_frame_buffer(size_t index) const {
+    return index < this->frame_buffer_count_ ? this->frame_buffers_[index] : nullptr;
+  }
+  size_t get_frame_buffer_count() const { return this->frame_buffer_count_; }
   size_t get_frame_buffer_size() const { return this->width_ * this->height_ * this->get_bytes_per_pixel_(); }
   size_t get_bytes_per_pixel() const { return this->get_bytes_per_pixel_(); }
   bool wait_for_refresh_done(uint32_t timeout_ms = 50);
@@ -145,6 +150,7 @@ class MipiDsi : public display::Display {
   uint8_t lanes_{2};           // 1, 2, 3 or 4 lanes
   bool use_dma2d_{false};
   bool async_lvgl_flush_{false};
+  size_t frame_buffer_count_{1};
 
   bool invert_colors_{};
   display::ColorOrder color_mode_{display::COLOR_ORDER_BGR};
@@ -181,7 +187,7 @@ class MipiDsi : public display::Display {
   uint32_t async_perf_copy_max_us_{0};
   uint32_t async_perf_submit_max_us_{0};
   uint32_t async_perf_done_max_us_{0};
-  uint8_t *frame_buffers_[2]{nullptr, nullptr};
+  uint8_t *frame_buffers_[MIPI_DSI_MAX_FRAME_BUFFERS]{};
   uint8_t *buffer_{nullptr};
   uint16_t x_low_{1};
   uint16_t y_low_{1};
