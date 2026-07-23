@@ -12,8 +12,6 @@ namespace esphome::lvgl {
 static const char *const TAG = "lvgl.snapshot";
 
 void LvglSnapshotStore::setup() {
-  if (this->decoded_slots_.empty())
-    this->decoded_slots_.resize(this->decoded_slot_count_);
   if (this->preload_ && !this->capture_all())
     this->status_set_warning(LOG_STR("Failed to preload one or more snapshots"));
 }
@@ -194,9 +192,6 @@ LvglSnapshotStore::DecodedSlot *LvglSnapshotStore::find_slot_(lv_obj_t *object) 
 }
 
 LvglSnapshotStore::DecodedSlot *LvglSnapshotStore::select_slot_() {
-  if (this->decoded_slots_.empty())
-    this->decoded_slots_.resize(this->decoded_slot_count_);
-
   auto *selected = static_cast<DecodedSlot *>(nullptr);
   for (auto &slot : this->decoded_slots_) {
     if (slot.references != 0)
