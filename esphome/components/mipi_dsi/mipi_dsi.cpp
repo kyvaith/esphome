@@ -140,6 +140,7 @@ void MipiDsi::setup() {
   if (err == ESP_OK && frame_buffers[0] != nullptr) {
     for (size_t i = 0; i < this->frame_buffer_count_; i++)
       this->frame_buffers_[i] = static_cast<uint8_t *>(frame_buffers[i]);
+    this->last_submitted_frame_buffer_ = this->frame_buffers_[0];
     ESP_LOGI(TAG, "%zu DPI framebuffer(s) exposed (%zu bytes each)", this->frame_buffer_count_,
              this->get_frame_buffer_size());
   } else {
@@ -215,6 +216,12 @@ void MipiDsi::setup() {
   }
   this->io_lock_ = xSemaphoreCreateBinary();
   this->refresh_lock_ = xSemaphoreCreateBinary();
+  this->frame_buffer_session_lock_ = xSemaphoreCreateMutex();
+  if (this->io_lock_ == nullptr || this->refresh_lock_ == nullptr || this->frame_buffer_session_lock_ == nullptr) {
+    this->status_set_error(LOG_STR("Framebuffer synchronization allocation failed"));
+    this->mark_failed();
+    return;
+  }
   if (this->async_lvgl_flush_) {
     this->async_flush_done_ = xSemaphoreCreateBinary();
     if (this->async_flush_done_ == nullptr) {
@@ -321,6 +328,178 @@ bool MipiDsi::wait_for_refresh_done(uint32_t timeout_ms) {
   while (xSemaphoreTake(this->refresh_lock_, 0) == pdTRUE) {
   }
   return xSemaphoreTake(this->refresh_lock_, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
+bool MipiDsi::wait_for_async_flush_(uint32_t timeout_ms) {
+  if (!this->async_lvgl_flush_)
+    return true;
+  const TickType_t started = xTaskGetTickCount();
+  const TickType_t timeout = std::max<TickType_t>(1, pdMS_TO_TICKS(timeout_ms));
+  while (this->async_flush_pending_) {
+    if (xTaskGetTickCount() - started >= timeout)
+      return false;
+    vTaskDelay(1);
+  }
+  return true;
+}
+
+bool MipiDsi::begin_frame_buffer_session(uint32_t timeout_ms) {
+  if (this->frame_buffer_session_active_ || this->frame_buffer_count_ < 2 ||
+      this->frame_buffer_session_lock_ == nullptr ||
+      xSemaphoreTake(this->frame_buffer_session_lock_, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+    return false;
+  }
+  if (!this->wait_for_async_flush_(timeout_ms)) {
+    xSemaphoreGive(this->frame_buffer_session_lock_);
+    return false;
+  }
+
+  // The normal renderer has already stopped. Wait for its most recently
+  // submitted framebuffer to cross a VSYNC boundary before leasing another.
+  if (this->last_submitted_frame_buffer_ != nullptr && !this->wait_for_refresh_done(timeout_ms)) {
+    xSemaphoreGive(this->frame_buffer_session_lock_);
+    return false;
+  }
+  this->session_active_frame_buffer_ =
+      this->last_submitted_frame_buffer_ != nullptr ? this->last_submitted_frame_buffer_ : this->frame_buffers_[0];
+  this->session_leased_frame_buffer_ = nullptr;
+  this->session_pending_frame_buffer_ = nullptr;
+  this->frame_buffer_session_generation_++;
+  if (this->frame_buffer_session_generation_ == 0)
+    this->frame_buffer_session_generation_++;
+  this->frame_buffer_session_active_ = true;
+  return true;
+}
+
+bool MipiDsi::acquire_frame_buffer(display::FrameBufferLease *lease, uint32_t timeout_ms) {
+  if (lease == nullptr || !this->frame_buffer_session_active_ || this->session_leased_frame_buffer_ != nullptr ||
+      this->session_pending_frame_buffer_ != nullptr) {
+    return false;
+  }
+
+  uint8_t *frame_buffer = nullptr;
+  size_t index = 0;
+  const TickType_t started = xTaskGetTickCount();
+  const TickType_t timeout = std::max<TickType_t>(1, pdMS_TO_TICKS(timeout_ms));
+  while (frame_buffer == nullptr) {
+    for (size_t candidate = 0; candidate < this->frame_buffer_count_; candidate++) {
+      if (this->frame_buffers_[candidate] != nullptr &&
+          this->frame_buffers_[candidate] != this->session_active_frame_buffer_) {
+        frame_buffer = this->frame_buffers_[candidate];
+        index = candidate;
+        break;
+      }
+    }
+    if (frame_buffer != nullptr)
+      break;
+    if (xTaskGetTickCount() - started >= timeout)
+      return false;
+    vTaskDelay(1);
+  }
+
+  this->session_leased_frame_buffer_ = frame_buffer;
+  *lease = {
+      .owner = this,
+      .data = frame_buffer,
+      .size = this->get_frame_buffer_size(),
+      .stride = this->get_frame_buffer_stride(),
+      .width = this->width_,
+      .height = this->height_,
+      .bitness = this->get_frame_buffer_bitness(),
+      .color_order = this->color_mode_,
+      .big_endian = false,
+      .index = index,
+      .generation = this->frame_buffer_session_generation_,
+  };
+  return true;
+}
+
+bool MipiDsi::validate_frame_buffer_lease_(const display::FrameBufferLease *lease) const {
+  return lease != nullptr && lease->owner == this && lease->data != nullptr && this->frame_buffer_session_active_ &&
+         lease->generation == this->frame_buffer_session_generation_ &&
+         lease->data == this->session_leased_frame_buffer_;
+}
+
+void MipiDsi::clear_frame_buffer_lease_(display::FrameBufferLease *lease) const {
+  if (lease != nullptr)
+    *lease = {};
+}
+
+bool MipiDsi::submit_frame_buffer_(uint8_t *frame_buffer, int y_start, int y_end) {
+  if (frame_buffer == nullptr || y_end < y_start)
+    return false;
+  y_start = std::max(0, y_start);
+  y_end = std::min<int>(this->height_ - 1, y_end);
+  if (y_end < y_start)
+    return false;
+  esp_err_t err = esp_cache_msync(frame_buffer, this->get_frame_buffer_size(),
+                                  ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "framebuffer cache sync failed: %s", esp_err_to_name(err));
+    return false;
+  }
+  err = esp_lcd_panel_draw_bitmap(this->handle_, 0, y_start, this->width_, y_end + 1, frame_buffer);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "present_frame_buffer failed: %s", esp_err_to_name(err));
+    return false;
+  }
+  xSemaphoreTake(this->io_lock_, portMAX_DELAY);
+  this->last_submitted_frame_buffer_ = frame_buffer;
+  return true;
+}
+
+bool MipiDsi::finish_pending_frame_buffer_(uint32_t timeout_ms) {
+  if (this->session_pending_frame_buffer_ == nullptr)
+    return true;
+  if (!this->wait_for_refresh_done(timeout_ms))
+    return false;
+  this->session_active_frame_buffer_ = this->session_pending_frame_buffer_;
+  this->session_pending_frame_buffer_ = nullptr;
+  this->session_leased_frame_buffer_ = nullptr;
+  return true;
+}
+
+bool MipiDsi::present_frame_buffer_lease(display::FrameBufferLease *lease, uint32_t timeout_ms) {
+  if (!this->validate_frame_buffer_lease_(lease))
+    return false;
+  uint8_t *frame_buffer = lease->data;
+  if (this->session_pending_frame_buffer_ == frame_buffer) {
+    if (!this->finish_pending_frame_buffer_(timeout_ms))
+      return false;
+    this->clear_frame_buffer_lease_(lease);
+    return true;
+  }
+  if (this->session_pending_frame_buffer_ != nullptr || !this->wait_for_async_flush_(timeout_ms) ||
+      !this->submit_frame_buffer_(frame_buffer, 0, this->height_ - 1)) {
+    return false;
+  }
+  this->session_pending_frame_buffer_ = frame_buffer;
+  if (!this->finish_pending_frame_buffer_(timeout_ms))
+    return false;
+  this->clear_frame_buffer_lease_(lease);
+  return true;
+}
+
+bool MipiDsi::release_frame_buffer(display::FrameBufferLease *lease) {
+  if (!this->validate_frame_buffer_lease_(lease) || this->session_pending_frame_buffer_ != nullptr)
+    return false;
+  this->session_leased_frame_buffer_ = nullptr;
+  this->clear_frame_buffer_lease_(lease);
+  return true;
+}
+
+bool MipiDsi::end_frame_buffer_session(uint32_t timeout_ms) {
+  if (!this->frame_buffer_session_active_ || this->session_leased_frame_buffer_ != nullptr ||
+      this->session_pending_frame_buffer_ != nullptr) {
+    return false;
+  }
+  if (!this->wait_for_async_flush_(timeout_ms))
+    return false;
+  this->frame_buffer_session_active_ = false;
+  this->session_active_frame_buffer_ = nullptr;
+  this->session_pending_frame_buffer_ = nullptr;
+  xSemaphoreGive(this->frame_buffer_session_lock_);
+  return true;
 }
 
 void MipiDsi::update() {
@@ -502,35 +681,13 @@ bool MipiDsi::present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end
   }
   if (!known_frame_buffer)
     return false;
-  if (y_end < y_start)
+  if (this->frame_buffer_session_active_)
     return false;
-  if (this->async_lvgl_flush_) {
-    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(50);
-    while (this->async_flush_pending_) {
-      if ((int32_t) (xTaskGetTickCount() - deadline) >= 0) {
-        ESP_LOGW(TAG, "present_frame_buffer timed out waiting for async LVGL flush");
-        return false;
-      }
-      vTaskDelay(pdMS_TO_TICKS(1));
-    }
-  }
-  y_start = std::max(0, y_start);
-  y_end = std::min<int>(this->height_ - 1, y_end);
-  if (y_end < y_start)
-    return false;
-  esp_err_t err = esp_cache_msync(frame_buffer, this->get_frame_buffer_size(),
-                                  ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
-  if (err != ESP_OK) {
-    ESP_LOGW(TAG, "framebuffer cache sync failed: %s", esp_err_to_name(err));
+  if (!this->wait_for_async_flush_(50)) {
+    ESP_LOGW(TAG, "present_frame_buffer timed out waiting for async LVGL flush");
     return false;
   }
-  err = esp_lcd_panel_draw_bitmap(this->handle_, 0, y_start, this->width_, y_end + 1, frame_buffer);
-  if (err != ESP_OK) {
-    ESP_LOGW(TAG, "present_frame_buffer failed: %s", esp_err_to_name(err));
-    return false;
-  }
-  xSemaphoreTake(this->io_lock_, portMAX_DELAY);
-  return true;
+  return this->submit_frame_buffer_(frame_buffer, y_start, y_end);
 }
 
 void MipiDsi::write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,
