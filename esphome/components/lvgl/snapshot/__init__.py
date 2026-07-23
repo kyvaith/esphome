@@ -8,6 +8,8 @@ from esphome.const import (
     CONF_PAGES,
 )
 
+from ..defines import CONF_WIDGETS
+from ..lvcode import lv_add
 from ..navigation import CONF_APPLICATIONS, CONF_HOME, CONF_PAGE
 from ..types import (
     LvglApplication,
@@ -143,15 +145,23 @@ def _registered_page_ids(config, navigation_config):
     return list(dict.fromkeys(page_ids))
 
 
+def _registered_home_widget_ids(navigation_config):
+    if navigation_config is None:
+        return []
+    return list(dict.fromkeys(navigation_config[CONF_HOME][CONF_WIDGETS]))
+
+
 async def snapshot_to_code(lv_component, config, navigation_config):
     snapshot_config = config.get(CONF_SNAPSHOT_COMPOSITOR)
     if snapshot_config is None:
         return
 
     page_ids = _registered_page_ids(snapshot_config, navigation_config)
-    if len(page_ids) > snapshot_config[CONF_MAX_ENTRIES]:
+    home_widget_ids = _registered_home_widget_ids(navigation_config)
+    registered_count = len(page_ids) + len(home_widget_ids)
+    if registered_count > snapshot_config[CONF_MAX_ENTRIES]:
         raise cv.Invalid(
-            f"snapshot_compositor registers {len(page_ids)} pages, but max_entries "
+            f"snapshot_compositor registers {registered_count} views, but max_entries "
             f"is {snapshot_config[CONF_MAX_ENTRIES]}"
         )
 
@@ -171,6 +181,11 @@ async def snapshot_to_code(lv_component, config, navigation_config):
     for page_id in page_ids:
         page = await cg.get_variable(page_id)
         cg.add(store.register_page(page))
+    home_widgets = await get_widgets(
+        [{CONF_ID: widget_id} for widget_id in home_widget_ids]
+    )
+    for widget in home_widgets:
+        lv_add(store.register_object(widget.obj))
 
     if navigation_config is not None:
         navigation = await cg.get_variable(navigation_config[CONF_ID])
@@ -184,9 +199,14 @@ async def snapshot_to_code(lv_component, config, navigation_config):
                 snapshot_config[CONF_SETTLE_DURATION].total_milliseconds
             )
         )
-        for page_id in navigation_config[CONF_HOME][CONF_PAGES]:
-            page = await cg.get_variable(page_id)
-            cg.add(compositor.add_home_page(page))
+        home_config = navigation_config[CONF_HOME]
+        if home_config[CONF_PAGES]:
+            for page_id in home_config[CONF_PAGES]:
+                page = await cg.get_variable(page_id)
+                cg.add(compositor.add_home_page(page))
+        else:
+            for widget in home_widgets:
+                lv_add(compositor.add_home_view(widget.obj))
         if transitions := snapshot_config.get(CONF_APPLICATION_TRANSITIONS):
             cg.add(compositor.set_application_transitions_enabled(True))
             cg.add(

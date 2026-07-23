@@ -17,6 +17,16 @@ void LvglNavigation::add_home_page(LvPageType *page) {
     this->home_pages_.push_back(page);
 }
 
+void LvglNavigation::add_home_widget(lv_obj_t *widget) {
+  if (widget == nullptr)
+    return;
+  if (this->home_widgets_.empty())
+    lv_obj_remove_flag(widget, LV_OBJ_FLAG_HIDDEN);
+  else
+    lv_obj_add_flag(widget, LV_OBJ_FLAG_HIDDEN);
+  this->home_widgets_.push_back(widget);
+}
+
 void LvglNavigation::add_application(LvglApplication *application) {
   if (application == nullptr)
     return;
@@ -24,8 +34,24 @@ void LvglNavigation::add_application(LvglApplication *application) {
   this->applications_.push_back(application);
 }
 
-int LvglNavigation::find_home_page_index_() const {
+void LvglNavigation::set_snapshot_compositor(LvglSnapshotCompositor *compositor) {
+  this->snapshot_compositor_ = compositor;
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+  if (compositor != nullptr)
+    compositor->set_navigation(this);
+#endif
+}
+
+int LvglNavigation::find_home_view_index_() const {
   const size_t current_page = this->parent_->get_current_page();
+  if (this->home_widget_page_ != nullptr && this->home_widget_page_->index == current_page) {
+    for (size_t index = 0; index < this->home_widgets_.size(); index++) {
+      if (this->home_widgets_[index] != nullptr && !lv_obj_has_flag(this->home_widgets_[index], LV_OBJ_FLAG_HIDDEN))
+        return static_cast<int>(index);
+    }
+    if (!this->home_widgets_.empty())
+      return std::clamp(this->last_home_page_index_, 0, static_cast<int>(this->home_widgets_.size()) - 1);
+  }
   for (size_t index = 0; index < this->home_pages_.size(); index++) {
     if (this->home_pages_[index] != nullptr && this->home_pages_[index]->index == current_page)
       return static_cast<int>(index);
@@ -65,7 +91,7 @@ void LvglNavigation::touch_begin(int32_t x, int32_t y) {
     return;
   }
 
-  const int home_index = this->find_home_page_index_();
+  const int home_index = this->find_home_view_index_();
   if (home_index >= 0) {
     this->last_home_page_index_ = home_index;
     this->touch_context_ = TouchContext::HOME;
@@ -118,14 +144,14 @@ bool LvglNavigation::touch_end() {
   if (!sample.captured)
     return false;
 
-  if (context == TouchContext::HOME && !this->home_pages_.empty()) {
-    const int current = this->find_home_page_index_();
+  if (context == TouchContext::HOME && this->get_home_view_count_() != 0) {
+    const int current = this->find_home_view_index_();
     int target = current;
     const int32_t threshold =
         std::max<int32_t>(1, static_cast<int32_t>(std::lround(this->parent_->get_width() * this->home_commit_ratio_)));
     if (current >= 0 && std::abs(sample.delta_x) >= threshold) {
       const int candidate = current + (sample.delta_x < 0 ? 1 : -1);
-      if (candidate >= 0 && candidate < static_cast<int>(this->home_pages_.size()))
+      if (candidate >= 0 && candidate < static_cast<int>(this->get_home_view_count_()))
         target = candidate;
     }
     if (current >= 0 && target >= 0) {
@@ -133,7 +159,7 @@ bool LvglNavigation::touch_end() {
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
       if (this->snapshot_compositor_ == nullptr || !this->snapshot_compositor_->settle_home(target))
 #endif
-        this->parent_->show_page(this->home_pages_[target]->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
+        this->activate_home_view(target);
     }
     return true;
   }
@@ -192,7 +218,7 @@ void LvglNavigation::open_application(LvglApplication *application) {
     this->snapshot_compositor_->cancel_application();
   }
 #endif
-  if (const int home_index = this->find_home_page_index_(); home_index >= 0)
+  if (const int home_index = this->find_home_view_index_(); home_index >= 0)
     this->last_home_page_index_ = home_index;
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->snapshot_compositor_ != nullptr &&
@@ -214,7 +240,7 @@ void LvglNavigation::close_application() {
 }
 
 void LvglNavigation::show_home() {
-  if (this->home_pages_.empty())
+  if (this->get_home_view_count_() == 0)
     return;
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->snapshot_compositor_ != nullptr) {
@@ -222,8 +248,8 @@ void LvglNavigation::show_home() {
     this->snapshot_compositor_->cancel_application();
   }
 #endif
-  const int target = std::clamp(this->last_home_page_index_, 0, static_cast<int>(this->home_pages_.size()) - 1);
-  this->parent_->show_page(this->home_pages_[target]->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
+  const int target = std::clamp(this->last_home_page_index_, 0, static_cast<int>(this->get_home_view_count_()) - 1);
+  this->activate_home_view(target);
 }
 
 bool LvglNavigation::is_application_open(const LvglApplication *application) const {
@@ -231,5 +257,33 @@ bool LvglNavigation::is_application_open(const LvglApplication *application) con
 }
 
 LvglApplication *LvglNavigation::get_active_application() const { return this->find_active_application_(); }
+
+size_t LvglNavigation::get_home_view_count_() const {
+  return this->home_widgets_.empty() ? this->home_pages_.size() : this->home_widgets_.size();
+}
+
+void LvglNavigation::activate_home_view(int index) {
+  if (index < 0 || index >= static_cast<int>(this->get_home_view_count_()))
+    return;
+  this->last_home_page_index_ = index;
+  if (this->home_widgets_.empty()) {
+    auto *page = this->home_pages_[index];
+    if (page != nullptr)
+      this->parent_->show_page(page->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
+    return;
+  }
+  if (this->home_widget_page_ == nullptr)
+    return;
+  for (size_t view_index = 0; view_index < this->home_widgets_.size(); view_index++) {
+    auto *widget = this->home_widgets_[view_index];
+    if (widget == nullptr)
+      continue;
+    if (view_index == static_cast<size_t>(index))
+      lv_obj_remove_flag(widget, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_add_flag(widget, LV_OBJ_FLAG_HIDDEN);
+  }
+  this->parent_->show_page(this->home_widget_page_->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
+}
 
 }  // namespace esphome::lvgl

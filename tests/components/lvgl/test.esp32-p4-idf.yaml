@@ -19,18 +19,27 @@ lvgl:
   touchscreens:
     - navigation_touchscreen
   pages:
-    - id: home_page_one
+    - id: home_widget_page
       widgets:
-        - button:
+        - obj:
+            id: home_widget_one
+            width: 100%
+            height: 100%
+            widgets:
+              - button:
+                  widgets:
+                    - label:
+                        text: Open
+                  on_click:
+                    - lvgl.navigation.open: test_application
+        - obj:
+            id: home_widget_two
+            width: 100%
+            height: 100%
+            hidden: true
             widgets:
               - label:
-                  text: Open
-            on_click:
-              - lvgl.navigation.open: test_application
-    - id: home_page_two
-      widgets:
-        - label:
-            text: Home 2
+                  text: Home 2
     - id: application_page
       widgets:
         - obj:
@@ -63,9 +72,10 @@ lvgl:
   navigation:
     id: test_navigation
     home:
-      pages:
-        - home_page_one
-        - home_page_two
+      page: home_widget_page
+      widgets:
+        - home_widget_one
+        - home_widget_two
     applications:
       - id: test_application
         page: application_page
