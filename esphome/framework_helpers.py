@@ -36,13 +36,13 @@ def get_project_link_flags() -> list[str]:
 
 
 def get_project_compile_flags() -> list[str]:
-    """Return the sorted -D and -W (non-linker) flags from the current build."""
+    """Return project-wide preprocessor, warning and include flags."""
     from esphome.core import CORE  # local import to avoid circular dependency
 
     return [
         flag
         for flag in sorted(CORE.build_flags)
-        if flag.startswith("-D")
+        if flag.startswith(("-D", "-I"))
         or (flag.startswith("-W") and not flag.startswith("-Wl,"))
     ]
 

@@ -1800,6 +1800,13 @@ class TestGetProjectCompileFlags:
         ):
             assert get_project_compile_flags() == ["-Wall", "-Wno-error"]
 
+    def test_returns_include_flags(self) -> None:
+        with patch(
+            "esphome.core.CORE",
+            _make_core({"-I/components/lvgl", "-DFOO"}),
+        ):
+            assert get_project_compile_flags() == ["-DFOO", "-I/components/lvgl"]
+
     def test_excludes_linker_flags(self) -> None:
         with patch(
             "esphome.core.CORE",
