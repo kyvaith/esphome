@@ -65,6 +65,12 @@ lvgl:
     decoded_slots: 3
     preload: true
     settle_duration: 220ms
+    application_transitions:
+      open_duration: 500ms
+      close_duration: 500ms
+      start_size: 1%
+      close_target_x: 50%
+      close_target_y: 75%
 
 psram:
 
