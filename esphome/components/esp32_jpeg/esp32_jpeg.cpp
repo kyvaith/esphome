@@ -45,7 +45,7 @@ static std::atomic<uint16_t> g_esphome_esp32_jpeg_dma2d_burst_length{CONFIG_ESPH
 #define CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BURST_LENGTH 128
 #endif
 #ifndef CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BAND_HEIGHT
-#define CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BAND_HEIGHT 16
+#define CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BAND_HEIGHT 0
 #endif
 #ifdef CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_DESC_BURST_DISABLE
 static std::atomic<bool> g_esphome_esp32_jpeg_encoder_dma2d_desc_burst{false};
@@ -129,6 +129,21 @@ void log_decode_buffer_probe_(const char *stage, uint8_t *buffer, size_t size) {
 }
 
 uint32_t align_up(uint32_t value, uint32_t alignment) { return (value + alignment - 1) / alignment * alignment; }
+
+esp_err_t sync_external_cache_(const void *buffer, size_t size, int flags) {
+  if (buffer == nullptr || size == 0 || !esp_ptr_external_ram(buffer))
+    return ESP_OK;
+
+  size_t alignment = 64;
+  esp_cache_get_alignment(MALLOC_CAP_SPIRAM, &alignment);
+  if (alignment == 0 || (alignment & (alignment - 1U)) != 0)
+    alignment = 64;
+  const uintptr_t start = reinterpret_cast<uintptr_t>(buffer);
+  const uintptr_t aligned_start = start & ~(static_cast<uintptr_t>(alignment) - 1U);
+  const uintptr_t aligned_end =
+      (start + size + alignment - 1U) & ~(static_cast<uintptr_t>(alignment) - 1U);
+  return esp_cache_msync(reinterpret_cast<void *>(aligned_start), aligned_end - aligned_start, flags);
+}
 
 esp_err_t prepare_hardware_input_(const uint8_t *jpeg, size_t jpeg_size, JpegBuffer *normalized,
                                    const uint8_t **effective_jpeg, size_t *effective_size) {
@@ -869,6 +884,24 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
 #endif
   };
   uint32_t encoded_size = 0;
+  // lv_snapshot_take_to_draw_buf() renders through the CPU into cached PSRAM.
+  // The JPEG encoder then reads that allocation through DMA2D. Clean the
+  // complete source before handing ownership to the peripheral; otherwise a
+  // first-use snapshot can be encoded from stale PSRAM while later captures
+  // happen to work after unrelated cache writebacks.
+  if (esp_ptr_external_ram(input_data)) {
+    esp_err_t sync_err = sync_external_cache_(input_data, expected_input_size,
+                                              ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+    if (sync_err != ESP_OK) {
+      if (owns_input)
+        heap_caps_free(input_data);
+      if (owns_encoder)
+        jpeg_del_encoder_engine(encoder);
+      if (!retain_output)
+        heap_caps_free(output_data);
+      return sync_err;
+    }
+  }
   {
     Dma2dJpegBurstGuard qos_guard;
     Dma2dJpegTransferAbilityGuard transfer_guard(true, config.dma2d_burst_length,
