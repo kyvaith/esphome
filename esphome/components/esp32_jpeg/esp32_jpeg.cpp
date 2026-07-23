@@ -28,7 +28,7 @@ uint32_t align_up(uint32_t value, uint32_t alignment) { return (value + alignmen
 jpeg_decoder_handle_t preallocated_decoder = nullptr;
 StaticSemaphore_t jpeg_codec_mutex_buffer;
 SemaphoreHandle_t jpeg_codec_mutex = nullptr;
-constexpr size_t MIN_ENCODER_INTERNAL_DMA_LARGEST = 64 * 1024;
+constexpr size_t MIN_ENCODER_INTERNAL_DMA_LARGEST = 56 * 1024;
 bool encoder_dma_guard_logged = false;
 
 void ensure_jpeg_codec_mutex_() {
