@@ -28,6 +28,7 @@ from esphome.components.psram import DOMAIN as PSRAM_DOMAIN
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_BUFFER_SIZE,
+    CONF_COMPRESSION,
     CONF_ESPHOME,
     CONF_GROUP,
     CONF_ID,
@@ -76,6 +77,12 @@ from .schemas import (
     any_widget_schema,
     container_schema,
     obj_dict,
+)
+from .snapshot import (
+    COMPRESSION_JPEG,
+    CONF_SNAPSHOT_COMPOSITOR,
+    SNAPSHOT_SCHEMA,
+    snapshot_to_code,
 )
 from .styles import styles_to_code, theme_to_code
 from .touchscreens import touchscreen_schema, touchscreens_to_code
@@ -324,6 +331,7 @@ def final_validation(config_list):
 
 async def to_code(configs):
     config_0 = configs[0]
+    snapshot_config = config_0.get(CONF_SNAPSHOT_COMPOSITOR)
     # Global configuration
     if CORE.is_esp32:
         # Skip compiling LVGL examples and demos; ESPHome builds provide their
@@ -333,6 +341,11 @@ async def to_code(configs):
         include_builtin_idf_component("esp_driver_jpeg")
     cg.add_library("lvgl/lvgl", "9.5.0")
     cg.add_define("USE_LVGL")
+    if snapshot_config is not None:
+        cg.add_define("USE_LVGL_SNAPSHOT_STORE")
+        df.add_define("LV_USE_SNAPSHOT", "1")
+        if snapshot_config[CONF_COMPRESSION] == COMPRESSION_JPEG:
+            cg.add_define("USE_LVGL_SNAPSHOT_JPEG_CACHE")
 
     # Add build filter to exclude LVGL platform code not needed for ESP32
     # This reduces compilation time and binary size significantly
@@ -592,6 +605,11 @@ async def to_code(configs):
             await add_widgets(lv_scr_act, config)
             await add_pages(lv_component, config)
             await navigation_to_code(lv_component, config)
+            await snapshot_to_code(
+                lv_component,
+                config,
+                config.get(CONF_NAVIGATION),
+            )
             await layers_to_code(lv_component, config)
             await lvgl_update(lv_component, config)
             await msgboxes_to_code(lv_component, config)
@@ -938,6 +956,7 @@ LVGL_SCHEMA = cv.All(
                 cv.Optional(df.CONF_GRADIENTS): GRADIENT_SCHEMA,
                 cv.Optional(df.CONF_TOUCHSCREENS, default=None): touchscreen_schema,
                 cv.Optional(CONF_NAVIGATION): NAVIGATION_SCHEMA,
+                cv.Optional(CONF_SNAPSHOT_COMPOSITOR): SNAPSHOT_SCHEMA,
                 cv.Optional(df.CONF_ENCODERS, default=None): ENCODERS_CONFIG,
                 cv.Optional(df.CONF_KEYPADS, default=None): KEYPADS_CONFIG,
                 cv.GenerateID(df.CONF_DEFAULT_GROUP): cv.declare_id(lv_group_t),
