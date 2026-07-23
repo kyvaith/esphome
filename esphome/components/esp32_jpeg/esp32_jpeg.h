@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #include "esp_err.h"
+#include "esphome/core/component.h"
 #include "soc/soc_caps.h"
 
 namespace esphome::esp32_jpeg {
@@ -79,7 +80,20 @@ struct DecodeConfig {
   PixelFormat output_format{PixelFormat::RGB888};
   RgbElementOrder rgb_order{RgbElementOrder::BGR};
   ColorConversionStandard color_conversion{ColorConversionStandard::BT601};
+  bool direct_output{false};
   int timeout_ms{40};
+};
+
+class Esp32JpegComponent : public Component {
+ public:
+  void setup() override;
+  void dump_config() override;
+  float get_setup_priority() const override { return setup_priority::BUS; }
+
+  void set_decoder_timeout(int timeout_ms) { this->decoder_timeout_ms_ = timeout_ms; }
+
+ protected:
+  int decoder_timeout_ms_{180};
 };
 
 size_t bytes_per_pixel(PixelFormat format);
@@ -90,6 +104,7 @@ esp_err_t get_info(const uint8_t *jpeg, size_t jpeg_size, PictureInfo *info);
 esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_size, JpegBuffer *output);
 esp_err_t decode(const DecodeConfig &config, const uint8_t *jpeg, size_t jpeg_size, uint8_t *output, size_t output_size,
                  size_t *written = nullptr);
+esp_err_t preallocate_decoder(int timeout_ms);
 
 }  // namespace esphome::esp32_jpeg
 
