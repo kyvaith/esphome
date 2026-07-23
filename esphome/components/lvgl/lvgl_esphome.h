@@ -20,6 +20,7 @@
 #include "esphome/components/display/display_color_utils.h"
 #include "esphome/core/component.h"
 
+#include <atomic>
 #include <list>
 #include <lvgl.h>
 #include <map>
@@ -231,8 +232,24 @@ class LvglComponent final : public PollingComponent {
   void set_paused(bool paused, bool show_snow);
   void set_refresh_interval(uint32_t period) {
     this->refr_timer_period_ = period;
-    if (this->refr_timer_ != nullptr)
+    if (this->refr_timer_ != nullptr && !this->frame_buffer_presentation_active_.load(std::memory_order_acquire))
       lv_timer_set_period(this->refr_timer_, period);
+  }
+
+  /** Temporarily hand the display framebuffers to an external renderer.
+   *
+   * LVGL input and animation timers continue running, but its display refresh
+   * timer remains dormant until the session ends. The display implementation
+   * owns framebuffer synchronization and rejects unsupported sessions.
+   */
+  bool begin_frame_buffer_presentation(uint32_t timeout_ms = 50);
+  bool acquire_presentation_frame(display::FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
+                                  uint32_t timeout_ms = 50);
+  bool present_presentation_frame(display::FrameBufferLease *lease, uint32_t timeout_ms = 50);
+  bool release_presentation_frame(display::FrameBufferLease *lease);
+  bool end_frame_buffer_presentation(uint32_t timeout_ms = 50);
+  bool is_frame_buffer_presentation_active() const {
+    return this->frame_buffer_presentation_active_.load(std::memory_order_acquire);
   }
 
   // Returns true if the display has been explicitly paused via set_paused().
@@ -373,6 +390,7 @@ class LvglComponent final : public PollingComponent {
   bool page_wrap_{true};
   LvglNavigation *navigation_{};
   bool big_endian_{};
+  std::atomic<bool> frame_buffer_presentation_active_{false};
   std::map<lv_group_t *, lv_obj_t *> focus_marks_{};
 #ifdef USE_LVGL_DIAGNOSTICS
   LvglDiagnostics diagnostics_{};

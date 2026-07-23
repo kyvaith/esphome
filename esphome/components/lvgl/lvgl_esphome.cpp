@@ -196,6 +196,56 @@ void LvglComponent::set_paused(bool paused, bool show_snow) {
     this->resume_callback_->trigger();
 }
 
+bool LvglComponent::begin_frame_buffer_presentation(uint32_t timeout_ms) {
+  if (this->paused_ || this->disp_ == nullptr || this->refr_timer_ == nullptr || this->displays_.size() != 1 ||
+      this->frame_buffer_presentation_active_.exchange(true, std::memory_order_acq_rel)) {
+    return false;
+  }
+
+  // Keep LVGL's input and animation timers alive while preventing its refresh
+  // timer from racing an external framebuffer renderer.
+  lv_timer_set_period(this->refr_timer_, 5 * 60 * 1000);
+  lv_timer_reset(this->refr_timer_);
+  if (!this->displays_[0]->begin_frame_buffer_session(timeout_ms)) {
+    this->frame_buffer_presentation_active_.store(false, std::memory_order_release);
+    lv_timer_set_period(this->refr_timer_, this->refr_timer_period_);
+    lv_timer_ready(this->refr_timer_);
+    return false;
+  }
+  return true;
+}
+
+bool LvglComponent::acquire_presentation_frame(display::FrameBufferLease *lease, BufferWriter writer,
+                                               uint32_t timeout_ms) {
+  return this->frame_buffer_presentation_active_.load(std::memory_order_acquire) && this->displays_.size() == 1 &&
+         this->displays_[0]->acquire_frame_buffer(lease, writer, timeout_ms);
+}
+
+bool LvglComponent::present_presentation_frame(display::FrameBufferLease *lease, uint32_t timeout_ms) {
+  return this->frame_buffer_presentation_active_.load(std::memory_order_acquire) && this->displays_.size() == 1 &&
+         this->displays_[0]->present_frame_buffer_lease(lease, timeout_ms);
+}
+
+bool LvglComponent::release_presentation_frame(display::FrameBufferLease *lease) {
+  return this->frame_buffer_presentation_active_.load(std::memory_order_acquire) && this->displays_.size() == 1 &&
+         this->displays_[0]->release_frame_buffer(lease);
+}
+
+bool LvglComponent::end_frame_buffer_presentation(uint32_t timeout_ms) {
+  if (!this->frame_buffer_presentation_active_.load(std::memory_order_acquire) || this->displays_.size() != 1 ||
+      !this->displays_[0]->end_frame_buffer_session(timeout_ms)) {
+    return false;
+  }
+
+  this->frame_buffer_presentation_active_.store(false, std::memory_order_release);
+  this->refr_timer_paused_ = false;
+  lv_timer_set_period(this->refr_timer_, this->refr_timer_period_);
+  if (auto *screen = lv_display_get_screen_active(this->disp_); screen != nullptr)
+    lv_obj_invalidate(screen);
+  lv_timer_ready(this->refr_timer_);
+  return true;
+}
+
 void LvglComponent::esphome_lvgl_init() {
   lv_init();
   // override draw buf alloc to ensure proper alignment for PPA
@@ -734,7 +784,7 @@ void LvglComponent::draw_end_() {
     this->draw_end_callback_->trigger();
   // Only reachable once the display is idle again: while busy, the display's refr_timer_ is
   // paused (see loop()), so LVGL never renders/flushes and this event never fires.
-  if (this->update_when_display_idle_) {
+  if (this->update_when_display_idle_ && !this->frame_buffer_presentation_active_.load(std::memory_order_acquire)) {
     for (auto *disp : this->displays_)
       disp->update();
   }
@@ -960,7 +1010,7 @@ void LvglComponent::loop() {
   // still keeps track of invalidated areas but won't render or flush them, so nothing needs to
   // be discarded or replayed: once resumed, the accumulated areas are simply drawn as normal.
   // Input events and other timers keep being processed below regardless of this state.
-  if (this->update_when_display_idle_) {
+  if (this->update_when_display_idle_ && !this->frame_buffer_presentation_active_.load(std::memory_order_acquire)) {
     bool busy = this->displays_busy_();
     if (busy && !this->refr_timer_paused_) {
       this->refr_timer_paused_ = true;
