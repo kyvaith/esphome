@@ -283,13 +283,49 @@ bool RuntimeImage::is_decode_finished() const {
   return this->decoder_->is_finished();
 }
 
+bool RuntimeImage::has_pending_image() const {
+  LockGuard lock(this->buffer_mutex_);
+  return this->pending_image_ && this->decode_buffer_ != nullptr;
+}
+
+size_t RuntimeImage::active_buffer_size() const {
+  LockGuard lock(this->buffer_mutex_);
+  return this->buffer_ == nullptr ? 0 : this->get_buffer_size_(this->buffer_width_, this->buffer_height_);
+}
+
+size_t RuntimeImage::pending_buffer_size() const {
+  LockGuard lock(this->buffer_mutex_);
+  return this->decode_buffer_ == nullptr
+             ? 0
+             : this->get_buffer_size_(this->decode_buffer_width_, this->decode_buffer_height_);
+}
+
+size_t RuntimeImage::memory_usage_bytes() const {
+  LockGuard lock(this->buffer_mutex_);
+  const size_t active =
+      this->buffer_ == nullptr ? 0 : this->get_buffer_size_(this->buffer_width_, this->buffer_height_);
+  const size_t pending = this->decode_buffer_ == nullptr
+                             ? 0
+                             : this->get_buffer_size_(this->decode_buffer_width_, this->decode_buffer_height_);
+  return active + pending;
+}
+
+uint32_t RuntimeImage::get_generation() const {
+  LockGuard lock(this->buffer_mutex_);
+  return this->generation_;
+}
+
 void RuntimeImage::release() {
   LockGuard lock(this->buffer_mutex_);
   // Public release is serialized with worker-task decoding.
+  const bool had_visible_image = this->buffer_ != nullptr;
   this->decoder_ = nullptr;
   this->pending_image_ = false;
   this->release_decode_buffer_();
   this->release_buffer_();
+  if (had_visible_image) {
+    this->generation_++;
+  }
 }
 
 void RuntimeImage::release_buffer_() {
@@ -342,6 +378,7 @@ bool RuntimeImage::publish_pending_locked_() {
   this->width_ = this->buffer_width_;
   this->height_ = this->buffer_height_;
   this->data_start_ = this->buffer_;
+  this->generation_++;
   return true;
 }
 

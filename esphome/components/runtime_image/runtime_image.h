@@ -135,6 +135,35 @@ class RuntimeImage : public image::Image {
   bool is_loaded() const { return this->buffer_ != nullptr; }
 
   /**
+   * @brief Check if a complete decoded image is waiting to be published.
+   */
+  bool has_pending_image() const;
+
+  /**
+   * @brief Return the number of bytes owned by the visible image buffer.
+   */
+  size_t active_buffer_size() const;
+
+  /**
+   * @brief Return the number of bytes owned by the pending decode buffer.
+   */
+  size_t pending_buffer_size() const;
+
+  /**
+   * @brief Return the total bytes owned by runtime image pixel buffers.
+   */
+  size_t memory_usage_bytes() const;
+
+  /**
+   * @brief Return a monotonically increasing visible-image generation.
+   *
+   * The value changes whenever a pending image is published or a visible image
+   * is released. Consumers can use it to avoid resetting an LVGL image source
+   * when the underlying image has not changed.
+   */
+  uint32_t get_generation() const;
+
+  /**
    * @brief Get the image format.
    */
   ImageFormat get_format() const { return this->format_; }
@@ -239,6 +268,7 @@ class RuntimeImage : public image::Image {
   int decode_buffer_width_{0};
   int decode_buffer_height_{0};
   bool pending_image_{false};
+  uint32_t generation_{0};
 
   // Decoding state
   size_t total_size_{0};
@@ -260,7 +290,7 @@ class RuntimeImage : public image::Image {
    */
   bool is_big_endian_{false};
 
-  Mutex buffer_mutex_;
+  mutable Mutex buffer_mutex_;
 };
 
 }  // namespace esphome::runtime_image

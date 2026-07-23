@@ -124,6 +124,7 @@ class SendspinHub final : public Component,
   }
 
   void set_task_stack_in_psram(bool task_stack_in_psram) { this->task_stack_in_psram_ = task_stack_in_psram; }
+  bool get_task_stack_in_psram() const { return this->task_stack_in_psram_; }
 
   // --- Sendspin role specific methods ---
 
@@ -138,6 +139,10 @@ class SendspinHub final : public Component,
   }
   template<typename F> void add_image_clear_callback(F &&callback) {
     this->artwork_image_clear_callbacks_.add(std::forward<F>(callback));
+  }
+  void image_frame_done(uint8_t slot) {
+    if (this->artwork_role_ != nullptr)
+      this->artwork_role_->frame_done(slot);
   }
 #endif
 
@@ -199,6 +204,7 @@ class SendspinHub final : public Component,
   void on_image_clear(uint8_t slot) override;
 
   sendspin::ArtworkRoleConfig artwork_config_{};
+  sendspin::ArtworkRole *artwork_role_{nullptr};
 
   // Callback fan-out to child components; they filter by slot as needed.
   // Decode runs on the artwork thread; display and clear run from the main loop.
