@@ -172,6 +172,8 @@ class DisplayMetaData:
     has_writer: bool = False
     rotation: int = 0
     draw_rounding: int = 0
+    frame_buffer_count: int = 0
+    frame_buffer_bytes_per_pixel: int = 0
 
 
 def _get_metadata_list() -> list[tuple]:
@@ -240,6 +242,8 @@ def add_metadata(
     has_writer: bool = False,
     rotation: int = 0,
     draw_rounding: int = 0,
+    frame_buffer_count: int = 0,
+    frame_buffer_bytes_per_pixel: int = 0,
 ):
     entries = _get_metadata_list()
     assert not any(existing_id is id for existing_id, _ in entries), (
@@ -256,6 +260,8 @@ def add_metadata(
                 has_writer=has_writer,
                 rotation=rotation,
                 draw_rounding=draw_rounding,
+                frame_buffer_count=frame_buffer_count,
+                frame_buffer_bytes_per_pixel=frame_buffer_bytes_per_pixel,
             ),
         )
     )

@@ -365,6 +365,18 @@ class Display : public PollingComponent {
     this->draw_pixels_at(x_start, y_start, w, h, ptr, order, bitness, big_endian, 0, 0, 0);
   }
 
+  /** Return a display-owned framebuffer suitable for direct rendering.
+   *
+   * Drivers that expose their native framebuffers may override these methods.
+   * The default implementation reports that direct rendering is unsupported.
+   */
+  virtual uint8_t *get_frame_buffer(size_t index) const { return nullptr; }
+  virtual size_t get_frame_buffer_count() const { return 0; }
+  virtual size_t get_frame_buffer_size() const { return 0; }
+  virtual size_t get_frame_buffer_stride() const { return 0; }
+  virtual ColorBitness get_frame_buffer_bitness() const { return COLOR_BITNESS_565; }
+  virtual bool present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end) { return false; }
+
   /// Draw a straight line from the point [x1,y1] to [x2,y2] with the given color.
   void line(int x1, int y1, int x2, int y2, Color color = COLOR_ON);
 
