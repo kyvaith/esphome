@@ -1,11 +1,14 @@
 from esphome import automation
 import esphome.codegen as cg
+from esphome.components.esp32 import VARIANT_ESP32P4, get_esp32_variant
 from esphome.components.image import Image_
-from esphome.components.lvgl.lvcode import LvContext
+from esphome.components.lvgl.defines import CONF_LVGL_ID
+from esphome.components.lvgl.lvcode import LvContext, LvglComponent
 from esphome.components.lvgl.types import lv_image_t
 from esphome.components.lvgl.widgets import get_widgets, wait_for_widgets
 import esphome.config_validation as cv
 from esphome.const import CONF_DURATION, CONF_ID, CONF_SOURCE
+from esphome.core import CORE
 
 CODEOWNERS = ["@kyvaith"]
 DEPENDENCIES = ["lvgl"]
@@ -62,6 +65,12 @@ LvglImagePresenterTransitionAction = lvgl_image_presenter_ns.class_(
 def _validate_zoom(config):
     if config[CONF_ZOOM_END] < config[CONF_ZOOM_START]:
         raise cv.Invalid(f"{CONF_ZOOM_END} must not be lower than {CONF_ZOOM_START}")
+    if config[CONF_DIRECT] and CONF_SOURCE not in config:
+        raise cv.Invalid(f"{CONF_SOURCE} is required when {CONF_DIRECT} is enabled")
+    if config[CONF_DIRECT] and config[CONF_ZOOM_END] != config[CONF_ZOOM_START]:
+        raise cv.Invalid(
+            "Direct image presentation currently supports panning at a fixed zoom only"
+        )
     return config
 
 
@@ -69,7 +78,9 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(LvglImagePresenter),
+            cv.GenerateID(CONF_LVGL_ID): cv.use_id(LvglComponent),
             cv.Required(CONF_WIDGET): cv.use_id(lv_image_t),
+            cv.Optional(CONF_SOURCE): cv.use_id(Image_),
             cv.Optional(CONF_DIRECT, default=False): cv.boolean,
             cv.Optional(
                 CONF_PHASE_DURATION, default="18s"
@@ -92,8 +103,18 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
+    if config[CONF_DIRECT] and (
+        not CORE.is_esp32 or get_esp32_variant() != VARIANT_ESP32P4
+    ):
+        raise cv.Invalid("Direct image presentation is only supported on ESP32-P4")
+
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+    lvgl = await cg.get_variable(config[CONF_LVGL_ID])
+    cg.add(var.set_lvgl_component(lvgl))
+    if source_id := config.get(CONF_SOURCE):
+        source = await cg.get_variable(source_id)
+        cg.add(var.set_source(source))
     cg.add(var.set_phase_duration(config[CONF_PHASE_DURATION].total_milliseconds))
     cg.add(var.set_frame_interval(config[CONF_FRAME_INTERVAL].total_milliseconds))
     cg.add(var.set_direct(config[CONF_DIRECT]))

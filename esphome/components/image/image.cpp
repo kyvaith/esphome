@@ -103,6 +103,35 @@ Color Image::get_pixel(int x, int y, const Color color_on, const Color color_off
       return color_off;
   }
 }
+
+bool Image::acquire_buffer(ImageBufferLease *lease) const {
+  if (lease == nullptr || this->data_start_ == nullptr || this->width_ <= 0 || this->height_ <= 0)
+    return false;
+  const size_t stride = this->get_width_stride();
+  size_t size = stride * static_cast<size_t>(this->height_);
+  if (this->type_ == IMAGE_TYPE_RGB565 && this->transparency_ == TRANSPARENCY_ALPHA_CHANNEL)
+    size += static_cast<size_t>(this->width_) * this->height_;
+  *lease = {
+      .owner = this,
+      .data = this->data_start_,
+      .size = size,
+      .stride = stride,
+      .width = this->width_,
+      .height = this->height_,
+      .type = this->type_,
+      .transparency = this->transparency_,
+      .writer = this->get_buffer_writer(),
+  };
+  return true;
+}
+
+bool Image::release_buffer(ImageBufferLease *lease) const {
+  if (lease == nullptr || lease->owner != this)
+    return false;
+  *lease = {};
+  return true;
+}
+
 #ifdef USE_LVGL
 lv_image_dsc_t *Image::get_lv_image_dsc() {
   // lazily construct lvgl image_dsc.
