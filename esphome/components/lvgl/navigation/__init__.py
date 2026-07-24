@@ -11,6 +11,7 @@ from ..types import (
     NavigationHomeAction,
     NavigationIsOpenCondition,
     NavigationOpenAction,
+    NavigationRefreshAction,
     lv_page_t,
     lv_pseudo_button_t,
 )
@@ -18,6 +19,7 @@ from ..widgets import get_widgets
 
 CONF_APPLICATIONS = "applications"
 CONF_AXIS_BIAS = "axis_bias"
+CONF_BLOCKERS = "blockers"
 CONF_CLOSE_COMMIT_THRESHOLD = "close_commit_threshold"
 CONF_CLOSE_EDGE_SIZE = "close_edge_size"
 CONF_CLOSE_GESTURE = "close_gesture"
@@ -28,10 +30,19 @@ CONF_ON_CLOSE = "on_close"
 CONF_ON_CLOSE_CANCELLED = "on_close_cancelled"
 CONF_ON_CLOSED = "on_closed"
 CONF_ON_OPENED = "on_opened"
+CONF_ON_HOME_CHANGED = "on_home_changed"
 CONF_ON_PREPARE_CLOSE = "on_prepare_close"
 CONF_ON_PREPARE_OPEN = "on_prepare_open"
 CONF_PAGE = "page"
 CONF_SWIPE_START_DISTANCE = "swipe_start_distance"
+
+NAVIGATION_CALLBACK_AUTOMATIONS = (
+    automation.CallbackAutomation(
+        CONF_ON_HOME_CHANGED,
+        "add_on_home_changed_callback",
+        [(cg.uint16, "page")],
+    ),
+)
 
 
 APPLICATION_SCHEMA = cv.Schema(
@@ -125,9 +136,13 @@ NAVIGATION_SCHEMA = cv.All(
         {
             cv.GenerateID(): cv.declare_id(LvglNavigation),
             cv.Required(CONF_HOME): HOME_SCHEMA,
+            cv.Optional(CONF_BLOCKERS, default=[]): cv.ensure_list(
+                cv.use_id(lv_pseudo_button_t)
+            ),
             cv.Optional(CONF_APPLICATIONS, default=[]): cv.ensure_list(
                 APPLICATION_SCHEMA
             ),
+            cv.Optional(CONF_ON_HOME_CHANGED): automation.validate_automation({}),
             cv.Optional(CONF_SWIPE_START_DISTANCE, default=10): cv.int_range(
                 min=1, max=1000
             ),
@@ -177,6 +192,16 @@ async def navigation_to_code(lv_component, config):
         )
         for widget in widgets:
             lv_add(navigation.add_home_widget(widget.obj))
+
+    blockers = await get_widgets(
+        [{CONF_ID: widget_id} for widget_id in navigation_config[CONF_BLOCKERS]]
+    )
+    for blocker in blockers:
+        lv_add(navigation.add_blocker(blocker.obj))
+
+    await automation.build_callback_automations(
+        navigation, navigation_config, NAVIGATION_CALLBACK_AUTOMATIONS
+    )
 
     for application_config in navigation_config[CONF_APPLICATIONS]:
         page = await cg.get_variable(application_config[CONF_PAGE])
@@ -235,6 +260,21 @@ async def navigation_close_to_code(config, action_id, template_arg, args):
     synchronous=True,
 )
 async def navigation_home_to_code(config, action_id, template_arg, args):
+    action = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(action, config[CONF_ID])
+    return action
+
+
+@automation.register_action(
+    "lvgl.navigation.refresh",
+    NavigationRefreshAction,
+    cv.maybe_simple_value(
+        cv.Schema({cv.Required(CONF_ID): cv.use_id(LvglNavigation)}),
+        key=CONF_ID,
+    ),
+    synchronous=True,
+)
+async def navigation_refresh_to_code(config, action_id, template_arg, args):
     action = cg.new_Pvariable(action_id, template_arg)
     await cg.register_parented(action, config[CONF_ID])
     return action

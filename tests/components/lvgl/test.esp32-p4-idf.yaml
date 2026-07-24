@@ -111,6 +111,7 @@ lvgl:
                     - lvgl.snapshot_scroll.refresh: test_scroll_snapshot
                     - lvgl.snapshot_scroll.release: test_scroll_snapshot
                     - lvgl.navigation.close: test_navigation
+                    - lvgl.navigation.refresh: test_navigation
               - label:
                   y: 900
                   text: End of scroll content
@@ -121,6 +122,10 @@ lvgl:
       widgets:
         - home_widget_one
         - home_widget_two
+    blockers:
+      - overlay_application_widget
+    on_home_changed:
+      - lambda: ESP_LOGD("lvgl.navigation", "Home page %u", page);
     applications:
       - id: test_application
         page: application_page

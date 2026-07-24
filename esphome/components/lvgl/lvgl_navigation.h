@@ -101,6 +101,7 @@ class LvglNavigation {
   void add_home_page(LvPageType *page);
   void set_home_widget_page(LvPageType *page) { this->home_widget_page_ = page; }
   void add_home_widget(lv_obj_t *widget);
+  void add_blocker(lv_obj_t *widget);
   void add_application(LvglApplication *application);
   void set_swipe_start_distance(uint16_t distance) { this->gesture_router_.set_start_distance(distance); }
   void set_axis_bias(uint16_t bias) { this->gesture_router_.set_axis_bias(bias); }
@@ -108,6 +109,9 @@ class LvglNavigation {
   void set_close_edge_ratio(float ratio) { this->close_edge_ratio_ = ratio; }
   void set_close_commit_ratio(float ratio) { this->close_commit_ratio_ = ratio; }
   void set_snapshot_compositor(LvglSnapshotCompositor *compositor);
+  template<typename F> void add_on_home_changed_callback(F &&callback) {
+    this->home_changed_callbacks_.add(std::forward<F>(callback));
+  }
 
   void touch_begin(int32_t x, int32_t y);
   bool touch_update(int32_t x, int32_t y);
@@ -117,6 +121,7 @@ class LvglNavigation {
   void open_application(LvglApplication *application);
   void close_application();
   void show_home();
+  void refresh_home();
 
   bool is_application_open(const LvglApplication *application) const;
   LvglApplication *get_active_application() const;
@@ -137,6 +142,8 @@ class LvglNavigation {
   LvglApplication *find_active_application_() const;
   void activate_application_view_(LvglApplication *application);
   void deactivate_application_view_(LvglApplication *application);
+  bool is_blocked_() const;
+  void notify_home_changed_(int index);
   void reset_touch_();
 
   LvglComponent *parent_{};
@@ -144,12 +151,15 @@ class LvglNavigation {
   std::vector<LvPageType *> home_pages_{};
   LvPageType *home_widget_page_{};
   std::vector<lv_obj_t *> home_widgets_{};
+  std::vector<lv_obj_t *> blockers_{};
   std::vector<LvglApplication *> applications_{};
   LvglApplication *active_application_{};
   GestureRouter gesture_router_{};
   LvglApplication *gesture_application_{};
   TouchContext touch_context_{TouchContext::NONE};
   int last_home_page_index_{};
+  int last_notified_home_index_{-1};
+  LazyCallbackManager<void(uint16_t)> home_changed_callbacks_{};
   float home_commit_ratio_{0.25f};
   float close_edge_ratio_{0.0625f};
   float close_commit_ratio_{0.25f};
@@ -176,6 +186,11 @@ template<typename... Ts> class NavigationCloseAction final : public Action<Ts...
 template<typename... Ts> class NavigationHomeAction final : public Action<Ts...>, public Parented<LvglNavigation> {
  protected:
   void play(const Ts &...x) override { this->parent_->show_home(); }
+};
+
+template<typename... Ts> class NavigationRefreshAction final : public Action<Ts...>, public Parented<LvglNavigation> {
+ protected:
+  void play(const Ts &...x) override { this->parent_->refresh_home(); }
 };
 
 template<typename... Ts> class NavigationIsOpenCondition final : public Condition<Ts...> {
