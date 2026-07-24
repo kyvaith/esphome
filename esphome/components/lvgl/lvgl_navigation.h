@@ -21,6 +21,7 @@ class LvglApplication {
  public:
   void set_parent(LvglNavigation *parent) { this->parent_ = parent; }
   void set_page(LvPageType *page) { this->page_ = page; }
+  void set_widget(lv_obj_t *widget) { this->widget_ = widget; }
   void set_close_gesture_enabled(bool enabled) { this->close_gesture_enabled_ = enabled; }
   void set_scroll_snapshot(LvglScrollSnapshotController *controller) { this->scroll_snapshot_ = controller; }
   template<typename F> void add_on_open_callback(F &&callback) { this->open_callbacks_.add(std::forward<F>(callback)); }
@@ -36,7 +37,12 @@ class LvglApplication {
 
   LvglNavigation *get_parent() const { return this->parent_; }
   LvPageType *get_page() const { return this->page_; }
+  lv_obj_t *get_widget() const { return this->widget_; }
+  lv_obj_t *get_view() const {
+    return this->widget_ != nullptr ? this->widget_ : (this->page_ != nullptr ? this->page_->obj : nullptr);
+  }
   LvglScrollSnapshotController *get_scroll_snapshot() const { return this->scroll_snapshot_; }
+  bool is_widget_application() const { return this->widget_ != nullptr; }
   bool is_close_gesture_enabled() const { return this->close_gesture_enabled_; }
   void call_on_open_callbacks() { this->open_callbacks_.call(); }
   void call_on_opened_callbacks() { this->opened_callbacks_.call(); }
@@ -46,6 +52,7 @@ class LvglApplication {
  protected:
   LvglNavigation *parent_{};
   LvPageType *page_{};
+  lv_obj_t *widget_{};
   LvglScrollSnapshotController *scroll_snapshot_{};
   LazyCallbackManager<void()> open_callbacks_{};
   LazyCallbackManager<void()> opened_callbacks_{};
@@ -81,7 +88,8 @@ class LvglNavigation {
   bool is_application_open(const LvglApplication *application) const;
   LvglApplication *get_active_application() const;
   void activate_home_view(int index);
-  void complete_application_transition(LvPageType *page, bool opening, bool close_committed);
+  void prepare_application_transition(LvglApplication *application, bool opening, bool close_committed);
+  void complete_application_transition(LvglApplication *application, bool opening, bool close_committed);
 
  protected:
   enum class TouchContext : uint8_t {
@@ -94,7 +102,8 @@ class LvglNavigation {
   int find_home_view_index_() const;
   size_t get_home_view_count_() const;
   LvglApplication *find_active_application_() const;
-  LvglApplication *find_application_(const LvPageType *page) const;
+  void activate_application_view_(LvglApplication *application);
+  void deactivate_application_view_(LvglApplication *application);
   void reset_touch_();
 
   LvglComponent *parent_{};
@@ -103,6 +112,7 @@ class LvglNavigation {
   LvPageType *home_widget_page_{};
   std::vector<lv_obj_t *> home_widgets_{};
   std::vector<LvglApplication *> applications_{};
+  LvglApplication *active_application_{};
   GestureRouter gesture_router_{};
   LvglApplication *gesture_application_{};
   TouchContext touch_context_{TouchContext::NONE};

@@ -2,7 +2,7 @@ from esphome import automation, codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_ON_OPEN, CONF_PAGES
 
-from ..defines import CONF_WIDGETS
+from ..defines import CONF_WIDGET, CONF_WIDGETS
 from ..lvcode import lv_add
 from ..types import (
     LvglApplication,
@@ -35,6 +35,7 @@ APPLICATION_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(LvglApplication),
         cv.Required(CONF_PAGE): cv.use_id(lv_page_t),
+        cv.Optional(CONF_WIDGET): cv.use_id(lv_pseudo_button_t),
         cv.Optional(CONF_CLOSE_GESTURE, default=True): cv.boolean,
         cv.Optional(CONF_ON_OPEN): automation.validate_automation({}),
         cv.Optional(CONF_ON_OPENED): automation.validate_automation({}),
@@ -68,9 +69,7 @@ def _validate_home(config):
 HOME_SCHEMA = cv.All(
     cv.Schema(
         {
-            cv.Optional(CONF_PAGES, default=[]): cv.ensure_list(
-                cv.use_id(lv_page_t)
-            ),
+            cv.Optional(CONF_PAGES, default=[]): cv.ensure_list(cv.use_id(lv_page_t)),
             cv.Optional(CONF_PAGE): cv.use_id(lv_page_t),
             cv.Optional(CONF_WIDGETS, default=[]): cv.ensure_list(
                 cv.use_id(lv_pseudo_button_t)
@@ -86,21 +85,25 @@ def _validate_navigation(config):
     home_pages = home_config[CONF_PAGES]
     home_widgets = home_config[CONF_WIDGETS]
     home_host_page = home_config.get(CONF_PAGE)
-    application_pages = [
-        application[CONF_PAGE] for application in config[CONF_APPLICATIONS]
+    applications = config[CONF_APPLICATIONS]
+    page_applications = [
+        application for application in applications if CONF_WIDGET not in application
+    ]
+    application_pages = [application[CONF_PAGE] for application in page_applications]
+    application_views = [
+        application.get(CONF_WIDGET, application[CONF_PAGE])
+        for application in applications
     ]
     if len(set(home_pages)) != len(home_pages):
         raise cv.Invalid("Home page IDs must be unique")
     if len(set(home_widgets)) != len(home_widgets):
         raise cv.Invalid("Home widget IDs must be unique")
-    if len(set(application_pages)) != len(application_pages):
-        raise cv.Invalid("Application page IDs must be unique")
+    if len(set(application_views)) != len(application_views):
+        raise cv.Invalid("Application page or widget IDs must be unique")
     if set(home_pages) & set(application_pages):
         raise cv.Invalid("A page cannot be both a home page and an application")
     if home_host_page in application_pages:
-        raise cv.Invalid(
-            "The home widget host page cannot also be an application page"
-        )
+        raise cv.Invalid("The home widget host page cannot also be an application page")
     return config
 
 
@@ -166,6 +169,9 @@ async def navigation_to_code(lv_component, config):
         page = await cg.get_variable(application_config[CONF_PAGE])
         application = cg.new_Pvariable(application_config[CONF_ID])
         lv_add(application.set_page(page))
+        if widget_id := application_config.get(CONF_WIDGET):
+            widget = (await get_widgets([{CONF_ID: widget_id}]))[0]
+            lv_add(application.set_widget(widget.obj))
         lv_add(
             application.set_close_gesture_enabled(
                 application_config[CONF_CLOSE_GESTURE]

@@ -102,11 +102,12 @@ void LvglSnapshotCompositor::cancel_home() {
   this->release_home_();
 }
 
-bool LvglSnapshotCompositor::open_application(LvPageType *application, int home_index) {
+bool LvglSnapshotCompositor::open_application(LvglApplication *application, int home_index) {
   if (!this->application_transitions_enabled_ || this->home_active_ || this->application_active_ ||
-      application == nullptr || home_index < 0 || home_index >= static_cast<int>(this->home_views_.size()))
+      application == nullptr || application->get_view() == nullptr || home_index < 0 ||
+      home_index >= static_cast<int>(this->home_views_.size()))
     return false;
-  if (!this->ensure_overlay_(application->obj) || !this->bind_application_(application, false))
+  if (!this->ensure_overlay_(application->get_view()) || !this->bind_application_(application, false))
     return false;
 
   this->application_home_index_ = home_index;
@@ -122,11 +123,12 @@ bool LvglSnapshotCompositor::open_application(LvPageType *application, int home_
   return this->animate_application_to_(1000, this->application_open_duration_);
 }
 
-bool LvglSnapshotCompositor::begin_application_close(LvPageType *application, int home_index) {
+bool LvglSnapshotCompositor::begin_application_close(LvglApplication *application, int home_index) {
   if (!this->application_transitions_enabled_ || this->home_active_ || this->application_active_ ||
-      application == nullptr || home_index < 0 || home_index >= static_cast<int>(this->home_views_.size()))
+      application == nullptr || application->get_view() == nullptr || home_index < 0 ||
+      home_index >= static_cast<int>(this->home_views_.size()))
     return false;
-  if (!this->ensure_overlay_(application->obj) || !this->bind_application_(application, true))
+  if (!this->ensure_overlay_(application->get_view()) || !this->bind_application_(application, true))
     return false;
 
   this->application_home_index_ = home_index;
@@ -304,19 +306,20 @@ void LvglSnapshotCompositor::release_home_() {
   this->home_active_ = false;
 }
 
-bool LvglSnapshotCompositor::bind_application_(LvPageType *page, bool force_capture) {
-  if (page == nullptr || this->application_image_ == nullptr)
+bool LvglSnapshotCompositor::bind_application_(LvglApplication *application, bool force_capture) {
+  if (application == nullptr || application->get_view() == nullptr || this->application_image_ == nullptr)
     return false;
-  if (force_capture && !this->store_->capture(page))
+  auto *view = application->get_view();
+  if (force_capture && !this->store_->capture_object(view))
     return false;
 
-  auto *buffer = this->store_->acquire(page);
-  if (buffer == nullptr && this->store_->capture(page))
-    buffer = this->store_->acquire(page);
+  auto *buffer = this->store_->acquire_object(view);
+  if (buffer == nullptr && this->store_->capture_object(view))
+    buffer = this->store_->acquire_object(view);
   if (buffer == nullptr)
     return false;
 
-  this->application_page_ = page;
+  this->application_ = application;
   this->application_buffer_ = buffer;
   lv_image_set_src(this->application_image_, buffer);
   return true;
@@ -381,17 +384,19 @@ void LvglSnapshotCompositor::complete_application_() {
   if (!this->application_active_)
     return;
 
-  auto *page = this->application_page_;
+  auto *application = this->application_;
   const bool opening = this->application_opening_;
   const bool close_committed = this->application_close_committed_;
-  if (this->application_opening_ || !this->application_close_committed_)
-    this->parent_->show_page(this->application_page_->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
+  if (this->navigation_ != nullptr)
+    this->navigation_->prepare_application_transition(application, opening, close_committed);
+  else if (application != nullptr && (opening || !close_committed))
+    this->parent_->show_page(application->get_page()->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
   lv_obj_add_flag(this->application_mask_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(this->overlay_, LV_OBJ_FLAG_HIDDEN);
   if (this->display_ != nullptr)
     lv_refr_now(this->display_);
   if (this->navigation_ != nullptr)
-    this->navigation_->complete_application_transition(page, opening, close_committed);
+    this->navigation_->complete_application_transition(application, opening, close_committed);
   this->release_application_();
 }
 
@@ -400,9 +405,9 @@ void LvglSnapshotCompositor::release_application_() {
     lv_obj_add_flag(this->application_mask_, LV_OBJ_FLAG_HIDDEN);
   if (this->application_image_ != nullptr)
     ::lv_image_set_src(this->application_image_, nullptr);
-  if (this->application_page_ != nullptr && this->application_buffer_ != nullptr)
-    this->store_->release(this->application_page_);
-  this->application_page_ = nullptr;
+  if (this->application_ != nullptr && this->application_buffer_ != nullptr)
+    this->store_->release_object(this->application_->get_view());
+  this->application_ = nullptr;
   this->application_buffer_ = nullptr;
   this->application_home_index_ = -1;
   this->application_progress_ = 0;

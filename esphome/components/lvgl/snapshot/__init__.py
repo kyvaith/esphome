@@ -148,6 +148,7 @@ def _registered_page_ids(config, navigation_config):
         page_ids.extend(
             application[CONF_PAGE]
             for application in navigation_config[CONF_APPLICATIONS]
+            if CONF_WIDGET not in application
         )
     return list(dict.fromkeys(page_ids))
 
@@ -158,6 +159,18 @@ def _registered_home_widget_ids(navigation_config):
     return list(dict.fromkeys(navigation_config[CONF_HOME][CONF_WIDGETS]))
 
 
+def _registered_application_widget_ids(navigation_config):
+    if navigation_config is None:
+        return []
+    return list(
+        dict.fromkeys(
+            application[CONF_WIDGET]
+            for application in navigation_config[CONF_APPLICATIONS]
+            if CONF_WIDGET in application
+        )
+    )
+
+
 async def snapshot_to_code(lv_component, config, navigation_config):
     snapshot_config = config.get(CONF_SNAPSHOT_COMPOSITOR)
     if snapshot_config is None:
@@ -165,8 +178,13 @@ async def snapshot_to_code(lv_component, config, navigation_config):
 
     page_ids = _registered_page_ids(snapshot_config, navigation_config)
     home_widget_ids = _registered_home_widget_ids(navigation_config)
+    application_widget_ids = _registered_application_widget_ids(navigation_config)
     direct_backend = snapshot_config[CONF_BACKEND] == BACKEND_DIRECT
-    registered_count = len(page_ids) + (0 if direct_backend else len(home_widget_ids))
+    registered_count = (
+        len(page_ids)
+        + len(application_widget_ids)
+        + (0 if direct_backend else len(home_widget_ids))
+    )
     if registered_count > snapshot_config[CONF_MAX_ENTRIES]:
         raise cv.Invalid(
             f"snapshot_compositor registers {registered_count} views, but max_entries "
@@ -192,9 +210,14 @@ async def snapshot_to_code(lv_component, config, navigation_config):
     home_widgets = await get_widgets(
         [{CONF_ID: widget_id} for widget_id in home_widget_ids]
     )
+    application_widgets = await get_widgets(
+        [{CONF_ID: widget_id} for widget_id in application_widget_ids]
+    )
     if not direct_backend:
         for widget in home_widgets:
             lv_add(store.register_object(widget.obj))
+    for widget in application_widgets:
+        lv_add(store.register_object(widget.obj))
 
     if navigation_config is not None:
         navigation = await cg.get_variable(navigation_config[CONF_ID])
