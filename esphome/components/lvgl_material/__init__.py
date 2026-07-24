@@ -13,18 +13,23 @@ DEPENDENCIES = ["lvgl"]
 
 CONF_ACTIVE_COLOR = "active_color"
 CONF_ACTIVE_SIZE = "active_size"
+CONF_ACTIVATION_WIDGET = "activation_widget"
+CONF_ARC = "arc"
 CONF_CONTAINER = "container"
 CONF_DIRECT_MARQUEES = "direct_marquees"
 CONF_DIRECT_STATE_LAYERS = "direct_state_layers"
+CONF_DIRECT_VOLUME_OVERLAYS = "direct_volume_overlays"
 CONF_ENTER_DURATION = "enter_duration"
 CONF_EXIT_DURATION = "exit_duration"
 CONF_GAP = "gap"
 CONF_INACTIVE_COLOR = "inactive_color"
 CONF_INACTIVE_SIZE = "inactive_size"
 CONF_INITIAL_PAGE = "initial_page"
+CONF_KNOB = "knob"
 CONF_PAGE_INDICATORS = "page_indicators"
 CONF_PRESSED_OPACITY = "pressed_opacity"
 CONF_PRESSED_STYLES = "pressed_styles"
+CONF_SCRIM_OPACITY = "scrim_opacity"
 CONF_STATE_LAYERS = "state_layers"
 CONF_THICKNESS = "thickness"
 CONF_TRANSITION_DURATION = "transition_duration"
@@ -38,6 +43,9 @@ MaterialDirectStateLayer = lvgl_material_ns.class_(
     "MaterialDirectStateLayer", cg.Component
 )
 MaterialDirectMarquee = lvgl_material_ns.class_("MaterialDirectMarquee", cg.Component)
+MaterialDirectVolumeOverlay = lvgl_material_ns.class_(
+    "MaterialDirectVolumeOverlay", cg.Component
+)
 MaterialPressedStyle = lvgl_material_ns.class_("MaterialPressedStyle", cg.Component)
 MaterialPageIndicator = lvgl_material_ns.class_("MaterialPageIndicator", cg.Component)
 MaterialPageIndicatorSetAction = lvgl_material_ns.class_(
@@ -81,6 +89,18 @@ DIRECT_MARQUEE_SCHEMA = cv.Schema(
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
+DIRECT_VOLUME_OVERLAY_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MaterialDirectVolumeOverlay),
+        cv.GenerateID(CONF_LVGL_ID): cv.use_id(LvglComponent),
+        cv.Required(CONF_ARC): cv.use_id(lv_obj_t),
+        cv.Required(CONF_KNOB): cv.use_id(lv_obj_t),
+        cv.Required(CONF_LABEL): cv.use_id(lv_obj_t),
+        cv.Optional(CONF_ACTIVATION_WIDGET): cv.use_id(lv_obj_t),
+        cv.Optional(CONF_SCRIM_OPACITY, default="72%"): cv.percentage,
+    }
+).extend(cv.COMPONENT_SCHEMA)
+
 PRESSED_STYLE_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(MaterialPressedStyle),
@@ -115,12 +135,14 @@ def _validate_config(config):
         not config.get(CONF_STATE_LAYERS)
         and not config.get(CONF_DIRECT_STATE_LAYERS)
         and not config.get(CONF_DIRECT_MARQUEES)
+        and not config.get(CONF_DIRECT_VOLUME_OVERLAYS)
         and not config.get(CONF_PRESSED_STYLES)
         and not config.get(CONF_PAGE_INDICATORS)
     ):
         raise cv.Invalid(
             f"At least one of {CONF_STATE_LAYERS}, {CONF_DIRECT_STATE_LAYERS}, "
-            f"{CONF_DIRECT_MARQUEES}, {CONF_PRESSED_STYLES}, "
+            f"{CONF_DIRECT_MARQUEES}, {CONF_DIRECT_VOLUME_OVERLAYS}, "
+            f"{CONF_PRESSED_STYLES}, "
             f"or {CONF_PAGE_INDICATORS} is required"
         )
     for indicator in config.get(CONF_PAGE_INDICATORS, []):
@@ -141,6 +163,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_DIRECT_MARQUEES, default=list): cv.ensure_list(
                 DIRECT_MARQUEE_SCHEMA
             ),
+            cv.Optional(CONF_DIRECT_VOLUME_OVERLAYS, default=list): cv.ensure_list(
+                DIRECT_VOLUME_OVERLAY_SCHEMA
+            ),
             cv.Optional(CONF_PRESSED_STYLES, default=list): cv.ensure_list(
                 PRESSED_STYLE_SCHEMA
             ),
@@ -154,6 +179,22 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
+    direct_volume_overlay_bindings = []
+    for conf in config[CONF_DIRECT_VOLUME_OVERLAYS]:
+        lvgl = await cg.get_variable(conf[CONF_LVGL_ID])
+        var = cg.new_Pvariable(conf[CONF_ID], lvgl)
+        await cg.register_component(var, conf)
+        cg.add(var.set_scrim_opacity(round(conf[CONF_SCRIM_OPACITY] * 255)))
+        arc = (await get_widgets(conf, CONF_ARC))[0]
+        knob = (await get_widgets(conf, CONF_KNOB))[0]
+        label = (await get_widgets(conf, CONF_LABEL))[0]
+        activation_widget = None
+        if CONF_ACTIVATION_WIDGET in conf:
+            activation_widget = (await get_widgets(conf, CONF_ACTIVATION_WIDGET))[0]
+        direct_volume_overlay_bindings.append(
+            (var, arc, knob, label, activation_widget)
+        )
+
     direct_marquee_bindings = []
     for conf in config[CONF_DIRECT_MARQUEES]:
         lvgl = await cg.get_variable(conf[CONF_LVGL_ID])
@@ -229,6 +270,12 @@ async def to_code(config):
 
     await wait_for_widgets()
     async with LvContext() as ctx:
+        for var, arc, knob, label, activation_widget in direct_volume_overlay_bindings:
+            ctx.add(var.set_arc(arc.obj))
+            ctx.add(var.set_knob(knob.obj))
+            ctx.add(var.set_label(label.obj))
+            if activation_widget is not None:
+                ctx.add(var.set_activation_widget(activation_widget.obj))
         for var, label, viewport in direct_marquee_bindings:
             ctx.add(var.set_label(label.obj))
             ctx.add(var.set_viewport(viewport.obj))
