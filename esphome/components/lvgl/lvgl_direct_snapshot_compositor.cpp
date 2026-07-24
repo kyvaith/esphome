@@ -1,5 +1,7 @@
 #include "lvgl_direct_snapshot_compositor.h"
 
+#include "lvgl_navigation.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -19,6 +21,14 @@ bool LvglDirectSnapshotCompositor::can_use_direct_home_() const {
     return false;
   return std::all_of(this->home_views_.begin(), this->home_views_.end(),
                      [parent](lv_obj_t *view) { return view != nullptr && lv_obj_get_parent(view) == parent; });
+}
+
+bool LvglDirectSnapshotCompositor::can_use_direct_application_(LvglApplication *application, int home_index) const {
+  return this->application_transitions_enabled_ && !this->home_active_ && !this->application_active_ &&
+         application != nullptr && application->get_view() != nullptr && this->parent_ != nullptr &&
+         this->parent_->get_width() > 0 && this->parent_->get_width() == this->parent_->get_height() &&
+         home_index >= 0 && home_index < static_cast<int>(this->home_views_.size()) &&
+         this->home_views_[home_index] != nullptr;
 }
 
 bool LvglDirectSnapshotCompositor::prepare_home(int page_index) {
@@ -157,9 +167,104 @@ void LvglDirectSnapshotCompositor::cancel_home() {
   this->reset_direct_home_();
 }
 
+bool LvglDirectSnapshotCompositor::open_application(LvglApplication *application, int home_index) {
+  this->application_fallback_ = false;
+  if (!this->can_use_direct_application_(application, home_index)) {
+    this->application_fallback_ = true;
+    return LvglSnapshotCompositor::open_application(application, home_index);
+  }
+
+  const int32_t width = this->parent_->get_width();
+  if (!lvgl_esphome_snapshot_app_open(application->get_view(), this->home_views_[home_index], width,
+                                      this->application_open_duration_)) {
+    this->application_fallback_ = true;
+    return LvglSnapshotCompositor::open_application(application, home_index);
+  }
+
+  this->application_ = application;
+  this->application_home_index_ = home_index;
+  this->application_opening_ = true;
+  this->application_close_committed_ = false;
+  this->application_active_ = true;
+  this->direct_application_phase_ = DirectApplicationPhase::OPENING;
+  this->start_completion_timer_();
+  return true;
+}
+
+bool LvglDirectSnapshotCompositor::begin_application_close(LvglApplication *application, int home_index) {
+  this->application_fallback_ = false;
+  if (!this->can_use_direct_application_(application, home_index) ||
+      !lvgl_esphome_snapshot_app_prepare_close(application->get_view())) {
+    this->application_fallback_ = true;
+    return LvglSnapshotCompositor::begin_application_close(application, home_index);
+  }
+
+  this->application_ = application;
+  this->application_home_index_ = home_index;
+  this->application_opening_ = false;
+  this->application_close_committed_ = false;
+  this->application_active_ = true;
+  this->direct_application_phase_ = DirectApplicationPhase::PREPARED_CLOSE;
+  return true;
+}
+
+bool LvglDirectSnapshotCompositor::update_application_close(int32_t delta_y) {
+  if (this->application_fallback_)
+    return LvglSnapshotCompositor::update_application_close(delta_y);
+  return this->direct_application_phase_ == DirectApplicationPhase::PREPARED_CLOSE;
+}
+
+bool LvglDirectSnapshotCompositor::settle_application_close(bool close) {
+  if (this->application_fallback_)
+    return LvglSnapshotCompositor::settle_application_close(close);
+  if (this->direct_application_phase_ != DirectApplicationPhase::PREPARED_CLOSE || this->application_ == nullptr)
+    return false;
+
+  if (!close) {
+    lvgl_esphome_snapshot_app_clear_prepared_close();
+    lvgl_esphome_snapshot_app_release_work_buffer();
+    this->reset_direct_application_();
+    return true;
+  }
+
+  const int32_t width = this->parent_->get_width();
+  const int32_t height = this->parent_->get_height();
+  const int32_t target_x = std::lround(width * this->application_close_target_x_);
+  const int32_t target_y = std::lround(height * this->application_close_target_y_);
+  if (!lvgl_esphome_snapshot_app_close(this->application_->get_view(), this->home_views_[this->application_home_index_],
+                                       width, target_x, target_y, this->application_close_duration_)) {
+    lvgl_esphome_snapshot_app_cancel();
+    lvgl_esphome_snapshot_app_release_work_buffer();
+    this->reset_direct_application_();
+    return false;
+  }
+
+  this->application_close_committed_ = true;
+  this->direct_application_phase_ = DirectApplicationPhase::CLOSING;
+  this->start_completion_timer_();
+  return true;
+}
+
+void LvglDirectSnapshotCompositor::cancel_application() {
+  if (this->application_fallback_) {
+    LvglSnapshotCompositor::cancel_application();
+    this->application_fallback_ = false;
+    return;
+  }
+  if (this->direct_application_phase_ != DirectApplicationPhase::NONE)
+    lvgl_esphome_snapshot_app_cancel();
+  lvgl_esphome_snapshot_app_release_work_buffer();
+  this->reset_direct_application_();
+}
+
 void LvglDirectSnapshotCompositor::completion_timer_(lv_timer_t *timer) {
   auto *compositor = static_cast<LvglDirectSnapshotCompositor *>(lv_timer_get_user_data(timer));
-  if (compositor != nullptr && !lvgl_esphome_snapshot_is_active())
+  if (compositor == nullptr || lvgl_esphome_snapshot_is_active())
+    return;
+  if (compositor->direct_application_phase_ == DirectApplicationPhase::OPENING ||
+      compositor->direct_application_phase_ == DirectApplicationPhase::CLOSING)
+    compositor->complete_direct_application_();
+  else
     compositor->complete_direct_home_();
 }
 
@@ -179,6 +284,31 @@ void LvglDirectSnapshotCompositor::complete_direct_home_() {
     this->prepare_home(target);
 }
 
+void LvglDirectSnapshotCompositor::complete_direct_application_() {
+  if (this->completion_timer_handle_ != nullptr) {
+    lv_timer_delete(this->completion_timer_handle_);
+    this->completion_timer_handle_ = nullptr;
+  }
+
+  auto *application = this->application_;
+  const int home_index = this->application_home_index_;
+  const bool opening = this->direct_application_phase_ == DirectApplicationPhase::OPENING;
+  if (this->navigation_ != nullptr) {
+    this->navigation_->prepare_application_transition(application, opening, !opening);
+    if (!opening)
+      this->navigation_->activate_home_view(home_index);
+  }
+
+  lvgl_esphome_snapshot_app_release_open_hold();
+  lvgl_esphome_snapshot_app_release_work_buffer();
+
+  if (this->navigation_ != nullptr)
+    this->navigation_->complete_application_transition(application, opening, !opening);
+  this->reset_direct_application_();
+  if (!opening && home_index >= 0)
+    this->prepare_home(home_index);
+}
+
 void LvglDirectSnapshotCompositor::reset_direct_home_() {
   if (this->completion_timer_handle_ != nullptr) {
     lv_timer_delete(this->completion_timer_handle_);
@@ -194,6 +324,22 @@ void LvglDirectSnapshotCompositor::reset_direct_home_() {
   this->target_index_ = -1;
   this->home_offset_ = 0;
   this->widget_fallback_ = false;
+}
+
+void LvglDirectSnapshotCompositor::reset_direct_application_() {
+  if (this->completion_timer_handle_ != nullptr) {
+    lv_timer_delete(this->completion_timer_handle_);
+    this->completion_timer_handle_ = nullptr;
+  }
+  this->application_ = nullptr;
+  this->application_buffer_ = nullptr;
+  this->application_home_index_ = -1;
+  this->application_progress_ = 0;
+  this->application_active_ = false;
+  this->application_opening_ = false;
+  this->application_close_committed_ = false;
+  this->direct_application_phase_ = DirectApplicationPhase::NONE;
+  this->application_fallback_ = false;
 }
 
 }  // namespace esphome::lvgl
