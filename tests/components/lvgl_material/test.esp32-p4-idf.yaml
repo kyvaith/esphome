@@ -43,6 +43,15 @@ lvgl:
         widgets:
           - label:
               text: Next
+    - button:
+        id: material_pressed_style_button
+        width: 160
+        height: 80
+        radius: 40
+        y: -120
+        widgets:
+          - label:
+              text: Shared style
     - obj:
         id: material_page_indicator_container
         width: 180
@@ -52,6 +61,11 @@ lvgl:
         border_width: 0
 
 lvgl_material:
+  pressed_styles:
+    - id: test_pressed_style
+      widgets:
+        - material_pressed_style_button
+      pressed_opacity: 70%
   direct_state_layers:
     - id: test_direct_state_layer
       widgets:

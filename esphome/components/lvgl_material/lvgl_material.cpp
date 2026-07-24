@@ -14,6 +14,48 @@ namespace esphome::lvgl_material {
 
 static const char *const TAG = "lvgl_material";
 
+void MaterialPressedStyle::setup() {
+  if (this->targets_.empty()) {
+    ESP_LOGE(TAG, "Pressed style has no targets");
+    this->mark_failed();
+    return;
+  }
+
+  lv_style_init(&this->style_);
+  this->style_initialized_ = true;
+  lv_style_set_bg_opa(&this->style_, this->pressed_opacity_);
+  constexpr lv_style_selector_t SELECTOR =
+      static_cast<lv_style_selector_t>(LV_PART_MAIN) | static_cast<lv_style_selector_t>(LV_STATE_PRESSED);
+  for (lv_obj_t *target : this->targets_) {
+    if (target == nullptr) {
+      ESP_LOGE(TAG, "Pressed style target is unavailable");
+      this->mark_failed();
+      return;
+    }
+    lv_obj_add_style(target, &this->style_, SELECTOR);
+  }
+}
+
+void MaterialPressedStyle::on_shutdown() {
+  if (!this->style_initialized_)
+    return;
+
+  constexpr lv_style_selector_t SELECTOR =
+      static_cast<lv_style_selector_t>(LV_PART_MAIN) | static_cast<lv_style_selector_t>(LV_STATE_PRESSED);
+  for (lv_obj_t *target : this->targets_) {
+    if (target != nullptr && lv_obj_is_valid(target))
+      lv_obj_remove_style(target, &this->style_, SELECTOR);
+  }
+  lv_style_reset(&this->style_);
+  this->style_initialized_ = false;
+}
+
+void MaterialPressedStyle::dump_config() {
+  ESP_LOGCONFIG(TAG, "Material Pressed Style:");
+  ESP_LOGCONFIG(TAG, "  Targets: %u", static_cast<unsigned>(this->targets_.size()));
+  ESP_LOGCONFIG(TAG, "  Pressed opacity: %u", static_cast<unsigned>(this->pressed_opacity_));
+}
+
 void MaterialDirectStateLayer::setup() {
   if (this->lvgl_component_ == nullptr || this->targets_.empty()) {
     ESP_LOGE(TAG, "Direct state layer configuration is incomplete");

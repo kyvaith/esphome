@@ -23,6 +23,7 @@ CONF_INACTIVE_SIZE = "inactive_size"
 CONF_INITIAL_PAGE = "initial_page"
 CONF_PAGE_INDICATORS = "page_indicators"
 CONF_PRESSED_OPACITY = "pressed_opacity"
+CONF_PRESSED_STYLES = "pressed_styles"
 CONF_STATE_LAYERS = "state_layers"
 CONF_THICKNESS = "thickness"
 CONF_TRANSITION_DURATION = "transition_duration"
@@ -33,6 +34,7 @@ MaterialStateLayer = lvgl_material_ns.class_("MaterialStateLayer", cg.Component)
 MaterialDirectStateLayer = lvgl_material_ns.class_(
     "MaterialDirectStateLayer", cg.Component
 )
+MaterialPressedStyle = lvgl_material_ns.class_("MaterialPressedStyle", cg.Component)
 MaterialPageIndicator = lvgl_material_ns.class_("MaterialPageIndicator", cg.Component)
 MaterialPageIndicatorSetAction = lvgl_material_ns.class_(
     "MaterialPageIndicatorSetAction",
@@ -66,6 +68,16 @@ DIRECT_STATE_LAYER_SCHEMA = cv.Schema(
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
+PRESSED_STYLE_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MaterialPressedStyle),
+        cv.Required(CONF_WIDGETS): cv.All(
+            cv.ensure_list(cv.use_id(lv_obj_t)), cv.Length(min=1)
+        ),
+        cv.Optional(CONF_PRESSED_OPACITY, default="12%"): cv.percentage,
+    }
+).extend(cv.COMPONENT_SCHEMA)
+
 PAGE_INDICATOR_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(MaterialPageIndicator),
@@ -89,11 +101,12 @@ def _validate_config(config):
     if (
         not config.get(CONF_STATE_LAYERS)
         and not config.get(CONF_DIRECT_STATE_LAYERS)
+        and not config.get(CONF_PRESSED_STYLES)
         and not config.get(CONF_PAGE_INDICATORS)
     ):
         raise cv.Invalid(
             f"At least one of {CONF_STATE_LAYERS}, {CONF_DIRECT_STATE_LAYERS}, "
-            f"or {CONF_PAGE_INDICATORS} is required"
+            f"{CONF_PRESSED_STYLES}, or {CONF_PAGE_INDICATORS} is required"
         )
     for indicator in config.get(CONF_PAGE_INDICATORS, []):
         if indicator[CONF_INITIAL_PAGE] >= indicator[CONF_COUNT]:
@@ -110,6 +123,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_DIRECT_STATE_LAYERS, default=list): cv.ensure_list(
                 DIRECT_STATE_LAYER_SCHEMA
             ),
+            cv.Optional(CONF_PRESSED_STYLES, default=list): cv.ensure_list(
+                PRESSED_STYLE_SCHEMA
+            ),
             cv.Optional(CONF_PAGE_INDICATORS, default=list): cv.ensure_list(
                 PAGE_INDICATOR_SCHEMA
             ),
@@ -120,6 +136,16 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
+    pressed_style_bindings = []
+    for conf in config[CONF_PRESSED_STYLES]:
+        var = cg.new_Pvariable(conf[CONF_ID])
+        await cg.register_component(var, conf)
+        cg.add(var.set_pressed_opacity(round(conf[CONF_PRESSED_OPACITY] * 255)))
+        widgets = await get_widgets(
+            [{CONF_ID: widget_id} for widget_id in conf[CONF_WIDGETS]]
+        )
+        pressed_style_bindings.append((var, widgets))
+
     direct_state_layer_bindings = []
     for conf in config[CONF_DIRECT_STATE_LAYERS]:
         lvgl = await cg.get_variable(conf[CONF_LVGL_ID])
@@ -176,6 +202,9 @@ async def to_code(config):
 
     await wait_for_widgets()
     async with LvContext() as ctx:
+        for var, widgets in pressed_style_bindings:
+            for widget in widgets:
+                ctx.add(var.add_target(widget.obj))
         for var, widgets in direct_state_layer_bindings:
             for widget in widgets:
                 ctx.add(var.add_target(widget.obj))
