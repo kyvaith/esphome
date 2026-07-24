@@ -482,14 +482,16 @@ void ESPAudioStack::loop() {
     this->request_audio_preallocation_();
   }
 
-  // Pick up the deferred I2S release queued by stop(). The task may still be
-  // blocked inside GMF codec IO for the current frame, so delete channels only
-  // after it has parked in the outer wait loop.
+  // Pick up the deferred codec close queued by stop(). The task may still be
+  // blocked inside GMF codec IO for the current frame, so close the stream only
+  // after it has parked in the outer wait loop. Keep the I2S channels and their
+  // DMA buffers reserved: recreating them after the UI has fragmented internal
+  // RAM can fail even when the aggregate free heap is sufficient.
   if (this->teardown_pending_.load(std::memory_order_relaxed) &&
       this->audio_task_idle_.load(std::memory_order_relaxed)) {
-    this->deinit_i2s_();
+    this->close_audio_io_();
     this->teardown_pending_.store(false, std::memory_order_relaxed);
-    ESP_LOGI(TAG, "Audio stack stopped");
+    ESP_LOGI(TAG, "Audio stack parked with I2S DMA reserved");
   }
 }
 
@@ -1129,19 +1131,18 @@ void ESPAudioStack::start() {
     return;
   }
 
-  // Complete any deferred close from the previous session before reopening.
-  // Reusing a GMF codec IO that the audio task has already parked during a
-  // stop/start call cycle can leave TX in a half-closed state on the next
-  // intercom call.
+  // Complete any deferred codec close from the previous session before
+  // reopening. The I2S channels remain allocated so a late restart does not
+  // depend on finding another large contiguous internal-memory block.
   if (this->teardown_pending_.load(std::memory_order_relaxed)) {
     const uint32_t start_ms = millis();
     while (!this->audio_task_idle_.load(std::memory_order_relaxed) && millis() - start_ms < 250) {
       delay(1);
     }
     if (this->audio_task_idle_.load(std::memory_order_relaxed)) {
-      this->deinit_i2s_();
+      this->close_audio_io_();
       this->teardown_pending_.store(false, std::memory_order_relaxed);
-      ESP_LOGI(TAG, "Completed pending audio stack teardown before restart");
+      ESP_LOGI(TAG, "Completed pending audio stream close before restart");
     } else {
       ESP_LOGW(TAG, "Audio stack restart refused while teardown is still pending");
       return;
@@ -1163,8 +1164,9 @@ void ESPAudioStack::start() {
     }
   }
 
-  // I2S allocation happens here, not in setup(): start() owns both driver
-  // channel creation and GMF IO open while stop() tears the bus back down.
+  // setup() normally reserves I2S DMA before the heap becomes fragmented.
+  // start() opens the prepared codec streams and only allocates channels as a
+  // recovery path if early reservation was unavailable.
   this->request_audio_preallocation_();
   this->has_i2s_error_.store(false, std::memory_order_relaxed);
   if (!this->enable_i2s_channels_()) {
@@ -1226,9 +1228,9 @@ void ESPAudioStack::stop() {
   this->audio_stack_running_.store(false, std::memory_order_relaxed);
   this->idle_trigger_.trigger();
 
-  // Defer I2S deletion to loop(): polling audio_task_idle_ here would block
-  // the main task for up to 600 ms (often >60 ms), starving network/UI/LVGL.
-  // loop() picks this up on the next tick once the audio task has parked.
+  // Defer closing codec streams until the audio task has parked. Normal idle
+  // transitions intentionally retain I2S channels and DMA; stop_and_wait()
+  // performs a full teardown for OTA and other maintenance operations.
   this->teardown_pending_.store(true, std::memory_order_relaxed);
 }
 
@@ -1246,6 +1248,8 @@ bool ESPAudioStack::stop_and_wait(uint32_t timeout_ms) {
   }
 
   if (this->teardown_pending_.load(std::memory_order_relaxed)) {
+    // Synchronous stop is used for maintenance where releasing every hardware
+    // resource is preferable to preserving fast restart capability.
     this->deinit_i2s_();
     this->teardown_pending_.store(false, std::memory_order_relaxed);
     ESP_LOGI(TAG, "Audio stack stopped synchronously");
