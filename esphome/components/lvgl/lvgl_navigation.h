@@ -23,6 +23,7 @@ class LvglApplication {
   void set_page(LvPageType *page) { this->page_ = page; }
   void set_widget(lv_obj_t *widget) { this->widget_ = widget; }
   void set_close_gesture_enabled(bool enabled) { this->close_gesture_enabled_ = enabled; }
+  void set_close_on_threshold(bool enabled) { this->close_on_threshold_ = enabled; }
   void set_scroll_snapshot(LvglScrollSnapshotController *controller) { this->scroll_snapshot_ = controller; }
   template<typename F> void add_on_prepare_open_callback(F &&callback) {
     this->prepare_open_callbacks_.add(std::forward<F>(callback));
@@ -53,6 +54,7 @@ class LvglApplication {
   LvglScrollSnapshotController *get_scroll_snapshot() const { return this->scroll_snapshot_; }
   bool is_widget_application() const { return this->widget_ != nullptr; }
   bool is_close_gesture_enabled() const { return this->close_gesture_enabled_; }
+  bool is_close_on_threshold() const { return this->close_on_threshold_; }
   bool is_close_prepared() const { return this->close_prepared_; }
   void call_on_prepare_open_callbacks() { this->prepare_open_callbacks_.call(); }
   void call_on_open_callbacks() { this->open_callbacks_.call(); }
@@ -91,6 +93,7 @@ class LvglApplication {
   LazyCallbackManager<void()> close_cancelled_callbacks_{};
   LazyCallbackManager<void()> closed_callbacks_{};
   bool close_gesture_enabled_{true};
+  bool close_on_threshold_{};
   bool close_prepared_{};
 };
 
@@ -121,6 +124,7 @@ class LvglNavigation {
   bool touch_update(int32_t x, int32_t y);
   bool touch_end();
   void touch_cancel();
+  void loop();
 
   void open_application(LvglApplication *application);
   void close_application();
@@ -150,6 +154,7 @@ class LvglNavigation {
   void update_home_indicators_(int index);
   void notify_home_changed_(int index);
   void reset_touch_();
+  void schedule_application_close_();
 
   LvglComponent *parent_{};
   LvglSnapshotCompositor *snapshot_compositor_{};
@@ -172,6 +177,7 @@ class LvglNavigation {
   int32_t home_commit_pixels_{-1};
   int32_t close_edge_pixels_{-1};
   int32_t close_commit_pixels_{-1};
+  bool close_deferred_{};
 };
 
 template<typename... Ts> class NavigationOpenAction final : public Action<Ts...> {
