@@ -4,9 +4,49 @@
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace esphome::lvgl_material {
+
+class MaterialDirectStateLayer : public Component {
+ public:
+  explicit MaterialDirectStateLayer(lvgl::LvglComponent *component) : lvgl_component_(component) {}
+  void add_target(lv_obj_t *target) { this->targets_.push_back(target); }
+  void set_pressed_opacity(lv_opa_t opacity) { this->pressed_opacity_ = opacity; }
+
+  void setup() override;
+  void on_shutdown() override;
+  void dump_config() override;
+  float get_setup_priority() const override { return setup_priority::PROCESSOR - 5.0f; }
+
+  bool press(lv_obj_t *target);
+  bool release();
+  void abandon();
+
+ protected:
+  static void press_ready_cb_(void *arg);
+  static void restore_ready_cb_(void *arg);
+  static bool inside_rounded_rect_(int x, int y, int width, int height, int radius);
+  bool allocate_buffers_();
+  bool is_configured_target_(lv_obj_t *target) const;
+
+  lvgl::LvglComponent *lvgl_component_{nullptr};
+  std::vector<lv_obj_t *> targets_;
+  uint8_t *normal_buffer_{nullptr};
+  uint8_t *pressed_buffer_{nullptr};
+  size_t buffer_capacity_{0};
+  lv_opa_t pressed_opacity_{LV_OPA_10};
+  int x_{0};
+  int y_{0};
+  int width_{0};
+  int height_{0};
+  bool active_{false};
+  std::atomic<bool> press_in_flight_{false};
+  std::atomic<bool> restore_in_flight_{false};
+};
 
 class MaterialStateLayer : public Component {
  public:

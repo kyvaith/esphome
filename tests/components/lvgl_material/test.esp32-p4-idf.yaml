@@ -25,6 +25,24 @@ lvgl:
         widgets:
           - label:
               text: Material
+    - button:
+        id: material_previous_button
+        width: 80
+        height: 120
+        radius: 40
+        x: -120
+        widgets:
+          - label:
+              text: Previous
+    - button:
+        id: material_next_button
+        width: 80
+        height: 120
+        radius: 40
+        x: 120
+        widgets:
+          - label:
+              text: Next
     - obj:
         id: material_page_indicator_container
         width: 180
@@ -34,6 +52,12 @@ lvgl:
         border_width: 0
 
 lvgl_material:
+  direct_state_layers:
+    - id: test_direct_state_layer
+      widgets:
+        - material_previous_button
+        - material_next_button
+      pressed_opacity: 12%
   state_layers:
     - id: test_state_layer
       widget: material_button

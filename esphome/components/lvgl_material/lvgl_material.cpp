@@ -1,12 +1,203 @@
 #include "lvgl_material.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 
 #include "esphome/core/log.h"
+
+#ifdef USE_ESP32
+#include "esp_heap_caps.h"
+#endif
 
 namespace esphome::lvgl_material {
 
 static const char *const TAG = "lvgl_material";
+
+void MaterialDirectStateLayer::setup() {
+  if (this->lvgl_component_ == nullptr || this->targets_.empty()) {
+    ESP_LOGE(TAG, "Direct state layer configuration is incomplete");
+    this->mark_failed();
+    return;
+  }
+  if (!this->allocate_buffers_()) {
+    ESP_LOGE(TAG, "Unable to allocate direct state layer buffers");
+    this->mark_failed();
+  }
+}
+
+void MaterialDirectStateLayer::on_shutdown() {
+  this->abandon();
+  if (this->press_in_flight_.load(std::memory_order_acquire) ||
+      this->restore_in_flight_.load(std::memory_order_acquire)) {
+    return;
+  }
+#ifdef USE_ESP32
+  heap_caps_free(this->normal_buffer_);
+  heap_caps_free(this->pressed_buffer_);
+#else
+  std::free(this->normal_buffer_);
+  std::free(this->pressed_buffer_);
+#endif
+  this->normal_buffer_ = nullptr;
+  this->pressed_buffer_ = nullptr;
+  this->buffer_capacity_ = 0;
+}
+
+void MaterialDirectStateLayer::dump_config() {
+  ESP_LOGCONFIG(TAG, "Material Direct State Layer:");
+  ESP_LOGCONFIG(TAG, "  Targets: %u", static_cast<unsigned>(this->targets_.size()));
+  ESP_LOGCONFIG(TAG, "  Pressed opacity: %u", static_cast<unsigned>(this->pressed_opacity_));
+  ESP_LOGCONFIG(TAG, "  Reserved buffer pair: %u bytes", static_cast<unsigned>(this->buffer_capacity_ * 2));
+}
+
+bool MaterialDirectStateLayer::press(lv_obj_t *target) {
+  if (this->is_failed() || !this->is_configured_target_(target) || this->active_ ||
+      this->press_in_flight_.load(std::memory_order_acquire) ||
+      this->restore_in_flight_.load(std::memory_order_acquire)) {
+    return false;
+  }
+
+  lv_area_t area{};
+  lv_obj_get_coords(target, &area);
+  const int width = lv_area_get_width(&area);
+  const int height = lv_area_get_height(&area);
+  if (width <= 0 || height <= 0)
+    return false;
+
+  constexpr int BYTES_PER_PIXEL = 3;
+  const int stride = width * BYTES_PER_PIXEL;
+  const size_t bytes = static_cast<size_t>(stride) * height;
+  if (bytes > this->buffer_capacity_ ||
+      !this->lvgl_component_->direct_capture_rgb888(this->normal_buffer_, stride, area.x1, area.y1, width, height)) {
+    return false;
+  }
+
+  std::memcpy(this->pressed_buffer_, this->normal_buffer_, bytes);
+  const int radius = std::min<int>(lv_obj_get_style_radius(target, LV_PART_MAIN), std::min(width, height) / 2);
+  const unsigned retained = 255U - this->pressed_opacity_;
+  for (int py = 0; py < height; py++) {
+    for (int px = 0; px < width; px++) {
+      if (!inside_rounded_rect_(px, py, width, height, radius))
+        continue;
+      uint8_t *pixel = this->pressed_buffer_ + static_cast<size_t>(py * stride + px * BYTES_PER_PIXEL);
+      pixel[0] = static_cast<uint8_t>((static_cast<unsigned>(pixel[0]) * retained + 127U) / 255U);
+      pixel[1] = static_cast<uint8_t>((static_cast<unsigned>(pixel[1]) * retained + 127U) / 255U);
+      pixel[2] = static_cast<uint8_t>((static_cast<unsigned>(pixel[2]) * retained + 127U) / 255U);
+    }
+  }
+
+  this->x_ = area.x1;
+  this->y_ = area.y1;
+  this->width_ = width;
+  this->height_ = height;
+  this->press_in_flight_.store(true, std::memory_order_release);
+  const uint8_t result = this->lvgl_component_->direct_blit_rgb888_async(
+      this->pressed_buffer_, stride, this->x_, this->y_, width, height, press_ready_cb_, this);
+  if (result != LVGL_DIRECT_BLIT_SUBMITTED) {
+    this->press_in_flight_.store(false, std::memory_order_release);
+    return false;
+  }
+  this->active_ = true;
+  return true;
+}
+
+bool MaterialDirectStateLayer::release() {
+  if (!this->active_)
+    return true;
+  if (this->restore_in_flight_.load(std::memory_order_acquire))
+    return true;
+  if (this->normal_buffer_ == nullptr || this->width_ <= 0 || this->height_ <= 0) {
+    this->active_ = false;
+    return true;
+  }
+
+  this->restore_in_flight_.store(true, std::memory_order_release);
+  const uint8_t result = this->lvgl_component_->direct_blit_rgb888_async(
+      this->normal_buffer_, this->width_ * 3, this->x_, this->y_, this->width_, this->height_, restore_ready_cb_, this);
+  if (result != LVGL_DIRECT_BLIT_SUBMITTED) {
+    this->restore_in_flight_.store(false, std::memory_order_release);
+    return false;
+  }
+  this->active_ = false;
+  return true;
+}
+
+void MaterialDirectStateLayer::abandon() {
+  if (this->lvgl_component_ != nullptr && this->width_ > 0 && this->height_ > 0)
+    this->lvgl_component_->direct_blit_rgb888_release(this->x_, this->y_, this->width_, this->height_);
+  this->active_ = false;
+}
+
+void MaterialDirectStateLayer::press_ready_cb_(void *arg) {
+  auto *state_layer = static_cast<MaterialDirectStateLayer *>(arg);
+  if (state_layer != nullptr)
+    state_layer->press_in_flight_.store(false, std::memory_order_release);
+}
+
+void MaterialDirectStateLayer::restore_ready_cb_(void *arg) {
+  auto *state_layer = static_cast<MaterialDirectStateLayer *>(arg);
+  if (state_layer != nullptr)
+    state_layer->restore_in_flight_.store(false, std::memory_order_release);
+}
+
+bool MaterialDirectStateLayer::inside_rounded_rect_(int x, int y, int width, int height, int radius) {
+  if (radius <= 0 || (x >= radius && x < width - radius) || (y >= radius && y < height - radius))
+    return true;
+
+  const int center_x2 = x < radius ? 2 * radius - 1 : 2 * (width - radius) - 1;
+  const int center_y2 = y < radius ? 2 * radius - 1 : 2 * (height - radius) - 1;
+  const int dx2 = 2 * x - center_x2;
+  const int dy2 = 2 * y - center_y2;
+  const int radius2 = 2 * radius;
+  return dx2 * dx2 + dy2 * dy2 <= radius2 * radius2;
+}
+
+bool MaterialDirectStateLayer::allocate_buffers_() {
+  size_t required = 0;
+  for (lv_obj_t *target : this->targets_) {
+    if (target == nullptr)
+      return false;
+    lv_obj_update_layout(target);
+    lv_area_t area{};
+    lv_obj_get_coords(target, &area);
+    const int width = lv_area_get_width(&area);
+    const int height = lv_area_get_height(&area);
+    if (width <= 0 || height <= 0)
+      return false;
+    required = std::max(required, static_cast<size_t>(width) * height * 3);
+  }
+  if (required == 0)
+    return false;
+
+#ifdef USE_ESP32
+  this->normal_buffer_ =
+      static_cast<uint8_t *>(heap_caps_aligned_alloc(64, required, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  this->pressed_buffer_ =
+      static_cast<uint8_t *>(heap_caps_aligned_alloc(64, required, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+#else
+  this->normal_buffer_ = static_cast<uint8_t *>(std::malloc(required));
+  this->pressed_buffer_ = static_cast<uint8_t *>(std::malloc(required));
+#endif
+  if (this->normal_buffer_ == nullptr || this->pressed_buffer_ == nullptr) {
+#ifdef USE_ESP32
+    heap_caps_free(this->normal_buffer_);
+    heap_caps_free(this->pressed_buffer_);
+#else
+    std::free(this->normal_buffer_);
+    std::free(this->pressed_buffer_);
+#endif
+    this->normal_buffer_ = nullptr;
+    this->pressed_buffer_ = nullptr;
+    return false;
+  }
+  this->buffer_capacity_ = required;
+  return true;
+}
+
+bool MaterialDirectStateLayer::is_configured_target_(lv_obj_t *target) const {
+  return target != nullptr && std::find(this->targets_.begin(), this->targets_.end(), target) != this->targets_.end();
+}
 
 void MaterialStateLayer::setup() {
   if (this->target_ == nullptr) {
