@@ -49,8 +49,6 @@ constexpr int WAVE_CENTER = (WAVE_SIZE - 1) / 2;
 constexpr int WAVE_ACTIVE_RADIUS = 121;
 constexpr int WAVE_ACTIVE_MIN = WAVE_CENTER - WAVE_ACTIVE_RADIUS;
 constexpr int WAVE_ACTIVE_SIZE = WAVE_ACTIVE_RADIUS * 2 + 1;
-constexpr int WAVE_BACKGROUND_SIZE = 800;
-constexpr int WAVE_BACKGROUND_ORIGIN = (WAVE_BACKGROUND_SIZE - WAVE_SIZE) / 2;
 constexpr uint32_t POLAR_RADIUS_MASK = 0x0FFFU;
 constexpr float DEG_TO_RAD = 0.017453292519943295769f;
 
@@ -158,37 +156,7 @@ static uint8_t circle_coverage_squared(int32_t distance_squared_q8, int32_t radi
       (outer_squared_q8 - inner_squared_q8));
 }
 
-static int angle_delta_cw(int start_deg, int angle_deg) {
-  int delta = angle_deg - start_deg;
-  while (delta < 0) {
-    delta += 360;
-  }
-  while (delta >= 360) {
-    delta -= 360;
-  }
-  return delta;
-}
-
-static bool angle_in_segment(int start_deg, int sweep_deg, int angle_deg) {
-  if (sweep_deg <= 0) {
-    return false;
-  }
-  if (sweep_deg >= 360) {
-    return true;
-  }
-  return angle_delta_cw(start_deg, angle_deg) <= sweep_deg;
-}
-
 static int iabs_int(int value) { return value < 0 ? -value : value; }
-
-static int angle_distance(int a, int b) {
-  int distance = a - b;
-  while (distance < 0)
-    distance += 360;
-  while (distance >= 360)
-    distance -= 360;
-  return distance > 180 ? 360 - distance : distance;
-}
 
 static int angle_delta_cw_q4(int start_q4, int angle_q4) {
   constexpr int full_circle_q4 = 360 * 16;
@@ -473,6 +441,31 @@ static bool rebuild_backdrop(WavyArcState *state, const lv_image_dsc_t *source, 
   if (!ensure_buffers(state))
     return false;
 
+  int display_width = source != nullptr && source->header.w > 0 ? source->header.w : WAVE_SIZE;
+  int display_height = source != nullptr && source->header.h > 0 ? source->header.h : WAVE_SIZE;
+  if (state->arc != nullptr) {
+    lv_display_t *display = lv_obj_get_display(state->arc);
+    if (display != nullptr) {
+      const int horizontal_resolution = lv_display_get_horizontal_resolution(display);
+      const int vertical_resolution = lv_display_get_vertical_resolution(display);
+      if (horizontal_resolution > 0)
+        display_width = horizontal_resolution;
+      if (vertical_resolution > 0)
+        display_height = vertical_resolution;
+    }
+  }
+
+  int origin_x = (display_width - WAVE_SIZE) / 2;
+  int origin_y = (display_height - WAVE_SIZE) / 2;
+  if (state->arc != nullptr) {
+    lv_area_t area{};
+    lv_obj_get_coords(state->arc, &area);
+    if (lv_area_get_width(&area) > 0 && lv_area_get_height(&area) > 0) {
+      origin_x = area.x1;
+      origin_y = area.y1;
+    }
+  }
+
   constexpr uint8_t scrim_red = 0x21;
   constexpr uint8_t scrim_green = 0x0F;
   constexpr uint8_t scrim_blue = 0x48;
@@ -481,22 +474,23 @@ static bool rebuild_backdrop(WavyArcState *state, const lv_image_dsc_t *source, 
   constexpr int static_blob_radius_sq = static_blob_radius * static_blob_radius;
   const bool direct_rgb565_crop =
       source != nullptr && source->data != nullptr && source->header.cf == LV_COLOR_FORMAT_RGB565 &&
-      source->header.w == WAVE_BACKGROUND_SIZE && source->header.h == WAVE_BACKGROUND_SIZE &&
-      source->header.stride >= WAVE_BACKGROUND_SIZE * 2;
+      source->header.w == display_width && source->header.h == display_height &&
+      source->header.stride >= display_width * static_cast<int>(sizeof(uint16_t)) && origin_x >= 0 && origin_y >= 0 &&
+      origin_x + WAVE_SIZE <= display_width && origin_y + WAVE_SIZE <= display_height;
   for (int y = 0; y < WAVE_SIZE; y++) {
-    const int display_y = WAVE_BACKGROUND_ORIGIN + y;
+    const int display_y = origin_y + y;
     const int source_y = source != nullptr && source->header.h > 0
-                             ? (display_y * static_cast<int>(source->header.h)) / WAVE_BACKGROUND_SIZE
+                             ? (display_y * static_cast<int>(source->header.h)) / display_height
                              : 0;
     const uint8_t *direct_row = direct_rgb565_crop
                                     ? source->data + static_cast<size_t>(display_y) * source->header.stride +
-                                          static_cast<size_t>(WAVE_BACKGROUND_ORIGIN) * sizeof(uint16_t)
+                                          static_cast<size_t>(origin_x) * sizeof(uint16_t)
                                     : nullptr;
     const int dy = y - WAVE_CENTER;
     for (int x = 0; x < WAVE_SIZE; x++) {
-      const int display_x = WAVE_BACKGROUND_ORIGIN + x;
+      const int display_x = origin_x + x;
       const int source_x = source != nullptr && source->header.w > 0
-                               ? (display_x * static_cast<int>(source->header.w)) / WAVE_BACKGROUND_SIZE
+                               ? (display_x * static_cast<int>(source->header.w)) / display_width
                                : 0;
       lv_color_t color;
       if (direct_row != nullptr) {
@@ -823,9 +817,12 @@ static void render_bitmap(WavyArcState *state) {
               : static_cast<uint32_t>(state->perf_present_total_us / state->perf_present_count);
       const uint32_t dma_avg_us =
           state->perf_dma_count == 0 ? 0 : static_cast<uint32_t>(state->perf_dma_total_us / state->perf_dma_count);
-      ESP_LOGI("media.wave", "perf2s: renders=%u render=%uus max=%uus submit=%uus max=%uus dma=%uus max=%uus pixels=%d",
-               state->perf_render_count, avg_us, state->perf_render_max_us, present_avg_us, state->perf_present_max_us,
-               dma_avg_us, state->perf_dma_max_us, WAVE_PIXELS);
+      ESP_LOGI("media.wave",
+               "perf2s: renders=%lu render=%luus max=%luus submit=%luus max=%luus dma=%luus max=%luus pixels=%d",
+               static_cast<unsigned long>(state->perf_render_count), static_cast<unsigned long>(avg_us),
+               static_cast<unsigned long>(state->perf_render_max_us), static_cast<unsigned long>(present_avg_us),
+               static_cast<unsigned long>(state->perf_present_max_us), static_cast<unsigned long>(dma_avg_us),
+               static_cast<unsigned long>(state->perf_dma_max_us), WAVE_PIXELS);
       state->perf_render_count = 0;
       state->perf_render_total_us = 0;
       state->perf_render_max_us = 0;
