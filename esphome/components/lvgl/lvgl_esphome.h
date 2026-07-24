@@ -303,6 +303,22 @@ class LvglComponent : public PollingComponent {
   // @param show_snow If true, show the snow effect when paused.
   void set_paused(bool paused, bool show_snow);
 
+  /** Temporarily hand the display framebuffers to an external renderer.
+   *
+   * LVGL input and animation timers continue running, but its display refresh
+   * timer remains dormant until the session ends. The display implementation
+   * owns framebuffer synchronization and rejects unsupported sessions.
+   */
+  bool begin_frame_buffer_presentation(uint32_t timeout_ms = 50);
+  bool acquire_presentation_frame(display::FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
+                                  uint32_t timeout_ms = 50);
+  bool present_presentation_frame(display::FrameBufferLease *lease, uint32_t timeout_ms = 50);
+  bool release_presentation_frame(display::FrameBufferLease *lease);
+  bool end_frame_buffer_presentation(uint32_t timeout_ms = 50);
+  bool is_frame_buffer_presentation_active() const {
+    return this->frame_buffer_presentation_active_.load(std::memory_order_acquire);
+  }
+
   // Returns true if the display is explicitly paused, or a blocking display update is in progress.
   bool is_paused() const;
   // If the display is paused and we have resume_on_input_ set to true, resume the display.
@@ -619,6 +635,9 @@ class LvglComponent : public PollingComponent {
   bool page_wrap_{true};
   LvglNavigation *navigation_{};
   bool big_endian_{};
+  std::atomic<bool> frame_buffer_presentation_active_{false};
+  lv_timer_t *frame_buffer_presentation_refr_timer_{};
+  uint32_t frame_buffer_presentation_refr_period_{LV_DEF_REFR_PERIOD};
   std::map<lv_group_t *, lv_obj_t *> focus_marks_{};
 
   CallbackManager<void(uint32_t)> idle_callbacks_{};
