@@ -155,6 +155,10 @@ class LvglNavigation {
   void notify_home_changed_(int index);
   void reset_touch_();
   void schedule_application_close_();
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+  void release_application_scroll_(LvglApplication *application);
+  void restore_application_scroll_(LvglApplication *application);
+#endif
 
   LvglComponent *parent_{};
   LvglSnapshotCompositor *snapshot_compositor_{};

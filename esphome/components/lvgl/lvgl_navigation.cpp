@@ -158,6 +158,7 @@ bool LvglNavigation::touch_update(int32_t x, int32_t y) {
              this->snapshot_compositor_ != nullptr) {
     if (sample.just_captured && this->gesture_application_ != nullptr) {
       this->gesture_application_->call_on_prepare_close_callbacks();
+      this->release_application_scroll_(this->gesture_application_);
       this->snapshot_compositor_->begin_application_close(this->gesture_application_, this->last_home_page_index_);
     }
     if (this->snapshot_compositor_->is_application_active())
@@ -236,6 +237,7 @@ bool LvglNavigation::touch_end() {
           this->activate_home_view(this->last_home_page_index_);
           gesture_application->call_on_closed_callbacks();
         } else if (gesture_application != nullptr) {
+          this->restore_application_scroll_(gesture_application);
           gesture_application->call_on_close_cancelled_callbacks();
         }
       }
@@ -244,12 +246,18 @@ bool LvglNavigation::touch_end() {
 #endif
     if (close && gesture_application != nullptr) {
       gesture_application->call_on_prepare_close_callbacks();
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+      this->release_application_scroll_(gesture_application);
+#endif
       gesture_application->call_on_close_callbacks();
       this->deactivate_application_view_(gesture_application);
       this->active_application_ = nullptr;
       this->activate_home_view(this->last_home_page_index_);
       gesture_application->call_on_closed_callbacks();
     } else if (gesture_application != nullptr) {
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+      this->restore_application_scroll_(gesture_application);
+#endif
       gesture_application->call_on_close_cancelled_callbacks();
     }
     return true;
@@ -274,8 +282,10 @@ void LvglNavigation::touch_cancel() {
     if (this->snapshot_compositor_->is_application_active()) {
       if (!this->snapshot_compositor_->settle_application_close(false)) {
         this->snapshot_compositor_->cancel_application();
-        if (gesture_application != nullptr)
+        if (gesture_application != nullptr) {
+          this->restore_application_scroll_(gesture_application);
           gesture_application->call_on_close_cancelled_callbacks();
+        }
       }
     } else {
       this->snapshot_compositor_->cancel_home();
@@ -286,8 +296,12 @@ void LvglNavigation::touch_cancel() {
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
       && (this->snapshot_compositor_ == nullptr || !this->snapshot_compositor_->is_application_active())
 #endif
-  )
+  ) {
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+    this->restore_application_scroll_(gesture_application);
+#endif
     gesture_application->call_on_close_cancelled_callbacks();
+  }
   this->reset_touch_();
 }
 
@@ -338,8 +352,12 @@ void LvglNavigation::open_application(LvglApplication *application) {
 
 void LvglNavigation::close_application() {
   auto *application = this->find_active_application_();
-  if (application != nullptr)
+  if (application != nullptr) {
     application->call_on_prepare_close_callbacks();
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+    this->release_application_scroll_(application);
+#endif
+  }
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (application != nullptr && this->snapshot_compositor_ != nullptr &&
       this->snapshot_compositor_->begin_application_close(application, this->last_home_page_index_)) {
@@ -376,6 +394,9 @@ void LvglNavigation::show_home() {
 #endif
   if (application != nullptr) {
     application->call_on_prepare_close_callbacks();
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+    this->release_application_scroll_(application);
+#endif
     application->call_on_close_callbacks();
     this->deactivate_application_view_(application);
     this->active_application_ = nullptr;
@@ -416,9 +437,29 @@ void LvglNavigation::complete_application_transition(LvglApplication *applicatio
   else if (close_committed) {
     this->active_application_ = nullptr;
     application->call_on_closed_callbacks();
-  } else
+  } else {
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+    this->restore_application_scroll_(application);
+#endif
     application->call_on_close_cancelled_callbacks();
+  }
 }
+
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+void LvglNavigation::release_application_scroll_(LvglApplication *application) {
+  if (application == nullptr)
+    return;
+  if (auto *scroll = application->get_scroll_snapshot(); scroll != nullptr)
+    scroll->release();
+}
+
+void LvglNavigation::restore_application_scroll_(LvglApplication *application) {
+  if (application == nullptr)
+    return;
+  if (auto *scroll = application->get_scroll_snapshot(); scroll != nullptr)
+    scroll->prepare();
+}
+#endif
 
 void LvglNavigation::activate_application_view_(LvglApplication *application) {
   if (application == nullptr || application->get_page() == nullptr)
