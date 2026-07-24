@@ -11,6 +11,23 @@
 
 namespace esphome::lvgl_material {
 
+class MaterialPressedStyle : public Component {
+ public:
+  void add_target(lv_obj_t *target) { this->targets_.push_back(target); }
+  void set_pressed_opacity(lv_opa_t opacity) { this->pressed_opacity_ = opacity; }
+
+  void setup() override;
+  void on_shutdown() override;
+  void dump_config() override;
+  float get_setup_priority() const override { return setup_priority::PROCESSOR - 5.0f; }
+
+ protected:
+  std::vector<lv_obj_t *> targets_;
+  lv_style_t style_{};
+  lv_opa_t pressed_opacity_{LV_OPA_10};
+  bool style_initialized_{false};
+};
+
 class MaterialDirectStateLayer : public Component {
  public:
   explicit MaterialDirectStateLayer(lvgl::LvglComponent *component) : lvgl_component_(component) {}
