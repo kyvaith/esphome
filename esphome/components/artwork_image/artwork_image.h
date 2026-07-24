@@ -1,0 +1,483 @@
+#pragma once
+
+#include "esphome/components/http_request/http_request.h"
+#include "esphome/components/image/image.h"
+#include "esphome/core/component.h"
+#include "esphome/core/defines.h"
+#include "esphome/core/helpers.h"
+
+#include "artwork_url.h"
+#include "image_decoder.h"
+
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+#include <atomic>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#endif
+
+#ifdef USE_SENDSPIN_ARTWORK
+#include "esphome/components/sendspin/sendspin_hub.h"
+#include <sendspin/config.h>
+#endif
+
+namespace esphome {
+namespace artwork_image {
+
+#ifdef USE_ESP_IDF
+class LocalHttpContainer;
+#endif
+
+using t_http_codes = enum {
+  HTTP_CODE_OK = 200,
+  HTTP_CODE_NOT_MODIFIED = 304,
+  HTTP_CODE_NOT_FOUND = 404,
+};
+
+/**
+ * @brief Format that the image is encoded with.
+ */
+enum ImageFormat {
+  /** Automatically detect from Content-Type header, with magic-byte fallback. */
+  AUTO,
+  /** JPEG format. */
+  JPEG,
+  /** PNG format. */
+  PNG,
+  /** BMP format. */
+  BMP,
+  /** HEIC/HEIF image format. Detected for clear error reporting; decoder not bundled. */
+  HEIC,
+};
+
+/**
+ * @brief Download an image from a given URL, and decode it using the specified decoder.
+ * The image will then be stored in a buffer, so that it can be re-displayed without the
+ * need to re-download or re-decode.
+ */
+class ArtworkImage : public PollingComponent,
+                    public image::Image,
+                    public Parented<esphome::http_request::HttpRequestComponent> {
+ public:
+  /**
+   * @brief Construct a new ArtworkImage object.
+   *
+   * @param url URL to download the image from.
+   * @param width Desired width of the target image area.
+   * @param height Desired height of the target image area.
+   * @param format Format that the image is encoded in (@see ImageFormat).
+   * @param buffer_size Size of the buffer used to download the image.
+   */
+  ArtworkImage(const std::string &url, int width, int height, ImageFormat format, image::ImageType type,
+              image::Transparency transparency, uint32_t buffer_size, bool is_big_endian,
+              bool allow_insecure_local_urls);
+
+  void setup() override;
+  void draw(int x, int y, display::Display *display, Color color_on, Color color_off) override;
+#ifdef USE_LVGL
+  lv_image_dsc_t *get_lv_image_dsc();
+#endif
+
+  void update() override;
+  void loop() override;
+  void map_chroma_key(Color &color);
+
+  /** Set the URL to download the image from. */
+  void set_url(const std::string &url) {
+    if (this->validate_url_(url)) {
+      this->url_ = url;
+    }
+  }
+  /** Set the URL and start an update, queuing the latest request if a download/decode is already active. */
+  void request_update_url(const std::string &url);
+
+  /** Add the request header */
+  template<typename V> void add_request_header(const std::string &header, V value) {
+    this->request_headers_.push_back(std::pair<std::string, TemplatableValue<std::string> >(header, value));
+  }
+
+  /**
+   * @brief Set the image that needs to be shown as long as the downloaded image
+   *  is not available.
+   *
+   * @param placeholder Pointer to the (@link Image) to show as placeholder.
+   */
+  void set_placeholder(image::Image *placeholder) { this->placeholder_ = placeholder; }
+
+#ifdef USE_SENDSPIN_ARTWORK
+  void set_sendspin_hub(sendspin_::SendspinHub *hub) { this->sendspin_hub_ = hub; }
+  void set_sendspin_slot(uint8_t slot) { this->sendspin_slot_ = slot; }
+  void set_sendspin_paused(bool paused);
+#endif
+
+  /** Reserve the reusable encoded-image input buffer at a caller-selected time. */
+  bool reserve_download_buffer();
+
+  /** Reserve the ESP-IDF HTTP client used for local artwork without starting a request. */
+  bool reserve_local_http_client(const std::string &url);
+
+  /**
+   * Release the buffer storing the image. The image will need to be downloaded again
+   * to be able to be displayed.
+   */
+  void release(bool immediate = false);
+
+  /**
+   * Reuse the current full-size hardware-JPEG buffer as the next decode target.
+   * The caller must keep every renderer that can read the image quiescent until
+   * the decode and post-processing transaction has completed.
+   */
+  uint8_t *try_reuse_active_buffer_for_decode(int width, int height, int content_width, int content_height);
+  void cancel_reused_active_buffer_decode();
+
+  /** Return a non-displayed staging buffer for the first hardware JPEG decode. */
+  uint8_t *try_get_staging_buffer_for_decode(int width, int height, int content_width, int content_height);
+  void cancel_staging_buffer_decode();
+  void mark_decode_buffer_written_by_dma() { this->decode_buffer_written_by_dma_ = true; }
+  void mark_decode_buffer_jpeg_allocator() { this->decode_buffer_uses_jpeg_allocator_ = true; }
+
+  /**
+   * Resize the download buffer
+   *
+   * @param size The new size for the download buffer.
+   */
+  size_t resize_download_buffer(size_t size) { return this->download_buffer_.resize(size); }
+
+  template<typename F> void add_on_finished_callback(F &&callback) {
+    this->download_finished_callback_.add(std::forward<F>(callback));
+  }
+  template<typename F> void add_on_decode_start_callback(F &&callback) {
+    this->decode_start_callback_.add(std::forward<F>(callback));
+  }
+  template<typename F> void add_on_decode_finished_callback(F &&callback) {
+    this->decode_finished_callback_.add(std::forward<F>(callback));
+  }
+  bool begin_decode_callbacks();
+  void complete_decode_callbacks(bool successful);
+  template<typename F> void add_on_error_callback(F &&callback) {
+    this->download_error_callback_.add(std::forward<F>(callback));
+  }
+
+  bool is_big_endian() const { return this->is_big_endian_; }
+  uint32_t get_trace_id() const { return this->trace_id_; }
+  int get_fixed_width() const { return this->fixed_width_; }
+  int get_fixed_height() const { return this->fixed_height_; }
+  int get_content_width() const { return this->buffer_content_width_; }
+  int get_content_height() const { return this->buffer_content_height_; }
+  int get_content_offset_x() const { return this->buffer_offset_x_; }
+  int get_content_offset_y() const { return this->buffer_offset_y_; }
+  image::ImageType image_type() const { return this->type_; }
+  void apply_rgb_darken_once(uint8_t percent);
+  void set_darken_percent(uint8_t percent) { this->darken_percent_ = percent; }
+  void set_hardware_jpeg(bool hardware_jpeg) { this->hardware_jpeg_ = hardware_jpeg; }
+  void set_reuse_active_buffer_capacity(bool reuse) { this->reuse_active_buffer_capacity_ = reuse; }
+  void set_scrim_color(uint32_t color) { this->scrim_color_ = color; }
+  void set_scrim_opacity(uint8_t opacity) { this->scrim_opacity_ = opacity; }
+  bool use_hardware_jpeg() const { return this->hardware_jpeg_; }
+  bool reserve_decode_buffer_capacity(size_t size);
+  size_t get_active_buffer_capacity() const { return this->buffer_capacity_; }
+  uint8_t get_darken_percent() const { return this->darken_percent_; }
+  void mark_decode_buffer_darkened(uint8_t percent) { this->decode_buffer_darkened_percent_ = percent; }
+  size_t memory_usage_bytes() const;
+  void log_memory_usage(const char *phase) const;
+
+ protected:
+  bool validate_url_(const std::string &url);
+  bool should_use_local_idf_url_(const std::string &url) const;
+  bool is_private_or_local_host_(const std::string &host) const;
+  std::shared_ptr<http_request::HttpContainer> get_local_idf_(const std::string &url,
+                                                              const std::vector<http_request::Header> &headers);
+  size_t get_sane_content_length_() const;
+  ImageFormat detect_format_();
+  bool detect_progressive_jpeg_();
+  bool detect_heic_();
+  bool create_decoder_(ImageFormat format, size_t total_size);
+  bool start_response_download_();
+  bool is_busy_() const {
+    return this->downloader_ != nullptr || this->decoder_ != nullptr
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+           || this->http_jpeg_decode_busy_.load(std::memory_order_acquire)
+#endif
+        ;
+  }
+  void queue_pending_update_(const std::string &url);
+  void start_pending_update_();
+  void log_state_(const char *stage);
+  void log_memory_summary_(const char *stage) const;
+  void begin_trace_(const char *stage, size_t bytes = 0);
+  void trace_event_(const char *stage, size_t bytes = 0) const;
+
+  RAMAllocator<uint8_t> allocator_{};
+
+  uint32_t get_buffer_size_() const { return get_buffer_size_(this->buffer_width_, this->buffer_height_); }
+  int get_buffer_size_(int width, int height) const { return (this->get_bpp() * width + 7u) / 8u * height; }
+
+  int get_position_(int x, int y) const { return (x + y * this->decode_buffer_width_) * this->get_bpp() / 8; }
+
+  ESPHOME_ALWAYS_INLINE bool is_auto_resize_() const { return this->fixed_width_ == 0 || this->fixed_height_ == 0; }
+
+  /**
+   * @brief Resize the image buffer to the requested dimensions.
+   *
+   * The buffer will be allocated if not existing.
+   * If the dimensions have been fixed in the yaml config, the buffer will be created
+   * with those dimensions and not resized, even on request.
+   * Otherwise, the old buffer will be deallocated and a new buffer with the requested
+   * allocated
+   *
+   * @param width
+   * @param height
+   * @return 0 if no memory could be allocated, the size of the new buffer otherwise.
+   */
+  size_t resize_(int width, int height);
+  size_t get_decode_buffer_size_() const { return get_buffer_size_(this->decode_buffer_width_, this->decode_buffer_height_); }
+  bool fit_rgb565_decode_buffer_with_ppa_(uint8_t *buffer, int buffer_width, int buffer_height, int content_width,
+                                          int content_height, bool buffer_uses_jpeg_allocator);
+  void release_spare_buffer_();
+  void release_buffer_(uint8_t *buffer, size_t size, bool jpeg_allocator);
+  void discard_decode_buffer_();
+  bool promote_decode_buffer_();
+  void retire_active_buffer_();
+  void cleanup_retired_buffers_(bool force);
+#ifdef USE_LVGL
+  void prepare_lvgl_dsc_();
+#endif
+  bool ensure_download_buffer_capacity_();
+  bool decode_encoded_image_(ImageFormat format, const uint8_t *data, size_t length, bool finish_on_decode = true);
+  bool apply_decode_buffer_scrim_();
+  bool decode_buffered_data_();
+  void finish_download_();
+  void fail_download_();
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  static void http_jpeg_decode_worker_task_(void *arg);
+  bool start_http_jpeg_decode_worker_();
+  bool queue_local_http_open_();
+  bool process_local_http_open_result_();
+  bool queue_local_http_headers_();
+  bool process_local_http_headers_result_(int &result);
+  bool queue_local_http_read_(size_t size);
+  bool process_local_http_read_result_(int &result);
+  bool queue_http_jpeg_decode_();
+  bool process_http_jpeg_decode_result_();
+  void finish_deferred_release_();
+#endif
+#ifdef USE_SENDSPIN_ARTWORK
+  void process_pending_sendspin_();
+  void queue_sendspin_process_();
+  void queue_sendspin_finish_();
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  static void sendspin_decode_worker_task_(void *arg);
+  bool start_sendspin_decode_worker_();
+  bool queue_sendspin_jpeg_decode_(std::vector<uint8_t> &&data, bool display);
+#endif
+#endif
+
+  /**
+   * @brief Draw a pixel into the buffer.
+   *
+   * This is used by the decoder to fill the buffer that will later be displayed
+   * by the `draw` method. This will internally convert the supplied 32 bit RGBA
+   * color into the requested image storage format.
+   *
+   * @param x Horizontal pixel position.
+   * @param y Vertical pixel position.
+   * @param color 32 bit color to put into the pixel.
+   */
+  void draw_pixel_(int x, int y, Color color);
+
+  void end_connection_();
+
+  CallbackManager<void()> decode_start_callback_{};
+  CallbackManager<void(bool)> decode_finished_callback_{};
+  std::atomic<bool> decode_callbacks_active_{false};
+  CallbackManager<void(bool)> download_finished_callback_{};
+  CallbackManager<void()> download_error_callback_{};
+
+  std::shared_ptr<http_request::HttpContainer> downloader_{nullptr};
+#ifdef USE_ESP_IDF
+  LocalHttpContainer *local_downloader_{nullptr};
+  std::shared_ptr<LocalHttpContainer> local_http_cache_{nullptr};
+  bool local_headers_ready_pending_start_{false};
+  uint32_t local_headers_ready_ms_{0};
+#endif
+  std::unique_ptr<ImageDecoder> decoder_{nullptr};
+  ImageFormat active_format_{ImageFormat::AUTO};
+
+  uint8_t *buffer_;
+  size_t buffer_capacity_{0};
+  bool buffer_uses_jpeg_allocator_{false};
+  uint8_t *decode_buffer_{nullptr};
+  size_t decode_buffer_capacity_{0};
+  bool decode_buffer_reuses_active_{false};
+  bool decode_buffer_uses_jpeg_allocator_{false};
+  uint8_t *spare_buffer_{nullptr};
+  size_t spare_buffer_size_{0};
+  bool spare_buffer_uses_jpeg_allocator_{false};
+  bool hardware_jpeg_{true};
+  bool reuse_active_buffer_capacity_{false};
+  DownloadBuffer download_buffer_;
+  /**
+   * This is the *initial* size of the download buffer, not the current size.
+   * The download buffer can be resized at runtime; the download_buffer_initial_size_
+   * will *not* change even if the download buffer has been resized.
+   */
+  size_t download_buffer_initial_size_;
+
+  const ImageFormat format_;
+  image::Image *placeholder_{nullptr};
+
+  std::string url_{""};
+
+  std::vector<std::pair<std::string, TemplatableValue<std::string> > > request_headers_;
+
+  /** width requested on configuration, or 0 if non specified. */
+  const int fixed_width_;
+  /** height requested on configuration, or 0 if non specified. */
+  const int fixed_height_;
+  /**
+   * Whether the image is stored in big-endian format.
+   * This is used to determine how to store 16 bit colors in the buffer.
+   */
+  bool is_big_endian_;
+  bool allow_insecure_local_urls_;
+  /**
+   * Actual width of the current image. If fixed_width_ is specified,
+   * this will be equal to it; otherwise it will be set once the decoding
+   * starts and the original size is known.
+   * This needs to be separate from "BaseImage::get_width()" because the latter
+   * must return 0 until the image has been decoded (to avoid showing partially
+   * decoded images).
+   */
+  int buffer_width_;
+  /**
+   * Actual height of the current image. If fixed_height_ is specified,
+   * this will be equal to it; otherwise it will be set once the decoding
+   * starts and the original size is known.
+   * This needs to be separate from "BaseImage::get_height()" because the latter
+   * must return 0 until the image has been decoded (to avoid showing partially
+   * decoded images).
+   */
+  int buffer_height_;
+  int decode_buffer_width_{0};
+  int decode_buffer_height_{0};
+  int decode_content_width_{0};
+  int decode_content_height_{0};
+  int decode_offset_x_{0};
+  int decode_offset_y_{0};
+  bool decode_buffer_written_by_dma_{false};
+  uint8_t decode_buffer_darkened_percent_{0};
+  bool decode_buffer_scrim_applied_{false};
+  uint32_t trace_id_{0};
+  uint32_t trace_next_id_{0};
+  uint64_t trace_start_us_{0};
+  uint8_t *darkened_buffer_{nullptr};
+  uint8_t darkened_percent_{0};
+  uint8_t darken_percent_{0};
+  uint32_t scrim_color_{0};
+  uint8_t scrim_opacity_{0};
+  int buffer_content_width_{0};
+  int buffer_content_height_{0};
+  int buffer_offset_x_{0};
+  int buffer_offset_y_{0};
+  struct RetiredBuffer {
+    uint8_t *data;
+    size_t size;
+    uint32_t retired_at;
+    bool jpeg_allocator;
+  };
+  std::vector<RetiredBuffer> retired_buffers_{};
+#ifdef USE_LVGL
+  lv_image_dsc_t lvgl_dsc_slots_[2]{};
+  uint8_t lvgl_dsc_slot_{0};
+#endif
+  time_t start_time_;
+  uint32_t last_data_millis_{0};
+  uint32_t last_download_read_stress_ms_{0};
+  bool update_pending_{false};
+  std::string pending_url_{""};
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  TaskHandle_t http_jpeg_decode_task_{nullptr};
+  StackType_t *http_jpeg_decode_task_stack_{nullptr};
+  StaticTask_t *http_jpeg_decode_task_storage_{nullptr};
+  std::atomic<bool> http_jpeg_decode_busy_{false};
+  std::atomic<bool> http_jpeg_decode_done_{false};
+  std::atomic<int> http_jpeg_decode_result_{0};
+  size_t http_jpeg_decode_input_size_{0};
+  bool release_after_http_decode_{false};
+  bool release_after_http_decode_immediate_{false};
+  std::atomic<bool> local_http_open_busy_{false};
+  std::atomic<bool> local_http_open_done_{false};
+  std::atomic<int> local_http_open_result_{ESP_FAIL};
+  std::atomic<bool> local_http_headers_busy_{false};
+  std::atomic<bool> local_http_headers_done_{false};
+  std::atomic<int> local_http_headers_result_{0};
+  std::atomic<bool> local_http_read_busy_{false};
+  std::atomic<bool> local_http_read_done_{false};
+  std::atomic<int> local_http_read_result_{0};
+  size_t local_http_read_size_{0};
+#endif
+#ifdef USE_SENDSPIN_ARTWORK
+  sendspin_::SendspinHub *sendspin_hub_{nullptr};
+  uint8_t sendspin_slot_{0};
+  std::atomic<bool> sendspin_decode_ready_{false};
+  std::atomic<bool> sendspin_decode_failed_{false};
+  std::atomic<bool> sendspin_process_queued_{false};
+  std::atomic<bool> sendspin_finish_queued_{false};
+  Mutex sendspin_pending_lock_{};
+  bool sendspin_paused_{false};
+  std::vector<uint8_t> pending_sendspin_data_{};
+  sendspin::SendspinImageFormat pending_sendspin_format_{sendspin::SendspinImageFormat::JPEG};
+  bool pending_sendspin_image_{false};
+  bool pending_sendspin_display_{false};
+  bool pending_sendspin_clear_{false};
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  TaskHandle_t sendspin_decode_task_{nullptr};
+  StackType_t *sendspin_decode_task_stack_{nullptr};
+  StaticTask_t *sendspin_decode_task_storage_{nullptr};
+  std::atomic<bool> sendspin_decode_busy_{false};
+  std::atomic<bool> sendspin_decode_owns_callbacks_{false};
+  std::vector<uint8_t> sendspin_decode_data_{};
+#endif
+#endif
+  static constexpr uint32_t DOWNLOAD_STALL_TIMEOUT_MS = 10000;
+
+  friend bool ImageDecoder::set_size(int width, int height);
+  friend void ImageDecoder::draw(int x, int y, int w, int h, const Color &color);
+  friend void ImageDecoder::draw_rgb565_block(int x, int y, int w, int h, const uint8_t *data);
+  friend bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int buffer_height,
+                                                int content_width, int content_height,
+                                                bool buffer_uses_jpeg_allocator);
+  friend bool ImageDecoder::adopt_rgb_buffer(uint8_t *buffer, int buffer_width, int buffer_height,
+                                             int content_width, int content_height,
+                                             bool buffer_uses_jpeg_allocator);
+};
+
+template<typename... Ts> class ArtworkImageSetUrlAction : public Action<Ts...> {
+ public:
+  ArtworkImageSetUrlAction(ArtworkImage *parent) : parent_(parent) {}
+  TEMPLATABLE_VALUE(std::string, url)
+  TEMPLATABLE_VALUE(bool, update)
+  void play(const Ts &...x) override {
+    auto url = this->url_.value(x...);
+    if (this->update_.value(x...)) {
+      this->parent_->request_update_url(url);
+    } else {
+      this->parent_->set_url(url);
+    }
+  }
+
+ protected:
+  ArtworkImage *parent_;
+};
+
+template<typename... Ts> class ArtworkImageReleaseAction : public Action<Ts...> {
+ public:
+  ArtworkImageReleaseAction(ArtworkImage *parent) : parent_(parent) {}
+  TEMPLATABLE_VALUE(bool, immediate)
+  void play(const Ts &...x) override { this->parent_->release(this->immediate_.value(x...)); }
+
+ protected:
+  ArtworkImage *parent_;
+};
+
+}  // namespace artwork_image
+}  // namespace esphome
