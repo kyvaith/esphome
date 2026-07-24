@@ -29,6 +29,7 @@ class GestureRouter {
   void set_axis_bias(uint16_t axis_bias) { this->axis_bias_ = axis_bias; }
 
   void begin(int32_t x, int32_t y, GestureAxis allowed_axis);
+  void begin(int32_t x, int32_t y, GestureAxis allowed_axis, uint16_t start_distance, uint16_t axis_bias);
   const GestureSample &update(int32_t x, int32_t y);
   GestureSample finish();
   void cancel();
@@ -39,6 +40,8 @@ class GestureRouter {
  protected:
   uint16_t start_distance_{10};
   uint16_t axis_bias_{6};
+  uint16_t active_start_distance_{10};
+  uint16_t active_axis_bias_{6};
   GestureAxis allowed_axis_{GestureAxis::NONE};
   GestureSample sample_{};
   bool tracking_{};

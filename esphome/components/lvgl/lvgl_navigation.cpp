@@ -111,7 +111,7 @@ void LvglNavigation::touch_begin(int32_t x, int32_t y) {
       this->gesture_application_ = application;
       this->touch_context_ = TouchContext::APPLICATION_SCROLL;
       scroll->touch_begin(y);
-      this->gesture_router_.begin(x, y, GestureAxis::VERTICAL);
+      this->gesture_router_.begin(x, y, GestureAxis::VERTICAL, scroll->get_start_distance(), scroll->get_axis_bias());
     }
 #endif
     return;

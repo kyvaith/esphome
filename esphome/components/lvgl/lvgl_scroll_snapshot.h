@@ -8,17 +8,25 @@
 
 namespace esphome::lvgl {
 
+enum class ScrollSnapshotBackend : uint8_t {
+  LVGL,
+  DIRECT,
+};
+
 class LvglScrollSnapshotController {
  public:
   LvglScrollSnapshotController(LvglComponent *parent, LvPageType *page, lv_obj_t *root)
       : parent_(parent), page_(page), root_(root) {}
 
   void set_preload(bool preload) { this->preload_ = preload; }
+  void set_backend(ScrollSnapshotBackend backend) { this->backend_ = backend; }
   void set_max_content_bytes(size_t max_content_bytes) { this->max_content_bytes_ = max_content_bytes; }
   void set_overscroll_ratio(float ratio) { this->overscroll_ratio_ = ratio; }
   void set_momentum_duration(uint32_t duration) { this->momentum_duration_ = duration; }
   void set_bounce_duration(uint32_t duration) { this->bounce_duration_ = duration; }
   void set_max_inertia_duration(uint32_t duration) { this->max_inertia_duration_ = duration; }
+  void set_start_distance(uint16_t start_distance) { this->start_distance_ = start_distance; }
+  void set_axis_bias(uint16_t axis_bias) { this->axis_bias_ = axis_bias; }
 
   void setup();
   bool prepare();
@@ -32,6 +40,8 @@ class LvglScrollSnapshotController {
   void finish();
   void cancel();
   bool is_active() const { return this->active_; }
+  uint16_t get_start_distance() const { return this->start_distance_; }
+  uint16_t get_axis_bias() const { return this->axis_bias_; }
 
  protected:
   static void screen_event_cb_(lv_event_t *event);
@@ -50,6 +60,14 @@ class LvglScrollSnapshotController {
   void complete_scroll_(int32_t scroll_y);
   void clear_buffers_();
   void hide_overlay_();
+  bool prepare_direct_();
+  bool refresh_direct_();
+  void release_direct_();
+  bool begin_direct_();
+  void update_direct_(int32_t delta_y, int32_t touch_y, uint32_t now);
+  void finish_direct_();
+  void cancel_direct_();
+  bool configure_direct_();
 
   LvglComponent *parent_{};
   LvPageType *page_{};
@@ -79,11 +97,14 @@ class LvglScrollSnapshotController {
   bool screen_active_{};
   bool root_was_hidden_{};
   bool bounce_pending_{};
+  ScrollSnapshotBackend backend_{ScrollSnapshotBackend::LVGL};
   size_t max_content_bytes_{8 * 1024 * 1024};
   float overscroll_ratio_{0.15f};
   uint32_t momentum_duration_{560};
   uint32_t bounce_duration_{320};
   uint32_t max_inertia_duration_{900};
+  uint16_t start_distance_{10};
+  uint16_t axis_bias_{6};
 };
 
 template<typename... Ts> class ScrollSnapshotPrepareAction final : public Action<Ts...> {

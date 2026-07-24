@@ -8680,6 +8680,14 @@ struct SnapshotScrollState {
   LvglComponent *component{nullptr};
 };
 
+struct SnapshotScrollConfig {
+  float overscroll_ratio{0.15f};
+  uint32_t momentum_duration_ms{560};
+  uint32_t bounce_duration_ms{320};
+  uint32_t max_inertia_duration_ms{900};
+  size_t max_content_bytes{8 * 1024 * 1024};
+};
+
 struct SnapshotAppState {
   lv_obj_t *app_root{nullptr};
   lv_obj_t *background_root{nullptr};
@@ -8853,6 +8861,7 @@ struct SnapshotTileWindowCache {
 
 SnapshotSwipeState snapshot_swipe_state;
 SnapshotScrollState snapshot_scroll_state;
+SnapshotScrollConfig snapshot_scroll_config;
 SnapshotAppState snapshot_app_state;
 lv_obj_t *snapshot_app_prepared_close_obj = nullptr;
 lv_draw_buf_t *snapshot_app_prepared_close_buf = nullptr;
@@ -11320,12 +11329,14 @@ int snapshot_scroll_clamp_y(int scroll_y) {
 }
 
 int snapshot_scroll_resist_y(int scroll_y) {
-  constexpr int MAX_OVERSCROLL = 120;
+  const int max_overscroll =
+      std::max(1, static_cast<int>(std::lround(snapshot_scroll_state.viewport_h *
+                                              snapshot_scroll_config.overscroll_ratio)));
   const int max_y = std::max(0, snapshot_scroll_state.max_scroll_y);
   if (scroll_y < 0)
-    return -std::min(MAX_OVERSCROLL, (-scroll_y + 2) / 3);
+    return -std::min(max_overscroll, (-scroll_y + 2) / 3);
   if (scroll_y > max_y)
-    return max_y + std::min(MAX_OVERSCROLL, (scroll_y - max_y + 2) / 3);
+    return max_y + std::min(max_overscroll, (scroll_y - max_y + 2) / 3);
   return scroll_y;
 }
 
@@ -11343,6 +11354,13 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
   const int old_scroll_y = lv_obj_get_scroll_y(obj);
   const int max_scroll_y = std::max<int>(0, lv_obj_get_scroll_top(obj) + lv_obj_get_scroll_bottom(obj));
   const int content_h = std::max(viewport_h, viewport_h + max_scroll_y);
+  const size_t stride = lv_draw_buf_width_to_stride(viewport_w, SNAPSHOT_CF);
+  if (stride == 0 || static_cast<size_t>(content_h) > snapshot_scroll_config.max_content_bytes / stride) {
+    ESP_LOGW(TAG, "snapshot scroll: content needs %u bytes, configured limit is %u",
+             static_cast<unsigned>(stride * content_h),
+             static_cast<unsigned>(snapshot_scroll_config.max_content_bytes));
+    return false;
+  }
   const int old_h = lv_obj_get_height(obj);
   const bool was_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
 
@@ -12522,7 +12540,7 @@ bool snapshot_scroll_process_pending() {
       if (state.inertia_bounce_pending) {
         state.inertia_start_y = state.inertia_target_y;
         state.inertia_target_y = state.inertia_final_y;
-        state.inertia_duration_ms = 320;
+        state.inertia_duration_ms = snapshot_scroll_config.bounce_duration_ms;
         state.inertia_start_us = now_us;
         state.inertia_bounce_pending = false;
         state.current_scroll_y = state.inertia_start_y;
@@ -12583,6 +12601,17 @@ void snapshot_scroll_log_summary() {
 extern "C" void lvgl_esphome_snapshot_swipe_end(void) {
   snapshot_swipe_cleanup();
   lv_obj_invalidate(lv_screen_active());
+}
+
+extern "C" void lvgl_esphome_snapshot_scroll_configure(float overscroll_ratio, uint32_t momentum_duration_ms,
+                                                         uint32_t bounce_duration_ms,
+                                                         uint32_t max_inertia_duration_ms,
+                                                         size_t max_content_bytes) {
+  snapshot_scroll_config.overscroll_ratio = std::clamp(overscroll_ratio, 0.0f, 1.0f);
+  snapshot_scroll_config.momentum_duration_ms = std::max<uint32_t>(1, momentum_duration_ms);
+  snapshot_scroll_config.bounce_duration_ms = std::max<uint32_t>(1, bounce_duration_ms);
+  snapshot_scroll_config.max_inertia_duration_ms = std::max<uint32_t>(1, max_inertia_duration_ms);
+  snapshot_scroll_config.max_content_bytes = std::max<size_t>(1, max_content_bytes);
 }
 
 extern "C" bool lvgl_esphome_snapshot_scroll_begin(lv_obj_t *obj, int viewport_w, int viewport_h) {
@@ -12814,11 +12843,18 @@ extern "C" void lvgl_esphome_snapshot_scroll_finish_inertial(int scroll_y, int v
   const int clamped_velocity = std::clamp(velocity_px_s, -4200, 4200);
   // Keep enough momentum for a watch-style list flick. The compositor runs
   // independently from LVGL, so the longer coast adds no live-tree redraws.
-  const int travel = std::clamp((clamped_velocity * 560) / 1000, -1200, 1200);
+  const int max_travel = std::max(1, state.viewport_h * 3 / 2);
+  const int travel =
+      static_cast<int>(std::clamp<int64_t>(static_cast<int64_t>(clamped_velocity) *
+                                              snapshot_scroll_config.momentum_duration_ms / 1000,
+                                          -max_travel, max_travel));
   const int raw_target_y = start_y + travel;
   const int final_y = std::clamp(raw_target_y, 0, max_y);
   const bool bounce = start_y < 0 || start_y > max_y || raw_target_y < 0 || raw_target_y > max_y;
-  const int target_y = bounce ? std::clamp(raw_target_y, -140, max_y + 140) : final_y;
+  const int max_overscroll =
+      std::max(1, static_cast<int>(std::lround(state.viewport_h * snapshot_scroll_config.overscroll_ratio)));
+  const int target_y =
+      bounce ? std::clamp(raw_target_y, -max_overscroll, max_y + max_overscroll) : final_y;
   const int distance = std::abs(target_y - start_y);
   if (!bounce && (distance < 8 || std::abs(clamped_velocity) < 80)) {
     lvgl_esphome_snapshot_scroll_finish_retain(final_y);
@@ -12831,13 +12867,17 @@ extern "C" void lvgl_esphome_snapshot_scroll_finish_inertial(int scroll_y, int v
   state.inertia_target_y = target_y;
   state.inertia_final_y = final_y;
   state.inertia_bounce_pending = bounce && target_y != final_y;
+  const uint32_t maximum_duration = std::max<uint32_t>(1, snapshot_scroll_config.max_inertia_duration_ms);
+  const uint32_t minimum_duration = std::min<uint32_t>(320U, maximum_duration);
   state.inertia_duration_ms =
-      std::clamp<uint32_t>(320U + (static_cast<uint32_t>(distance) * 11U) / 20U, 320U, 900U);
+      std::clamp<uint32_t>(320U + (static_cast<uint32_t>(distance) * 11U) / 20U, minimum_duration,
+                           maximum_duration);
   state.inertia_start_us = static_cast<uint64_t>(millis()) * 1000ULL;
   state.inertia_active = true;
 #ifdef USE_ESP32
   if (state.worker_enabled &&
-      snapshot_scroll_worker_start_inertia(start_y, target_y, final_y, state.inertia_duration_ms, 320U)) {
+      snapshot_scroll_worker_start_inertia(start_y, target_y, final_y, state.inertia_duration_ms,
+                                           snapshot_scroll_config.bounce_duration_ms)) {
     return;
   }
 #endif

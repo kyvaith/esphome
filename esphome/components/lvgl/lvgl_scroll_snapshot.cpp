@@ -30,6 +30,8 @@ bool LvglScrollSnapshotController::prepare() {
   this->prepare_pending_ = false;
   if (this->active_ || !this->screen_active_)
     return false;
+  if (this->backend_ == ScrollSnapshotBackend::DIRECT)
+    return this->prepare_direct_();
 
   lv_draw_buf_t *head = nullptr;
   lv_draw_buf_t *tail = nullptr;
@@ -52,13 +54,19 @@ bool LvglScrollSnapshotController::prepare() {
 }
 
 bool LvglScrollSnapshotController::refresh() {
-  if (this->active_)
+  if (this->active_ || !this->screen_active_)
     return false;
+  if (this->backend_ == ScrollSnapshotBackend::DIRECT)
+    return this->refresh_direct_();
   return this->prepare();
 }
 
 void LvglScrollSnapshotController::release() {
   this->prepare_pending_ = false;
+  if (this->backend_ == ScrollSnapshotBackend::DIRECT) {
+    this->release_direct_();
+    return;
+  }
   lv_anim_delete(this, animation_exec_);
   if (this->active_)
     this->complete_scroll_(std::clamp<int32_t>(this->visual_scroll_y_, 0, this->max_scroll_y_));
@@ -80,6 +88,8 @@ void LvglScrollSnapshotController::touch_begin(int32_t y) {
 }
 
 bool LvglScrollSnapshotController::begin() {
+  if (this->backend_ == ScrollSnapshotBackend::DIRECT)
+    return this->begin_direct_();
   if (this->active_ || this->root_ == nullptr)
     return false;
   if (!this->prepared_ && !this->prepare())
@@ -102,6 +112,10 @@ bool LvglScrollSnapshotController::begin() {
 }
 
 void LvglScrollSnapshotController::update(int32_t delta_y, int32_t touch_y, uint32_t now) {
+  if (this->backend_ == ScrollSnapshotBackend::DIRECT) {
+    this->update_direct_(delta_y, touch_y, now);
+    return;
+  }
   if (!this->active_)
     return;
 
@@ -116,6 +130,10 @@ void LvglScrollSnapshotController::update(int32_t delta_y, int32_t touch_y, uint
 }
 
 void LvglScrollSnapshotController::finish() {
+  if (this->backend_ == ScrollSnapshotBackend::DIRECT) {
+    this->finish_direct_();
+    return;
+  }
   if (!this->active_)
     return;
 
@@ -140,6 +158,10 @@ void LvglScrollSnapshotController::finish() {
 }
 
 void LvglScrollSnapshotController::cancel() {
+  if (this->backend_ == ScrollSnapshotBackend::DIRECT) {
+    this->cancel_direct_();
+    return;
+  }
   if (!this->active_)
     return;
   this->velocity_px_s_ = 0;
@@ -422,6 +444,99 @@ void LvglScrollSnapshotController::hide_overlay_() {
     ::lv_image_set_src(this->head_image_, nullptr);
   if (this->tail_image_ != nullptr)
     ::lv_image_set_src(this->tail_image_, nullptr);
+}
+
+bool LvglScrollSnapshotController::configure_direct_() {
+  if (this->root_ == nullptr)
+    return false;
+
+  auto *parent = lv_obj_get_parent(this->root_);
+  lv_obj_update_layout(parent == nullptr ? this->root_ : parent);
+  this->viewport_width_ = lv_obj_get_width(this->root_);
+  this->viewport_height_ = lv_obj_get_height(this->root_);
+  if (this->viewport_width_ != this->parent_->get_width() || this->viewport_height_ != this->parent_->get_height()) {
+    ESP_LOGW(TAG, "Direct scroll snapshots require a full-display widget; got %" PRId32 "x%" PRId32,
+             this->viewport_width_, this->viewport_height_);
+    return false;
+  }
+
+  lv_area_t area;
+  lv_obj_get_coords(this->root_, &area);
+  if (area.x1 != 0 || area.y1 != 0) {
+    ESP_LOGW(TAG, "Direct scroll snapshots require a widget at the display origin; got %" PRId32 ",%" PRId32, area.x1,
+             area.y1);
+    return false;
+  }
+
+  lvgl_esphome_snapshot_scroll_configure(this->overscroll_ratio_, this->momentum_duration_, this->bounce_duration_,
+                                         this->max_inertia_duration_, this->max_content_bytes_);
+  return true;
+}
+
+bool LvglScrollSnapshotController::prepare_direct_() {
+  if (!this->configure_direct_())
+    return false;
+  this->prepared_ = lvgl_esphome_snapshot_scroll_prepare(this->root_, this->viewport_width_, this->viewport_height_);
+  return this->prepared_;
+}
+
+bool LvglScrollSnapshotController::refresh_direct_() {
+  if (!this->configure_direct_())
+    return false;
+  if (lvgl_esphome_snapshot_scroll_refresh(this->root_, this->viewport_width_, this->viewport_height_)) {
+    this->prepared_ = true;
+    return true;
+  }
+  return this->prepare_direct_();
+}
+
+void LvglScrollSnapshotController::release_direct_() {
+  lvgl_esphome_snapshot_scroll_end();
+  this->active_ = false;
+  this->prepared_ = false;
+}
+
+bool LvglScrollSnapshotController::begin_direct_() {
+  if (this->active_ || !this->configure_direct_())
+    return false;
+  this->start_scroll_y_ = lv_obj_get_scroll_y(this->root_);
+  this->visual_scroll_y_ = this->start_scroll_y_;
+  if (!lvgl_esphome_snapshot_scroll_begin(this->root_, this->viewport_width_, this->viewport_height_))
+    return false;
+  this->prepared_ = true;
+  this->active_ = true;
+  return true;
+}
+
+void LvglScrollSnapshotController::update_direct_(int32_t delta_y, int32_t touch_y, uint32_t now) {
+  if (!this->active_)
+    return;
+
+  const uint32_t elapsed = now - this->last_touch_ms_;
+  if (elapsed > 0 && elapsed <= 100) {
+    const int32_t instantaneous = -((touch_y - this->last_touch_y_) * 1000) / static_cast<int32_t>(elapsed);
+    this->velocity_px_s_ = (this->velocity_px_s_ * 2 + instantaneous) / 3;
+  }
+  this->last_touch_y_ = touch_y;
+  this->last_touch_ms_ = now;
+  this->visual_scroll_y_ = this->start_scroll_y_ - delta_y;
+  lvgl_esphome_snapshot_scroll_update(this->visual_scroll_y_);
+}
+
+void LvglScrollSnapshotController::finish_direct_() {
+  if (!this->active_)
+    return;
+  lvgl_esphome_snapshot_scroll_finish_inertial(this->visual_scroll_y_, this->velocity_px_s_);
+  this->active_ = false;
+}
+
+void LvglScrollSnapshotController::cancel_direct_() {
+  if (!this->active_)
+    return;
+  const int32_t maximum_scroll =
+      std::max<int32_t>(0, lv_obj_get_scroll_top(this->root_) + lv_obj_get_scroll_bottom(this->root_));
+  lvgl_esphome_snapshot_scroll_finish_retain(std::clamp<int32_t>(this->visual_scroll_y_, 0, maximum_scroll));
+  this->active_ = false;
 }
 
 }  // namespace esphome::lvgl
