@@ -30,6 +30,7 @@ CONF_NAVIGATION = "navigation"
 CONF_ON_CLOSE = "on_close"
 CONF_ON_CLOSE_CANCELLED = "on_close_cancelled"
 CONF_ON_CLOSED = "on_closed"
+CONF_ON_BEFORE_REVEAL = "on_before_reveal"
 CONF_ON_OPENED = "on_opened"
 CONF_ON_HOME_CHANGED = "on_home_changed"
 CONF_ON_PREPARE_CLOSE = "on_prepare_close"
@@ -60,6 +61,7 @@ APPLICATION_SCHEMA = cv.Schema(
         cv.Optional(CONF_CLOSE_ON_THRESHOLD, default=False): cv.boolean,
         cv.Optional(CONF_ON_PREPARE_OPEN): automation.validate_automation({}),
         cv.Optional(CONF_ON_OPEN): automation.validate_automation({}),
+        cv.Optional(CONF_ON_BEFORE_REVEAL): automation.validate_automation({}),
         cv.Optional(CONF_ON_OPENED): automation.validate_automation({}),
         cv.Optional(CONF_ON_PREPARE_CLOSE): automation.validate_automation({}),
         cv.Optional(CONF_ON_CLOSE): automation.validate_automation({}),
@@ -71,6 +73,9 @@ APPLICATION_SCHEMA = cv.Schema(
 APPLICATION_CALLBACK_AUTOMATIONS = (
     automation.CallbackAutomation(CONF_ON_PREPARE_OPEN, "add_on_prepare_open_callback"),
     automation.CallbackAutomation(CONF_ON_OPEN, "add_on_open_callback"),
+    automation.CallbackAutomation(
+        CONF_ON_BEFORE_REVEAL, "add_on_before_reveal_callback"
+    ),
     automation.CallbackAutomation(CONF_ON_OPENED, "add_on_opened_callback"),
     automation.CallbackAutomation(
         CONF_ON_PREPARE_CLOSE, "add_on_prepare_close_callback"

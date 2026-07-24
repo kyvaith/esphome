@@ -160,6 +160,8 @@ lvgl:
           - logger.log: Preparing application open
         on_open:
           - logger.log: Application opening
+        on_before_reveal:
+          - logger.log: Preparing live application view
         on_opened:
           - logger.log: Application opened
         on_prepare_close:
@@ -175,6 +177,8 @@ lvgl:
         widget: overlay_application_widget
         on_open:
           - logger.log: Overlay application opening
+        on_before_reveal:
+          - logger.log: Preparing live overlay view
         on_opened:
           - logger.log: Overlay application opened
         on_close:

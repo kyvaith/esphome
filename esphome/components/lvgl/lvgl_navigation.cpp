@@ -347,6 +347,7 @@ void LvglNavigation::open_application(LvglApplication *application) {
 #endif
   application->call_on_open_callbacks();
   this->activate_application_view_(application);
+  application->call_on_before_reveal_callbacks();
   application->call_on_opened_callbacks();
 }
 
@@ -423,10 +424,12 @@ LvglApplication *LvglNavigation::get_active_application() const { return this->f
 void LvglNavigation::prepare_application_transition(LvglApplication *application, bool opening, bool close_committed) {
   if (application == nullptr)
     return;
-  if (opening || !close_committed)
+  if (opening || !close_committed) {
     this->activate_application_view_(application);
-  else
+    application->call_on_before_reveal_callbacks();
+  } else {
     this->deactivate_application_view_(application);
+  }
 }
 
 void LvglNavigation::complete_application_transition(LvglApplication *application, bool opening, bool close_committed) {

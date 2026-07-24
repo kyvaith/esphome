@@ -29,6 +29,9 @@ class LvglApplication {
     this->prepare_open_callbacks_.add(std::forward<F>(callback));
   }
   template<typename F> void add_on_open_callback(F &&callback) { this->open_callbacks_.add(std::forward<F>(callback)); }
+  template<typename F> void add_on_before_reveal_callback(F &&callback) {
+    this->before_reveal_callbacks_.add(std::forward<F>(callback));
+  }
   template<typename F> void add_on_opened_callback(F &&callback) {
     this->opened_callbacks_.add(std::forward<F>(callback));
   }
@@ -58,6 +61,7 @@ class LvglApplication {
   bool is_close_prepared() const { return this->close_prepared_; }
   void call_on_prepare_open_callbacks() { this->prepare_open_callbacks_.call(); }
   void call_on_open_callbacks() { this->open_callbacks_.call(); }
+  void call_on_before_reveal_callbacks() { this->before_reveal_callbacks_.call(); }
   void call_on_opened_callbacks() { this->opened_callbacks_.call(); }
   void call_on_prepare_close_callbacks() {
     if (this->close_prepared_)
@@ -87,6 +91,7 @@ class LvglApplication {
   LvglScrollSnapshotController *scroll_snapshot_{};
   LazyCallbackManager<void()> prepare_open_callbacks_{};
   LazyCallbackManager<void()> open_callbacks_{};
+  LazyCallbackManager<void()> before_reveal_callbacks_{};
   LazyCallbackManager<void()> opened_callbacks_{};
   LazyCallbackManager<void()> prepare_close_callbacks_{};
   LazyCallbackManager<void()> close_callbacks_{};
