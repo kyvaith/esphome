@@ -18,6 +18,13 @@ lvgl:
   use_ppa_img: true
   touchscreens:
     - navigation_touchscreen
+  top_layer:
+    widgets:
+      - obj:
+          id: top_layer_navigation_blocker
+          width: 100%
+          height: 100%
+          hidden: true
   pages:
     - id: home_widget_page
       widgets:
@@ -138,7 +145,7 @@ lvgl:
         - home_indicator_one
         - home_indicator_two
     blockers:
-      - overlay_application_widget
+      - top_layer_navigation_blocker
     on_home_changed:
       - lambda: ESP_LOGD("lvgl.navigation", "Home page %u", page);
     applications:
