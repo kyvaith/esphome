@@ -141,6 +141,8 @@ void MipiDsi::setup() {
     for (size_t i = 0; i < this->frame_buffer_count_; i++)
       this->frame_buffers_[i] = static_cast<uint8_t *>(frame_buffers[i]);
     this->last_submitted_frame_buffer_ = this->frame_buffers_[0];
+    this->latest_submitted_frame_buffer_.store(this->frame_buffers_[0], std::memory_order_release);
+    this->direct_presented_frame_buffer_.store(this->frame_buffers_[0], std::memory_order_release);
     ESP_LOGI(TAG, "%zu DPI framebuffer(s) exposed (%zu bytes each)", this->frame_buffer_count_,
              this->get_frame_buffer_size());
   } else {
@@ -217,14 +219,17 @@ void MipiDsi::setup() {
   this->io_lock_ = xSemaphoreCreateBinary();
   this->refresh_lock_ = xSemaphoreCreateBinary();
   this->frame_buffer_session_lock_ = xSemaphoreCreateMutex();
-  if (this->io_lock_ == nullptr || this->refresh_lock_ == nullptr || this->frame_buffer_session_lock_ == nullptr) {
+  this->direct_frame_lock_ = xSemaphoreCreateMutex();
+  if (this->io_lock_ == nullptr || this->refresh_lock_ == nullptr || this->frame_buffer_session_lock_ == nullptr ||
+      this->direct_frame_lock_ == nullptr) {
     this->status_set_error(LOG_STR("Framebuffer synchronization allocation failed"));
     this->mark_failed();
     return;
   }
   if (this->async_lvgl_flush_) {
     this->async_flush_done_ = xSemaphoreCreateBinary();
-    if (this->async_flush_done_ == nullptr) {
+    this->blocking_region_done_ = xSemaphoreCreateBinary();
+    if (this->async_flush_done_ == nullptr || this->blocking_region_done_ == nullptr) {
       ESP_LOGW(TAG, "Async LVGL flush requested but semaphore allocation failed");
       this->async_lvgl_flush_ = false;
     }
@@ -274,6 +279,12 @@ void MipiDsi::start_async_flush_task_() {
 }
 
 void MipiDsi::async_flush_task_trampoline(void *arg) { static_cast<MipiDsi *>(arg)->async_flush_task_(); }
+
+void MipiDsi::blocking_region_ready_(void *arg) {
+  auto semaphore = static_cast<SemaphoreHandle_t>(arg);
+  if (semaphore != nullptr)
+    xSemaphoreGive(semaphore);
+}
 
 void MipiDsi::async_flush_task_() {
   while (true) {
@@ -328,6 +339,95 @@ bool MipiDsi::wait_for_refresh_done(uint32_t timeout_ms) {
   while (xSemaphoreTake(this->refresh_lock_, 0) == pdTRUE) {
   }
   return xSemaphoreTake(this->refresh_lock_, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
+bool MipiDsi::is_frame_buffer_(const uint8_t *frame_buffer) const {
+  if (frame_buffer == nullptr)
+    return false;
+  for (size_t index = 0; index < this->frame_buffer_count_; index++) {
+    if (this->frame_buffers_[index] == frame_buffer)
+      return true;
+  }
+  return false;
+}
+
+uint8_t *MipiDsi::get_direct_render_frame_buffer(const uint8_t *exclude_a, const uint8_t *exclude_b) const {
+  const uint8_t *presented = this->direct_presented_frame_buffer_.load(std::memory_order_acquire);
+  const uint8_t *queued = this->direct_queued_frame_buffer_.load(std::memory_order_acquire);
+  const uint8_t *submitted = this->latest_submitted_frame_buffer_.load(std::memory_order_acquire);
+  for (size_t index = 0; index < this->frame_buffer_count_; index++) {
+    auto *candidate = this->frame_buffers_[index];
+    if (candidate != nullptr && candidate != presented && candidate != queued && candidate != submitted &&
+        candidate != exclude_a && candidate != exclude_b) {
+      return candidate;
+    }
+  }
+  return nullptr;
+}
+
+uint8_t *MipiDsi::wait_for_direct_render_frame_buffer(const uint8_t *exclude_a, const uint8_t *exclude_b,
+                                                      uint32_t timeout_ms) {
+  const TickType_t started = xTaskGetTickCount();
+  const TickType_t timeout = std::max<TickType_t>(1, pdMS_TO_TICKS(timeout_ms));
+  while (true) {
+    if (auto *frame_buffer = this->get_direct_render_frame_buffer(exclude_a, exclude_b); frame_buffer != nullptr)
+      return frame_buffer;
+    if (!this->wait_for_direct_frame_queue_idle(timeout_ms))
+      return nullptr;
+    if (xTaskGetTickCount() - started >= timeout)
+      return nullptr;
+  }
+}
+
+bool MipiDsi::finish_queued_direct_frame_(uint32_t timeout_ms) {
+  if (!this->direct_frame_pending_)
+    return true;
+  if (this->direct_queued_frame_buffer_.load(std::memory_order_acquire) == nullptr || this->refresh_lock_ == nullptr ||
+      xSemaphoreTake(this->refresh_lock_, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+    return false;
+  }
+  this->direct_presented_frame_buffer_.store(
+      this->direct_queued_frame_buffer_.exchange(nullptr, std::memory_order_acq_rel), std::memory_order_release);
+  this->direct_frame_pending_ = false;
+  return true;
+}
+
+bool MipiDsi::wait_for_direct_frame_queue_idle(uint32_t timeout_ms) {
+  if (this->direct_frame_lock_ == nullptr ||
+      xSemaphoreTake(this->direct_frame_lock_, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+    return false;
+  }
+  const bool ready = this->finish_queued_direct_frame_(timeout_ms);
+  xSemaphoreGive(this->direct_frame_lock_);
+  return ready;
+}
+
+bool MipiDsi::queue_direct_frame_buffer(uint8_t *frame_buffer, uint32_t timeout_ms, bool wait_for_active) {
+  if (!this->is_frame_buffer_(frame_buffer) || this->direct_frame_lock_ == nullptr ||
+      this->frame_buffer_session_active_ ||
+      xSemaphoreTake(this->direct_frame_lock_, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+    return false;
+  }
+
+  const bool had_pending_frame = this->direct_frame_pending_;
+  bool ready = this->finish_queued_direct_frame_(timeout_ms);
+  if (ready && !had_pending_frame)
+    ready = this->wait_for_refresh_done(timeout_ms);
+  if (ready) {
+    // We are immediately past a frame boundary. The most recently submitted
+    // normal-renderer frame is therefore the one currently scanned out.
+    this->direct_presented_frame_buffer_.store(this->latest_submitted_frame_buffer_.load(std::memory_order_acquire),
+                                               std::memory_order_release);
+    ready = frame_buffer != this->direct_presented_frame_buffer_.load(std::memory_order_acquire) &&
+            this->submit_frame_buffer_(frame_buffer, 0, this->height_ - 1, BufferWriter::DMA);
+  }
+  if (ready) {
+    this->direct_queued_frame_buffer_.store(frame_buffer, std::memory_order_release);
+    this->direct_frame_pending_ = true;
+  }
+  xSemaphoreGive(this->direct_frame_lock_);
+
+  return ready && (!wait_for_active || this->wait_for_direct_frame_queue_idle(timeout_ms));
 }
 
 bool MipiDsi::wait_for_async_flush_(uint32_t timeout_ms) {
@@ -498,6 +598,7 @@ bool MipiDsi::submit_frame_buffer_(uint8_t *frame_buffer, int y_start, int y_end
   }
   xSemaphoreTake(this->io_lock_, portMAX_DELAY);
   this->last_submitted_frame_buffer_ = frame_buffer;
+  this->latest_submitted_frame_buffer_.store(frame_buffer, std::memory_order_release);
   this->last_submitted_frame_buffer_writer_ = writer;
   return true;
 }
@@ -688,6 +789,46 @@ bool MipiDsi::draw_pixels_at_async(int x_start, int y_start, int w, int h, const
       this->async_perf_copy_max_us_ = copy_us;
   }
   return true;
+}
+
+Dma2dRegionResult MipiDsi::draw_pixels_at_dma2d_blocking(int x_start, int y_start, int w, int h, const uint8_t *ptr,
+                                                         display::ColorOrder order, display::ColorBitness bitness,
+                                                         uint32_t queue_timeout_ms) {
+  if (!this->async_lvgl_flush_ || !this->use_dma2d_ || this->blocking_region_done_ == nullptr)
+    return Dma2dRegionResult::UNAVAILABLE;
+
+  const TickType_t timeout = std::max<TickType_t>(1, pdMS_TO_TICKS(queue_timeout_ms));
+  const TickType_t started = xTaskGetTickCount();
+  while (this->async_flush_pending_) {
+    if (xTaskGetTickCount() - started >= timeout)
+      return Dma2dRegionResult::BUSY;
+    vTaskDelay(1);
+  }
+
+  while (xSemaphoreTake(this->blocking_region_done_, 0) == pdTRUE) {
+  }
+  const auto result = this->draw_pixels_at_dma2d_async(x_start, y_start, w, h, ptr, order, bitness,
+                                                       &MipiDsi::blocking_region_ready_, this->blocking_region_done_);
+  if (result != Dma2dRegionResult::SUBMITTED)
+    return result;
+  return xSemaphoreTake(this->blocking_region_done_, portMAX_DELAY) == pdTRUE ? Dma2dRegionResult::COMPLETE
+                                                                              : Dma2dRegionResult::FAILED;
+}
+
+Dma2dRegionResult MipiDsi::draw_pixels_at_dma2d_async(int x_start, int y_start, int w, int h, const uint8_t *ptr,
+                                                      display::ColorOrder order, display::ColorBitness bitness,
+                                                      AsyncFlushReadyCallback ready_callback, void *ready_arg) {
+  if (!this->async_lvgl_flush_ || !this->use_dma2d_ || this->async_flush_done_ == nullptr ||
+      this->async_flush_task_handle_ == nullptr || ready_callback == nullptr) {
+    return Dma2dRegionResult::UNAVAILABLE;
+  }
+  if (this->async_flush_pending_)
+    return Dma2dRegionResult::BUSY;
+  if (!this->draw_pixels_at_async(x_start, y_start, w, h, ptr, order, bitness, false, 0, 0, 0, ready_callback,
+                                  ready_arg)) {
+    return this->async_flush_pending_ ? Dma2dRegionResult::BUSY : Dma2dRegionResult::FAILED;
+  }
+  return Dma2dRegionResult::SUBMITTED;
 }
 
 void MipiDsi::consume_async_flush_perf(AsyncFlushPerfStats *stats) {

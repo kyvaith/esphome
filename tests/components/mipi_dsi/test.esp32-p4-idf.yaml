@@ -12,7 +12,7 @@ display:
     enable_pin: GPIO22
     use_dma2d: true
     async_lvgl_flush: true
-    frame_buffer_count: 2
+    frame_buffer_count: 3
 
 #light:
   #- platform: mipi_dsi

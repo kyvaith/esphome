@@ -5,6 +5,8 @@
 
 // only applicable on ESP32-P4
 #ifdef USE_ESP32_VARIANT_ESP32P4
+#include <atomic>
+
 #include "esphome/core/component.h"
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
@@ -48,8 +50,17 @@ struct MipiDsiCallbackContext {
 
 using AsyncFlushReadyCallback = void (*)(void *);
 
+enum class Dma2dRegionResult : uint8_t {
+  UNAVAILABLE,
+  BUSY,
+  SUBMITTED,
+  COMPLETE,
+  FAILED,
+};
+
 struct AsyncFlushPerfStats {
   uint32_t flushes{};
+  uint32_t underruns{};
   uint32_t zero_copy_flushes{};
   uint32_t staged_flushes{};
   uint32_t done_flushes{};
@@ -104,6 +115,18 @@ class MipiDsi : public display::Display {
   display::ColorBitness get_frame_buffer_bitness() const override { return this->color_depth_; }
   size_t get_bytes_per_pixel() const { return this->get_bytes_per_pixel_(); }
   bool wait_for_refresh_done(uint32_t timeout_ms = 50);
+  uint8_t *get_presented_frame_buffer() const {
+    auto *queued = this->direct_queued_frame_buffer_.load(std::memory_order_acquire);
+    auto *presented = this->direct_presented_frame_buffer_.load(std::memory_order_acquire);
+    auto *submitted = this->latest_submitted_frame_buffer_.load(std::memory_order_acquire);
+    return queued != nullptr ? presented : (submitted != nullptr ? submitted : presented);
+  }
+  uint8_t *get_queued_frame_buffer() const { return this->direct_queued_frame_buffer_.load(std::memory_order_acquire); }
+  uint8_t *get_direct_render_frame_buffer(const uint8_t *exclude_a = nullptr, const uint8_t *exclude_b = nullptr) const;
+  uint8_t *wait_for_direct_render_frame_buffer(const uint8_t *exclude_a = nullptr, const uint8_t *exclude_b = nullptr,
+                                               uint32_t timeout_ms = 50);
+  bool queue_direct_frame_buffer(uint8_t *frame_buffer, uint32_t timeout_ms = 50, bool wait_for_active = true);
+  bool wait_for_direct_frame_queue_idle(uint32_t timeout_ms = 50);
   bool begin_frame_buffer_session(uint32_t timeout_ms = 50) override;
   bool acquire_frame_buffer(display::FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
                             uint32_t timeout_ms = 50) override;
@@ -123,6 +146,12 @@ class MipiDsi : public display::Display {
   bool draw_pixels_at_async(int x_start, int y_start, int w, int h, const uint8_t *ptr, display::ColorOrder order,
                             display::ColorBitness bitness, bool big_endian, int x_offset, int y_offset, int x_pad,
                             AsyncFlushReadyCallback ready_callback, void *ready_arg);
+  Dma2dRegionResult draw_pixels_at_dma2d_blocking(int x_start, int y_start, int w, int h, const uint8_t *ptr,
+                                                  display::ColorOrder order, display::ColorBitness bitness,
+                                                  uint32_t queue_timeout_ms = 2);
+  Dma2dRegionResult draw_pixels_at_dma2d_async(int x_start, int y_start, int w, int h, const uint8_t *ptr,
+                                               display::ColorOrder order, display::ColorBitness bitness,
+                                               AsyncFlushReadyCallback ready_callback, void *ready_arg);
   bool present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end) override;
   void consume_async_flush_perf(AsyncFlushPerfStats *stats);
 
@@ -139,9 +168,12 @@ class MipiDsi : public display::Display {
   void start_async_flush_task_();
   static void async_flush_task_trampoline(void *arg);
   void async_flush_task_();
+  static void blocking_region_ready_(void *arg);
   bool ensure_async_staging_buffer_(size_t size);
   bool check_buffer_();
   bool wait_for_async_flush_(uint32_t timeout_ms);
+  bool finish_queued_direct_frame_(uint32_t timeout_ms);
+  bool is_frame_buffer_(const uint8_t *frame_buffer) const;
   bool submit_frame_buffer_(uint8_t *frame_buffer, int y_start, int y_end, BufferWriter writer = BufferWriter::CPU);
   bool finish_pending_frame_buffer_(uint32_t timeout_ms);
   bool validate_frame_buffer_lease_(const display::FrameBufferLease *lease) const;
@@ -177,7 +209,9 @@ class MipiDsi : public display::Display {
   SemaphoreHandle_t io_lock_{};
   SemaphoreHandle_t refresh_lock_{};
   SemaphoreHandle_t frame_buffer_session_lock_{};
+  SemaphoreHandle_t direct_frame_lock_{};
   SemaphoreHandle_t async_flush_done_{};
+  SemaphoreHandle_t blocking_region_done_{};
   TaskHandle_t async_flush_task_handle_{};
   MipiDsiCallbackContext callback_context_{};
   AsyncFlushReadyCallback async_ready_callback_{};
@@ -204,6 +238,10 @@ class MipiDsi : public display::Display {
   uint32_t async_perf_done_max_us_{0};
   uint8_t *frame_buffers_[MIPI_DSI_MAX_FRAME_BUFFERS]{};
   uint8_t *last_submitted_frame_buffer_{};
+  std::atomic<uint8_t *> direct_presented_frame_buffer_{nullptr};
+  std::atomic<uint8_t *> direct_queued_frame_buffer_{nullptr};
+  std::atomic<uint8_t *> latest_submitted_frame_buffer_{nullptr};
+  bool direct_frame_pending_{false};
   uint8_t *session_active_frame_buffer_{};
   uint8_t *session_leased_frame_buffer_{};
   uint8_t *session_pending_frame_buffer_{};
