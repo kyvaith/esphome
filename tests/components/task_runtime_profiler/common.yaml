@@ -1,0 +1,8 @@
+task_runtime_profiler:
+  id: runtime_profiler
+
+button:
+  - platform: template
+    name: Log task runtime profile
+    on_press:
+      - task_runtime_profiler.log: runtime_profiler
