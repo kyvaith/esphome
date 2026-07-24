@@ -12057,6 +12057,7 @@ extern "C" bool lvgl_esphome_snapshot_app_prepare_close(lv_obj_t *app) {
   // application image. Use it as a read-only close-animation source instead
   // of allocating and filling another 1.92 MB RGB888 surface. The compositor
   // excludes this framebuffer from its target rotation until completion.
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   if (buf == nullptr && component != nullptr) {
     const int width = lv_display_get_horizontal_resolution(disp);
     const int height = lv_display_get_vertical_resolution(disp);
@@ -12069,6 +12070,7 @@ extern "C" bool lvgl_esphome_snapshot_app_prepare_close(lv_obj_t *app) {
       buf = &snapshot_app_presented_close_view;
     }
   }
+#endif
   if (buf == nullptr && component != nullptr && snapshot_app_reserve_work_buffer(app)) {
     const int width = lv_display_get_horizontal_resolution(disp);
     const int height = lv_display_get_vertical_resolution(disp);
@@ -12187,6 +12189,7 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
     }
   }
 
+#if LV_USE_IMAGE
   snapshot_swipe_state.current_buf = snapshot_cache_find(current);
   snapshot_swipe_state.next_buf = snapshot_cache_find(next);
   if (snapshot_swipe_state.current_buf == nullptr) {
@@ -12277,6 +12280,10 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
   lv_obj_add_flag(next, LV_OBJ_FLAG_HIDDEN);
   ESP_LOGD(TAG, "snapshot swipe: active, next_x=%d", next_x);
   return true;
+#else
+  snapshot_swipe_cleanup();
+  return false;
+#endif
 #else
   return false;
 #endif

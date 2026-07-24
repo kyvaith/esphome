@@ -232,8 +232,11 @@ void LvglNavigation::touch_cancel() {
     }
   }
 #endif
-  if (gesture_application != nullptr && gesture_application->is_close_prepared() &&
-      (this->snapshot_compositor_ == nullptr || !this->snapshot_compositor_->is_application_active()))
+  if (gesture_application != nullptr && gesture_application->is_close_prepared()
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+      && (this->snapshot_compositor_ == nullptr || !this->snapshot_compositor_->is_application_active())
+#endif
+  )
     gesture_application->call_on_close_cancelled_callbacks();
   this->reset_touch_();
 }
