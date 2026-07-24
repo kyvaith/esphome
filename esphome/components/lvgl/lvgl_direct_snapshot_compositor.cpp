@@ -16,11 +16,8 @@ bool LvglDirectSnapshotCompositor::can_use_direct_home_() const {
   if (this->parent_ == nullptr || this->home_views_.empty() || this->parent_->get_width() <= 0)
     return false;
 
-  auto *parent = lv_obj_get_parent(this->home_views_.front());
-  if (parent == nullptr)
-    return false;
   return std::all_of(this->home_views_.begin(), this->home_views_.end(),
-                     [parent](lv_obj_t *view) { return view != nullptr && lv_obj_get_parent(view) == parent; });
+                     [](lv_obj_t *view) { return view != nullptr && lv_obj_get_parent(view) != nullptr; });
 }
 
 bool LvglDirectSnapshotCompositor::can_use_direct_application_(LvglApplication *application, int home_index) const {
@@ -86,14 +83,19 @@ bool LvglDirectSnapshotCompositor::start_direct_home_(int32_t delta_x) {
 
   lvgl_esphome_snapshot_swipe_end();
   auto *current = this->home_views_[this->current_index_];
-  lv_obj_align(current, LV_ALIGN_CENTER, 0, 0);
-  lv_obj_remove_flag(current, LV_OBJ_FLAG_HIDDEN);
+  auto *current_parent = lv_obj_get_parent(current);
+  if (current_parent != nullptr) {
+    lv_obj_align(current, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_remove_flag(current, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_update_layout(current_parent);
+  }
   if (this->direct_neighbor_index_ >= 0) {
     auto *neighbor = this->home_views_[this->direct_neighbor_index_];
-    lv_obj_align(neighbor, LV_ALIGN_CENTER, this->direct_neighbor_origin_, 0);
-    lv_obj_add_flag(neighbor, LV_OBJ_FLAG_HIDDEN);
+    if (lv_obj_get_parent(neighbor) != nullptr) {
+      lv_obj_align(neighbor, LV_ALIGN_CENTER, this->direct_neighbor_origin_, 0);
+      lv_obj_add_flag(neighbor, LV_OBJ_FLAG_HIDDEN);
+    }
   }
-  lv_obj_update_layout(lv_obj_get_parent(current));
   const int fallback_index = this->current_index_;
   this->direct_edge_ = false;
   this->direct_neighbor_index_ = -1;

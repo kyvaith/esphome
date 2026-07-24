@@ -35,6 +35,7 @@ CONF_DECODED_SLOTS = "decoded_slots"
 CONF_APPLICATION_TRANSITIONS = "application_transitions"
 CONF_CLOSE_TARGET_X = "close_target_x"
 CONF_CLOSE_TARGET_Y = "close_target_y"
+CONF_HOME_VIEWS = "home_views"
 CONF_INTERNAL_COMPOSITOR_ID = "internal_compositor_id"
 CONF_MAX_ENTRIES = "max_entries"
 CONF_PRELOAD = "preload"
@@ -134,6 +135,9 @@ SNAPSHOT_SCHEMA = cv.All(
             cv.Optional(CONF_SCROLL_REGIONS, default=[]): cv.ensure_list(
                 SCROLL_REGION_SCHEMA
             ),
+            cv.Optional(CONF_HOME_VIEWS, default=[]): cv.ensure_list(
+                cv.use_id(lv_pseudo_button_t)
+            ),
             cv.Optional(CONF_PAGES, default=[]): cv.ensure_list(cv.use_id(lv_page_t)),
         }
     ).extend(cv.COMPONENT_SCHEMA),
@@ -141,10 +145,11 @@ SNAPSHOT_SCHEMA = cv.All(
 )
 
 
-def _registered_page_ids(config, navigation_config):
+def _registered_page_ids(config, navigation_config, include_home_pages):
     page_ids = list(config[CONF_PAGES])
     if navigation_config is not None:
-        page_ids.extend(navigation_config[CONF_HOME][CONF_PAGES])
+        if include_home_pages:
+            page_ids.extend(navigation_config[CONF_HOME][CONF_PAGES])
         page_ids.extend(
             application[CONF_PAGE]
             for application in navigation_config[CONF_APPLICATIONS]
@@ -176,14 +181,44 @@ async def snapshot_to_code(lv_component, config, navigation_config):
     if snapshot_config is None:
         return
 
-    page_ids = _registered_page_ids(snapshot_config, navigation_config)
-    home_widget_ids = _registered_home_widget_ids(navigation_config)
+    configured_home_view_ids = snapshot_config[CONF_HOME_VIEWS]
+    navigation_home_widget_ids = _registered_home_widget_ids(navigation_config)
+    if configured_home_view_ids and navigation_home_widget_ids:
+        raise cv.Invalid(
+            "snapshot_compositor.home_views is only valid with page-based home navigation"
+        )
+
+    home_view_ids = configured_home_view_ids or navigation_home_widget_ids
+    navigation_home_page_ids = (
+        navigation_config[CONF_HOME][CONF_PAGES]
+        if navigation_config is not None
+        else []
+    )
+    if configured_home_view_ids and len(configured_home_view_ids) != len(
+        navigation_home_page_ids
+    ):
+        raise cv.Invalid(
+            "snapshot_compositor.home_views must contain one widget for every "
+            "page in navigation.home.pages"
+        )
+
     application_widget_ids = _registered_application_widget_ids(navigation_config)
     direct_backend = snapshot_config[CONF_BACKEND] == BACKEND_DIRECT
+    if direct_backend and navigation_config is not None and not home_view_ids:
+        raise cv.Invalid(
+            "The direct snapshot backend requires home widget navigation or "
+            "snapshot_compositor.home_views"
+        )
+
+    page_ids = _registered_page_ids(
+        snapshot_config,
+        navigation_config,
+        include_home_pages=not (direct_backend and configured_home_view_ids),
+    )
     registered_count = (
         len(page_ids)
         + len(application_widget_ids)
-        + (0 if direct_backend else len(home_widget_ids))
+        + (0 if direct_backend else len(home_view_ids))
     )
     if registered_count > snapshot_config[CONF_MAX_ENTRIES]:
         raise cv.Invalid(
@@ -207,25 +242,20 @@ async def snapshot_to_code(lv_component, config, navigation_config):
     for page_id in page_ids:
         page = await cg.get_variable(page_id)
         cg.add(store.register_page(page))
-    home_widgets = await get_widgets(
-        [{CONF_ID: widget_id} for widget_id in home_widget_ids]
+    home_views = await get_widgets(
+        [{CONF_ID: widget_id} for widget_id in home_view_ids]
     )
     application_widgets = await get_widgets(
         [{CONF_ID: widget_id} for widget_id in application_widget_ids]
     )
     if not direct_backend:
-        for widget in home_widgets:
+        for widget in home_views:
             lv_add(store.register_object(widget.obj))
     for widget in application_widgets:
         lv_add(store.register_object(widget.obj))
 
     if navigation_config is not None:
         navigation = await cg.get_variable(navigation_config[CONF_ID])
-        if direct_backend and not home_widget_ids:
-            raise cv.Invalid(
-                "The direct snapshot backend currently requires home widget "
-                "navigation on a shared host page"
-            )
         compositor_type = (
             LvglDirectSnapshotCompositor if direct_backend else LvglSnapshotCompositor
         )
@@ -241,14 +271,18 @@ async def snapshot_to_code(lv_component, config, navigation_config):
         )
         home_config = navigation_config[CONF_HOME]
         if home_config[CONF_PAGES]:
-            for page_id in home_config[CONF_PAGES]:
-                page = await cg.get_variable(page_id)
-                cg.add(compositor.add_home_page(page))
+            if configured_home_view_ids:
+                for widget in home_views:
+                    lv_add(compositor.add_home_view(widget.obj))
+            else:
+                for page_id in home_config[CONF_PAGES]:
+                    page = await cg.get_variable(page_id)
+                    cg.add(compositor.add_home_page(page))
         else:
-            for widget in home_widgets:
+            for widget in home_views:
                 lv_add(compositor.add_home_view(widget.obj))
-            if direct_backend and snapshot_config[CONF_PRELOAD]:
-                lv_add(compositor.prepare_home(0))
+        if direct_backend and snapshot_config[CONF_PRELOAD]:
+            lv_add(compositor.prepare_home(0))
         if transitions := snapshot_config.get(CONF_APPLICATION_TRANSITIONS):
             cg.add(compositor.set_application_transitions_enabled(True))
             cg.add(

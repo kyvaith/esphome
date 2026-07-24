@@ -15,15 +15,25 @@ lvgl:
   pages:
     - id: direct_home_one
       widgets:
-        - image:
-            id: direct_presenter_widget
-            src: direct_presenter_image
+        - obj:
+            id: direct_home_one_view
             width: 100%
             height: 100%
+            widgets:
+              - image:
+                  id: direct_presenter_widget
+                  src: direct_presenter_image
+                  width: 100%
+                  height: 100%
     - id: direct_home_two
       widgets:
-        - label:
-            text: Home 2
+        - obj:
+            id: direct_home_two_view
+            width: 100%
+            height: 100%
+            widgets:
+              - label:
+                  text: Home 2
   navigation:
     home:
       pages:
@@ -31,6 +41,11 @@ lvgl:
         - direct_home_two
   snapshot_compositor:
     id: default_snapshots
+    backend: direct
+    preload: true
+    home_views:
+      - direct_home_one_view
+      - direct_home_two_view
 
 image:
   - platform: file
