@@ -1,11 +1,12 @@
 from esphome import automation
 import esphome.codegen as cg
+from esphome.components.lvgl.defines import CONF_LVGL_ID, CONF_WIDGETS
 from esphome.components.lvgl.lv_validation import lv_color
-from esphome.components.lvgl.lvcode import LvContext
+from esphome.components.lvgl.lvcode import LvContext, LvglComponent
 from esphome.components.lvgl.types import lv_obj_t
 from esphome.components.lvgl.widgets import get_widgets, wait_for_widgets
 import esphome.config_validation as cv
-from esphome.const import CONF_COLOR, CONF_ID, CONF_VALUE
+from esphome.const import CONF_COLOR, CONF_COUNT, CONF_ID, CONF_VALUE
 
 CODEOWNERS = ["@kyvaith"]
 DEPENDENCIES = ["lvgl"]
@@ -13,7 +14,7 @@ DEPENDENCIES = ["lvgl"]
 CONF_ACTIVE_COLOR = "active_color"
 CONF_ACTIVE_SIZE = "active_size"
 CONF_CONTAINER = "container"
-CONF_COUNT = "count"
+CONF_DIRECT_STATE_LAYERS = "direct_state_layers"
 CONF_ENTER_DURATION = "enter_duration"
 CONF_EXIT_DURATION = "exit_duration"
 CONF_GAP = "gap"
@@ -29,6 +30,9 @@ CONF_WIDGET = "widget"
 
 lvgl_material_ns = cg.esphome_ns.namespace("lvgl_material")
 MaterialStateLayer = lvgl_material_ns.class_("MaterialStateLayer", cg.Component)
+MaterialDirectStateLayer = lvgl_material_ns.class_(
+    "MaterialDirectStateLayer", cg.Component
+)
 MaterialPageIndicator = lvgl_material_ns.class_("MaterialPageIndicator", cg.Component)
 MaterialPageIndicatorSetAction = lvgl_material_ns.class_(
     "MaterialPageIndicatorSetAction",
@@ -48,6 +52,17 @@ STATE_LAYER_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_EXIT_DURATION, default="120ms"
         ): cv.positive_time_period_milliseconds,
+    }
+).extend(cv.COMPONENT_SCHEMA)
+
+DIRECT_STATE_LAYER_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MaterialDirectStateLayer),
+        cv.GenerateID(CONF_LVGL_ID): cv.use_id(LvglComponent),
+        cv.Required(CONF_WIDGETS): cv.All(
+            cv.ensure_list(cv.use_id(lv_obj_t)), cv.Length(min=1)
+        ),
+        cv.Optional(CONF_PRESSED_OPACITY, default="12%"): cv.percentage,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -71,9 +86,14 @@ PAGE_INDICATOR_SCHEMA = cv.Schema(
 
 
 def _validate_config(config):
-    if not config.get(CONF_STATE_LAYERS) and not config.get(CONF_PAGE_INDICATORS):
+    if (
+        not config.get(CONF_STATE_LAYERS)
+        and not config.get(CONF_DIRECT_STATE_LAYERS)
+        and not config.get(CONF_PAGE_INDICATORS)
+    ):
         raise cv.Invalid(
-            f"At least one of {CONF_STATE_LAYERS} or {CONF_PAGE_INDICATORS} is required"
+            f"At least one of {CONF_STATE_LAYERS}, {CONF_DIRECT_STATE_LAYERS}, "
+            f"or {CONF_PAGE_INDICATORS} is required"
         )
     for indicator in config.get(CONF_PAGE_INDICATORS, []):
         if indicator[CONF_INITIAL_PAGE] >= indicator[CONF_COUNT]:
@@ -87,6 +107,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_STATE_LAYERS, default=list): cv.ensure_list(
                 STATE_LAYER_SCHEMA
             ),
+            cv.Optional(CONF_DIRECT_STATE_LAYERS, default=list): cv.ensure_list(
+                DIRECT_STATE_LAYER_SCHEMA
+            ),
             cv.Optional(CONF_PAGE_INDICATORS, default=list): cv.ensure_list(
                 PAGE_INDICATOR_SCHEMA
             ),
@@ -97,6 +120,17 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
+    direct_state_layer_bindings = []
+    for conf in config[CONF_DIRECT_STATE_LAYERS]:
+        lvgl = await cg.get_variable(conf[CONF_LVGL_ID])
+        var = cg.new_Pvariable(conf[CONF_ID], lvgl)
+        await cg.register_component(var, conf)
+        cg.add(var.set_pressed_opacity(round(conf[CONF_PRESSED_OPACITY] * 255)))
+        widgets = await get_widgets(
+            [{CONF_ID: widget_id} for widget_id in conf[CONF_WIDGETS]]
+        )
+        direct_state_layer_bindings.append((var, widgets))
+
     state_layer_bindings = []
     for conf in config[CONF_STATE_LAYERS]:
         var = cg.new_Pvariable(conf[CONF_ID])
@@ -142,6 +176,9 @@ async def to_code(config):
 
     await wait_for_widgets()
     async with LvContext() as ctx:
+        for var, widgets in direct_state_layer_bindings:
+            for widget in widgets:
+                ctx.add(var.add_target(widget.obj))
         for var, widget in state_layer_bindings:
             ctx.add(var.set_target(widget.obj))
         for var, container in page_indicator_bindings:
