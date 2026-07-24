@@ -96,6 +96,7 @@ extern "C" bool lvgl_esphome_snapshot_refresh_tile_page(lv_obj_t *page, int widt
 extern "C" bool lvgl_esphome_snapshot_is_active(void);
 extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *background, int width, uint32_t duration_ms);
 extern "C" void lvgl_esphome_snapshot_app_release_open_hold(void);
+extern "C" bool lvgl_esphome_snapshot_app_cancel(void);
 extern "C" bool lvgl_esphome_snapshot_app_close(lv_obj_t *app, lv_obj_t *background, int width, int target_center_x,
                                                 int target_center_y, uint32_t duration_ms);
 extern "C" bool lvgl_esphome_snapshot_app_prepare_close(lv_obj_t *app);

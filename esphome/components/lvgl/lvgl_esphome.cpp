@@ -12007,6 +12007,21 @@ extern "C" void lvgl_esphome_snapshot_app_release_open_hold(void) {
 #endif
 }
 
+extern "C" bool lvgl_esphome_snapshot_app_cancel(void) {
+#if LV_USE_SNAPSHOT
+  if (!snapshot_app_cleanup())
+    return false;
+  snapshot_app_clear_prepared_close();
+  s_snapshot_app_open_frame_held = false;
+  s_snapshot_direct_active = false;
+  lv_obj_invalidate(lv_screen_active());
+  lvgl_esphome_snapshot_app_release_work_buffer();
+  return true;
+#else
+  return false;
+#endif
+}
+
 extern "C" bool lvgl_esphome_snapshot_app_close(lv_obj_t *app, lv_obj_t *background, int width, int target_center_x,
                                                 int target_center_y, uint32_t duration_ms) {
   return snapshot_app_begin(app, background, width, target_center_x, target_center_y, duration_ms, false);
