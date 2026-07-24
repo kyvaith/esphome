@@ -136,6 +136,18 @@ bool LvglNavigation::touch_update(int32_t x, int32_t y) {
     return false;
   }
   const auto &sample = this->gesture_router_.update(x, y);
+  if (this->touch_context_ == TouchContext::APPLICATION_CLOSE && sample.captured &&
+      this->gesture_application_ != nullptr && this->gesture_application_->is_close_on_threshold()) {
+    const int32_t threshold = std::max<int32_t>(
+        1, this->close_commit_pixels_ >= 0
+               ? this->close_commit_pixels_
+               : static_cast<int32_t>(std::lround(this->parent_->get_height() * this->close_commit_ratio_)));
+    if (sample.delta_y <= -threshold) {
+      this->reset_touch_();
+      this->schedule_application_close_();
+    }
+    return true;
+  }
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->touch_context_ == TouchContext::HOME && sample.captured && this->snapshot_compositor_ != nullptr) {
     if (sample.just_captured)
@@ -207,6 +219,11 @@ bool LvglNavigation::touch_end() {
                ? this->close_commit_pixels_
                : static_cast<int32_t>(std::lround(this->parent_->get_height() * this->close_commit_ratio_)));
     const bool close = sample.delta_y <= -threshold;
+    if (gesture_application != nullptr && gesture_application->is_close_on_threshold()) {
+      if (close)
+        this->schedule_application_close_();
+      return true;
+    }
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
     if (this->snapshot_compositor_ != nullptr && this->snapshot_compositor_->is_application_active()) {
       if (close && gesture_application != nullptr)
@@ -278,6 +295,19 @@ void LvglNavigation::reset_touch_() {
   this->gesture_router_.cancel();
   this->gesture_application_ = nullptr;
   this->touch_context_ = TouchContext::NONE;
+}
+
+void LvglNavigation::schedule_application_close_() {
+  if (this->close_deferred_)
+    return;
+  this->close_deferred_ = true;
+}
+
+void LvglNavigation::loop() {
+  if (!this->close_deferred_)
+    return;
+  this->close_deferred_ = false;
+  this->close_application();
 }
 
 void LvglNavigation::open_application(LvglApplication *application) {

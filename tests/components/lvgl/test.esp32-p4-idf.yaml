@@ -155,6 +155,7 @@ lvgl:
       - id: test_application
         page: application_page
         close_gesture: true
+        close_on_threshold: true
         on_prepare_open:
           - logger.log: Preparing application open
         on_open:

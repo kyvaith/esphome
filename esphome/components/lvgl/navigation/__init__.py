@@ -23,6 +23,7 @@ CONF_BLOCKERS = "blockers"
 CONF_CLOSE_COMMIT_THRESHOLD = "close_commit_threshold"
 CONF_CLOSE_EDGE_SIZE = "close_edge_size"
 CONF_CLOSE_GESTURE = "close_gesture"
+CONF_CLOSE_ON_THRESHOLD = "close_on_threshold"
 CONF_HOME = "home"
 CONF_HOME_COMMIT_THRESHOLD = "home_commit_threshold"
 CONF_NAVIGATION = "navigation"
@@ -56,6 +57,7 @@ APPLICATION_SCHEMA = cv.Schema(
         cv.Required(CONF_PAGE): cv.use_id(lv_page_t),
         cv.Optional(CONF_WIDGET): cv.use_id(lv_pseudo_button_t),
         cv.Optional(CONF_CLOSE_GESTURE, default=True): cv.boolean,
+        cv.Optional(CONF_CLOSE_ON_THRESHOLD, default=False): cv.boolean,
         cv.Optional(CONF_ON_PREPARE_OPEN): automation.validate_automation({}),
         cv.Optional(CONF_ON_OPEN): automation.validate_automation({}),
         cv.Optional(CONF_ON_OPENED): automation.validate_automation({}),
@@ -241,6 +243,11 @@ async def navigation_to_code(lv_component, config):
         lv_add(
             application.set_close_gesture_enabled(
                 application_config[CONF_CLOSE_GESTURE]
+            )
+        )
+        lv_add(
+            application.set_close_on_threshold(
+                application_config[CONF_CLOSE_ON_THRESHOLD]
             )
         )
         await automation.build_callback_automations(

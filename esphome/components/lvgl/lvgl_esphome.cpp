@@ -8265,6 +8265,9 @@ void LvglComponent::loop() {
     ESP_LOGD(TAG, "LVGL loop started - system is now fully ready");
   }
 
+  if (this->navigation_ != nullptr)
+    this->navigation_->loop();
+
   const bool frame_buffer_presentation_active = this->frame_buffer_presentation_active_.load(std::memory_order_acquire);
   if (!frame_buffer_presentation_active && this->is_paused()) {
     if (this->paused_ && this->show_snow_)
