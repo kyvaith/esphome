@@ -125,12 +125,18 @@ lvgl:
       - id: test_application
         page: application_page
         close_gesture: true
+        on_prepare_open:
+          - logger.log: Preparing application open
         on_open:
           - logger.log: Application opening
         on_opened:
           - logger.log: Application opened
+        on_prepare_close:
+          - logger.log: Preparing application close
         on_close:
           - logger.log: Application closing
+        on_close_cancelled:
+          - logger.log: Application close cancelled
         on_closed:
           - logger.log: Application closed
       - id: test_overlay_application

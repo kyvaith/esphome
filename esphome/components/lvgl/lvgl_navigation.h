@@ -24,12 +24,21 @@ class LvglApplication {
   void set_widget(lv_obj_t *widget) { this->widget_ = widget; }
   void set_close_gesture_enabled(bool enabled) { this->close_gesture_enabled_ = enabled; }
   void set_scroll_snapshot(LvglScrollSnapshotController *controller) { this->scroll_snapshot_ = controller; }
+  template<typename F> void add_on_prepare_open_callback(F &&callback) {
+    this->prepare_open_callbacks_.add(std::forward<F>(callback));
+  }
   template<typename F> void add_on_open_callback(F &&callback) { this->open_callbacks_.add(std::forward<F>(callback)); }
   template<typename F> void add_on_opened_callback(F &&callback) {
     this->opened_callbacks_.add(std::forward<F>(callback));
   }
+  template<typename F> void add_on_prepare_close_callback(F &&callback) {
+    this->prepare_close_callbacks_.add(std::forward<F>(callback));
+  }
   template<typename F> void add_on_close_callback(F &&callback) {
     this->close_callbacks_.add(std::forward<F>(callback));
+  }
+  template<typename F> void add_on_close_cancelled_callback(F &&callback) {
+    this->close_cancelled_callbacks_.add(std::forward<F>(callback));
   }
   template<typename F> void add_on_closed_callback(F &&callback) {
     this->closed_callbacks_.add(std::forward<F>(callback));
@@ -44,21 +53,45 @@ class LvglApplication {
   LvglScrollSnapshotController *get_scroll_snapshot() const { return this->scroll_snapshot_; }
   bool is_widget_application() const { return this->widget_ != nullptr; }
   bool is_close_gesture_enabled() const { return this->close_gesture_enabled_; }
+  bool is_close_prepared() const { return this->close_prepared_; }
+  void call_on_prepare_open_callbacks() { this->prepare_open_callbacks_.call(); }
   void call_on_open_callbacks() { this->open_callbacks_.call(); }
   void call_on_opened_callbacks() { this->opened_callbacks_.call(); }
-  void call_on_close_callbacks() { this->close_callbacks_.call(); }
-  void call_on_closed_callbacks() { this->closed_callbacks_.call(); }
+  void call_on_prepare_close_callbacks() {
+    if (this->close_prepared_)
+      return;
+    this->close_prepared_ = true;
+    this->prepare_close_callbacks_.call();
+  }
+  void call_on_close_callbacks() {
+    this->close_prepared_ = false;
+    this->close_callbacks_.call();
+  }
+  void call_on_close_cancelled_callbacks() {
+    if (!this->close_prepared_)
+      return;
+    this->close_prepared_ = false;
+    this->close_cancelled_callbacks_.call();
+  }
+  void call_on_closed_callbacks() {
+    this->close_prepared_ = false;
+    this->closed_callbacks_.call();
+  }
 
  protected:
   LvglNavigation *parent_{};
   LvPageType *page_{};
   lv_obj_t *widget_{};
   LvglScrollSnapshotController *scroll_snapshot_{};
+  LazyCallbackManager<void()> prepare_open_callbacks_{};
   LazyCallbackManager<void()> open_callbacks_{};
   LazyCallbackManager<void()> opened_callbacks_{};
+  LazyCallbackManager<void()> prepare_close_callbacks_{};
   LazyCallbackManager<void()> close_callbacks_{};
+  LazyCallbackManager<void()> close_cancelled_callbacks_{};
   LazyCallbackManager<void()> closed_callbacks_{};
   bool close_gesture_enabled_{true};
+  bool close_prepared_{};
 };
 
 class LvglNavigation {
