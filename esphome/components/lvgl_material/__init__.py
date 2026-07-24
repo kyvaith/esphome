@@ -35,6 +35,7 @@ CONF_THICKNESS = "thickness"
 CONF_TRANSITION_DURATION = "transition_duration"
 CONF_LABEL = "label"
 CONF_VIEWPORT = "viewport"
+CONF_WAVY_PROGRESS = "wavy_progress"
 CONF_WIDGET = "widget"
 
 lvgl_material_ns = cg.esphome_ns.namespace("lvgl_material")
@@ -46,6 +47,7 @@ MaterialDirectMarquee = lvgl_material_ns.class_("MaterialDirectMarquee", cg.Comp
 MaterialDirectVolumeOverlay = lvgl_material_ns.class_(
     "MaterialDirectVolumeOverlay", cg.Component
 )
+MaterialWavyProgress = lvgl_material_ns.class_("MaterialWavyProgress", cg.Component)
 MaterialPressedStyle = lvgl_material_ns.class_("MaterialPressedStyle", cg.Component)
 MaterialPageIndicator = lvgl_material_ns.class_("MaterialPageIndicator", cg.Component)
 MaterialPageIndicatorSetAction = lvgl_material_ns.class_(
@@ -101,6 +103,13 @@ DIRECT_VOLUME_OVERLAY_SCHEMA = cv.Schema(
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
+WAVY_PROGRESS_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MaterialWavyProgress),
+        cv.Required(CONF_WIDGET): cv.use_id(lv_obj_t),
+    }
+).extend(cv.COMPONENT_SCHEMA)
+
 PRESSED_STYLE_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(MaterialPressedStyle),
@@ -136,12 +145,14 @@ def _validate_config(config):
         and not config.get(CONF_DIRECT_STATE_LAYERS)
         and not config.get(CONF_DIRECT_MARQUEES)
         and not config.get(CONF_DIRECT_VOLUME_OVERLAYS)
+        and not config.get(CONF_WAVY_PROGRESS)
         and not config.get(CONF_PRESSED_STYLES)
         and not config.get(CONF_PAGE_INDICATORS)
     ):
         raise cv.Invalid(
             f"At least one of {CONF_STATE_LAYERS}, {CONF_DIRECT_STATE_LAYERS}, "
             f"{CONF_DIRECT_MARQUEES}, {CONF_DIRECT_VOLUME_OVERLAYS}, "
+            f"{CONF_WAVY_PROGRESS}, "
             f"{CONF_PRESSED_STYLES}, "
             f"or {CONF_PAGE_INDICATORS} is required"
         )
@@ -166,6 +177,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_DIRECT_VOLUME_OVERLAYS, default=list): cv.ensure_list(
                 DIRECT_VOLUME_OVERLAY_SCHEMA
             ),
+            cv.Optional(CONF_WAVY_PROGRESS, default=list): cv.ensure_list(
+                WAVY_PROGRESS_SCHEMA
+            ),
             cv.Optional(CONF_PRESSED_STYLES, default=list): cv.ensure_list(
                 PRESSED_STYLE_SCHEMA
             ),
@@ -179,6 +193,13 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
+    wavy_progress_bindings = []
+    for conf in config[CONF_WAVY_PROGRESS]:
+        var = cg.new_Pvariable(conf[CONF_ID])
+        await cg.register_component(var, conf)
+        widget = (await get_widgets(conf, CONF_WIDGET))[0]
+        wavy_progress_bindings.append((var, widget))
+
     direct_volume_overlay_bindings = []
     for conf in config[CONF_DIRECT_VOLUME_OVERLAYS]:
         lvgl = await cg.get_variable(conf[CONF_LVGL_ID])
@@ -270,6 +291,8 @@ async def to_code(config):
 
     await wait_for_widgets()
     async with LvContext() as ctx:
+        for var, widget in wavy_progress_bindings:
+            ctx.add(var.set_widget(widget.obj))
         for var, arc, knob, label, activation_widget in direct_volume_overlay_bindings:
             ctx.add(var.set_arc(arc.obj))
             ctx.add(var.set_knob(knob.obj))
