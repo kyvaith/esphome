@@ -12,9 +12,11 @@ class LvglNavigation;
 class LvglSnapshotCompositor {
  public:
   LvglSnapshotCompositor(LvglComponent *parent, LvglSnapshotStore *store) : parent_(parent), store_(store) {}
+  virtual ~LvglSnapshotCompositor() = default;
 
-  void add_home_page(LvPageType *page);
-  void add_home_view(lv_obj_t *view);
+  virtual void add_home_page(LvPageType *page);
+  virtual void add_home_view(lv_obj_t *view);
+  virtual bool prepare_home(int page_index) { return false; }
   void set_navigation(LvglNavigation *navigation) { this->navigation_ = navigation; }
   void set_settle_duration(uint32_t duration) { this->settle_duration_ = duration; }
   void set_application_transitions_enabled(bool enabled) { this->application_transitions_enabled_ = enabled; }
@@ -26,18 +28,18 @@ class LvglSnapshotCompositor {
     this->application_close_target_y_ = y_ratio;
   }
 
-  bool begin_home(int page_index);
-  bool update_home(int32_t delta_x);
-  bool settle_home(int target_index);
-  void cancel_home();
-  bool is_home_active() const { return this->home_active_; }
+  virtual bool begin_home(int page_index);
+  virtual bool update_home(int32_t delta_x);
+  virtual bool settle_home(int target_index);
+  virtual void cancel_home();
+  virtual bool is_home_active() const { return this->home_active_; }
 
-  bool open_application(LvPageType *application, int home_index);
-  bool begin_application_close(LvPageType *application, int home_index);
-  bool update_application_close(int32_t delta_y);
-  bool settle_application_close(bool close);
-  void cancel_application();
-  bool is_application_active() const { return this->application_active_; }
+  virtual bool open_application(LvPageType *application, int home_index);
+  virtual bool begin_application_close(LvPageType *application, int home_index);
+  virtual bool update_application_close(int32_t delta_y);
+  virtual bool settle_application_close(bool close);
+  virtual void cancel_application();
+  virtual bool is_application_active() const { return this->application_active_; }
 
  protected:
   struct Surface {

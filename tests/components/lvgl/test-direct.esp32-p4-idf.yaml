@@ -11,7 +11,6 @@ lvgl:
   buffer_size: 100%
   color_depth: 32
   direct_mode: true
-  diagnostics: true
   use_ppa: true
   pages:
     - id: direct_home_one
@@ -30,6 +29,8 @@ lvgl:
       pages:
         - direct_home_one
         - direct_home_two
+  snapshot_compositor:
+    id: default_snapshots
 
 image:
   - platform: file
