@@ -25,8 +25,11 @@ CONF_HOME = "home"
 CONF_HOME_COMMIT_THRESHOLD = "home_commit_threshold"
 CONF_NAVIGATION = "navigation"
 CONF_ON_CLOSE = "on_close"
+CONF_ON_CLOSE_CANCELLED = "on_close_cancelled"
 CONF_ON_CLOSED = "on_closed"
 CONF_ON_OPENED = "on_opened"
+CONF_ON_PREPARE_CLOSE = "on_prepare_close"
+CONF_ON_PREPARE_OPEN = "on_prepare_open"
 CONF_PAGE = "page"
 CONF_SWIPE_START_DISTANCE = "swipe_start_distance"
 
@@ -37,17 +40,27 @@ APPLICATION_SCHEMA = cv.Schema(
         cv.Required(CONF_PAGE): cv.use_id(lv_page_t),
         cv.Optional(CONF_WIDGET): cv.use_id(lv_pseudo_button_t),
         cv.Optional(CONF_CLOSE_GESTURE, default=True): cv.boolean,
+        cv.Optional(CONF_ON_PREPARE_OPEN): automation.validate_automation({}),
         cv.Optional(CONF_ON_OPEN): automation.validate_automation({}),
         cv.Optional(CONF_ON_OPENED): automation.validate_automation({}),
+        cv.Optional(CONF_ON_PREPARE_CLOSE): automation.validate_automation({}),
         cv.Optional(CONF_ON_CLOSE): automation.validate_automation({}),
+        cv.Optional(CONF_ON_CLOSE_CANCELLED): automation.validate_automation({}),
         cv.Optional(CONF_ON_CLOSED): automation.validate_automation({}),
     }
 )
 
 APPLICATION_CALLBACK_AUTOMATIONS = (
+    automation.CallbackAutomation(CONF_ON_PREPARE_OPEN, "add_on_prepare_open_callback"),
     automation.CallbackAutomation(CONF_ON_OPEN, "add_on_open_callback"),
     automation.CallbackAutomation(CONF_ON_OPENED, "add_on_opened_callback"),
+    automation.CallbackAutomation(
+        CONF_ON_PREPARE_CLOSE, "add_on_prepare_close_callback"
+    ),
     automation.CallbackAutomation(CONF_ON_CLOSE, "add_on_close_callback"),
+    automation.CallbackAutomation(
+        CONF_ON_CLOSE_CANCELLED, "add_on_close_cancelled_callback"
+    ),
     automation.CallbackAutomation(CONF_ON_CLOSED, "add_on_closed_callback"),
 )
 

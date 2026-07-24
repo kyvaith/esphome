@@ -221,9 +221,14 @@ bool LvglDirectSnapshotCompositor::settle_application_close(bool close) {
     return false;
 
   if (!close) {
+    auto *application = this->application_;
     lvgl_esphome_snapshot_app_clear_prepared_close();
     lvgl_esphome_snapshot_app_release_work_buffer();
     this->reset_direct_application_();
+    if (this->navigation_ != nullptr)
+      this->navigation_->complete_application_transition(application, false, false);
+    else if (application != nullptr)
+      application->call_on_close_cancelled_callbacks();
     return true;
   }
 
