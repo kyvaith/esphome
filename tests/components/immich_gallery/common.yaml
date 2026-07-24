@@ -1,0 +1,16 @@
+immich_gallery:
+  id: test_immich_gallery
+
+interval:
+  - interval: 60s
+    then:
+      - lambda: |-
+          const auto base_url = id(test_immich_gallery).trim_url("http://immich.local/");
+          if (!id(test_immich_gallery).valid_base_url(base_url)) {
+            ESP_LOGE("immich_gallery.test", "URL validation failed");
+          }
+          const auto body = id(test_immich_gallery).search_body(
+              10, "Favorites", "", "", "", "", "");
+          if (body.empty()) {
+            ESP_LOGE("immich_gallery.test", "Search body is empty");
+          }
