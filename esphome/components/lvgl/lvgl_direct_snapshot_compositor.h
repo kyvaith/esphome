@@ -12,6 +12,7 @@ class LvglDirectSnapshotCompositor final : public LvglSnapshotCompositor {
   bool prepare_home(int page_index) override;
   bool prepare_applications(const std::vector<LvglApplication *> &applications) override;
   bool is_home_prepared() const override { return this->home_prepared_; }
+  void loop() override;
   bool begin_home(int page_index) override;
   bool update_home(int32_t delta_x) override;
   bool settle_home(int target_index) override;
@@ -30,18 +31,14 @@ class LvglDirectSnapshotCompositor final : public LvglSnapshotCompositor {
     CLOSING,
   };
 
-  static void completion_timer_(lv_timer_t *timer);
-
   bool can_use_direct_home_() const;
   bool can_use_direct_application_(LvglApplication *application, int home_index) const;
   bool start_direct_home_(int32_t delta_x);
-  void start_completion_timer_();
   void complete_direct_home_();
   void complete_direct_application_();
   void reset_direct_home_();
   void reset_direct_application_();
 
-  lv_timer_t *completion_timer_handle_{};
   int direct_neighbor_index_{-1};
   int32_t direct_neighbor_origin_{};
   bool direct_pending_{};

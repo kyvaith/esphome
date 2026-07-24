@@ -29,11 +29,6 @@ void MaterialDirectVolumeOverlay::setup() {
   if (this->lvgl_component_ == nullptr || this->arc_ == nullptr || this->knob_ == nullptr || this->label_ == nullptr) {
     ESP_LOGE(TAG, "Direct volume overlay configuration is incomplete");
     this->mark_failed();
-    return;
-  }
-  if (!this->update_geometry_()) {
-    ESP_LOGE(TAG, "Direct volume overlay geometry is invalid");
-    this->mark_failed();
   }
 }
 
