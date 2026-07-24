@@ -1,5 +1,7 @@
 #include "ken_burns.h"
 
+#if LV_USE_IMAGE
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -1152,3 +1154,5 @@ void KenBurnsController::select_pan_direction_(bool forward) {
 }
 
 }  // namespace esphome::lvgl
+
+#endif  // LV_USE_IMAGE
