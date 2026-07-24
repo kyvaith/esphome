@@ -36,6 +36,11 @@ CONF_ON_PREPARE_OPEN = "on_prepare_open"
 CONF_PAGE = "page"
 CONF_SWIPE_START_DISTANCE = "swipe_start_distance"
 
+DISTANCE_OR_PERCENTAGE = cv.Any(
+    cv.percentage,
+    cv.int_range(min=1, max=10000),
+)
+
 NAVIGATION_CALLBACK_AUTOMATIONS = (
     automation.CallbackAutomation(
         CONF_ON_HOME_CHANGED,
@@ -154,9 +159,13 @@ NAVIGATION_SCHEMA = cv.All(
                 min=1, max=1000
             ),
             cv.Optional(CONF_AXIS_BIAS, default=6): cv.int_range(min=0, max=1000),
-            cv.Optional(CONF_HOME_COMMIT_THRESHOLD, default="25%"): cv.percentage,
-            cv.Optional(CONF_CLOSE_EDGE_SIZE, default="6.25%"): cv.percentage,
-            cv.Optional(CONF_CLOSE_COMMIT_THRESHOLD, default="25%"): cv.percentage,
+            cv.Optional(
+                CONF_HOME_COMMIT_THRESHOLD, default="25%"
+            ): DISTANCE_OR_PERCENTAGE,
+            cv.Optional(CONF_CLOSE_EDGE_SIZE, default="6.25%"): DISTANCE_OR_PERCENTAGE,
+            cv.Optional(
+                CONF_CLOSE_COMMIT_THRESHOLD, default="25%"
+            ): DISTANCE_OR_PERCENTAGE,
         }
     ),
     _validate_navigation,
@@ -176,15 +185,21 @@ async def navigation_to_code(lv_component, config):
         )
     )
     cg.add(navigation.set_axis_bias(navigation_config[CONF_AXIS_BIAS]))
-    cg.add(
-        navigation.set_home_commit_ratio(navigation_config[CONF_HOME_COMMIT_THRESHOLD])
-    )
-    cg.add(navigation.set_close_edge_ratio(navigation_config[CONF_CLOSE_EDGE_SIZE]))
-    cg.add(
-        navigation.set_close_commit_ratio(
-            navigation_config[CONF_CLOSE_COMMIT_THRESHOLD]
-        )
-    )
+    home_commit_threshold = navigation_config[CONF_HOME_COMMIT_THRESHOLD]
+    if isinstance(home_commit_threshold, int):
+        cg.add(navigation.set_home_commit_pixels(home_commit_threshold))
+    else:
+        cg.add(navigation.set_home_commit_ratio(home_commit_threshold))
+    close_edge_size = navigation_config[CONF_CLOSE_EDGE_SIZE]
+    if isinstance(close_edge_size, int):
+        cg.add(navigation.set_close_edge_pixels(close_edge_size))
+    else:
+        cg.add(navigation.set_close_edge_ratio(close_edge_size))
+    close_commit_threshold = navigation_config[CONF_CLOSE_COMMIT_THRESHOLD]
+    if isinstance(close_commit_threshold, int):
+        cg.add(navigation.set_close_commit_pixels(close_commit_threshold))
+    else:
+        cg.add(navigation.set_close_commit_ratio(close_commit_threshold))
 
     home_config = navigation_config[CONF_HOME]
     if home_config[CONF_PAGES]:

@@ -107,8 +107,11 @@ class LvglNavigation {
   void set_swipe_start_distance(uint16_t distance) { this->gesture_router_.set_start_distance(distance); }
   void set_axis_bias(uint16_t bias) { this->gesture_router_.set_axis_bias(bias); }
   void set_home_commit_ratio(float ratio) { this->home_commit_ratio_ = ratio; }
+  void set_home_commit_pixels(uint16_t pixels) { this->home_commit_pixels_ = pixels; }
   void set_close_edge_ratio(float ratio) { this->close_edge_ratio_ = ratio; }
+  void set_close_edge_pixels(uint16_t pixels) { this->close_edge_pixels_ = pixels; }
   void set_close_commit_ratio(float ratio) { this->close_commit_ratio_ = ratio; }
+  void set_close_commit_pixels(uint16_t pixels) { this->close_commit_pixels_ = pixels; }
   void set_snapshot_compositor(LvglSnapshotCompositor *compositor);
   template<typename F> void add_on_home_changed_callback(F &&callback) {
     this->home_changed_callbacks_.add(std::forward<F>(callback));
@@ -166,6 +169,9 @@ class LvglNavigation {
   float home_commit_ratio_{0.25f};
   float close_edge_ratio_{0.0625f};
   float close_commit_ratio_{0.25f};
+  int32_t home_commit_pixels_{-1};
+  int32_t close_edge_pixels_{-1};
+  int32_t close_commit_pixels_{-1};
 };
 
 template<typename... Ts> class NavigationOpenAction final : public Action<Ts...> {
