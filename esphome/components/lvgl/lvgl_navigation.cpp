@@ -318,6 +318,10 @@ void LvglNavigation::schedule_application_close_() {
 }
 
 void LvglNavigation::loop() {
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+  if (this->snapshot_compositor_ != nullptr)
+    this->snapshot_compositor_->loop();
+#endif
   if (!this->close_deferred_)
     return;
   this->close_deferred_ = false;

@@ -169,7 +169,6 @@ bool LvglDirectSnapshotCompositor::settle_home(int target_index) {
   const uint32_t distance = static_cast<uint32_t>(std::abs(current_x - this->home_offset_));
   const uint32_t duration = std::max<uint32_t>(80, this->settle_duration_ * distance / std::max<int32_t>(1, width));
   lvgl_esphome_snapshot_swipe_request_finish(current_x, next_x, duration, commit);
-  this->start_completion_timer_();
   return true;
 }
 
@@ -204,7 +203,6 @@ bool LvglDirectSnapshotCompositor::open_application(LvglApplication *application
   this->application_close_committed_ = false;
   this->application_active_ = true;
   this->direct_application_phase_ = DirectApplicationPhase::OPENING;
-  this->start_completion_timer_();
   return true;
 }
 
@@ -263,7 +261,6 @@ bool LvglDirectSnapshotCompositor::settle_application_close(bool close) {
 
   this->application_close_committed_ = true;
   this->direct_application_phase_ = DirectApplicationPhase::CLOSING;
-  this->start_completion_timer_();
   return true;
 }
 
@@ -279,27 +276,18 @@ void LvglDirectSnapshotCompositor::cancel_application() {
   this->reset_direct_application_();
 }
 
-void LvglDirectSnapshotCompositor::completion_timer_(lv_timer_t *timer) {
-  auto *compositor = static_cast<LvglDirectSnapshotCompositor *>(lv_timer_get_user_data(timer));
-  if (compositor == nullptr || lvgl_esphome_snapshot_is_active())
+void LvglDirectSnapshotCompositor::loop() {
+  if (lvgl_esphome_snapshot_is_active())
     return;
-  if (compositor->direct_application_phase_ == DirectApplicationPhase::OPENING ||
-      compositor->direct_application_phase_ == DirectApplicationPhase::CLOSING)
-    compositor->complete_direct_application_();
-  else
-    compositor->complete_direct_home_();
-}
-
-void LvglDirectSnapshotCompositor::start_completion_timer_() {
-  if (this->completion_timer_handle_ == nullptr)
-    this->completion_timer_handle_ = lv_timer_create(completion_timer_, 8, this);
+  if (this->direct_application_phase_ == DirectApplicationPhase::OPENING ||
+      this->direct_application_phase_ == DirectApplicationPhase::CLOSING) {
+    this->complete_direct_application_();
+  } else if (this->direct_active_) {
+    this->complete_direct_home_();
+  }
 }
 
 void LvglDirectSnapshotCompositor::complete_direct_home_() {
-  if (this->completion_timer_handle_ != nullptr) {
-    lv_timer_delete(this->completion_timer_handle_);
-    this->completion_timer_handle_ = nullptr;
-  }
   const int target = this->target_index_;
   this->reset_direct_home_();
   if (target >= 0)
@@ -307,11 +295,6 @@ void LvglDirectSnapshotCompositor::complete_direct_home_() {
 }
 
 void LvglDirectSnapshotCompositor::complete_direct_application_() {
-  if (this->completion_timer_handle_ != nullptr) {
-    lv_timer_delete(this->completion_timer_handle_);
-    this->completion_timer_handle_ = nullptr;
-  }
-
   auto *application = this->application_;
   const int home_index = this->application_home_index_;
   const bool opening = this->direct_application_phase_ == DirectApplicationPhase::OPENING;
@@ -332,10 +315,6 @@ void LvglDirectSnapshotCompositor::complete_direct_application_() {
 }
 
 void LvglDirectSnapshotCompositor::reset_direct_home_() {
-  if (this->completion_timer_handle_ != nullptr) {
-    lv_timer_delete(this->completion_timer_handle_);
-    this->completion_timer_handle_ = nullptr;
-  }
   this->direct_pending_ = false;
   this->direct_active_ = false;
   this->direct_edge_ = false;
@@ -349,10 +328,6 @@ void LvglDirectSnapshotCompositor::reset_direct_home_() {
 }
 
 void LvglDirectSnapshotCompositor::reset_direct_application_() {
-  if (this->completion_timer_handle_ != nullptr) {
-    lv_timer_delete(this->completion_timer_handle_);
-    this->completion_timer_handle_ = nullptr;
-  }
   this->application_ = nullptr;
   this->application_buffer_ = nullptr;
   this->application_home_index_ = -1;
