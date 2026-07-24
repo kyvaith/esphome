@@ -13,7 +13,10 @@ from esphome.components.const import (
     CONF_DRAW_ROUNDING,
 )
 from esphome.components.display import Display, get_display_metadata
-from esphome.components.esp32 import add_idf_sdkconfig_option, include_builtin_idf_component
+from esphome.components.esp32 import (
+    add_idf_sdkconfig_option,
+    include_builtin_idf_component,
+)
 from esphome.components.esp32.const import KEY_ESP32, KEY_SDKCONFIG_OPTIONS
 from esphome.components.image import (
     CONF_OPAQUE,
@@ -139,7 +142,9 @@ for module_info in pkgutil.iter_modules(widgets.__path__):
 DOMAIN = "lvgl"
 DEPENDENCIES = ["display"]
 AUTO_LOAD = ["key_provider", "button"]
-CODEOWNERS = ["@clydebarrow"]  # LVGL 9.5.0 implementation with ThorVG enabled by default
+CODEOWNERS = [
+    "@clydebarrow"
+]  # LVGL 9.5.0 implementation with ThorVG enabled by default
 HELLO_WORLD_FILE = "hello_world.yaml"
 CONF_USE_PPA = "use_ppa"
 CONF_USE_PPA_IMG = "use_ppa_img"
@@ -277,9 +282,9 @@ def final_validation(config_list):
         # If the user didn't set it, auto-detect from the first MIPI DSI display found.
         user_set_depth = CONF_COLOR_DEPTH in config
         has_mipi = any(
-            global_config.get_config_for_path(global_config.get_path_for_id(did)[:-1]).get(
-                "platform", ""
-            )
+            global_config.get_config_for_path(
+                global_config.get_path_for_id(did)[:-1]
+            ).get("platform", "")
             == "mipi_dsi"
             for did in config[df.CONF_DISPLAYS]
         )
@@ -508,7 +513,9 @@ async def to_code(configs):
     # LVGL 9.5: Enable blur/frosted glass support (small code, useful for shadows)
     df.add_define("LV_USE_DRAW_SW_BLUR", "1")
 
-    lv_use_log = use_perf_monitor or use_profiler or _sdkconfig_bool("CONFIG_LV_USE_LOG", True)
+    lv_use_log = (
+        use_perf_monitor or use_profiler or _sdkconfig_bool("CONFIG_LV_USE_LOG", True)
+    )
     lv_log_level = (
         f"LV_LOG_LEVEL_{df.LV_LOG_LEVELS[config_0[CONF_LOG_LEVEL]]}"
         if lv_use_log
@@ -605,13 +612,15 @@ async def to_code(configs):
             await set_obj_properties(lv_scr_act, config)
             await add_widgets(lv_scr_act, config)
             await add_pages(lv_component, config)
+            # Navigation may reference blockers or indicators hosted on a display
+            # layer, so all layer widgets must exist before resolving navigation.
+            await layers_to_code(lv_component, config)
             await navigation_to_code(lv_component, config)
             await snapshot_to_code(
                 lv_component,
                 config,
                 config.get(CONF_NAVIGATION),
             )
-            await layers_to_code(lv_component, config)
             await lvgl_update(lv_component, config)
             await msgboxes_to_code(lv_component, config)
             # await disp_update(lv_component.get_disp(), config)
@@ -689,12 +698,37 @@ async def to_code(configs):
     }
     # All canonical LV_USE_* widget define names in LVGL v9.x
     _ALL_CANONICAL_WIDGETS = {
-        "ANIMIMG", "ARC", "BAR", "BUTTON", "BUTTONMATRIX",
-        "CALENDAR", "CANVAS", "CHART", "CHECKBOX", "DROPDOWN",
-        "IMAGE", "IMAGEBUTTON", "KEYBOARD", "LABEL", "LED",
-        "LINE", "LIST", "MENU", "MSGBOX", "ROLLER", "SCALE",
-        "SLIDER", "SPAN", "SPINBOX", "SPINNER", "SWITCH",
-        "TABLE", "TABVIEW", "TEXTAREA", "TILEVIEW", "WIN",
+        "ANIMIMG",
+        "ARC",
+        "BAR",
+        "BUTTON",
+        "BUTTONMATRIX",
+        "CALENDAR",
+        "CANVAS",
+        "CHART",
+        "CHECKBOX",
+        "DROPDOWN",
+        "IMAGE",
+        "IMAGEBUTTON",
+        "KEYBOARD",
+        "LABEL",
+        "LED",
+        "LINE",
+        "LIST",
+        "MENU",
+        "MSGBOX",
+        "ROLLER",
+        "SCALE",
+        "SLIDER",
+        "SPAN",
+        "SPINBOX",
+        "SPINNER",
+        "SWITCH",
+        "TABLE",
+        "TABVIEW",
+        "TEXTAREA",
+        "TILEVIEW",
+        "WIN",
     }
 
     # Add ESPHome-specific defines; add LV_USE_* only for non-widget entries
@@ -737,8 +771,7 @@ async def to_code(configs):
     # Only enable ThorVG/SVG/Lottie/Vector Graphics if actually needed.
     # This saves ~500KB-1MB of flash on ESP32 devices.
     needs_thorvg = bool(
-        {"THORVG_INTERNAL", "SVG", "LOTTIE", "VECTOR_GRAPHIC"}
-        & normalized_lv_uses
+        {"THORVG_INTERNAL", "SVG", "LOTTIE", "VECTOR_GRAPHIC"} & normalized_lv_uses
     )
 
     if needs_thorvg:
@@ -765,9 +798,7 @@ async def to_code(configs):
         df.add_define("LV_USE_LOTTIE", "0")
         # Smaller stack when ThorVG is not used
         df.add_define("LV_DRAW_THREAD_STACK_SIZE", "(8 * 1024)")
-        df.LOGGER.info(
-            "ThorVG disabled (no SVG/Lottie widgets) - saving ~500KB flash"
-        )
+        df.LOGGER.info("ThorVG disabled (no SVG/Lottie widgets) - saving ~500KB flash")
 
     # Image decoders: BMP and GIF are small, enable if image widget is used
     # lv_uses stores names as-is from add_lv_use(): lowercase from widgets, uppercase from helpers.py
