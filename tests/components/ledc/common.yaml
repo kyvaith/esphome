@@ -4,6 +4,12 @@ esphome:
       - output.ledc.set_frequency:
           id: test_ledc
           frequency: 100Hz
+      - output.ledc.set_next_fade_duration:
+          id: test_ledc
+          duration: 500ms
+      - output.set_level:
+          id: test_ledc
+          level: 50%
 
 output:
   - platform: ledc

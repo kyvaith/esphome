@@ -4,6 +4,7 @@ from esphome.components import output
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_CHANNEL,
+    CONF_DURATION,
     CONF_FREQUENCY,
     CONF_ID,
     CONF_PHASE_ANGLE,
@@ -40,6 +41,9 @@ def validate_frequency(value):
 ledc_ns = cg.esphome_ns.namespace("ledc")
 LEDCOutput = ledc_ns.class_("LEDCOutput", output.FloatOutput, cg.Component)
 SetFrequencyAction = ledc_ns.class_("SetFrequencyAction", automation.Action)
+SetNextFadeDurationAction = ledc_ns.class_(
+    "SetNextFadeDurationAction", automation.Action
+)
 
 CONFIG_SCHEMA = output.FLOAT_OUTPUT_SCHEMA.extend(
     {
@@ -84,4 +88,25 @@ async def ledc_set_frequency_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg, paren)
     template_ = await cg.templatable(config[CONF_FREQUENCY], args, cg.float_)
     cg.add(var.set_frequency(template_))
+    return var
+
+
+@automation.register_action(
+    "output.ledc.set_next_fade_duration",
+    SetNextFadeDurationAction,
+    cv.Schema(
+        {
+            cv.Required(CONF_ID): cv.use_id(LEDCOutput),
+            cv.Required(CONF_DURATION): cv.templatable(
+                cv.positive_time_period_milliseconds
+            ),
+        }
+    ),
+    synchronous=True,
+)
+async def ledc_set_next_fade_duration_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, parent)
+    duration = await cg.templatable(config[CONF_DURATION], args, cg.uint32)
+    cg.add(var.set_duration(duration))
     return var
