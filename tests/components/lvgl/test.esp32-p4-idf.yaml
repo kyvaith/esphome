@@ -136,6 +136,9 @@ lvgl:
                   text: End of scroll content
   navigation:
     id: test_navigation
+    home_commit_threshold: 100
+    close_edge_size: 50
+    close_commit_threshold: 10
     home:
       page: home_widget_page
       widgets:

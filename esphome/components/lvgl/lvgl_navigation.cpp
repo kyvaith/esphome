@@ -96,7 +96,10 @@ void LvglNavigation::touch_begin(int32_t x, int32_t y) {
 
   if (auto *application = this->find_active_application_(); application != nullptr) {
     const int32_t height = this->parent_->get_height();
-    const int32_t edge_start = height - static_cast<int32_t>(std::lround(height * this->close_edge_ratio_));
+    const int32_t edge_size = this->close_edge_pixels_ >= 0
+                                  ? this->close_edge_pixels_
+                                  : static_cast<int32_t>(std::lround(height * this->close_edge_ratio_));
+    const int32_t edge_start = height - std::clamp(edge_size, int32_t{1}, height);
     if (application->is_close_gesture_enabled() && y >= edge_start) {
       this->gesture_application_ = application;
       this->touch_context_ = TouchContext::APPLICATION_CLOSE;
@@ -178,8 +181,10 @@ bool LvglNavigation::touch_end() {
   if (context == TouchContext::HOME && this->get_home_view_count_() != 0) {
     const int current = this->find_home_view_index_();
     int target = current;
-    const int32_t threshold =
-        std::max<int32_t>(1, static_cast<int32_t>(std::lround(this->parent_->get_width() * this->home_commit_ratio_)));
+    const int32_t threshold = std::max<int32_t>(
+        1, this->home_commit_pixels_ >= 0
+               ? this->home_commit_pixels_
+               : static_cast<int32_t>(std::lround(this->parent_->get_width() * this->home_commit_ratio_)));
     if (current >= 0 && std::abs(sample.delta_x) >= threshold) {
       const int candidate = current + (sample.delta_x < 0 ? 1 : -1);
       if (candidate >= 0 && candidate < static_cast<int>(this->get_home_view_count_()))
@@ -198,7 +203,9 @@ bool LvglNavigation::touch_end() {
 
   if (context == TouchContext::APPLICATION_CLOSE) {
     const int32_t threshold = std::max<int32_t>(
-        1, static_cast<int32_t>(std::lround(this->parent_->get_height() * this->close_commit_ratio_)));
+        1, this->close_commit_pixels_ >= 0
+               ? this->close_commit_pixels_
+               : static_cast<int32_t>(std::lround(this->parent_->get_height() * this->close_commit_ratio_)));
     const bool close = sample.delta_y <= -threshold;
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
     if (this->snapshot_compositor_ != nullptr && this->snapshot_compositor_->is_application_active()) {
