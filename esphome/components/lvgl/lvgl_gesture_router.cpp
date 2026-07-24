@@ -6,7 +6,13 @@
 namespace esphome::lvgl {
 
 void GestureRouter::begin(int32_t x, int32_t y, GestureAxis allowed_axis) {
+  this->begin(x, y, allowed_axis, this->start_distance_, this->axis_bias_);
+}
+
+void GestureRouter::begin(int32_t x, int32_t y, GestureAxis allowed_axis, uint16_t start_distance, uint16_t axis_bias) {
   this->allowed_axis_ = allowed_axis;
+  this->active_start_distance_ = start_distance;
+  this->active_axis_bias_ = axis_bias;
   this->sample_ = {
       .start_x = x,
       .start_y = y,
@@ -29,11 +35,11 @@ const GestureSample &GestureRouter::update(int32_t x, int32_t y) {
 
   const int32_t abs_x = std::abs(this->sample_.delta_x);
   const int32_t abs_y = std::abs(this->sample_.delta_y);
-  if (std::max(abs_x, abs_y) < this->start_distance_)
+  if (std::max(abs_x, abs_y) < this->active_start_distance_)
     return this->sample_;
 
-  const bool horizontal = abs_x > abs_y + this->axis_bias_;
-  const bool vertical = abs_y > abs_x + this->axis_bias_;
+  const bool horizontal = abs_x > abs_y + this->active_axis_bias_;
+  const bool vertical = abs_y > abs_x + this->active_axis_bias_;
   const bool allowed = (this->allowed_axis_ == GestureAxis::HORIZONTAL && horizontal) ||
                        (this->allowed_axis_ == GestureAxis::VERTICAL && vertical);
   if (allowed) {

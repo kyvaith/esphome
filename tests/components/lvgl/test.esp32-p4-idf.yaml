@@ -200,12 +200,15 @@ lvgl:
       - id: test_scroll_snapshot
         application: test_application
         widget: application_scroll_root
+        backend: direct
         preload: true
         max_content_size: 8MB
         overscroll: 15%
         momentum_duration: 560ms
         bounce_duration: 320ms
         max_inertia_duration: 900ms
+        swipe_start_distance: 2
+        axis_bias: 6
 
 psram:
 

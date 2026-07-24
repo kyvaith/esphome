@@ -10,7 +10,13 @@ from esphome.const import (
 
 from ..defines import CONF_WIDGETS
 from ..lvcode import lv_add
-from ..navigation import CONF_APPLICATIONS, CONF_HOME, CONF_PAGE
+from ..navigation import (
+    CONF_APPLICATIONS,
+    CONF_AXIS_BIAS,
+    CONF_HOME,
+    CONF_PAGE,
+    CONF_SWIPE_START_DISTANCE,
+)
 from ..types import (
     LvglApplication,
     LvglDirectSnapshotCompositor,
@@ -75,6 +81,9 @@ SCROLL_REGION_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(LvglScrollSnapshotController),
         cv.Required(CONF_APPLICATION): cv.use_id(LvglApplication),
         cv.Required(CONF_WIDGET): cv.use_id(lv_pseudo_button_t),
+        cv.Optional(CONF_BACKEND, default=BACKEND_LVGL): cv.one_of(
+            BACKEND_LVGL, BACKEND_DIRECT, lower=True
+        ),
         cv.Optional(CONF_PRELOAD, default=True): cv.boolean,
         cv.Optional(CONF_MAX_CONTENT_SIZE, default="8MB"): cv.All(
             cv.validate_bytes,
@@ -90,6 +99,10 @@ SCROLL_REGION_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_MAX_INERTIA_DURATION, default="900ms"
         ): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_SWIPE_START_DISTANCE, default=10): cv.int_range(
+            min=1, max=1000
+        ),
+        cv.Optional(CONF_AXIS_BIAS, default=6): cv.int_range(min=0, max=1000),
     }
 )
 
@@ -101,6 +114,19 @@ def _validate_scroll_regions(config):
         raise cv.Invalid("Only one scroll region can be assigned to an application")
     if len(widgets) != len(set(widgets)):
         raise cv.Invalid("A widget can only be assigned to one scroll region")
+    direct_regions = [
+        region
+        for region in config[CONF_SCROLL_REGIONS]
+        if region[CONF_BACKEND] == BACKEND_DIRECT
+    ]
+    if len(direct_regions) > 1:
+        raise cv.Invalid(
+            "Only one direct scroll region can be configured per LVGL display"
+        )
+    if direct_regions and config[CONF_BACKEND] != BACKEND_DIRECT:
+        raise cv.Invalid(
+            "A direct scroll region requires snapshot_compositor.backend: direct"
+        )
     return config
 
 
@@ -317,6 +343,12 @@ async def snapshot_to_code(lv_component, config, navigation_config):
                 application.get_page(),
                 widget.obj,
             )
+            backend = (
+                "ScrollSnapshotBackend::DIRECT"
+                if region_config[CONF_BACKEND] == BACKEND_DIRECT
+                else "ScrollSnapshotBackend::LVGL"
+            )
+            cg.add(controller.set_backend(cg.RawExpression(backend)))
             cg.add(controller.set_preload(region_config[CONF_PRELOAD]))
             cg.add(
                 controller.set_max_content_bytes(region_config[CONF_MAX_CONTENT_SIZE])
@@ -337,6 +369,10 @@ async def snapshot_to_code(lv_component, config, navigation_config):
                     region_config[CONF_MAX_INERTIA_DURATION].total_milliseconds
                 )
             )
+            cg.add(
+                controller.set_start_distance(region_config[CONF_SWIPE_START_DISTANCE])
+            )
+            cg.add(controller.set_axis_bias(region_config[CONF_AXIS_BIAS]))
             cg.add(application.set_scroll_snapshot(controller))
             cg.add(controller.setup())
 
