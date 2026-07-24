@@ -14,6 +14,7 @@ DEPENDENCIES = ["lvgl"]
 CONF_ACTIVE_COLOR = "active_color"
 CONF_ACTIVE_SIZE = "active_size"
 CONF_CONTAINER = "container"
+CONF_DIRECT_MARQUEES = "direct_marquees"
 CONF_DIRECT_STATE_LAYERS = "direct_state_layers"
 CONF_ENTER_DURATION = "enter_duration"
 CONF_EXIT_DURATION = "exit_duration"
@@ -27,6 +28,8 @@ CONF_PRESSED_STYLES = "pressed_styles"
 CONF_STATE_LAYERS = "state_layers"
 CONF_THICKNESS = "thickness"
 CONF_TRANSITION_DURATION = "transition_duration"
+CONF_LABEL = "label"
+CONF_VIEWPORT = "viewport"
 CONF_WIDGET = "widget"
 
 lvgl_material_ns = cg.esphome_ns.namespace("lvgl_material")
@@ -34,6 +37,7 @@ MaterialStateLayer = lvgl_material_ns.class_("MaterialStateLayer", cg.Component)
 MaterialDirectStateLayer = lvgl_material_ns.class_(
     "MaterialDirectStateLayer", cg.Component
 )
+MaterialDirectMarquee = lvgl_material_ns.class_("MaterialDirectMarquee", cg.Component)
 MaterialPressedStyle = lvgl_material_ns.class_("MaterialPressedStyle", cg.Component)
 MaterialPageIndicator = lvgl_material_ns.class_("MaterialPageIndicator", cg.Component)
 MaterialPageIndicatorSetAction = lvgl_material_ns.class_(
@@ -65,6 +69,15 @@ DIRECT_STATE_LAYER_SCHEMA = cv.Schema(
             cv.ensure_list(cv.use_id(lv_obj_t)), cv.Length(min=1)
         ),
         cv.Optional(CONF_PRESSED_OPACITY, default="12%"): cv.percentage,
+    }
+).extend(cv.COMPONENT_SCHEMA)
+
+DIRECT_MARQUEE_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MaterialDirectMarquee),
+        cv.GenerateID(CONF_LVGL_ID): cv.use_id(LvglComponent),
+        cv.Required(CONF_LABEL): cv.use_id(lv_obj_t),
+        cv.Required(CONF_VIEWPORT): cv.use_id(lv_obj_t),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -101,12 +114,14 @@ def _validate_config(config):
     if (
         not config.get(CONF_STATE_LAYERS)
         and not config.get(CONF_DIRECT_STATE_LAYERS)
+        and not config.get(CONF_DIRECT_MARQUEES)
         and not config.get(CONF_PRESSED_STYLES)
         and not config.get(CONF_PAGE_INDICATORS)
     ):
         raise cv.Invalid(
             f"At least one of {CONF_STATE_LAYERS}, {CONF_DIRECT_STATE_LAYERS}, "
-            f"{CONF_PRESSED_STYLES}, or {CONF_PAGE_INDICATORS} is required"
+            f"{CONF_DIRECT_MARQUEES}, {CONF_PRESSED_STYLES}, "
+            f"or {CONF_PAGE_INDICATORS} is required"
         )
     for indicator in config.get(CONF_PAGE_INDICATORS, []):
         if indicator[CONF_INITIAL_PAGE] >= indicator[CONF_COUNT]:
@@ -123,6 +138,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_DIRECT_STATE_LAYERS, default=list): cv.ensure_list(
                 DIRECT_STATE_LAYER_SCHEMA
             ),
+            cv.Optional(CONF_DIRECT_MARQUEES, default=list): cv.ensure_list(
+                DIRECT_MARQUEE_SCHEMA
+            ),
             cv.Optional(CONF_PRESSED_STYLES, default=list): cv.ensure_list(
                 PRESSED_STYLE_SCHEMA
             ),
@@ -136,6 +154,15 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
+    direct_marquee_bindings = []
+    for conf in config[CONF_DIRECT_MARQUEES]:
+        lvgl = await cg.get_variable(conf[CONF_LVGL_ID])
+        var = cg.new_Pvariable(conf[CONF_ID], lvgl)
+        await cg.register_component(var, conf)
+        label = (await get_widgets(conf, CONF_LABEL))[0]
+        viewport = (await get_widgets(conf, CONF_VIEWPORT))[0]
+        direct_marquee_bindings.append((var, label, viewport))
+
     pressed_style_bindings = []
     for conf in config[CONF_PRESSED_STYLES]:
         var = cg.new_Pvariable(conf[CONF_ID])
@@ -202,6 +229,9 @@ async def to_code(config):
 
     await wait_for_widgets()
     async with LvContext() as ctx:
+        for var, label, viewport in direct_marquee_bindings:
+            ctx.add(var.set_label(label.obj))
+            ctx.add(var.set_viewport(viewport.obj))
         for var, widgets in pressed_style_bindings:
             for widget in widgets:
                 ctx.add(var.add_target(widget.obj))

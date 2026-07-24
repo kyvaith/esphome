@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esphome/components/lvgl/lvgl_esphome.h"
+#include "esphome/components/lvgl_material/material_direct_marquee.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 

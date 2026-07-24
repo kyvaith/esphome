@@ -53,6 +53,21 @@ lvgl:
           - label:
               text: Shared style
     - obj:
+        id: material_marquee_viewport
+        width: 160
+        height: 40
+        y: -170
+        border_width: 0
+        pad_all: 0
+        overflow_visible: false
+        widgets:
+          - label:
+              id: material_marquee_label
+              width: 320
+              height: 40
+              text: A deliberately long marquee test label
+              long_mode: CLIP
+    - obj:
         id: material_page_indicator_container
         width: 180
         height: 24
@@ -61,6 +76,10 @@ lvgl:
         border_width: 0
 
 lvgl_material:
+  direct_marquees:
+    - id: test_direct_marquee
+      label: material_marquee_label
+      viewport: material_marquee_viewport
   pressed_styles:
     - id: test_pressed_style
       widgets:
