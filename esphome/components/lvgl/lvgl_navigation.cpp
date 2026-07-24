@@ -27,6 +27,19 @@ void LvglNavigation::add_home_widget(lv_obj_t *widget) {
   this->home_widgets_.push_back(widget);
 }
 
+void LvglNavigation::add_home_indicator(lv_obj_t *indicator) {
+  if (indicator == nullptr)
+    return;
+  const bool active = this->home_indicators_.empty();
+  if (active)
+    lv_obj_add_state(indicator, LV_STATE_CHECKED);
+  else
+    lv_obj_remove_state(indicator, LV_STATE_CHECKED);
+  this->home_indicators_.push_back(indicator);
+  lvgl_esphome_snapshot_swipe_set_page_indicator(this->last_home_page_index_ + 1,
+                                                 static_cast<int>(this->home_indicators_.size()));
+}
+
 void LvglNavigation::add_blocker(lv_obj_t *widget) {
   if (widget != nullptr)
     this->blockers_.push_back(widget);
@@ -419,8 +432,30 @@ bool LvglNavigation::is_blocked_() const {
                      [](lv_obj_t *widget) { return widget != nullptr && lv_obj_is_visible(widget); });
 }
 
+void LvglNavigation::update_home_indicators_(int index) {
+  lv_obj_t *parent = nullptr;
+  for (size_t indicator_index = 0; indicator_index < this->home_indicators_.size(); indicator_index++) {
+    auto *indicator = this->home_indicators_[indicator_index];
+    if (indicator == nullptr)
+      continue;
+    if (indicator_index == static_cast<size_t>(index))
+      lv_obj_add_state(indicator, LV_STATE_CHECKED);
+    else
+      lv_obj_remove_state(indicator, LV_STATE_CHECKED);
+    if (parent == nullptr)
+      parent = lv_obj_get_parent(indicator);
+  }
+  if (parent != nullptr)
+    lv_obj_update_layout(parent);
+  if (!this->home_indicators_.empty())
+    lvgl_esphome_snapshot_swipe_set_page_indicator(index + 1, static_cast<int>(this->home_indicators_.size()));
+}
+
 void LvglNavigation::notify_home_changed_(int index) {
-  if (index < 0 || index == this->last_notified_home_index_)
+  if (index < 0)
+    return;
+  this->update_home_indicators_(index);
+  if (index == this->last_notified_home_index_)
     return;
   this->last_notified_home_index_ = index;
   this->home_changed_callbacks_.call(static_cast<uint16_t>(index + 1));

@@ -85,6 +85,18 @@ lvgl:
                         text: Close overlay
                   on_click:
                     - lvgl.navigation.close: test_navigation
+        - obj:
+            id: home_indicator_one
+            width: 8
+            height: 8
+            checked:
+              width: 24
+        - obj:
+            id: home_indicator_two
+            width: 8
+            height: 8
+            checked:
+              width: 24
     - id: application_page
       widgets:
         - obj:
@@ -122,6 +134,9 @@ lvgl:
       widgets:
         - home_widget_one
         - home_widget_two
+      indicators:
+        - home_indicator_one
+        - home_indicator_two
     blockers:
       - overlay_application_widget
     on_home_changed:
