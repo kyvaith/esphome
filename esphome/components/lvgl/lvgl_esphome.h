@@ -363,6 +363,7 @@ class LvglComponent : public PollingComponent {
   bool navigation_touch_update(int32_t x, int32_t y);
   bool navigation_touch_end();
   void navigation_touch_cancel();
+  void rotate_coordinates(int32_t &x, int32_t &y) const;
   void set_big_endian(bool big_endian) { this->big_endian_ = big_endian; }
   bool is_big_endian() const { return this->big_endian_; }
   size_t get_current_page() const;

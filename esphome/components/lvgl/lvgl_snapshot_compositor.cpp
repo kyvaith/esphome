@@ -262,7 +262,7 @@ bool LvglSnapshotCompositor::bind_surface_(Surface &surface, lv_obj_t *view, int
 void LvglSnapshotCompositor::release_surface_(Surface &surface) {
   if (surface.image != nullptr) {
     lv_obj_add_flag(surface.image, LV_OBJ_FLAG_HIDDEN);
-    lv_image_set_src(surface.image, nullptr);
+    ::lv_image_set_src(surface.image, nullptr);
   }
   if (surface.view != nullptr && surface.buffer != nullptr)
     this->store_->release_object(surface.view);
@@ -399,7 +399,7 @@ void LvglSnapshotCompositor::release_application_() {
   if (this->application_mask_ != nullptr)
     lv_obj_add_flag(this->application_mask_, LV_OBJ_FLAG_HIDDEN);
   if (this->application_image_ != nullptr)
-    lv_image_set_src(this->application_image_, nullptr);
+    ::lv_image_set_src(this->application_image_, nullptr);
   if (this->application_page_ != nullptr && this->application_buffer_ != nullptr)
     this->store_->release(this->application_page_);
   this->application_page_ = nullptr;

@@ -1607,6 +1607,29 @@ void LvglComponent::navigation_touch_cancel() {
     this->navigation_->touch_cancel();
 }
 
+void LvglComponent::rotate_coordinates(int32_t &x, int32_t &y) const {
+  switch (this->rotation) {
+    default:
+      break;
+    case display::DISPLAY_ROTATION_180_DEGREES:
+      x = this->width_ - x - 1;
+      y = this->height_ - y - 1;
+      break;
+    case display::DISPLAY_ROTATION_270_DEGREES: {
+      const auto original_x = x;
+      x = this->height_ - y - 1;
+      y = original_x;
+      break;
+    }
+    case display::DISPLAY_ROTATION_90_DEGREES: {
+      const auto original_y = y;
+      y = this->width_ - x - 1;
+      x = original_y;
+      break;
+    }
+  }
+}
+
 void LvglComponent::draw_buffer_(const lv_area_t *area, lv_color_data *ptr) {
   auto width = lv_area_get_width(area);
   auto height = lv_area_get_height(area);
