@@ -75,6 +75,7 @@ LvglScrollSnapshotController = lvgl_ns.class_("LvglScrollSnapshotController")
 NavigationOpenAction = lvgl_ns.class_("NavigationOpenAction", automation.Action)
 NavigationCloseAction = lvgl_ns.class_("NavigationCloseAction", automation.Action)
 NavigationHomeAction = lvgl_ns.class_("NavigationHomeAction", automation.Action)
+NavigationRefreshAction = lvgl_ns.class_("NavigationRefreshAction", automation.Action)
 NavigationIsOpenCondition = lvgl_ns.class_(
     "NavigationIsOpenCondition", automation.Condition
 )
