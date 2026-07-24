@@ -1358,8 +1358,8 @@ std::string lv_event_code_name_for(lv_event_t *event) {
   if (event_code < sizeof(EVENT_NAMES) / sizeof(EVENT_NAMES[0])) {
     return EVENT_NAMES[event_code];
   }
-  char buffer[8];
-  snprintf(buffer, sizeof(buffer), "%2u", static_cast<unsigned>(event_code));
+  char buffer[12];
+  snprintf(buffer, sizeof(buffer), "%u", static_cast<unsigned>(event_code));
   return buffer;
 }
 
@@ -1873,8 +1873,8 @@ void LvglComponent::flush_cb_(lv_display_t *disp_drv, const lv_area_t *area, uin
         this->perf_flush_px_ += flush_px;
         profiler_note_flush(flush_us, flush_px);
         this->perf_flush_us_ += flush_us;
-        ESP_LOGV(TAG, "async flush_cb, area=%d/%d, %d/%d scheduled in %lu us", area->x1, area->y1, width, height,
-                 (unsigned long) flush_us);
+        ESP_LOGV(TAG, "async flush_cb, area=%d/%d, %d/%d scheduled in %lu us", static_cast<int>(area->x1),
+                 static_cast<int>(area->y1), width, height, (unsigned long) flush_us);
         return;
       }
     }
@@ -1916,8 +1916,9 @@ void LvglComponent::flush_cb_(lv_display_t *disp_drv, const lv_area_t *area, uin
     // Track flush wait time so loop() can subtract it when computing
     // CPU%% — the synchronous DMA push isn't real CPU work.
     this->perf_flush_us_ += dt;
-    ESP_LOGV(TAG, "flush_cb, area=%d/%d, %d/%d took %llu us", area->x1, area->y1, lv_area_get_width(area),
-             lv_area_get_height(area), (unsigned long long) dt);
+    ESP_LOGV(TAG, "flush_cb, area=%d/%d, %d/%d took %llu us", static_cast<int>(area->x1),
+             static_cast<int>(area->y1), static_cast<int>(lv_area_get_width(area)),
+             static_cast<int>(lv_area_get_height(area)), (unsigned long long) dt);
   }
   lv_display_flush_ready(disp_drv);
 }
@@ -3090,9 +3091,12 @@ void LvglComponent::direct_region_task_() {
         ESP_LOGI("lvgl.region",
                  "perf2s: frames=%u received=%u submitted=%u/%u busy=%u coalesced=%u batch_max=%u "
                  "avg=%uus max=%uus queued=%u last=%s",
-                 perf_count, perf_request_count, submitted_copy, submitted_blend, submit_busy,
-                 perf_coalesced_count, perf_max_batch_count,
-                 static_cast<unsigned>(perf_total_us / std::max<uint32_t>(1, perf_count)), perf_max_us,
+                 static_cast<unsigned>(perf_count), static_cast<unsigned>(perf_request_count),
+                 static_cast<unsigned>(submitted_copy), static_cast<unsigned>(submitted_blend),
+                 static_cast<unsigned>(submit_busy), static_cast<unsigned>(perf_coalesced_count),
+                 static_cast<unsigned>(perf_max_batch_count),
+                 static_cast<unsigned>(perf_total_us / std::max<uint32_t>(1, perf_count)),
+                 static_cast<unsigned>(perf_max_us),
                  static_cast<unsigned>(uxQueueMessagesWaiting(this->direct_region_queue_)), YESNO(presented));
         perf_count = 0;
         perf_request_count = 0;
@@ -3472,7 +3476,7 @@ extern "C" uint8_t lvgl_esphome_direct_blit_rgb888_async(const uint8_t *src, int
   auto *disp = lv_display_get_default();
   auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
   return component == nullptr
-             ? LVGL_DIRECT_BLIT_REJECTED
+             ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
              : component->direct_blit_rgb888_async(src, src_stride, x, y, width, height, ready_callback, ready_arg);
 }
 
@@ -3483,7 +3487,7 @@ extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_async(
   auto *disp = lv_display_get_default();
   auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
   return component == nullptr
-             ? LVGL_DIRECT_BLIT_REJECTED
+             ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
              : component->direct_blend_argb8888_async(
                    background, background_stride, foreground, foreground_stride, foreground_width,
                    foreground_height, foreground_x, foreground_y, x, y, width, height, ready_callback, ready_arg);
@@ -8875,8 +8879,6 @@ lv_draw_buf_t snapshot_app_presented_close_view{};
 SnapshotCacheEntry snapshot_cache[SNAPSHOT_CACHE_ENTRY_COUNT];
 SnapshotPanoramaCacheEntry snapshot_panorama_cache[3];
 SnapshotTileWindowCache snapshot_tile_window_cache;
-lv_obj_t *snapshot_cache_pending_compress_obj = nullptr;
-uint32_t snapshot_cache_pending_compress_at = 0;
 lv_obj_t *snapshot_cache_latest_raw_app_obj = nullptr;
 
 lv_draw_buf_t *snapshot_tile_window_find(lv_obj_t *obj) {
@@ -8898,7 +8900,7 @@ size_t snapshot_tile_window_bytes() {
   return bytes;
 }
 
-bool snapshot_tile_window_reserve(int width, int height) {
+[[maybe_unused]] bool snapshot_tile_window_reserve(int width, int height) {
   if (width <= 0 || height <= 0)
     return false;
   if (snapshot_tile_window_cache.width == width && snapshot_tile_window_cache.height == height) {
@@ -9523,16 +9525,6 @@ void snapshot_cache_store_raw_only(lv_obj_t *obj, lv_draw_buf_t *buf) {
   slot->generation++;
 }
 
-void snapshot_cache_schedule_compression(lv_obj_t *obj, uint32_t delay_ms) {
-#ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
-  snapshot_cache_pending_compress_obj = obj;
-  snapshot_cache_pending_compress_at = millis() + delay_ms;
-#else
-  (void) obj;
-  (void) delay_ms;
-#endif
-}
-
 void snapshot_cache_process_pending_compression() {
 #ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
   auto &worker = snapshot_compression_worker;
@@ -9569,49 +9561,6 @@ void snapshot_cache_process_pending_compression() {
     worker.result_ready.store(false, std::memory_order_release);
     worker.busy.store(false, std::memory_order_release);
   }
-
-  if (snapshot_cache_pending_compress_obj == nullptr ||
-      static_cast<int32_t>(millis() - snapshot_cache_pending_compress_at) < 0) {
-    return;
-  }
-
-  if (worker.busy.load(std::memory_order_acquire))
-    return;
-
-  lv_obj_t *obj = snapshot_cache_pending_compress_obj;
-  auto *entry = snapshot_cache_find_entry(obj);
-  if (entry == nullptr || entry->buf == nullptr) {
-    snapshot_cache_pending_compress_obj = nullptr;
-    return;
-  }
-  const uint32_t width = entry->buf->header.w;
-  const uint32_t height = entry->buf->header.h;
-  const uint32_t stride = entry->buf->header.stride;
-  const size_t raw_size = entry->buf->data_size != 0 ? entry->buf->data_size : (size_t) stride * height;
-  if (entry->buf->header.cf != LV_COLOR_FORMAT_RGB888 || width == 0 || height == 0 || stride != width * 3 ||
-      raw_size < (size_t) stride * height || (width % 16) != 0 || (height % 16) != 0 ||
-      !snapshot_compression_worker_setup()) {
-    snapshot_cache_pending_compress_obj = nullptr;
-    return;
-  }
-
-  worker.entry = entry;
-  worker.obj = obj;
-  worker.buf = entry->buf;
-  worker.generation = entry->generation;
-  worker.big_endian = entry->big_endian;
-  worker.width = width;
-  worker.height = height;
-  worker.stride = stride;
-  worker.cf = static_cast<lv_color_format_t>(entry->buf->header.cf);
-  worker.raw_size = raw_size;
-  worker.result = ESP_FAIL;
-  worker.elapsed_us = 0;
-  entry->compression_in_flight = true;
-  snapshot_cache_pending_compress_obj = nullptr;
-  worker.busy.store(true, std::memory_order_release);
-  std::atomic_thread_fence(std::memory_order_release);
-  xTaskNotifyGive(worker.task);
 #endif
 }
 
@@ -10026,124 +9975,6 @@ SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare_from_sources(lv_obj_
   }
   return slot;
 #else
-  return nullptr;
-#endif
-}
-
-SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare_from_buffers(lv_obj_t *left_obj, lv_obj_t *right_obj,
-                                                                         lv_draw_buf_t *left, lv_draw_buf_t *right,
-                                                                         int width) {
-#if defined(USE_ESP32) && LV_COLOR_DEPTH == 32
-  constexpr int scale = SNAPSHOT_PANORAMA_SCALE;
-  SnapshotPanoramaPageSource left_source;
-  SnapshotPanoramaPageSource right_source;
-  if (!snapshot_panorama_source_from_buffer(left, scale, &left_source) ||
-      !snapshot_panorama_source_from_buffer(right, scale, &right_source)) {
-    return nullptr;
-  }
-  return snapshot_panorama_cache_prepare_from_sources(left_obj, right_obj, left_source, right_source, width);
-#else
-  return nullptr;
-#endif
-}
-
-SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare(lv_obj_t *left_obj, lv_obj_t *right_obj, int width) {
-#if defined(USE_ESP32) && LV_COLOR_DEPTH == 32
-  if (left_obj == nullptr || right_obj == nullptr || width <= 0)
-    return nullptr;
-  constexpr int scale = SNAPSHOT_PANORAMA_SCALE;
-  if (auto *cached = snapshot_panorama_cache_find(left_obj, right_obj, width, scale))
-    return cached;
-
-  auto *left = snapshot_cache_find(left_obj);
-  auto *right = snapshot_cache_find(right_obj);
-  return snapshot_panorama_cache_prepare_from_buffers(left_obj, right_obj, left, right, width);
-#else
-  return nullptr;
-#endif
-}
-
-SnapshotPanoramaCacheEntry *snapshot_panorama_cache_prepare_pages(lv_obj_t **pages, int page_count, int width) {
-#if defined(USE_ESP32) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
-  if (pages == nullptr || page_count < 2 || page_count > 4 || width <= 0 || s_display_srm_client == nullptr)
-    return nullptr;
-
-  auto *display = lv_obj_get_display(pages[0]);
-  constexpr size_t CACHE_ALIGN = 128;
-  constexpr size_t BYTES_PER_PIXEL = 3;
-  const int height = display == nullptr ? 0 : lv_display_get_vertical_resolution(display);
-  if (height <= 0)
-    return nullptr;
-  const int panorama_width = width * page_count;
-  const size_t panorama_size = static_cast<size_t>(panorama_width) * height * BYTES_PER_PIXEL;
-  const size_t aligned_size = (panorama_size + CACHE_ALIGN - 1) & ~(CACHE_ALIGN - 1);
-
-  for (auto &entry : snapshot_panorama_cache) {
-    if (entry.buf != nullptr)
-      snapshot_panorama_free_entry(entry);
-  }
-  auto &slot = snapshot_panorama_cache[0];
-  auto *panorama = static_cast<uint8_t *>(
-      heap_caps_aligned_alloc(CACHE_ALIGN, aligned_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (panorama == nullptr) {
-    ESP_LOGW(TAG, "snapshot panorama: full allocation failed (%u bytes)", static_cast<unsigned>(aligned_size));
-    snapshot_log_heap_("full panorama alloc failed", pages[0], true);
-    return nullptr;
-  }
-
-  const uint64_t started_us = snapshot_diag_now_us_();
-  bool copied = true;
-  for (int page = 0; page < page_count; page++) {
-    lv_draw_buf_t *source_buf = snapshot_cache_find(pages[page]);
-    const bool owns_source = source_buf == nullptr;
-    if (source_buf == nullptr)
-      source_buf = snapshot_take_centered(pages[page]);
-    SnapshotPanoramaPageSource source;
-    if (source_buf == nullptr || !snapshot_panorama_source_from_buffer(source_buf, 1, &source) ||
-        !snapshot_panorama_copy_source_ppa(source, panorama, aligned_size, panorama_width, height, page * width,
-                                           width, height)) {
-      copied = false;
-    }
-    if (owns_source && source_buf != nullptr)
-      lv_draw_buf_destroy(source_buf);
-    if (!copied)
-      break;
-  }
-  if (!copied) {
-    heap_caps_free(panorama);
-    ESP_LOGW(TAG, "snapshot panorama: failed to build full %dx%d PPA surface", panorama_width, height);
-    return nullptr;
-  }
-
-  snapshot_panorama_cache_sync_banded(panorama, static_cast<size_t>(panorama_width) * BYTES_PER_PIXEL, height,
-                                      ESP_CACHE_MSYNC_FLAG_DIR_M2C);
-  slot.left = pages[0];
-  slot.right = pages[1];
-  slot.page_count = page_count;
-  for (int i = 0; i < page_count; i++)
-    slot.pages[i] = pages[i];
-  slot.buf = panorama;
-  slot.size = aligned_size;
-  slot.width = width;
-  slot.height = height;
-  slot.scale = 1;
-
-  for (auto &entry : snapshot_cache) {
-    for (int i = 0; i < page_count; i++) {
-      if (entry.obj == pages[i]) {
-        snapshot_cache_free_entry(entry);
-        break;
-      }
-    }
-  }
-  ESP_LOGI(TAG, "snapshot panorama: cached persistent RGB888 %dx%d (%u KB) in %lluus", panorama_width, height,
-           static_cast<unsigned>(aligned_size / 1024),
-           static_cast<unsigned long long>(snapshot_diag_now_us_() - started_us));
-  return &slot;
-#else
-  (void) pages;
-  (void) page_count;
-  (void) width;
   return nullptr;
 #endif
 }
