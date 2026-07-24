@@ -3,6 +3,7 @@
 #include "esphome/components/lvgl/lvgl_esphome.h"
 #include "esphome/components/lvgl_material/material_direct_marquee.h"
 #include "esphome/components/lvgl_material/material_direct_volume_overlay.h"
+#include "esphome/components/lvgl_material/material_wavy_progress.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 

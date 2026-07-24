@@ -25,6 +25,11 @@ lvgl:
         widgets:
           - label:
               text: Material
+    - image:
+        id: material_wavy_progress_image
+        src: material_wavy_progress_source
+        width: 244
+        height: 244
     - button:
         id: material_previous_button
         width: 80
@@ -107,6 +112,9 @@ lvgl:
         text: "50%"
 
 lvgl_material:
+  wavy_progress:
+    - id: test_wavy_progress
+      widget: material_wavy_progress_image
   direct_marquees:
     - id: test_direct_marquee
       label: material_marquee_label
@@ -157,6 +165,13 @@ interval:
           value: 1
 
 psram:
+
+image:
+  - platform: file
+    id: material_wavy_progress_source
+    file: ../../pnglogo.png
+    type: RGB
+    resize: 244x244
 
 esp_ldo:
   - channel: 3
