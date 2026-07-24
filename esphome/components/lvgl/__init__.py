@@ -70,7 +70,12 @@ from .gradient import GRADIENT_SCHEMA, gradients_to_code
 from .keypads import KEYPADS_CONFIG, keypads_to_code
 from .lv_validation import lv_bool
 from .lvcode import LvContext, LvglComponent, lv_event_t_ptr, lvgl_static
-from .navigation import CONF_NAVIGATION, NAVIGATION_SCHEMA, navigation_to_code
+from .navigation import (
+    CONF_NAVIGATION,
+    NAVIGATION_SCHEMA,
+    navigation_automations_to_code,
+    navigation_to_code,
+)
 from .schemas import (
     BASE_PROPS,
     DISP_BG_SCHEMA,
@@ -626,6 +631,8 @@ async def to_code(configs):
             # await disp_update(lv_component.get_disp(), config)
     # Mark all widgets as completed so awaiters of ``wait_for_widgets`` proceed.
     set_widgets_completed(True)
+    for config in configs:
+        CORE.add_job(navigation_automations_to_code, config)
     async with LvContext():
         await generate_triggers()
         await generate_align_tos(configs[0])

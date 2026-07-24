@@ -229,10 +229,6 @@ async def navigation_to_code(lv_component, config):
     for blocker in blockers:
         lv_add(navigation.add_blocker(blocker.obj))
 
-    await automation.build_callback_automations(
-        navigation, navigation_config, NAVIGATION_CALLBACK_AUTOMATIONS
-    )
-
     for application_config in navigation_config[CONF_APPLICATIONS]:
         page = await cg.get_variable(application_config[CONF_PAGE])
         application = cg.new_Pvariable(application_config[CONF_ID])
@@ -250,10 +246,24 @@ async def navigation_to_code(lv_component, config):
                 application_config[CONF_CLOSE_ON_THRESHOLD]
             )
         )
+        lv_add(navigation.add_application(application))
+
+
+async def navigation_automations_to_code(config):
+    navigation_config = config.get(CONF_NAVIGATION)
+    if navigation_config is None:
+        return
+
+    navigation = await cg.get_variable(navigation_config[CONF_ID])
+    await automation.build_callback_automations(
+        navigation, navigation_config, NAVIGATION_CALLBACK_AUTOMATIONS
+    )
+
+    for application_config in navigation_config[CONF_APPLICATIONS]:
+        application = await cg.get_variable(application_config[CONF_ID])
         await automation.build_callback_automations(
             application, application_config, APPLICATION_CALLBACK_AUTOMATIONS
         )
-        lv_add(navigation.add_application(application))
 
 
 @automation.register_action(
