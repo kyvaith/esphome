@@ -20,6 +20,8 @@ class LEDCOutput final : public output::FloatOutput, public Component {
   void set_channel(uint8_t channel) { this->channel_ = channel; }
   void set_frequency(float frequency) { this->frequency_ = frequency; }
   void set_phase_angle(float angle) { this->phase_angle_ = angle; }
+  /// Apply the next duty update with the ESP-IDF hardware fade engine.
+  void set_next_fade_duration(uint32_t duration_ms) { this->next_fade_duration_ms_ = duration_ms; }
   /// Dynamically change frequency at runtime
   void update_frequency(float frequency) override;
 
@@ -40,6 +42,7 @@ class LEDCOutput final : public output::FloatOutput, public Component {
   float frequency_{};
   float duty_{0.0f};
   uint32_t last_duty_{UINT32_MAX};
+  uint32_t next_fade_duration_ms_{0};
   bool initialized_ = false;
 };
 
@@ -52,6 +55,17 @@ template<typename... Ts> class SetFrequencyAction final : public Action<Ts...> {
     float freq = this->frequency_.value(x...);
     this->parent_->update_frequency(freq);
   }
+
+ protected:
+  LEDCOutput *parent_;
+};
+
+template<typename... Ts> class SetNextFadeDurationAction final : public Action<Ts...> {
+ public:
+  explicit SetNextFadeDurationAction(LEDCOutput *parent) : parent_(parent) {}
+  TEMPLATABLE_VALUE(uint32_t, duration)
+
+  void play(const Ts &...x) { this->parent_->set_next_fade_duration(this->duration_.value(x...)); }
 
  protected:
   LEDCOutput *parent_;
