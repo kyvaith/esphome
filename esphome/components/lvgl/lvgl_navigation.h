@@ -101,6 +101,7 @@ class LvglNavigation {
   void add_home_page(LvPageType *page);
   void set_home_widget_page(LvPageType *page) { this->home_widget_page_ = page; }
   void add_home_widget(lv_obj_t *widget);
+  void add_home_indicator(lv_obj_t *indicator);
   void add_blocker(lv_obj_t *widget);
   void add_application(LvglApplication *application);
   void set_swipe_start_distance(uint16_t distance) { this->gesture_router_.set_start_distance(distance); }
@@ -143,6 +144,7 @@ class LvglNavigation {
   void activate_application_view_(LvglApplication *application);
   void deactivate_application_view_(LvglApplication *application);
   bool is_blocked_() const;
+  void update_home_indicators_(int index);
   void notify_home_changed_(int index);
   void reset_touch_();
 
@@ -151,6 +153,7 @@ class LvglNavigation {
   std::vector<LvPageType *> home_pages_{};
   LvPageType *home_widget_page_{};
   std::vector<lv_obj_t *> home_widgets_{};
+  std::vector<lv_obj_t *> home_indicators_{};
   std::vector<lv_obj_t *> blockers_{};
   std::vector<LvglApplication *> applications_{};
   LvglApplication *active_application_{};

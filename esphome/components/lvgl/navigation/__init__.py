@@ -2,7 +2,7 @@ from esphome import automation, codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_ON_OPEN, CONF_PAGES
 
-from ..defines import CONF_WIDGET, CONF_WIDGETS
+from ..defines import CONF_INDICATORS, CONF_WIDGET, CONF_WIDGETS
 from ..lvcode import lv_add
 from ..types import (
     LvglApplication,
@@ -79,6 +79,7 @@ APPLICATION_CALLBACK_AUTOMATIONS = (
 def _validate_home(config):
     has_pages = bool(config.get(CONF_PAGES))
     has_widgets = bool(config.get(CONF_WIDGETS))
+    indicators = config[CONF_INDICATORS]
     if has_pages == has_widgets:
         raise cv.Invalid(
             "Home navigation requires either 'pages' or the 'page' + 'widgets' pair"
@@ -87,6 +88,9 @@ def _validate_home(config):
         raise cv.Invalid("Home widget navigation requires a host 'page'")
     if has_pages and CONF_PAGE in config:
         raise cv.Invalid("The home host 'page' is only valid with 'widgets'")
+    view_count = len(config[CONF_PAGES] or config[CONF_WIDGETS])
+    if indicators and len(indicators) != view_count:
+        raise cv.Invalid("Home indicators must contain one widget for every home view")
     return config
 
 
@@ -96,6 +100,9 @@ HOME_SCHEMA = cv.All(
             cv.Optional(CONF_PAGES, default=[]): cv.ensure_list(cv.use_id(lv_page_t)),
             cv.Optional(CONF_PAGE): cv.use_id(lv_page_t),
             cv.Optional(CONF_WIDGETS, default=[]): cv.ensure_list(
+                cv.use_id(lv_pseudo_button_t)
+            ),
+            cv.Optional(CONF_INDICATORS, default=[]): cv.ensure_list(
                 cv.use_id(lv_pseudo_button_t)
             ),
         }
@@ -192,6 +199,12 @@ async def navigation_to_code(lv_component, config):
         )
         for widget in widgets:
             lv_add(navigation.add_home_widget(widget.obj))
+
+    indicators = await get_widgets(
+        [{CONF_ID: widget_id} for widget_id in home_config[CONF_INDICATORS]]
+    )
+    for indicator in indicators:
+        lv_add(navigation.add_home_indicator(indicator.obj))
 
     blockers = await get_widgets(
         [{CONF_ID: widget_id} for widget_id in navigation_config[CONF_BLOCKERS]]
