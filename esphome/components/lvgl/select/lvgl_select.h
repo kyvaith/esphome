@@ -10,7 +10,7 @@
 
 namespace esphome::lvgl {
 
-class LVGLSelect final : public select::Select, public Component {
+class LVGLSelect : public select::Select, public Component {
  public:
   LVGLSelect(LvSelectable *widget, lv_anim_enable_t anim, bool restore)
       : widget_(widget), anim_(anim), restore_(restore) {}
@@ -20,8 +20,11 @@ class LVGLSelect final : public select::Select, public Component {
     if (this->restore_) {
       size_t index;
       this->pref_ = this->make_entity_preference<size_t>();
-      if (this->pref_.load(&index))
+      if (this->pref_.load(&index)) {
+        lv_lock();
         this->widget_->set_selected_index(index, LV_ANIM_OFF);
+        lv_unlock();
+      }
     }
     this->publish();
     lv_obj_add_event_cb(
@@ -49,7 +52,9 @@ class LVGLSelect final : public select::Select, public Component {
 
  protected:
   void control(size_t index) override {
+    lv_lock();
     this->widget_->set_selected_index(index, this->anim_);
+    lv_unlock();
     this->publish();
   }
   void set_options_() {

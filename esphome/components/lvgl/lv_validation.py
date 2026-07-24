@@ -22,12 +22,9 @@ from esphome.helpers import cpp_string_escape
 from esphome.schema_extractors import SCHEMA_EXTRACT, schema_extractor
 from esphome.types import Expression, SafeExpType
 
-from ..mapping import INDEX_TYPES, get_mapping_metadata
 from . import types as ty
 from .defines import (
     CONF_END_VALUE,
-    CONF_IMAGE,
-    CONF_MAPPING,
     CONF_START_VALUE,
     CONF_TIME_FORMAT,
     LV_FONTS,
@@ -63,7 +60,6 @@ opacity = LValidator(
     opacity_validator,
     lv_opa_t,
     retmapper=lambda opa: StaticCastExpression(cg.uint8, opa * 255.0),
-    animatable=True,
 )
 
 COLOR_NAMES = {
@@ -227,33 +223,35 @@ def color(value):
     )
 
 
-def get_component_colors(value):
+def color_retmapper(value):
+    if isinstance(value, cv.Lambda):
+        return cv.returning_lambda(value)
     if isinstance(value, str) and value in COLOR_NAMES:
         value = COLOR_NAMES[value]
     if isinstance(value, int):
-        return value >> 16, value >> 8 & 0xFF, value & 0xFF
+        return literal(
+            f"lv_color_make({(value >> 16) & 0xFF}, {(value >> 8) & 0xFF}, {value & 0xFF})"
+        )
     if isinstance(value, ID):
         cval = [x for x in CORE.config[CONF_COLOR] if x[CONF_ID] == value][0]
         if CONF_HEX in cval:
             r, g, b = cval[CONF_HEX]
         else:
             r, g, b, _ = from_rgbw(cval)
-        return r, g, b
+        return literal(f"lv_color_make({r}, {g}, {b})")
     raise AssertionError(f"Unhandled lv_color value: {value!r}")
 
 
-def color_retmapper(value):
-    if isinstance(value, cv.Lambda):
-        return cv.returning_lambda(value)
-    r, g, b = get_component_colors(value)
-    return literal(f"lv_color_make({r}, {g}, {b})")
+def option_string(value):
+    value = cv.string(value).strip()
+    if value.find("\n") != -1:
+        raise cv.Invalid("Options strings must not contain newlines")
+    return value
 
 
 class LvColor(LValidator):
     def __init__(self):
-        super().__init__(
-            color, ty.lv_color_t, retmapper=color_retmapper, animatable=True
-        )
+        super().__init__(color, ty.lv_color_t, retmapper=color_retmapper)
 
     def __getattr__(self, item):
         if item in COLOR_NAMES:
@@ -262,13 +260,6 @@ class LvColor(LValidator):
 
 
 lv_color = LvColor()
-
-
-def option_string(value):
-    value = cv.string(value).strip()
-    if value.find("\n") != -1:
-        raise cv.Invalid("Options strings must not contain newlines")
-    return value
 
 
 def pixels_or_percent_validator(value):
@@ -286,7 +277,6 @@ pixels_or_percent = LValidator(
     pixels_or_percent_validator,
     lv_coord_t,
     retmapper=lambda x: x if isinstance(x, int) else literal(f"lv_pct({int(x * 100)})"),
-    animatable=True,
 )
 
 
@@ -325,23 +315,10 @@ def angle(value):
 
 
 # Validator for angles in LVGL expressed in 1/10 degree units.
-lv_angle = LValidator(angle, uint32, retmapper=lambda x: int(x * 10), animatable=True)
+lv_angle = LValidator(angle, uint32, retmapper=lambda x: int(x * 10))
 
 # Validator for angles in LVGL expressed in whole degrees
-lv_angle_degrees = LValidator(angle, uint32, retmapper=int, animatable=True)
-
-
-def rotation_degrees(value):
-    """Validate a display rotation, returning the angle in whole degrees.
-
-    Accepts the four supported rotations, optionally suffixed with "°".
-    """
-    value = cv.string(value).removesuffix("°")
-    return cv.one_of(0, 90, 180, 270, int=True)(value)
-
-
-# Validator for a display rotation expressed in whole degrees (templatable)
-lv_rotation = LValidator(rotation_degrees, cg.int_)
+lv_angle_degrees = LValidator(angle, uint32, retmapper=int)
 
 
 @schema_extractor("one_of")
@@ -359,9 +336,9 @@ def size_validator(value):
 size = LValidator(
     size_validator,
     uint32,
-    retmapper=lambda x: (
-        literal(x) if isinstance(x, str) else pixels_or_percent.retmapper(x)
-    ),
+    retmapper=lambda x: literal(x)
+    if isinstance(x, str)
+    else pixels_or_percent.retmapper(x),
 )
 
 
@@ -391,59 +368,63 @@ def stop_value(value):
     return cv.int_range(0, 255)(value)
 
 
-def _image_validator(value):
-    if isinstance(value, dict) and CONF_MAPPING in value:
-        from .schemas import MAPPING_IMAGE_SCHEMA
+def image_validator(value):
+    # Accept multiple image source types:
+    # 1. Image_ ID - standard ESPHome image (image: component)
+    #    Also matches SdImageComponent since it inherits from Image_
+    # 2. SvgFile ID - embedded SVG from svg_file: component
+    # 3. String path - file on filesystem (e.g., "/sdcard/icons/wifi.svg")
+    #
+    # Order matters: try Image_ first (base class) so both regular images
+    # and SdImageComponent (which inherits from Image_) are accepted.
 
-        return MAPPING_IMAGE_SCHEMA(value)
-    value = cv.use_id(Image_)(value)
-    get_lv_images_used().add(value)
-    add_lv_use("label")
-    return value
+    # Try Image_ first - covers both standard images AND SdImageComponent
+    try:
+        value_id = cv.use_id(Image_)(value)
+        get_lv_images_used().add(value_id)
+        add_lv_use("img", "label")
+        return value_id
+    except cv.Invalid:
+        pass
 
-
-class ImageValidator(LValidator):
-    def __init__(self):
-        super().__init__(
-            validator=_image_validator,
-            rtype=image.Image_.operator("ptr"),
-            requires=CONF_IMAGE,
+    # Try SdImageComponent explicitly (in case Image_ check fails)
+    try:
+        sd_image_class = cg.esphome_ns.namespace("storage").class_(
+            "SdImageComponent"
         )
+        result = cv.use_id(sd_image_class)(value)
+        add_lv_use("img", "label")
+        return result
+    except cv.Invalid:
+        pass
 
-    async def process(
-        self,
-        value: Any,
-        args: list[tuple[SafeExpType, str]] | None = None,
-        raw_lambda: bool = False,
-    ) -> Expression:
-        # Local import to avoid circular import at module level
-        from .lvcode import get_lambda_context_args
+    # Try svg_file ID
+    try:
+        svg_file_class = cg.esphome_ns.namespace("svg_file").class_("SvgFile")
+        result = cv.use_id(svg_file_class)(value)
+        add_lv_use("img", "label")
+        return result
+    except cv.Invalid:
+        pass
 
-        args = args or get_lambda_context_args()
-        if isinstance(value, dict) and CONF_MAPPING in value:
-            mapping_id = value[CONF_MAPPING]
-            mapping_var = await cg.get_variable(mapping_id)
-            metadata = get_mapping_metadata(mapping_id.id)
-            index = value[CONF_VALUE]
-            if isinstance(index, Lambda):
-                index = call_lambda(
-                    await cg.process_lambda(
-                        index, args, return_type=metadata.from_.data_type
-                    )
-                )
-            else:
-                index = await metadata.from_.convert_value(index)
-            return mapping_var.get(index)
+    # If all ID resolutions failed and it's a string starting with "/", treat as file path
+    if isinstance(value, str) and value.startswith("/"):
+        add_lv_use("img", "label")
+        return value
 
-        return await super().process(value, args, raw_lambda)
+    raise cv.Invalid(
+        f"Invalid image source: {value}. "
+        f"Must be an image/sd_image/svg_file ID or a file path starting with '/'"
+    )
 
 
-lv_image = ImageValidator()
-
+lv_image = LValidator(
+    image_validator,
+    image.Image_.operator("ptr"),
+)
 lv_image_list = LValidator(
-    cv.ensure_list(_image_validator),
+    cv.ensure_list(image_validator),
     cg.std_vector.template(image.Image_.operator("ptr")),
-    requires="image",
 )
 lv_bool = LValidator(cv.boolean, cg.bool_, retmapper=literal)
 
@@ -469,10 +450,7 @@ class TextValidator(LValidator):
         return super().__call__(value)
 
     async def process(
-        self,
-        value: Any,
-        args: list[tuple[SafeExpType, str]] | None = None,
-        raw_lambda: bool = False,
+        self, value: Any, args: list[tuple[SafeExpType, str]] | None = None
     ) -> Expression:
         # Local import to avoid circular import at module level
         from .lvcode import get_lambda_context_args
@@ -484,7 +462,6 @@ class TextValidator(LValidator):
                 str_args = [str(x) for x in value[CONF_ARGS]]
                 arg_expr = cg.RawExpression(",".join(str_args))
                 format_str = cpp_string_escape(format_str)
-                # str_sprintf justified: user-defined format, can't optimize without permanent RAM cost
                 sprintf_str = f"str_sprintf({format_str}, {arg_expr}).c_str()"
                 if nanval := value.get(CONF_IF_NAN):
                     nanval = cpp_string_escape(nanval)
@@ -492,24 +469,6 @@ class TextValidator(LValidator):
                         f"(std::isfinite({arg_expr}) ? {sprintf_str} : {nanval})"
                     )
                 return literal(sprintf_str)
-            if mapping_id := value.get(CONF_MAPPING):
-                mapping_var = await cg.get_variable(mapping_id)
-                metadata = get_mapping_metadata(mapping_id.id)
-                if metadata.to_ != INDEX_TYPES["string"]:
-                    raise ValueError(
-                        f"Mapping {mapping_id} does not map to strings, cannot use in text"
-                    )
-                index = value[CONF_VALUE]
-                if isinstance(index, Lambda):
-                    index = call_lambda(
-                        await cg.process_lambda(
-                            index, args, return_type=metadata.from_.data_type
-                        )
-                    )
-                else:
-                    index = await metadata.from_.convert_value(index)
-                return mapping_var.get(index).c_str()
-
             if time_format := value.get(CONF_TIME_FORMAT):
                 source = value[CONF_TIME]
                 if isinstance(source, Lambda):
@@ -535,18 +494,13 @@ class TextValidator(LValidator):
                 return value
             # Either a std::string or a lambda call returning that. We need const char*
             return MockObj(f"({value}).c_str()")
-        return await super().process(value, args, raw_lambda)
+        return await super().process(value, args)
 
 
 lv_text = TextValidator()
 lv_float = LValidator(cv.float_, cg.float_)
-lv_positive_float = LValidator(cv.positive_float, cg.float_)
-lv_zero_to_one_float = LValidator(cv.zero_to_one_float, cg.float_)
-lv_int = LValidator(cv.int_, cg.int_, animatable=True)
-lv_positive_int = LValidator(cv.positive_int, cg.int_, animatable=True)
-lv_brightness = LValidator(
-    cv.percentage, cg.float_, retmapper=lambda x: int(x * 255), animatable=True
-)
+lv_int = LValidator(cv.int_, cg.int_)
+lv_positive_int = LValidator(cv.positive_int, cg.int_)
 
 
 def _percentage_validator(value):
@@ -593,17 +547,12 @@ class LvFont(LValidator):
         # The inline overloads in lvgl_esphome.h handle conversion to lv_font_t*
         super().__init__(validator, Font.operator("ptr"))
 
-    async def process(
-        self,
-        value: Any,
-        args: list[tuple[SafeExpType, str]] | None = None,
-        raw_lambda: bool = False,
-    ):
+    async def process(self, value, args=()):
         if is_lv_font(value):
             return literal(f"&lv_font_{value}")
         if isinstance(value, str):
             return literal(f"{value}")
-        return await super().process(value, args, raw_lambda)
+        return await super().process(value, args)
 
 
 lv_font = LvFont()

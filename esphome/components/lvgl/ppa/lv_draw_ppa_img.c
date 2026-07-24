@@ -1,0 +1,1406 @@
+/**
+ * @file lv_draw_ppa_img.c
+ * Fixed PPA image blending for LVGL 9.4 on ESP32-P4
+ * Backported from https://github.com/lvgl/lvgl/pull/9162
+ * Adapted for C++ compilation (ESPHome build system)
+ */
+
+#include "sdkconfig.h"
+#ifdef CONFIG_SOC_PPA_SUPPORTED
+
+#include "lv_draw_ppa_private.h"
+#include "lv_draw_ppa.h"
+#include "src/draw/lv_draw_image_private.h"
+#include "src/draw/lv_image_decoder_private.h"
+#include "src/draw/lv_image_decoder.h"
+#include "esp_timer.h"
+#include "esp_rom_sys.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#include "hal/axi_icm_ll.h"
+#endif
+#include <math.h>
+#include <stdbool.h>
+#include <string.h>
+
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+static portMUX_TYPE s_direct_animation_qos_lock = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t s_direct_animation_qos_users;
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+bool esphome_artwork_image_buffer_written_by_dma(const void * ptr) __attribute__((weak));
+bool esphome_mipi_dsi_wait_fifo_margin(uint32_t min_depth, uint32_t timeout_us) __attribute__((weak));
+void esphome_mipi_dsi_mark_stress(const char * label, uint32_t duration_ms) __attribute__((weak));
+uint32_t lvgl_esphome_get_perf_logging_enabled(void) __attribute__((weak));
+#ifdef __cplusplus
+}
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_HEIGHT
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_HEIGHT 32
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_GAP_US
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_GAP_US 0
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_HEIGHT
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_HEIGHT CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_HEIGHT
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_GAP_US
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_GAP_US CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_GAP_US
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_HEIGHT
+#define CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_HEIGHT 32
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_GAP_US
+#define CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_GAP_US 0
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DSI_BACKPRESSURE
+#define CONFIG_ESPHOME_LVGL_PPA_DSI_BACKPRESSURE 0
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DSI_FIFO_MIN
+#define CONFIG_ESPHOME_LVGL_PPA_DSI_FIFO_MIN 768
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US
+#define CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US 2000
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_FIFO_MIN
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_FIFO_MIN CONFIG_ESPHOME_LVGL_PPA_DSI_FIFO_MIN
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_WAIT_US
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_WAIT_US CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_POST_WAIT
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_POST_WAIT 1
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DSI_STRESS_DIAGNOSTICS
+#define CONFIG_ESPHOME_LVGL_PPA_DSI_STRESS_DIAGNOSTICS 0
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SKIP_DMA_SOURCE_MSYNC
+#define CONFIG_ESPHOME_LVGL_PPA_SKIP_DMA_SOURCE_MSYNC 0
+#endif
+
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_THROTTLE
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_THROTTLE 1
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_MIN_PIXELS
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_MIN_PIXELS 100000
+#endif
+#ifndef CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS
+#define CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS 8
+#endif
+#ifndef CONFIG_ESPHOME_DMA2D_PEAK_LEVEL
+#define CONFIG_ESPHOME_DMA2D_PEAK_LEVEL 0
+#endif
+#ifndef CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL
+#define CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL 1
+#endif
+#ifndef CONFIG_ESPHOME_DMA2D_WRITE_PRIORITY
+#define CONFIG_ESPHOME_DMA2D_WRITE_PRIORITY 1
+#endif
+#ifndef CONFIG_ESPHOME_DMA2D_READ_PRIORITY
+#define CONFIG_ESPHOME_DMA2D_READ_PRIORITY 1
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_AXI_BURSTINESS
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_AXI_BURSTINESS 4
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_PEAK_LEVEL
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_PEAK_LEVEL 2
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSACTION_LEVEL
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSACTION_LEVEL 4
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_WRITE_PRIORITY
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_WRITE_PRIORITY 0
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_READ_PRIORITY
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_READ_PRIORITY 0
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DIRECT_AXI_BURSTINESS
+#define CONFIG_ESPHOME_LVGL_PPA_DIRECT_AXI_BURSTINESS 8
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DIRECT_PEAK_LEVEL
+#define CONFIG_ESPHOME_LVGL_PPA_DIRECT_PEAK_LEVEL 0
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DIRECT_TRANSACTION_LEVEL
+#define CONFIG_ESPHOME_LVGL_PPA_DIRECT_TRANSACTION_LEVEL 1
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DIRECT_WRITE_PRIORITY
+#define CONFIG_ESPHOME_LVGL_PPA_DIRECT_WRITE_PRIORITY 0
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DIRECT_READ_PRIORITY
+#define CONFIG_ESPHOME_LVGL_PPA_DIRECT_READ_PRIORITY 0
+#endif
+
+static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t * draw_dsc,
+                                 const lv_image_decoder_dsc_t * decoder_dsc, lv_draw_image_sup_t * sup,
+                                 const lv_area_t * img_coords, const lv_area_t * clipped_img_area);
+
+static uint32_t s_ppa_img_srm_tasks;
+static uint32_t s_ppa_img_srm_large_tasks;
+static uint32_t s_ppa_img_srm_unaligned_tasks;
+static uint64_t s_ppa_img_srm_unaligned_bytes;
+static uint64_t s_ppa_img_srm_copy_us;
+static uint32_t s_ppa_img_srm_copy_max_us;
+static uint64_t s_ppa_img_srm_sync_us;
+static uint32_t s_ppa_img_srm_sync_max_us;
+static uint64_t s_ppa_img_srm_sync_bytes;
+static uint64_t s_ppa_img_srm_ppa_us;
+static uint32_t s_ppa_img_srm_ppa_max_us;
+static uint32_t s_ppa_img_srm_band_max_us;
+static uint64_t s_ppa_img_srm_wait_us;
+static uint32_t s_ppa_img_srm_wait_max_us;
+static uint32_t s_ppa_img_overlay_count;
+static uint64_t s_ppa_img_overlay_src_sync_us;
+static uint64_t s_ppa_img_overlay_wait_us;
+static uint64_t s_ppa_img_overlay_dest_pre_us;
+static uint64_t s_ppa_img_overlay_ppa_us;
+static uint64_t s_ppa_img_overlay_dest_post_us;
+static bool s_ppa_img_srm_qos_config_logged;
+
+static inline bool lv_draw_ppa_verbose_log_enabled(void)
+{
+    return lvgl_esphome_get_perf_logging_enabled != NULL &&
+           lvgl_esphome_get_perf_logging_enabled() != 0;
+}
+
+static inline bool lv_draw_ppa_source_written_by_dma(const void * ptr)
+{
+    return esphome_artwork_image_buffer_written_by_dma != NULL &&
+           esphome_artwork_image_buffer_written_by_dma(ptr);
+}
+
+static inline void lv_draw_ppa_sync_source_for_dma_read(const void * ptr, uint32_t size)
+{
+    if(lv_draw_ppa_source_written_by_dma(ptr)) {
+#if CONFIG_ESPHOME_LVGL_PPA_SKIP_DMA_SOURCE_MSYNC
+        LV_UNUSED(size);
+        return;
+#else
+        lv_draw_ppa_cache_msync_after_dma_write(ptr, size);
+#endif
+    }
+    else {
+        lv_draw_ppa_cache_msync(ptr, size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    }
+}
+
+static inline uint32_t lv_draw_ppa_wait_for_display_fifo_with_limits(uint32_t min_depth,
+                                                                     uint32_t timeout_us)
+{
+#if CONFIG_ESPHOME_LVGL_PPA_DSI_BACKPRESSURE
+    if(esphome_mipi_dsi_wait_fifo_margin == NULL) {
+        return 0;
+    }
+    int64_t start_us = esp_timer_get_time();
+    esphome_mipi_dsi_wait_fifo_margin(min_depth, timeout_us);
+    return (uint32_t)(esp_timer_get_time() - start_us);
+#else
+    LV_UNUSED(min_depth);
+    LV_UNUSED(timeout_us);
+    return 0;
+#endif
+}
+
+static inline uint32_t lv_draw_ppa_wait_for_display_fifo(void)
+{
+    return lv_draw_ppa_wait_for_display_fifo_with_limits(CONFIG_ESPHOME_LVGL_PPA_DSI_FIFO_MIN,
+                                                         CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US);
+}
+
+static inline void lv_draw_ppa_mark_display_stress(const char * label, uint32_t duration_ms)
+{
+    if(CONFIG_ESPHOME_LVGL_PPA_DSI_STRESS_DIAGNOSTICS &&
+       lv_draw_ppa_verbose_log_enabled() && esphome_mipi_dsi_mark_stress != NULL) {
+        esphome_mipi_dsi_mark_stress(label, duration_ms);
+    }
+}
+
+#if defined(CONFIG_IDF_TARGET_ESP32P4) && CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_THROTTLE
+typedef struct {
+    bool active;
+} lv_draw_ppa_dma2d_qos_guard_t;
+
+static void lv_draw_ppa_dma2d_qos_guard_begin(lv_draw_ppa_dma2d_qos_guard_t * guard, uint32_t pixel_count)
+{
+    guard->active = pixel_count >= CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_MIN_PIXELS;
+    if(!guard->active) {
+        return;
+    }
+    if(!s_ppa_img_srm_qos_config_logged && lv_draw_ppa_verbose_log_enabled()) {
+        s_ppa_img_srm_qos_config_logged = true;
+        ESP_LOGW("lvgl.ppa_img",
+                 "large SRM QoS throttle enabled: min_px=%u burst=%u peak=%u trans=%u prio=%u/%u restore_burst=%u",
+                 (unsigned)CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_MIN_PIXELS,
+                 (unsigned)CONFIG_ESPHOME_LVGL_PPA_SRM_AXI_BURSTINESS,
+                 (unsigned)CONFIG_ESPHOME_LVGL_PPA_SRM_PEAK_LEVEL,
+                 (unsigned)CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSACTION_LEVEL,
+                 (unsigned)CONFIG_ESPHOME_LVGL_PPA_SRM_WRITE_PRIORITY,
+                 (unsigned)CONFIG_ESPHOME_LVGL_PPA_SRM_READ_PRIORITY,
+                 (unsigned)CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS);
+    }
+    axi_icm_ll_set_dma2d_qos_arbiter_prio(CONFIG_ESPHOME_LVGL_PPA_SRM_WRITE_PRIORITY,
+                                          CONFIG_ESPHOME_LVGL_PPA_SRM_READ_PRIORITY);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_LVGL_PPA_SRM_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_LVGL_PPA_SRM_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_WRITE);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_LVGL_PPA_SRM_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_LVGL_PPA_SRM_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_WRITE);
+}
+
+static void lv_draw_ppa_dma2d_qos_guard_end(lv_draw_ppa_dma2d_qos_guard_t * guard)
+{
+    if(!guard->active) {
+        return;
+    }
+    axi_icm_ll_set_dma2d_qos_arbiter_prio(CONFIG_ESPHOME_DMA2D_WRITE_PRIORITY,
+                                          CONFIG_ESPHOME_DMA2D_READ_PRIORITY);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_WRITE);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_DMA2D_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_DMA2D_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_WRITE);
+    guard->active = false;
+}
+#else
+typedef struct {
+    bool active;
+} lv_draw_ppa_dma2d_qos_guard_t;
+static void lv_draw_ppa_dma2d_qos_guard_begin(lv_draw_ppa_dma2d_qos_guard_t * guard, uint32_t pixel_count)
+{
+    LV_UNUSED(pixel_count);
+    guard->active = false;
+}
+static void lv_draw_ppa_dma2d_qos_guard_end(lv_draw_ppa_dma2d_qos_guard_t * guard)
+{
+    LV_UNUSED(guard);
+}
+#endif
+
+void lv_draw_ppa_srm_qos_begin(uint32_t pixel_count)
+{
+    lv_draw_ppa_dma2d_qos_guard_t guard;
+    lv_draw_ppa_dma2d_qos_guard_begin(&guard, pixel_count);
+}
+
+void lv_draw_ppa_srm_qos_end(uint32_t pixel_count)
+{
+    lv_draw_ppa_dma2d_qos_guard_t guard;
+#if defined(CONFIG_IDF_TARGET_ESP32P4) && CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_THROTTLE
+    guard.active = pixel_count >= CONFIG_ESPHOME_LVGL_PPA_SRM_QOS_MIN_PIXELS;
+#else
+    LV_UNUSED(pixel_count);
+    guard.active = false;
+#endif
+    lv_draw_ppa_dma2d_qos_guard_end(&guard);
+}
+
+void lv_draw_ppa_direct_animation_qos_apply(void)
+{
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    portENTER_CRITICAL(&s_direct_animation_qos_lock);
+    if(s_direct_animation_qos_users++ != 0) {
+        portEXIT_CRITICAL(&s_direct_animation_qos_lock);
+        return;
+    }
+    /* Direct animation always writes a complete idle DSI framebuffer. Give
+     * DMA2D its unrestricted transaction rate while keeping its AXI arbiter
+     * priority below the display GDMA reader. */
+    axi_icm_ll_set_dma2d_qos_arbiter_prio(CONFIG_ESPHOME_LVGL_PPA_DIRECT_WRITE_PRIORITY,
+                                          CONFIG_ESPHOME_LVGL_PPA_DIRECT_READ_PRIORITY);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_LVGL_PPA_DIRECT_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_LVGL_PPA_DIRECT_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_WRITE);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_LVGL_PPA_DIRECT_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_LVGL_PPA_DIRECT_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_LVGL_PPA_DIRECT_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_LVGL_PPA_DIRECT_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_WRITE);
+    portEXIT_CRITICAL(&s_direct_animation_qos_lock);
+#endif
+}
+
+void lv_draw_ppa_direct_animation_qos_restore(void)
+{
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+    portENTER_CRITICAL(&s_direct_animation_qos_lock);
+    if(s_direct_animation_qos_users == 0) {
+        portEXIT_CRITICAL(&s_direct_animation_qos_lock);
+        return;
+    }
+    if(--s_direct_animation_qos_users != 0) {
+        portEXIT_CRITICAL(&s_direct_animation_qos_lock);
+        return;
+    }
+    axi_icm_ll_set_dma2d_qos_arbiter_prio(CONFIG_ESPHOME_DMA2D_WRITE_PRIORITY,
+                                          CONFIG_ESPHOME_DMA2D_READ_PRIORITY);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, CONFIG_ESPHOME_DMA2D_AXI_BURSTINESS,
+                                  AXI_ICM_ACCESS_WRITE);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_DMA2D_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_READ);
+    axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D,
+                                             CONFIG_ESPHOME_DMA2D_PEAK_LEVEL,
+                                             CONFIG_ESPHOME_DMA2D_TRANSACTION_LEVEL,
+                                             AXI_ICM_ACCESS_WRITE);
+    portEXIT_CRITICAL(&s_direct_animation_qos_lock);
+#endif
+}
+
+uint32_t lv_draw_ppa_get_img_srm_task_count(void)
+{
+    return s_ppa_img_srm_tasks;
+}
+
+uint32_t lv_draw_ppa_get_img_srm_large_task_count(void)
+{
+    return s_ppa_img_srm_large_tasks;
+}
+
+uint32_t lv_draw_ppa_get_img_srm_unaligned_task_count(void)
+{
+    return s_ppa_img_srm_unaligned_tasks;
+}
+
+uint64_t lv_draw_ppa_get_img_srm_unaligned_bytes(void)
+{
+    return s_ppa_img_srm_unaligned_bytes;
+}
+
+uint64_t lv_draw_ppa_get_img_srm_copy_us(void)
+{
+    return s_ppa_img_srm_copy_us;
+}
+
+uint32_t lv_draw_ppa_get_img_srm_copy_max_us(void)
+{
+    return s_ppa_img_srm_copy_max_us;
+}
+
+uint64_t lv_draw_ppa_get_img_srm_sync_us(void)
+{
+    return s_ppa_img_srm_sync_us;
+}
+
+uint32_t lv_draw_ppa_get_img_srm_sync_max_us(void)
+{
+    return s_ppa_img_srm_sync_max_us;
+}
+
+uint64_t lv_draw_ppa_get_img_srm_sync_bytes(void)
+{
+    return s_ppa_img_srm_sync_bytes;
+}
+
+uint64_t lv_draw_ppa_get_img_srm_ppa_us(void)
+{
+    return s_ppa_img_srm_ppa_us;
+}
+
+uint32_t lv_draw_ppa_get_img_srm_ppa_max_us(void)
+{
+    return s_ppa_img_srm_ppa_max_us;
+}
+
+uint32_t lv_draw_ppa_get_img_srm_band_max_us(void)
+{
+    return s_ppa_img_srm_band_max_us;
+}
+
+uint64_t lv_draw_ppa_get_img_srm_wait_us(void)
+{
+    return s_ppa_img_srm_wait_us;
+}
+
+uint32_t lv_draw_ppa_get_img_srm_wait_max_us(void)
+{
+    return s_ppa_img_srm_wait_max_us;
+}
+
+uint32_t lv_draw_ppa_get_img_overlay_count(void)
+{
+    return s_ppa_img_overlay_count;
+}
+
+uint64_t lv_draw_ppa_get_img_overlay_src_sync_us(void)
+{
+    return s_ppa_img_overlay_src_sync_us;
+}
+
+uint64_t lv_draw_ppa_get_img_overlay_wait_us(void)
+{
+    return s_ppa_img_overlay_wait_us;
+}
+
+uint64_t lv_draw_ppa_get_img_overlay_dest_pre_us(void)
+{
+    return s_ppa_img_overlay_dest_pre_us;
+}
+
+uint64_t lv_draw_ppa_get_img_overlay_ppa_us(void)
+{
+    return s_ppa_img_overlay_ppa_us;
+}
+
+uint64_t lv_draw_ppa_get_img_overlay_dest_post_us(void)
+{
+    return s_ppa_img_overlay_dest_post_us;
+}
+
+
+void lv_draw_ppa_img(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
+                     const lv_area_t * coords)
+{
+    if(dsc->opa <= (lv_opa_t)LV_OPA_MIN)
+        return;
+
+    /* Dynamic RGB/ARGB overlays are already decoded draw buffers. Going through
+     * lv_draw_image_normal_helper() opens and closes the variable-image
+     * decoder for every animation frame, which is substantially more
+     * expensive than the actual PPA blend on ESP32-P4. Feed the native image
+     * descriptor directly to the blocking PPA core instead. */
+    if(lv_image_src_get_type(dsc->src) == LV_IMAGE_SRC_VARIABLE &&
+       dsc->rotation == 0 && dsc->scale_x == LV_SCALE_NONE && dsc->scale_y == LV_SCALE_NONE &&
+       dsc->skew_x == 0 && dsc->skew_y == 0 &&
+       dsc->blend_mode == LV_BLEND_MODE_NORMAL && dsc->opa >= (lv_opa_t)LV_OPA_MAX) {
+        const lv_image_dsc_t * image = (const lv_image_dsc_t *)dsc->src;
+        const lv_color_format_t image_cf = (lv_color_format_t)image->header.cf;
+        if(image->header.magic == LV_IMAGE_HEADER_MAGIC &&
+           (image_cf == LV_COLOR_FORMAT_RGB565 || image_cf == LV_COLOR_FORMAT_ARGB8888 ||
+            image_cf == LV_COLOR_FORMAT_RGB888 ||
+            image_cf == LV_COLOR_FORMAT_XRGB8888) &&
+           image->data != NULL) {
+            lv_area_t clipped_img_area;
+            if(!lv_area_intersect(&clipped_img_area, coords, &t->clip_area))
+                return;
+
+            lv_draw_buf_t direct_buf;
+            lv_memzero(&direct_buf, sizeof(direct_buf));
+            direct_buf.header = image->header;
+            direct_buf.data_size = image->data_size;
+            direct_buf.data = (uint8_t *)image->data;
+
+            lv_image_decoder_dsc_t decoder_dsc;
+            lv_memzero(&decoder_dsc, sizeof(decoder_dsc));
+            decoder_dsc.src = dsc->src;
+            decoder_dsc.decoded = &direct_buf;
+
+            lv_draw_image_sup_t sup;
+            lv_memzero(&sup, sizeof(sup));
+            sup.alpha_color = dsc->recolor;
+            lv_draw_img_ppa_core(t, dsc, &decoder_dsc, &sup, coords, &clipped_img_area);
+            return;
+        }
+    }
+
+    /* PPA accepts the image's native pixel stride. Asking the generic decoder
+     * for draw-buffer stride alignment makes LVGL allocate and copy dynamic
+     * ARGB images on every frame before PPA sees them. It is particularly
+     * expensive for animated overlays and provides no benefit to this unit. */
+    lv_image_decoder_args_t decoder_args;
+    lv_memzero(&decoder_args, sizeof(decoder_args));
+    decoder_args.stride_align = false;
+    decoder_args.premultiply = false;
+    decoder_args.no_cache = false;
+    decoder_args.use_indexed = false;
+    decoder_args.flush_cache = false;
+    lv_draw_image_normal_helper(t, dsc, coords, lv_draw_img_ppa_core, &decoder_args);
+}
+
+static void lv_draw_img_ppa_core(lv_draw_task_t * t, const lv_draw_image_dsc_t * draw_dsc,
+                                 const lv_image_decoder_dsc_t * decoder_dsc, lv_draw_image_sup_t * sup,
+                                 const lv_area_t * img_coords, const lv_area_t * clipped_img_area)
+{
+    LV_UNUSED(sup);
+
+    lv_layer_t * layer = t->target_layer;
+    lv_draw_buf_t * draw_buf = layer->draw_buf;
+    const lv_draw_buf_t * decoded = decoder_dsc->decoded;
+    lv_draw_ppa_unit_t * u = (lv_draw_ppa_unit_t *)t->draw_unit;
+
+    lv_area_t rel_clip_area;
+    lv_area_copy(&rel_clip_area, clipped_img_area);
+    lv_area_move(&rel_clip_area, -img_coords->x1, -img_coords->y1);
+
+    lv_area_t rel_img_coords;
+    lv_area_copy(&rel_img_coords, img_coords);
+    lv_area_move(&rel_img_coords, -img_coords->x1, -img_coords->y1);
+
+    lv_area_t src_area;
+    if(!lv_area_intersect(&src_area, &rel_clip_area, &rel_img_coords))
+        return;
+
+    lv_area_t dest_area;
+    lv_area_copy(&dest_area, clipped_img_area);
+    lv_area_move(&dest_area, -t->target_layer->buf_area.x1, -t->target_layer->buf_area.y1);
+
+    if(decoded == NULL || decoded->data == NULL)
+        return;
+
+    const uint8_t * src_buf = decoded->data;
+    lv_color_format_t src_cf = (lv_color_format_t)decoded->header.cf;
+    lv_color_format_t dest_cf = (lv_color_format_t)draw_buf->header.cf;
+    uint8_t * dest_buf = draw_buf->data;
+    uint32_t block_w = (uint32_t)lv_area_get_width(&src_area);
+    uint32_t block_h = (uint32_t)lv_area_get_height(&src_area);
+
+    uint32_t src_px_size = lv_color_format_get_size(src_cf);
+    uint32_t dest_px_size = lv_color_format_get_size(dest_cf);
+    uint32_t src_stride = decoded->header.stride ? decoded->header.stride : (decoded->header.w * src_px_size);
+    uint32_t dest_stride = draw_buf->header.stride ? draw_buf->header.stride : (draw_buf->header.w * dest_px_size);
+    if(src_px_size == 0 || dest_px_size == 0 ||
+       (src_stride % src_px_size) != 0 ||
+       (dest_stride % dest_px_size) != 0) {
+        LV_LOG_WARN("PPA image skipped: invalid stride src=%u/%u dest=%u/%u",
+                    (unsigned)src_stride, (unsigned)src_px_size,
+                    (unsigned)dest_stride, (unsigned)dest_px_size);
+        return;
+    }
+    uint32_t src_stride_px = src_stride / src_px_size;
+    uint32_t dest_stride_px = dest_stride / dest_px_size;
+    uint32_t dest_buffer_size;
+    if(!lv_draw_ppa_get_output_buffer_size(draw_buf,
+                                           (size_t)dest_stride * draw_buf->header.h,
+                                           &dest_buffer_size)) {
+        LV_LOG_WARN("PPA image skipped: destination buffer is smaller than its geometry");
+        return;
+    }
+    const bool alpha_overlay = src_cf == LV_COLOR_FORMAT_ARGB8888 &&
+                               draw_dsc->opa >= (lv_opa_t)LV_OPA_MAX;
+
+    /* Use field-by-field assignment for C++ compatibility
+     * (C++ designated initializers must be in declaration order) */
+    ppa_blend_oper_config_t cfg;
+    lv_memzero(&cfg, sizeof(cfg));
+
+    /* For an ARGB image, blend the source as foreground over the existing
+     * destination. The legacy opaque-copy path intentionally does the inverse
+     * and supplies a transparent A8 foreground so the source overwrites it. */
+    cfg.in_bg.buffer         = alpha_overlay ? (void *)dest_buf : (void *)src_buf;
+    cfg.in_bg.pic_w          = alpha_overlay ? dest_stride_px : src_stride_px;
+    cfg.in_bg.pic_h          = alpha_overlay ? draw_buf->header.h : decoded->header.h;
+    cfg.in_bg.block_w        = block_w;
+    cfg.in_bg.block_h        = block_h;
+    cfg.in_bg.block_offset_x = (uint32_t)(alpha_overlay ? dest_area.x1 : src_area.x1);
+    cfg.in_bg.block_offset_y = (uint32_t)(alpha_overlay ? dest_area.y1 : src_area.y1);
+    cfg.in_bg.blend_cm       = lv_color_format_to_ppa_blend(alpha_overlay ? dest_cf : src_cf);
+
+    cfg.bg_rgb_swap          = false;
+    cfg.bg_byte_swap         = false;
+    cfg.bg_alpha_update_mode = PPA_ALPHA_FIX_VALUE;
+    cfg.bg_alpha_fix_val     = 0xFF;
+    cfg.bg_ck_en             = false;
+
+    /* Foreground input */
+    cfg.in_fg.buffer         = alpha_overlay ? (void *)src_buf : (void *)dest_buf;
+    cfg.in_fg.pic_w          = alpha_overlay ? src_stride_px : dest_stride_px;
+    cfg.in_fg.pic_h          = alpha_overlay ? decoded->header.h : draw_buf->header.h;
+    cfg.in_fg.block_w        = block_w;
+    cfg.in_fg.block_h        = block_h;
+    cfg.in_fg.block_offset_x = (uint32_t)(alpha_overlay ? src_area.x1 : dest_area.x1);
+    cfg.in_fg.block_offset_y = (uint32_t)(alpha_overlay ? src_area.y1 : dest_area.y1);
+    cfg.in_fg.blend_cm       = alpha_overlay ? PPA_BLEND_COLOR_MODE_ARGB8888 : PPA_BLEND_COLOR_MODE_A8;
+
+    cfg.fg_rgb_swap          = false;
+    cfg.fg_byte_swap         = false;
+    cfg.fg_alpha_update_mode = alpha_overlay ? PPA_ALPHA_NO_CHANGE : PPA_ALPHA_FIX_VALUE;
+    cfg.fg_alpha_fix_val     = 0;
+    cfg.fg_ck_en             = false;
+
+    /* Output */
+    cfg.out.buffer           = dest_buf;
+    /* PPA hardware rejects unaligned out.buffer_size (issue #9868). */
+    cfg.out.buffer_size      = dest_buffer_size;
+    cfg.out.pic_w            = dest_stride_px;
+    cfg.out.pic_h            = draw_buf->header.h;
+    cfg.out.block_offset_x   = (uint32_t)dest_area.x1;
+    cfg.out.block_offset_y   = (uint32_t)dest_area.y1;
+    cfg.out.blend_cm         = lv_color_format_to_ppa_blend(dest_cf);
+
+    cfg.mode                 = PPA_TRANS_MODE_BLOCKING;
+    cfg.user_data            = u;
+
+    const uint32_t pixel_count = block_w * block_h;
+    const int64_t start_us = pixel_count >= 100000U ? esp_timer_get_time() : 0;
+    const uint32_t band_height = CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_HEIGHT;
+    const bool use_bands =
+        pixel_count >= 100000U && band_height > 0 && block_h > band_height;
+
+    lv_draw_ppa_dma2d_qos_guard_t qos_guard;
+    lv_draw_ppa_dma2d_qos_guard_begin(&qos_guard, pixel_count);
+    if(pixel_count >= 100000U) {
+        lv_draw_ppa_mark_display_stress(use_bands ? "ppa-blend-banded" : "ppa-blend", 1500);
+    }
+    esp_err_t ret = ESP_OK;
+    uint32_t max_band_elapsed = 0;
+    if(use_bands) {
+        for(uint32_t y = 0; y < block_h; y += band_height) {
+            uint32_t this_band_h = block_h - y;
+            if(this_band_h > band_height) this_band_h = band_height;
+
+            cfg.in_bg.block_h = this_band_h;
+            cfg.in_bg.block_offset_y = (uint32_t)(alpha_overlay ? dest_area.y1 : src_area.y1) + y;
+            cfg.in_fg.block_h = this_band_h;
+            cfg.in_fg.block_offset_y = (uint32_t)(alpha_overlay ? src_area.y1 : dest_area.y1) + y;
+            cfg.out.block_offset_y = (uint32_t)dest_area.y1 + y;
+
+            const uint8_t * src_sync_start = src_buf + (size_t)(src_area.y1 + y) * src_stride;
+            uint32_t src_sync_size = src_stride * this_band_h;
+            uint8_t * dest_sync_start = dest_buf + (size_t)(dest_area.y1 + y) * dest_stride;
+            uint32_t dest_sync_size = dest_stride * this_band_h;
+            lv_draw_ppa_sync_source_for_dma_read(src_sync_start, src_sync_size);
+            lv_draw_ppa_wait_for_display_fifo();
+            lv_draw_ppa_cache_msync(dest_sync_start, dest_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+
+            lv_draw_ppa_wait_for_display_fifo();
+            const int64_t band_start_us = esp_timer_get_time();
+            ret = ppa_do_blend(u->blend_client, &cfg);
+            const uint32_t band_elapsed = (uint32_t)(esp_timer_get_time() - band_start_us);
+            if(band_elapsed > max_band_elapsed) max_band_elapsed = band_elapsed;
+            if(ret == ESP_OK) {
+                lv_draw_ppa_wait_for_display_fifo();
+                lv_draw_ppa_cache_msync_after_dma_write(dest_sync_start, dest_sync_size);
+            }
+            else {
+                break;
+            }
+#if CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_GAP_US > 0
+            esp_rom_delay_us(CONFIG_ESPHOME_LVGL_PPA_BLEND_BAND_GAP_US);
+#endif
+            taskYIELD();
+        }
+    }
+    else {
+        const uint8_t * src_sync_start = src_buf + (size_t)src_area.y1 * src_stride;
+        uint32_t src_sync_size = src_stride * block_h;
+        uint8_t * dest_sync_start = dest_buf + (size_t)dest_area.y1 * dest_stride;
+        uint32_t dest_sync_size = dest_stride * block_h;
+        const bool overlay_perf = alpha_overlay && lvgl_esphome_get_perf_logging_enabled != NULL &&
+                                  lvgl_esphome_get_perf_logging_enabled();
+        int64_t perf_step_us = overlay_perf ? esp_timer_get_time() : 0;
+        lv_draw_ppa_sync_source_for_dma_read(src_sync_start, src_sync_size);
+        if(overlay_perf) {
+            const int64_t now_us = esp_timer_get_time();
+            s_ppa_img_overlay_src_sync_us += (uint64_t)(now_us - perf_step_us);
+            perf_step_us = now_us;
+        }
+        lv_draw_ppa_wait_for_display_fifo();
+        if(overlay_perf) {
+            const int64_t now_us = esp_timer_get_time();
+            s_ppa_img_overlay_wait_us += (uint64_t)(now_us - perf_step_us);
+            perf_step_us = now_us;
+        }
+        lv_draw_ppa_cache_msync(dest_sync_start, dest_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        if(overlay_perf) {
+            const int64_t now_us = esp_timer_get_time();
+            s_ppa_img_overlay_dest_pre_us += (uint64_t)(now_us - perf_step_us);
+            perf_step_us = now_us;
+        }
+        lv_draw_ppa_wait_for_display_fifo();
+        if(overlay_perf) {
+            const int64_t now_us = esp_timer_get_time();
+            s_ppa_img_overlay_wait_us += (uint64_t)(now_us - perf_step_us);
+            perf_step_us = now_us;
+        }
+        ret = ppa_do_blend(u->blend_client, &cfg);
+        if(overlay_perf) {
+            const int64_t now_us = esp_timer_get_time();
+            s_ppa_img_overlay_ppa_us += (uint64_t)(now_us - perf_step_us);
+            perf_step_us = now_us;
+        }
+        if(ret == ESP_OK) {
+            lv_draw_ppa_wait_for_display_fifo();
+            if(overlay_perf) {
+                const int64_t now_us = esp_timer_get_time();
+                s_ppa_img_overlay_wait_us += (uint64_t)(now_us - perf_step_us);
+                perf_step_us = now_us;
+            }
+            lv_draw_ppa_cache_msync_after_dma_write(dest_sync_start, dest_sync_size);
+            if(overlay_perf) {
+                s_ppa_img_overlay_dest_post_us += (uint64_t)(esp_timer_get_time() - perf_step_us);
+            }
+        }
+        if(overlay_perf) {
+            s_ppa_img_overlay_count++;
+        }
+    }
+    lv_draw_ppa_dma2d_qos_guard_end(&qos_guard);
+    if(start_us != 0 && lv_draw_ppa_verbose_log_enabled()) {
+        ESP_LOGW("lvgl.ppa_img", "blend %ux%u src_cf=%d dst_cf=%d band=%u max_band=%uus ret=%d took=%lldus",
+                 (unsigned)block_w, (unsigned)block_h, (int)src_cf, (int)dest_cf,
+                 use_bands ? (unsigned)band_height : 0U, (unsigned)max_band_elapsed, (int)ret,
+                 (long long)(esp_timer_get_time() - start_us));
+    }
+    if(ret != ESP_OK) {
+        LV_LOG_ERROR("PPA blend failed: %d", ret);
+    }
+}
+
+#ifdef LV_USE_PPA_IMG
+
+void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
+                          const lv_area_t * coords)
+{
+    if(dsc->opa <= (lv_opa_t)LV_OPA_MIN) return;
+
+    lv_draw_ppa_unit_t * u   = (lv_draw_ppa_unit_t *)t->draw_unit;
+    lv_layer_t * layer        = t->target_layer;
+    lv_draw_buf_t * dest_buf  = layer->draw_buf;
+
+    /* _real_area is the transformed image footprint. coords/image_area remain
+     * the unscaled image rectangle and are only suitable as a stable origin. */
+    lv_area_t visible_area;
+    if(!lv_area_intersect(&visible_area, &t->_real_area, &t->clip_area) ||
+       !lv_area_intersect(&visible_area, &visible_area, &layer->buf_area)) return;
+
+    lv_image_decoder_dsc_t decoder_dsc;
+    lv_image_decoder_args_t dec_args;
+    lv_memzero(&dec_args, sizeof(dec_args));
+    /* The exact source window is synchronized below. Flushing the complete
+     * variable image here duplicates the PSRAM traffic for every frame. */
+    dec_args.flush_cache = false;
+
+    lv_result_t res = lv_image_decoder_open(&decoder_dsc, dsc->src, &dec_args);
+    if(res != LV_RESULT_OK) return;
+
+    const lv_draw_buf_t * decoded = decoder_dsc.decoded;
+    if(!decoded || !decoded->data) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+
+    const uint8_t * src_buf = (const uint8_t *)decoded->data;
+    lv_color_format_t src_cf  = (lv_color_format_t)decoded->header.cf;
+    lv_color_format_t dest_cf = (lv_color_format_t)dest_buf->header.cf;
+    if(!ppa_src_cf_supported(src_cf) || !ppa_dest_cf_supported(dest_cf)) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+
+    float sx = (dsc->scale_x != LV_SCALE_NONE) ? ((float)dsc->scale_x / 256.0f) : 1.0f;
+    float sy = (dsc->scale_y != LV_SCALE_NONE) ? ((float)dsc->scale_y / 256.0f) : 1.0f;
+
+    uint32_t src_w = decoded->header.w;
+    uint32_t src_h = decoded->header.h;
+
+    const lv_area_t * image_area = &dsc->image_area;
+    if(lv_area_get_width(image_area) <= 0 || lv_area_get_height(image_area) <= 0) {
+        image_area = coords;
+    }
+
+    /* Keep the source origin anchored to the complete image_area. Deriving it
+     * from a partial dirty tile makes unrelated invalidations (for example a
+     * 1 Hz clock over artwork) copy the top source rows into that tile. */
+    float virt_x = (float)image_area->x1 + (float)dsc->pivot.x * (1.0f - sx);
+    float virt_y = (float)image_area->y1 + (float)dsc->pivot.y * (1.0f - sy);
+
+    /* Visible clip dimensions and buffer-local destination (always non-negative) */
+    int32_t clip_w = lv_area_get_width(&visible_area);
+    int32_t clip_h = lv_area_get_height(&visible_area);
+
+    lv_area_t dest_area;
+    lv_area_copy(&dest_area, &visible_area);
+    lv_area_move(&dest_area, -layer->buf_area.x1, -layer->buf_area.y1);
+
+    /* Map visible tile top-left back into source image space */
+    int32_t src_bx = (int32_t)(((float)visible_area.x1 - virt_x) / sx);
+    int32_t src_by = (int32_t)(((float)visible_area.y1 - virt_y) / sy);
+
+    /* ceilf gives the ideal source block; floorf clamp keeps PPA happy.
+     * The PPA may render 1 pixel short — we fix that after the call. */
+    uint32_t src_bw = (uint32_t)ceilf((float)clip_w / sx);
+    uint32_t src_bh = (uint32_t)ceilf((float)clip_h / sy);
+
+    uint32_t avail_w = (uint32_t)(dest_buf->header.w - dest_area.x1);
+    uint32_t avail_h = (uint32_t)(dest_buf->header.h - dest_area.y1);
+    uint32_t max_src_bw = (uint32_t)floorf((float)avail_w / sx);
+    uint32_t max_src_bh = (uint32_t)floorf((float)avail_h / sy);
+    bool gap_right  = (src_bw > max_src_bw);
+    bool gap_bottom = (src_bh > max_src_bh);
+    if(src_bw > max_src_bw) src_bw = max_src_bw;
+    if(src_bh > max_src_bh) src_bh = max_src_bh;
+
+    if(src_bx < 0 || src_by < 0 ||
+       (uint32_t)src_bx >= src_w || (uint32_t)src_by >= src_h) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    if((uint32_t)src_bx + src_bw > src_w) src_bw = src_w - (uint32_t)src_bx;
+    if((uint32_t)src_by + src_bh > src_h) src_bh = src_h - (uint32_t)src_by;
+    if(src_bw == 0 || src_bh == 0) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+
+    uint32_t out_bpp = (dest_cf == LV_COLOR_FORMAT_RGB565) ? 2u :
+                       (dest_cf == LV_COLOR_FORMAT_RGB888)  ? 3u : 4u;
+    uint32_t src_bpp = lv_color_format_get_size(src_cf);
+    uint32_t src_stride = decoded->header.stride ? decoded->header.stride : (src_w * src_bpp);
+    if(src_bpp == 0 || (src_stride % src_bpp) != 0) {
+        LV_LOG_WARN("PPA SRM scale skipped: invalid src stride=%u px=%u",
+                    (unsigned)src_stride, (unsigned)src_bpp);
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    uint32_t src_stride_px = src_stride / src_bpp;
+    uint32_t dest_stride = dest_buf->header.stride ? dest_buf->header.stride : (dest_buf->header.w * out_bpp);
+    if(out_bpp == 0 || (dest_stride % out_bpp) != 0) {
+        LV_LOG_WARN("PPA SRM scale skipped: invalid dest stride=%u px=%u",
+                    (unsigned)dest_stride, (unsigned)out_bpp);
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    uint32_t dest_stride_px = dest_stride / out_bpp;
+    size_t raw_bytes = (size_t)dest_stride * dest_buf->header.h;
+    uint32_t aligned_size;
+    if(!lv_draw_ppa_get_output_buffer_size(dest_buf, raw_bytes, &aligned_size)) {
+        LV_LOG_WARN("PPA SRM scale skipped: destination buffer is smaller than its geometry");
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    uint32_t pixel_count = (uint32_t)clip_w * (uint32_t)clip_h;
+
+    /* PPA only reads the source rows covered by the clipped draw task.
+     * Syncing the full decoded image on every redraw can move megabytes over
+     * PSRAM for a tiny dirty area and starve MIPI DSI scanout. */
+    const uint8_t * src_sync = src_buf + (size_t)src_by * src_stride;
+    uint32_t src_sync_size = src_stride * src_bh;
+    int64_t sync_start_us = pixel_count >= 100000U ? esp_timer_get_time() : 0;
+    lv_draw_ppa_sync_source_for_dma_read(src_sync, src_sync_size);
+    if(sync_start_us != 0) {
+        uint32_t elapsed = (uint32_t)(esp_timer_get_time() - sync_start_us);
+        s_ppa_img_srm_sync_us += elapsed;
+        s_ppa_img_srm_sync_bytes += src_sync_size;
+        if(elapsed > s_ppa_img_srm_sync_max_us) {
+            s_ppa_img_srm_sync_max_us = elapsed;
+        }
+        if(elapsed > 5000U && lv_draw_ppa_verbose_log_enabled()) {
+            ESP_LOGW("lvgl.ppa_img", "srm source sync %ux%u bytes=%u took=%uus",
+                     (unsigned)src_bw, (unsigned)src_bh, (unsigned)src_sync_size, (unsigned)elapsed);
+        }
+    }
+
+    ppa_srm_oper_config_t cfg;
+    lv_memzero(&cfg, sizeof(cfg));
+
+    cfg.in.buffer         = (void *)decoded->data;
+    cfg.in.pic_w          = src_stride_px;
+    cfg.in.pic_h          = src_h;
+    cfg.in.block_w        = src_bw;
+    cfg.in.block_h        = src_bh;
+    cfg.in.block_offset_x = (uint32_t)src_bx;
+    cfg.in.block_offset_y = (uint32_t)src_by;
+    cfg.in.srm_cm         = lv_color_format_to_ppa_srm(src_cf);
+
+    uint8_t * aligned_out = NULL;
+    uint8_t * out_ptr     = dest_buf->data;
+
+    if(esp_ptr_external_ram(dest_buf->data) &&
+       !lv_draw_ppa_buf_cache_aligned(dest_buf->data)) {
+        if((uint32_t)clip_w * (uint32_t)clip_h >= 100000U && lv_draw_ppa_verbose_log_enabled()) {
+            ESP_LOGW("lvgl.ppa_img", "srm unaligned output: copying %u bytes before PPA", (unsigned)raw_bytes);
+        }
+        aligned_out = (uint8_t *)heap_caps_aligned_alloc(
+            PPA_CACHE_LINE_SIZE, aligned_size,
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if(!aligned_out) {
+            LV_LOG_ERROR("PPA SRM: aligned alloc failed (%u B)", (unsigned)aligned_size);
+            lv_image_decoder_close(&decoder_dsc);
+            return;
+        }
+        s_ppa_img_srm_unaligned_tasks++;
+        s_ppa_img_srm_unaligned_bytes += raw_bytes;
+        int64_t copy_start_us = esp_timer_get_time();
+        memcpy(aligned_out, dest_buf->data, raw_bytes);
+        uint32_t copy_elapsed_us = (uint32_t)(esp_timer_get_time() - copy_start_us);
+        s_ppa_img_srm_copy_us += copy_elapsed_us;
+        if(copy_elapsed_us > s_ppa_img_srm_copy_max_us) {
+            s_ppa_img_srm_copy_max_us = copy_elapsed_us;
+        }
+        lv_draw_ppa_cache_msync(aligned_out, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        out_ptr = aligned_out;
+    }
+
+    cfg.out.buffer         = out_ptr;
+    cfg.out.buffer_size    = aligned_size;
+    cfg.out.pic_w          = dest_stride_px;
+    cfg.out.pic_h          = dest_buf->header.h;
+    cfg.out.block_offset_x = (uint32_t)dest_area.x1;
+    cfg.out.block_offset_y = (uint32_t)dest_area.y1;
+    cfg.out.srm_cm         = lv_color_format_to_ppa_srm(dest_cf);
+
+    cfg.rotation_angle    = PPA_SRM_ROTATION_ANGLE_0;
+    cfg.scale_x           = sx;
+    cfg.scale_y           = sy;
+    cfg.mirror_x          = false;
+    cfg.mirror_y          = false;
+    cfg.rgb_swap          = false;
+    cfg.byte_swap         = false;
+    cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+    cfg.mode              = PPA_TRANS_MODE_BLOCKING;
+    cfg.user_data         = u;
+
+    s_ppa_img_srm_tasks++;
+    if(pixel_count >= 100000U) {
+        s_ppa_img_srm_large_tasks++;
+    }
+    const bool srm_axis_aligned =
+        dsc->rotation == 0 && dsc->skew_x == 0 && dsc->skew_y == 0;
+    const bool is_scaled = dsc->scale_x != LV_SCALE_NONE || dsc->scale_y != LV_SCALE_NONE;
+    const uint32_t band_height = is_scaled ? CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_HEIGHT :
+                                 CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_HEIGHT;
+    const uint32_t band_gap_us = is_scaled ? CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_GAP_US :
+                                CONFIG_ESPHOME_LVGL_PPA_SRM_BAND_GAP_US;
+    const uint32_t fifo_min = is_scaled ? CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_FIFO_MIN :
+                              CONFIG_ESPHOME_LVGL_PPA_DSI_FIFO_MIN;
+    const uint32_t fifo_wait_us = is_scaled ? CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_WAIT_US :
+                                  CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US;
+    const bool use_bands =
+        srm_axis_aligned && aligned_out == NULL && pixel_count >= 100000U &&
+        band_height > 0 && (uint32_t)clip_h > band_height;
+
+    /* SRM writes through DMA while LVGL's draw buffer is cacheable PSRAM.
+     * Synchronize whole touched rows, not just the visible rectangle: RGB888
+     * spans are not cache-line aligned, so a row-level contract preserves
+     * neighbouring software-rendered pixels and prevents delayed horizontal
+     * artifacts when later redraws hit the same cache lines.
+     *
+     * Large 1:1 artwork copies are split into bands. A single full-screen SRM
+     * transfer can monopolize PSRAM long enough to starve MIPI DSI scanout;
+     * banding leaves short gaps between PPA jobs while keeping the CPU-free SRM
+     * path for the expensive RGB565/RGB888 copy.
+     */
+    uint8_t * sync_start = out_ptr + (size_t)dest_area.y1 * dest_stride;
+    uint32_t sync_size = dest_stride * (uint32_t)clip_h;
+
+    esp_err_t ret = ESP_OK;
+    uint32_t elapsed = 0;
+    uint32_t max_band_elapsed = 0;
+    uint32_t wait_total_us = 0;
+    uint32_t wait_max_us = 0;
+    const int64_t start_us =
+        (pixel_count >= 100000U || lv_draw_ppa_verbose_log_enabled()) ? esp_timer_get_time() : 0;
+    lv_draw_ppa_dma2d_qos_guard_t qos_guard;
+    lv_draw_ppa_dma2d_qos_guard_begin(&qos_guard, pixel_count);
+    if(pixel_count >= 100000U) {
+        lv_draw_ppa_mark_display_stress(use_bands ? "ppa-srm-banded" : "ppa-srm", 1500);
+    }
+    const bool use_area_sync = !use_bands && aligned_out == NULL && pixel_count < 100000U;
+    if(use_bands) {
+        for(uint32_t y = 0; y < (uint32_t)clip_h; y += band_height) {
+            uint32_t this_band_h = (uint32_t)clip_h - y;
+            if(this_band_h > band_height) this_band_h = band_height;
+            uint32_t src_band_y = (uint32_t)src_by + (uint32_t)floorf((float)y / sy);
+            uint32_t src_band_h = (uint32_t)ceilf((float)this_band_h / sy);
+            if(src_band_y >= src_h) {
+                break;
+            }
+            if(src_band_y + src_band_h > src_h) {
+                src_band_h = src_h - src_band_y;
+            }
+            if(src_band_h == 0) {
+                continue;
+            }
+
+            cfg.in.block_h = src_band_h;
+            cfg.in.block_offset_y = src_band_y;
+            cfg.out.block_offset_y = (uint32_t)dest_area.y1 + y;
+
+            uint8_t * band_sync_start = out_ptr + (size_t)(dest_area.y1 + y) * dest_stride;
+            uint32_t band_sync_size = dest_stride * this_band_h;
+            lv_draw_ppa_cache_msync(band_sync_start, band_sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+
+            uint32_t wait_us = lv_draw_ppa_wait_for_display_fifo_with_limits(fifo_min, fifo_wait_us);
+            wait_total_us += wait_us;
+            if(wait_us > wait_max_us) wait_max_us = wait_us;
+
+            const int64_t band_start_us = esp_timer_get_time();
+            ret = ppa_do_scale_rotate_mirror(u->srm_client, &cfg);
+            uint32_t band_elapsed = (uint32_t)(esp_timer_get_time() - band_start_us);
+            if(band_elapsed > max_band_elapsed) max_band_elapsed = band_elapsed;
+            if(ret == ESP_OK) {
+                lv_draw_ppa_cache_msync_after_dma_write(band_sync_start, band_sync_size);
+                if(!is_scaled || CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_POST_WAIT) {
+                    wait_us = lv_draw_ppa_wait_for_display_fifo_with_limits(fifo_min, fifo_wait_us);
+                    wait_total_us += wait_us;
+                    if(wait_us > wait_max_us) wait_max_us = wait_us;
+                }
+            } else {
+                break;
+            }
+            if(band_gap_us > 0) {
+                esp_rom_delay_us(band_gap_us);
+            }
+            taskYIELD();
+        }
+    } else {
+        if(use_area_sync) {
+            lv_draw_ppa_cache_sync_area_to_memory(dest_buf, &layer->buf_area, &visible_area);
+        } else {
+            lv_draw_ppa_cache_msync(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        }
+        uint32_t wait_us = lv_draw_ppa_wait_for_display_fifo();
+        wait_total_us += wait_us;
+        if(wait_us > wait_max_us) wait_max_us = wait_us;
+        ret = ppa_do_scale_rotate_mirror(u->srm_client, &cfg);
+        if(ret == ESP_OK) {
+            if(use_area_sync) {
+                lv_draw_ppa_cache_sync_area_from_memory(dest_buf, &layer->buf_area, &visible_area);
+            } else {
+                lv_draw_ppa_cache_msync_after_dma_write(sync_start, sync_size);
+            }
+            wait_us = lv_draw_ppa_wait_for_display_fifo();
+            wait_total_us += wait_us;
+            if(wait_us > wait_max_us) wait_max_us = wait_us;
+        }
+    }
+    lv_draw_ppa_dma2d_qos_guard_end(&qos_guard);
+    if(start_us != 0) {
+        elapsed = (uint32_t)(esp_timer_get_time() - start_us);
+        s_ppa_img_srm_ppa_us += elapsed;
+        s_ppa_img_srm_wait_us += wait_total_us;
+        if(wait_max_us > s_ppa_img_srm_wait_max_us) {
+            s_ppa_img_srm_wait_max_us = wait_max_us;
+        }
+        if(elapsed > s_ppa_img_srm_ppa_max_us) {
+            s_ppa_img_srm_ppa_max_us = elapsed;
+        }
+        if(max_band_elapsed > s_ppa_img_srm_band_max_us) {
+            s_ppa_img_srm_band_max_us = max_band_elapsed;
+        }
+        if(lv_draw_ppa_verbose_log_enabled()) {
+            ESP_LOGW("lvgl.ppa_img",
+                     "srm %dx%d src=%ux%u scale=%.2f/%.2f band=%u gap=%u wait=%uus max_wait=%uus max_band=%uus ret=%d took=%uus",
+                     (int)clip_w, (int)clip_h, (unsigned)src_bw, (unsigned)src_bh,
+                     (double)sx, (double)sy, use_bands ? (unsigned)band_height : 0U,
+                     (unsigned)band_gap_us,
+                     (unsigned)wait_total_us, (unsigned)wait_max_us,
+                     (unsigned)max_band_elapsed, (int)ret, (unsigned)elapsed);
+        }
+    }
+    if(ret != ESP_OK) {
+        LV_LOG_ERROR("PPA SRM scale failed: %d (src %ux%u scale %.2f/%.2f)",
+                     (int)ret, src_w, src_h, (double)sx, (double)sy);
+    }
+
+    /* PPA floorf rounding leaves a 1-pixel gap at right/bottom edges.
+     * Fill it by duplicating the last rendered column/row. Invalidate CPU
+     * cache first: PPA wrote via DMA, so CPU cache can be stale. */
+    if(ret == ESP_OK && (gap_right || gap_bottom)) {
+        lv_draw_ppa_cache_msync_after_dma_write(out_ptr, aligned_size);
+
+        uint8_t *base = out_ptr;
+        uint32_t stride = dest_stride;
+
+        if(gap_right && clip_w >= 2) {
+            uint32_t col = dest_area.x1 + (uint32_t)clip_w - 1;
+            uint32_t col_prev = col - 1;
+            for(int32_t y = 0; y < clip_h; y++) {
+                uint32_t row_off = (dest_area.y1 + (uint32_t)y) * stride;
+                lv_memcpy(base + row_off + col * out_bpp,
+                          base + row_off + col_prev * out_bpp, out_bpp);
+            }
+        }
+        if(gap_bottom && clip_h >= 2) {
+            uint32_t row = dest_area.y1 + (uint32_t)clip_h - 1;
+            uint32_t row_prev = row - 1;
+            lv_memcpy(base + row * stride + dest_area.x1 * out_bpp,
+                      base + row_prev * stride + dest_area.x1 * out_bpp,
+                      (uint32_t)clip_w * out_bpp);
+        }
+
+        lv_draw_ppa_cache_msync(out_ptr, aligned_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    }
+
+    if(aligned_out) {
+        if(ret == ESP_OK) {
+            lv_draw_ppa_cache_msync_after_dma_write(aligned_out, aligned_size);
+            int64_t copy_start_us = esp_timer_get_time();
+            memcpy(dest_buf->data, aligned_out, raw_bytes);
+            uint32_t copy_elapsed_us = (uint32_t)(esp_timer_get_time() - copy_start_us);
+            s_ppa_img_srm_copy_us += copy_elapsed_us;
+            if(copy_elapsed_us > s_ppa_img_srm_copy_max_us) {
+                s_ppa_img_srm_copy_max_us = copy_elapsed_us;
+            }
+            lv_draw_ppa_cache_msync(dest_buf->data, raw_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        }
+        heap_caps_free(aligned_out);
+    }
+
+    lv_image_decoder_close(&decoder_dsc);
+}
+
+/**
+ * PPA SRM hardware-accelerated image rotation (0/90/180/270 degrees)
+ * Uses the ESP32-P4 PPA Scale-Rotate-Mirror engine for zero-CPU-cost rotation.
+ */
+void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
+                            const lv_area_t * coords)
+{
+    if(dsc->opa <= (lv_opa_t)LV_OPA_MIN)
+        return;
+
+    lv_draw_ppa_unit_t * u = (lv_draw_ppa_unit_t *)t->draw_unit;
+    lv_layer_t * layer = t->target_layer;
+    lv_draw_buf_t * dest_buf = layer->draw_buf;
+
+    /* Decode the source image */
+    lv_image_decoder_dsc_t decoder_dsc;
+    lv_image_decoder_args_t dec_args;
+    lv_memzero(&dec_args, sizeof(dec_args));
+    dec_args.stride_align = false;
+    dec_args.premultiply = false;
+    dec_args.no_cache = false;
+    dec_args.use_indexed = false;
+    dec_args.flush_cache = true;  /* Ensure cache coherency for PPA DMA */
+
+    lv_result_t res = lv_image_decoder_open(&decoder_dsc, dsc->src, &dec_args);
+    if(res != LV_RESULT_OK) {
+        LV_LOG_WARN("PPA SRM: failed to decode image");
+        return;
+    }
+
+    const lv_draw_buf_t * decoded = decoder_dsc.decoded;
+    if(!decoded || !decoded->data) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+
+    lv_color_format_t src_cf = (lv_color_format_t)decoded->header.cf;
+    lv_color_format_t dest_cf = (lv_color_format_t)dest_buf->header.cf;
+
+    /* Verify PPA format support for both source and destination */
+    if(!ppa_src_cf_supported(src_cf) || !ppa_dest_cf_supported(dest_cf)) {
+        LV_LOG_WARN("PPA SRM: unsupported color format src=%d dest=%d", src_cf, dest_cf);
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+
+    /* Map LVGL rotation (clockwise, 0.1 deg units) to PPA rotation (counter-clockwise) */
+    int32_t angle = dsc->rotation % 3600;
+    if(angle < 0) angle += 3600;
+
+    ppa_srm_rotation_angle_t ppa_rot;
+    switch(angle) {
+        case 0:    ppa_rot = PPA_SRM_ROTATION_ANGLE_0;   break;
+        case 900:  ppa_rot = PPA_SRM_ROTATION_ANGLE_270; break;  /* 90° CW = 270° CCW */
+        case 1800: ppa_rot = PPA_SRM_ROTATION_ANGLE_180; break;
+        case 2700: ppa_rot = PPA_SRM_ROTATION_ANGLE_90;  break;  /* 270° CW = 90° CCW */
+        default:
+            lv_image_decoder_close(&decoder_dsc);
+            return;
+    }
+
+    uint32_t src_w = decoded->header.w;
+    uint32_t src_h = decoded->header.h;
+
+    uint32_t src_bpp_r = lv_color_format_get_size(src_cf);
+    uint32_t src_stride_r = decoded->header.stride ? decoded->header.stride : (src_w * src_bpp_r);
+    if(src_bpp_r == 0 || (src_stride_r % src_bpp_r) != 0) {
+        LV_LOG_WARN("PPA SRM rotate skipped: invalid src stride=%u px=%u",
+                    (unsigned)src_stride_r, (unsigned)src_bpp_r);
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    uint32_t src_stride_px_r = src_stride_r / src_bpp_r;
+
+    /* coords is the original image rectangle; _real_area is its transformed
+     * on-screen footprint. Map only the visible output tile back to source. */
+    LV_UNUSED(coords);
+    int32_t buf_w = (int32_t)dest_buf->header.w;
+    int32_t buf_h = (int32_t)dest_buf->header.h;
+
+    lv_area_t visible_area;
+    if(!lv_area_intersect(&visible_area, &t->_real_area, &t->clip_area) ||
+       !lv_area_intersect(&visible_area, &visible_area, &layer->buf_area)) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+
+    int32_t out_dx = visible_area.x1 - t->_real_area.x1;
+    int32_t out_dy = visible_area.y1 - t->_real_area.y1;
+    int32_t visible_w = lv_area_get_width(&visible_area);
+    int32_t visible_h = lv_area_get_height(&visible_area);
+
+    lv_area_t dest_area;
+    lv_area_copy(&dest_area, &visible_area);
+    lv_area_move(&dest_area, -layer->buf_area.x1, -layer->buf_area.y1);
+    if(dest_area.x1 < 0 || dest_area.y1 < 0 ||
+       dest_area.x1 >= buf_w || dest_area.y1 >= buf_h) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    if(dest_area.x1 + visible_w > buf_w) visible_w = buf_w - dest_area.x1;
+    if(dest_area.y1 + visible_h > buf_h) visible_h = buf_h - dest_area.y1;
+    if(visible_w <= 0 || visible_h <= 0) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+
+    int32_t src_x;
+    int32_t src_y;
+    int32_t block_w;
+    int32_t block_h;
+    switch(angle) {
+        case 1800:
+            block_w = visible_w;
+            block_h = visible_h;
+            src_x = (int32_t)src_w - out_dx - visible_w;
+            src_y = (int32_t)src_h - out_dy - visible_h;
+            break;
+        case 900:
+            block_w = visible_h;
+            block_h = visible_w;
+            src_x = out_dy;
+            src_y = (int32_t)src_h - out_dx - visible_w;
+            break;
+        case 2700:
+            block_w = visible_h;
+            block_h = visible_w;
+            src_x = (int32_t)src_w - out_dy - visible_h;
+            src_y = out_dx;
+            break;
+        default:
+            lv_image_decoder_close(&decoder_dsc);
+            return;
+    }
+
+    if(src_x < 0 || src_y < 0 || src_x >= (int32_t)src_w || src_y >= (int32_t)src_h) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    if(src_x + block_w > (int32_t)src_w) block_w = (int32_t)src_w - src_x;
+    if(src_y + block_h > (int32_t)src_h) block_h = (int32_t)src_h - src_y;
+    if(block_w <= 0 || block_h <= 0) {
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+
+    const uint8_t * src_sync = (const uint8_t *)decoded->data + (size_t)src_y * src_stride_r;
+    lv_draw_ppa_sync_source_for_dma_read(src_sync, (size_t)src_stride_r * block_h);
+
+    ppa_srm_oper_config_t cfg;
+    lv_memzero(&cfg, sizeof(cfg));
+
+    cfg.in.buffer         = (void *)decoded->data;
+    cfg.in.pic_w          = src_stride_px_r;
+    cfg.in.pic_h          = src_h;
+    cfg.in.block_w        = (uint32_t)block_w;
+    cfg.in.block_h        = (uint32_t)block_h;
+    cfg.in.block_offset_x = (uint32_t)src_x;
+    cfg.in.block_offset_y = (uint32_t)src_y;
+    cfg.in.srm_cm         = lv_color_format_to_ppa_srm(src_cf);
+
+    uint32_t out_bpp_r = (dest_cf == LV_COLOR_FORMAT_RGB565) ? 2u :
+                         (dest_cf == LV_COLOR_FORMAT_RGB888)  ? 3u : 4u;
+    uint32_t dest_stride_r = dest_buf->header.stride ? dest_buf->header.stride : (dest_buf->header.w * out_bpp_r);
+    if(out_bpp_r == 0 || (dest_stride_r % out_bpp_r) != 0) {
+        LV_LOG_WARN("PPA SRM rotate skipped: invalid dest stride=%u px=%u",
+                    (unsigned)dest_stride_r, (unsigned)out_bpp_r);
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+    uint32_t dest_stride_px_r = dest_stride_r / out_bpp_r;
+    size_t raw_bytes_r = (size_t)dest_stride_r * dest_buf->header.h;
+    uint32_t aligned_size_r;
+    if(!lv_draw_ppa_get_output_buffer_size(dest_buf, raw_bytes_r, &aligned_size_r)) {
+        LV_LOG_WARN("PPA SRM rotate skipped: destination buffer is smaller than its geometry");
+        lv_image_decoder_close(&decoder_dsc);
+        return;
+    }
+
+    uint8_t * aligned_out_r = NULL;
+    uint8_t * out_ptr_r     = dest_buf->data;
+
+    if(esp_ptr_external_ram(dest_buf->data) &&
+       !lv_draw_ppa_buf_cache_aligned(dest_buf->data)) {
+        aligned_out_r = (uint8_t *)heap_caps_aligned_alloc(
+            PPA_CACHE_LINE_SIZE, aligned_size_r,
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if(!aligned_out_r) {
+            LV_LOG_ERROR("PPA SRM rotate: aligned alloc failed");
+            lv_image_decoder_close(&decoder_dsc);
+            return;
+        }
+        memcpy(aligned_out_r, dest_buf->data, raw_bytes_r);
+        lv_draw_ppa_cache_msync(aligned_out_r, aligned_size_r, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        out_ptr_r = aligned_out_r;
+    }
+
+    cfg.out.buffer         = out_ptr_r;
+    cfg.out.buffer_size    = aligned_size_r;
+    cfg.out.pic_w          = dest_stride_px_r;
+    cfg.out.pic_h          = dest_buf->header.h;
+    cfg.out.block_offset_x = (uint32_t)dest_area.x1;
+    cfg.out.block_offset_y = (uint32_t)dest_area.y1;
+    cfg.out.srm_cm         = lv_color_format_to_ppa_srm(dest_cf);
+
+    cfg.rotation_angle     = ppa_rot;
+    cfg.scale_x            = 1.0f;
+    cfg.scale_y            = 1.0f;
+    cfg.mirror_x           = false;
+    cfg.mirror_y           = false;
+    cfg.rgb_swap           = false;
+    cfg.byte_swap          = false;
+    cfg.alpha_update_mode  = PPA_ALPHA_NO_CHANGE;
+    cfg.mode               = PPA_TRANS_MODE_BLOCKING;
+    cfg.user_data          = u;
+
+    esp_err_t ret = ppa_do_scale_rotate_mirror(u->srm_client, &cfg);
+    if(ret != ESP_OK) {
+        LV_LOG_ERROR("PPA SRM rotation failed: %d angle=%d src=%ux%u block=%dx%d+%d+%d",
+                     (int)ret, angle, src_w, src_h, block_w, block_h, src_x, src_y);
+    }
+
+    if(aligned_out_r) {
+        if(ret == ESP_OK) {
+            lv_draw_ppa_cache_msync_after_dma_write(aligned_out_r, aligned_size_r);
+            memcpy(dest_buf->data, aligned_out_r, raw_bytes_r);
+            lv_draw_ppa_cache_msync(dest_buf->data, raw_bytes_r, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        }
+        heap_caps_free(aligned_out_r);
+    }
+
+    lv_image_decoder_close(&decoder_dsc);
+}
+
+#endif /* LV_USE_PPA_IMG */
+
+#endif /* CONFIG_SOC_PPA_SUPPORTED */

@@ -23,6 +23,7 @@ from esphome.const import (
     CONF_COLOR,
     CONF_HEIGHT,
     CONF_ID,
+    CONF_INDEX,
     CONF_TEXT,
     CONF_WIDTH,
     CONF_X,
@@ -55,7 +56,7 @@ from ..lv_validation import (
     pixels_or_percent,
     size,
 )
-from ..lvcode import LocalVariable, lv, lv_assign, lv_expr
+from ..lvcode import LocalVariable, lv, lv_assign
 from ..schemas import STYLE_PROPS, TEXT_SCHEMA, point_schema, remap_property
 from ..types import LvType, ObjUpdateAction, lv_point_precise_t
 from . import Widget, WidgetType, get_widgets
@@ -101,24 +102,87 @@ class CanvasType(WidgetType):
         else:
             color_format = "LV_COLOR_FORMAT_NATIVE"
 
-        # LVGL 9.4: LV_CANVAS_BUF_SIZE(width, height, bits_per_pixel, stride)
-        # stride is 0 for default (width * bytes_per_pixel)
+        # LVGL 9.4: Canvas buffer allocation
+        # The issue: lv_expr.malloc_core() generates an expression that is never evaluated
+        # Solution: Use lv.malloc_core() which executes immediately
+
         draw_buf = cg.new_Pvariable(config[CONF_DRAW_BUF_ID])
         buf_size = literal(f"LV_DRAW_BUF_SIZE({width}, {height}, {color_format})")
+
+        # Allocate buffer using lv.malloc_core (executes immediately)
+        canvas_buffer = lv.malloc_core(buf_size)
+
+        # Initialize draw buffer with allocated buffer
         lv.draw_buf_init(
             draw_buf,
             width,
             height,
             literal(color_format),
             0,
-            lv_expr.malloc_core(buf_size),
+            canvas_buffer,
             literal(buf_size),
         )
         lv.draw_buf_set_flag(draw_buf, literal("LV_IMAGE_FLAGS_MODIFIABLE"))
         lv.canvas_set_draw_buf(w.obj, draw_buf)
 
+        # Set canvas size explicitly
+        from ..lvcode import lv_obj
+        lv_obj.set_size(w.obj, width, height)
+
 
 CanvasType()
+
+
+# Global layer storage for batched drawing operations
+# Key: canvas widget id, Value: layer variable name
+_canvas_layers = {}
+
+
+@automation.register_action(
+    "lvgl.canvas.begin_draw",
+    ObjUpdateAction,
+    cv.Schema(
+        {
+            cv.GenerateID(CONF_ID): cv.use_id(lv_canvas_t),
+        },
+    ),
+    synchronous=True,
+)
+async def canvas_begin_draw(config, action_id, template_arg, args):
+    """Begin a batch of drawing operations. Call end_draw when finished."""
+    widget = await get_widgets(config)
+
+    async def do_begin(w: Widget):
+        # Create persistent layer for this canvas
+        from ..lvcode import lv_add
+        layer_name = f"canvas_layer_{id(w)}"
+        lv_add(cg.RawStatement(f"static lv_layer_t {layer_name};"))
+        lv.canvas_init_layer(w.obj, literal(f"&{layer_name}"))
+        _canvas_layers[id(w)] = layer_name
+
+    return await action_to_code(widget, do_begin, action_id, template_arg, args, config)
+
+
+@automation.register_action(
+    "lvgl.canvas.end_draw",
+    ObjUpdateAction,
+    cv.Schema(
+        {
+            cv.GenerateID(CONF_ID): cv.use_id(lv_canvas_t),
+        },
+    ),
+    synchronous=True,
+)
+async def canvas_end_draw(config, action_id, template_arg, args):
+    """End a batch of drawing operations and render to screen."""
+    widget = await get_widgets(config)
+
+    async def do_end(w: Widget):
+        layer_name = _canvas_layers.get(id(w))
+        if layer_name:
+            lv.canvas_finish_layer(w.obj, literal(f"&{layer_name}"))
+
+    return await action_to_code(widget, do_end, action_id, template_arg, args, config)
 
 
 @automation.register_action(
@@ -142,6 +206,60 @@ async def canvas_fill(config, action_id, template_arg, args):
         lv.canvas_fill_bg(w.obj, color, opa)
 
     return await action_to_code(widget, do_fill, action_id, template_arg, args, config)
+
+
+@automation.register_action(
+    "lvgl.canvas.invalidate",
+    ObjUpdateAction,
+    cv.Schema(
+        {
+            cv.GenerateID(CONF_ID): cv.use_id(lv_canvas_t),
+        },
+    ),
+    synchronous=True,
+)
+async def canvas_invalidate(config, action_id, template_arg, args):
+    """Force canvas refresh without using layer system."""
+    widget = await get_widgets(config)
+
+    async def do_invalidate(w: Widget):
+        from ..lvcode import lv_obj
+        lv_obj.invalidate(w.obj)
+
+    return await action_to_code(widget, do_invalidate, action_id, template_arg, args, config)
+
+
+@automation.register_action(
+    "lvgl.canvas.copy_buf",
+    ObjUpdateAction,
+    cv.Schema(
+        {
+            cv.GenerateID(CONF_ID): cv.use_id(lv_canvas_t),
+            cv.Required(CONF_SRC): lv_image,
+            cv.Required(CONF_X): pixels,
+            cv.Required(CONF_Y): pixels,
+        },
+    ),
+    synchronous=True,
+)
+async def canvas_copy_buf(config, action_id, template_arg, args):
+    """Copy an image buffer to the canvas at specified position."""
+    widget = await get_widgets(config)
+    src = await lv_image.process(config[CONF_SRC])
+    x = await pixels.process(config[CONF_X])
+    y = await pixels.process(config[CONF_Y])
+
+    async def do_copy(w: Widget):
+        # Get source image info and copy to canvas
+        # lv_canvas_copy_buf(canvas, to_copy, x, y, w, h)
+        from ..lvcode import lv_add
+        img_dsc = src.get_lv_image_dsc()
+        lv_add(cg.RawStatement(
+            f"lv_canvas_copy_buf({w.obj}, lv_image_get_buf({img_dsc}), "
+            f"{x}, {y}, {img_dsc}->header.w, {img_dsc}->header.h);"
+        ))
+
+    return await action_to_code(widget, do_copy, action_id, template_arg, args, config)
 
 
 @automation.register_action(
@@ -171,7 +289,6 @@ async def canvas_set_pixel(config, action_id, template_arg, args):
 
     async def do_set_pixels(w: Widget):
         # LVGL 9.4: lv_canvas_set_px combines color and opacity
-        # Could optimize this for lambda values
         for point in points:
             x, y = point
             lv.canvas_set_px(w.obj, x, y, color, opa)
@@ -179,6 +296,55 @@ async def canvas_set_pixel(config, action_id, template_arg, args):
     return await action_to_code(
         widget, do_set_pixels, action_id, template_arg, args, config
     )
+
+
+CONF_PALETTE_COLOR = "palette_color"
+
+
+@automation.register_action(
+    "lvgl.canvas.set_palette",
+    ObjUpdateAction,
+    cv.Schema(
+        {
+            cv.GenerateID(CONF_ID): cv.use_id(lv_canvas_t),
+            cv.Required(CONF_INDEX): cv.int_range(0, 255),
+            cv.Required(CONF_COLOR): lv_color,
+        },
+    ),
+    synchronous=True,
+)
+async def canvas_set_palette(config, action_id, template_arg, args):
+    """Set palette color for indexed color formats (I1, I2, I4, I8)."""
+    widget = await get_widgets(config)
+    index = config[CONF_INDEX]
+    color = await lv_color.process(config[CONF_COLOR])
+
+    async def do_set_palette(w: Widget):
+        lv.canvas_set_palette(w.obj, index, color)
+
+    return await action_to_code(widget, do_set_palette, action_id, template_arg, args, config)
+
+
+@automation.register_action(
+    "lvgl.canvas.get_image",
+    ObjUpdateAction,
+    cv.Schema(
+        {
+            cv.GenerateID(CONF_ID): cv.use_id(lv_canvas_t),
+        },
+    ),
+    synchronous=True,
+)
+async def canvas_get_image(config, action_id, template_arg, args):
+    """Get the canvas as an image descriptor (for use with other widgets)."""
+    widget = await get_widgets(config)
+
+    async def do_get_image(w: Widget):
+        # Returns lv_image_dsc_t* that can be used with lv_image_set_src
+        from ..lvcode import lv_add
+        lv_add(cg.RawStatement(f"/* Canvas image: lv_canvas_get_image({w.obj}) */;"))
+
+    return await action_to_code(widget, do_get_image, action_id, template_arg, args, config)
 
 
 DRAW_SCHEMA = {
@@ -237,8 +403,6 @@ RECT_PROPS = {
         "shadow_width",
         "shadow_offset_x",
         "shadow_offset_y",
-        "shadow_ofs_x",
-        "shadow_ofs_y",
         "shadow_spread",
         "shadow_opa",
     )

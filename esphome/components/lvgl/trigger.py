@@ -9,7 +9,7 @@ from esphome.const import (
     CONF_X,
     CONF_Y,
 )
-from esphome.cpp_generator import MockObj, new_Pvariable
+from esphome.cpp_generator import MockObj, RawStatement, new_Pvariable
 from esphome.cpp_helpers import register_component
 from esphome.cpp_types import nullptr
 
@@ -83,7 +83,13 @@ async def generate_triggers():
                 selected = literal(
                     f"lv_indev_get_gesture_dir(lv_indev_active()) == {dir}"
                 )
-                await add_trigger(conf, w, "GESTURE", is_selected=selected)
+                await add_trigger(
+                    conf,
+                    w,
+                    "GESTURE",
+                    is_selected=selected,
+                    wait_release=True,
+                )
 
             for conf in config.get(CONF_ON_VALUE, ()):
                 await add_trigger(
@@ -141,7 +147,9 @@ def _get_event_literal(trigger: str | MockObj) -> MockObj:
     return literal("LV_EVENT_" + TRIGGER_MAP[trigger.upper()])
 
 
-async def add_trigger(conf, w, *events: str | MockObj, is_selected=None):
+async def add_trigger(
+    conf, w, *events: str | MockObj, is_selected=None, wait_release=False
+):
     is_selected = is_selected or w.is_selected()
     tid = conf[CONF_TRIGGER_ID]
     trigger = cg.new_Pvariable(tid)
@@ -155,6 +163,8 @@ async def add_trigger(conf, w, *events: str | MockObj, is_selected=None):
     await automation.build_automation(trigger, args, conf)
     async with LambdaContext(EVENT_ARG, where=tid) as context:
         with LvConditional(is_selected):
+            if wait_release:
+                lv_add(RawStatement("lv_indev_wait_release(lv_indev_active());"))
             lv_add(trigger.trigger(*value, literal("event")))
     callback = await context.get_lambda()
     event_literals = [_get_event_literal(event) for event in events]
@@ -164,6 +174,4 @@ async def add_trigger(conf, w, *events: str | MockObj, is_selected=None):
             lv_expr.obj_get_display(w.obj), callback, event_literals[0], nullptr
         )
     else:
-        lv_add(
-            lvgl_static.add_event_cb(w.obj, await context.get_lambda(), *event_literals)
-        )
+        lv_add(lvgl_static.add_event_cb(w.obj, callback, *event_literals))

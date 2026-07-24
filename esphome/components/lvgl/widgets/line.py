@@ -1,3 +1,4 @@
+from esphome.components.const import CONF_POINTS
 import esphome.config_validation as cv
 from esphome.const import CONF_X, CONF_Y
 
@@ -9,7 +10,6 @@ from ..types import LvCompound, LvType
 from . import Widget, WidgetType
 
 CONF_LINE = "line"
-CONF_POINTS = "points"
 CONF_POINT_LIST_ID = "point_list_id"
 
 

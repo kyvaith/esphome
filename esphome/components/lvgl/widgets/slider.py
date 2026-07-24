@@ -7,13 +7,13 @@ from ..defines import (
     CONF_KNOB,
     CONF_MAIN,
     SLIDER_MODES,
+    add_lv_use,
     literal,
 )
 from ..lv_validation import animated, get_start_value, lv_float
 from ..lvcode import lv
 from ..types import LvNumber
 from . import NumberType, Widget
-from .label import CONF_LABEL
 from .lv_bar import CONF_BAR
 
 CONF_SLIDER = "slider"
@@ -49,10 +49,8 @@ class SliderType(NumberType):
     def animated(self):
         return True
 
-    def get_uses(self):
-        return (CONF_BAR, CONF_LABEL)
-
     async def to_code(self, w: Widget, config):
+        add_lv_use(CONF_BAR)
         if CONF_MIN_VALUE in config:
             # not modify case
             lv.slider_set_range(w.obj, config[CONF_MIN_VALUE], config[CONF_MAX_VALUE])

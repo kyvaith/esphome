@@ -1,0 +1,806 @@
+# =============================================================================
+# LVGL 9.5 New Features - ESPHome Examples
+# =============================================================================
+# This file demonstrates all the new style properties and features
+# introduced in LVGL 9.5 for ESPHome.
+#
+# Features covered:
+#   1. Blur / Frosted Glass (blur_radius, blur_backdrop, blur_quality)
+#   2. Gradient Opacity (bg_main_opa, bg_grad_opa)
+#   3. Image Opacity (image_opa)
+#   4. Bitmap Mask (bitmap_mask_src)
+#   5. External Margins (margin_top/bottom/left/right)
+#   6. Text Outline / Stroke (text_outline_stroke_color, text_outline_stroke_opa, text_outline_stroke_width)
+#   7. Drop Shadow (drop_shadow_radius, drop_shadow_color, etc.)
+#   8. Image Colorkey (image_colorkey)
+#   9. Arc Image Source (arc_image_src)
+#  10. Rotary Encoder Sensitivity (rotary_sensitivity)
+#  11. WebP Image Support (via ThorVG)
+#
+# Target display: 800x480 or similar
+# =============================================================================
+
+lvgl:
+  displays:
+    - my_display
+
+  # ---------------------------------------------------------------------------
+  # Gradients (with per-stop opacity - new in LVGL 9.5)
+  # ---------------------------------------------------------------------------
+  gradients:
+    - id: gradient_sunset
+      direction: HOR
+      stops:
+        - color: 0xFF6B35
+          opa: 100%
+          position: 0%
+        - color: 0xF7C59F
+          opa: 60%
+          position: 50%
+        - color: 0x004E89
+          opa: 100%
+          position: 100%
+
+    - id: gradient_glass
+      direction: VER
+      stops:
+        - color: 0xFFFFFF
+          opa: 30%
+          position: 0%
+        - color: 0xFFFFFF
+          opa: 10%
+          position: 100%
+
+  pages:
+    # =========================================================================
+    # PAGE 1: Blur / Frosted Glass Effect
+    # =========================================================================
+    - id: page_blur
+      widgets:
+        # Background image (the content behind the blur)
+        - img:
+            src: background_image
+            width: 100%
+            height: 100%
+            align: center
+
+        # --- Example 1: Frosted Glass Card ---
+        # blur_backdrop: true = blurs the BACKGROUND behind the widget (like CSS backdrop-filter)
+        # blur_radius = intensity of the blur (in pixels)
+        # The widget must have bg_opa < 100% to see the blur effect behind it
+        - obj:
+            id: frosted_card
+            align: center
+            width: 300
+            height: 200
+            radius: 20
+            bg_color: 0xFFFFFF
+            bg_opa: 30%
+            blur_radius: 15
+            blur_backdrop: true
+            blur_quality: AUTO
+            border_width: 1
+            border_color: 0xFFFFFF
+            border_opa: 40%
+            pad_all: 20
+            widgets:
+              - label:
+                  text: "Frosted Glass Effect"
+                  text_color: white
+                  text_font: montserrat_20
+                  align: top_mid
+
+              - label:
+                  text: "backdrop blur"
+                  text_color: white
+                  align: center
+
+        # --- Example 2: Content Blur (blur_backdrop: false) ---
+        # blur_backdrop: false (default) = blurs the widget's OWN content
+        - obj:
+            align: bottom_left
+            x: 20
+            y: -20
+            width: 160
+            height: 100
+            radius: 12
+            bg_color: 0x2196F3
+            bg_opa: 80%
+            blur_radius: 10
+            blur_backdrop: false
+            widgets:
+              - label:
+                  text: "Content Blur"
+                  text_color: white
+                  align: center
+
+        # --- Example 3: High Quality Backdrop Blur ---
+        - obj:
+            align: bottom_right
+            x: -20
+            y: -20
+            width: 160
+            height: 100
+            radius: 12
+            bg_color: 0x9C27B0
+            bg_opa: 50%
+            blur_radius: 20
+            blur_backdrop: true
+            blur_quality: PRECISION
+            widgets:
+              - label:
+                  text: "HQ Backdrop"
+                  text_color: white
+                  align: center
+
+    # =========================================================================
+    # PAGE 2: Gradient Opacity (bg_main_opa / bg_grad_opa)
+    # =========================================================================
+    - id: page_gradient_opacity
+      bg_color: 0x1A1A2E
+      widgets:
+        - label:
+            text: "Gradient Opacity Examples"
+            text_color: white
+            text_font: montserrat_20
+            align: top_mid
+            y: 10
+
+        # --- Example 1: Full opacity gradient ---
+        - obj:
+            align: left_mid
+            x: 20
+            width: 220
+            height: 120
+            radius: 16
+            bg_color: 0xFF6B35
+            bg_grad_color: 0x004E89
+            bg_grad_dir: HOR
+            bg_main_opa: 100%
+            bg_grad_opa: 100%
+            widgets:
+              - label:
+                  text: "main: 100%\ngrad: 100%"
+                  text_color: white
+                  align: center
+
+        # --- Example 2: Fading gradient (start opaque, end transparent) ---
+        - obj:
+            align: center
+            width: 220
+            height: 120
+            radius: 16
+            bg_color: 0xFF6B35
+            bg_grad_color: 0x004E89
+            bg_grad_dir: HOR
+            bg_main_opa: 100%
+            bg_grad_opa: 30%
+            widgets:
+              - label:
+                  text: "main: 100%\ngrad: 30%"
+                  text_color: white
+                  align: center
+
+        # --- Example 3: Both semi-transparent ---
+        - obj:
+            align: right_mid
+            x: -20
+            width: 220
+            height: 120
+            radius: 16
+            bg_color: 0xFF6B35
+            bg_grad_color: 0x004E89
+            bg_grad_dir: VER
+            bg_main_opa: 50%
+            bg_grad_opa: 80%
+            border_width: 1
+            border_color: 0xFFFFFF
+            border_opa: 30%
+            widgets:
+              - label:
+                  text: "main: 50%\ngrad: 80%"
+                  text_color: white
+                  align: center
+
+        # --- Using a predefined gradient with per-stop opacity ---
+        - obj:
+            align: bottom_mid
+            y: -20
+            width: 90%
+            height: 80
+            radius: 12
+            bg_grad: gradient_sunset
+            widgets:
+              - label:
+                  text: "Predefined gradient with per-stop opacity (gradient_sunset)"
+                  text_color: white
+                  align: center
+
+    # =========================================================================
+    # PAGE 3: Image Opacity + WebP Support
+    # =========================================================================
+    - id: page_image_opacity
+      bg_color: 0x121212
+      widgets:
+        - label:
+            text: "Image Opacity & WebP"
+            text_color: white
+            text_font: montserrat_20
+            align: top_mid
+            y: 10
+
+        # --- Image at full opacity ---
+        - img:
+            src: my_icon
+            align: left_mid
+            x: 40
+            image_opa: 100%
+
+        # --- Image at 60% opacity ---
+        - img:
+            src: my_icon
+            align: center
+            image_opa: 60%
+
+        # --- Image at 25% opacity (ghost effect) ---
+        - img:
+            src: my_icon
+            align: right_mid
+            x: -40
+            image_opa: 25%
+
+        # Labels for each
+        - label:
+            text: "100%"
+            text_color: white
+            align: left_mid
+            x: 40
+            y: 60
+
+        - label:
+            text: "60%"
+            text_color: white
+            align: center
+            y: 60
+
+        - label:
+            text: "25%"
+            text_color: white
+            align: right_mid
+            x: -50
+            y: 60
+
+        # --- WebP Image Support (via ThorVG, no external library needed) ---
+        # Simply reference a .webp file like any other image
+        # - img:
+        #     src: my_webp_image
+        #     align: bottom_mid
+        #     y: -20
+        #
+        # Declare the WebP image in the image: section:
+        # image:
+        #   - id: my_webp_image
+        #     file: "images/photo.webp"
+        #     type: RGBA
+        #     resize: 200x150
+
+    # =========================================================================
+    # PAGE 4: Bitmap Mask
+    # =========================================================================
+    - id: page_bitmap_mask
+      bg_color: 0x0D1B2A
+      widgets:
+        - label:
+            text: "Bitmap Mask"
+            text_color: white
+            text_font: montserrat_20
+            align: top_mid
+            y: 10
+
+        # --- Masked object: the mask image defines visible areas ---
+        # White pixels = visible, Black pixels = hidden
+        - obj:
+            align: center
+            width: 200
+            height: 200
+            bg_color: 0xFF6B35
+            bg_grad_color: 0x004E89
+            bg_grad_dir: VER
+            bitmap_mask_src: circle_mask
+            widgets:
+              - label:
+                  text: "Masked!"
+                  text_color: white
+                  align: center
+
+        - label:
+            text: "bitmap_mask_src applies an alpha mask\nWhite = visible, Black = hidden"
+            text_color: 0x888888
+            align: bottom_mid
+            y: -20
+            text_align: center
+
+    # =========================================================================
+    # PAGE 5: External Margins (flex/grid layouts)
+    # =========================================================================
+    - id: page_margins
+      bg_color: 0x1B1B3A
+      widgets:
+        - label:
+            text: "Margins in Flex Layout"
+            text_color: white
+            text_font: montserrat_20
+            align: top_mid
+            y: 10
+
+        # Flex container
+        - obj:
+            align: center
+            width: 90%
+            height: 350
+            bg_color: 0x16213E
+            radius: 16
+            pad_all: 10
+            layout:
+              type: flex
+              flex_flow: row_wrap
+              flex_align_main: start
+              flex_align_cross: start
+              flex_align_track: start
+            widgets:
+              # --- Item 1: No margin (reference) ---
+              - obj:
+                  width: 140
+                  height: 80
+                  bg_color: 0x2196F3
+                  radius: 8
+                  widgets:
+                    - label:
+                        text: "No margin"
+                        text_color: white
+                        align: center
+
+              # --- Item 2: margin_left pushes it away from item 1 ---
+              - obj:
+                  width: 140
+                  height: 80
+                  bg_color: 0x4CAF50
+                  radius: 8
+                  margin_left: 20
+                  widgets:
+                    - label:
+                        text: "margin_left: 20"
+                        text_color: white
+                        align: center
+
+              # --- Item 3: margin_top pushes it down ---
+              - obj:
+                  width: 140
+                  height: 80
+                  bg_color: 0xFF9800
+                  radius: 8
+                  margin_top: 30
+                  widgets:
+                    - label:
+                        text: "margin_top: 30"
+                        text_color: white
+                        align: center
+
+              # --- Item 4: All margins ---
+              - obj:
+                  width: 140
+                  height: 80
+                  bg_color: 0xE91E63
+                  radius: 8
+                  margin_top: 10
+                  margin_bottom: 10
+                  margin_left: 15
+                  margin_right: 15
+                  widgets:
+                    - label:
+                        text: "All margins"
+                        text_color: white
+                        align: center
+
+              # --- Item 5: Large bottom margin ---
+              - obj:
+                  width: 140
+                  height: 80
+                  bg_color: 0x9C27B0
+                  radius: 8
+                  margin_bottom: 40
+                  widgets:
+                    - label:
+                        text: "margin_bottom: 40"
+                        text_color: white
+                        align: center
+
+    # =========================================================================
+    # PAGE 6: Text Outline / Stroke
+    # =========================================================================
+    - id: page_text_outline
+      bg_color: 0x0A0A23
+      widgets:
+        # --- Example 1: White outline on dark text ---
+        - label:
+            text: "Text Outline"
+            text_color: 0x0A0A23
+            text_font: montserrat_48
+            text_outline_stroke_color: white
+            text_outline_stroke_opa: 100%
+            text_outline_stroke_width: 3
+            align: top_mid
+            y: 30
+
+        # --- Example 2: Colored glow effect ---
+        - label:
+            text: "Neon Glow"
+            text_color: 0x00FF88
+            text_font: montserrat_48
+            text_outline_stroke_color: 0x00FF88
+            text_outline_stroke_opa: 50%
+            text_outline_stroke_width: 6
+            align: center
+            y: -40
+
+        # --- Example 3: Bold stroke effect ---
+        - label:
+            text: "Bold Stroke"
+            text_color: white
+            text_font: montserrat_36
+            text_outline_stroke_color: 0xFF6B35
+            text_outline_stroke_opa: 100%
+            text_outline_stroke_width: 4
+            align: center
+            y: 40
+
+        # --- Example 4: Subtle outline for readability on busy backgrounds ---
+        - label:
+            text: "Readable on any background"
+            text_color: white
+            text_font: montserrat_20
+            text_outline_stroke_color: 0x000000
+            text_outline_stroke_opa: 80%
+            text_outline_stroke_width: 2
+            align: bottom_mid
+            y: -40
+
+    # =========================================================================
+    # PAGE 7: Drop Shadow (independent from regular shadow)
+    # =========================================================================
+    # Drop shadow is rendered OUTSIDE the widget, like CSS box-shadow.
+    # Unlike regular shadow (which is part of the widget's background),
+    # drop shadow follows the widget's shape including rounded corners.
+    - id: page_drop_shadow
+      bg_color: 0xF0F0F0
+      widgets:
+        - label:
+            text: "Drop Shadow Examples"
+            text_color: 0x333333
+            text_font: montserrat_20
+            align: top_mid
+            y: 10
+
+        # --- Example 1: Subtle drop shadow ---
+        - obj:
+            align: left_mid
+            x: 30
+            width: 180
+            height: 120
+            radius: 16
+            bg_color: white
+            drop_shadow_radius: 8
+            drop_shadow_offset_x: 2
+            drop_shadow_offset_y: 4
+            drop_shadow_color: 0x000000
+            drop_shadow_opa: 20%
+            drop_shadow_quality: SPEED
+            widgets:
+              - label:
+                  text: "Subtle"
+                  text_color: 0x333333
+                  align: center
+
+        # --- Example 2: Medium drop shadow ---
+        - obj:
+            align: center
+            width: 180
+            height: 120
+            radius: 16
+            bg_color: white
+            drop_shadow_radius: 16
+            drop_shadow_offset_x: 4
+            drop_shadow_offset_y: 8
+            drop_shadow_color: 0x000000
+            drop_shadow_opa: 30%
+            drop_shadow_quality: AUTO
+            widgets:
+              - label:
+                  text: "Medium"
+                  text_color: 0x333333
+                  align: center
+
+        # --- Example 3: Strong colored drop shadow ---
+        - obj:
+            align: right_mid
+            x: -30
+            width: 180
+            height: 120
+            radius: 16
+            bg_color: 0x2196F3
+            drop_shadow_radius: 24
+            drop_shadow_offset_x: 0
+            drop_shadow_offset_y: 12
+            drop_shadow_color: 0x2196F3
+            drop_shadow_opa: 40%
+            drop_shadow_quality: PRECISION
+            widgets:
+              - label:
+                  text: "Colored"
+                  text_color: white
+                  align: center
+
+        # --- Comparison: regular shadow vs drop shadow ---
+        - obj:
+            align: bottom_left
+            x: 60
+            y: -20
+            width: 150
+            height: 80
+            radius: 12
+            bg_color: white
+            # Regular shadow (old)
+            shadow_width: 20
+            shadow_offset_y: 5
+            shadow_color: 0x000000
+            shadow_opa: 30%
+            widgets:
+              - label:
+                  text: "shadow\n(regular)"
+                  text_color: 0x666666
+                  text_align: center
+                  align: center
+
+        - obj:
+            align: bottom_right
+            x: -60
+            y: -20
+            width: 150
+            height: 80
+            radius: 12
+            bg_color: white
+            # Drop shadow (new)
+            drop_shadow_radius: 20
+            drop_shadow_offset_y: 5
+            drop_shadow_color: 0x000000
+            drop_shadow_opa: 30%
+            widgets:
+              - label:
+                  text: "drop_shadow\n(new)"
+                  text_color: 0x666666
+                  text_align: center
+                  align: center
+
+    # =========================================================================
+    # PAGE 8: Combined Effects - Frosted Glass Dashboard Card
+    # =========================================================================
+    - id: page_combined
+      widgets:
+        # Background wallpaper
+        - img:
+            src: background_image
+            width: 100%
+            height: 100%
+
+        # --- Dashboard card combining multiple LVGL 9.5 features ---
+        - obj:
+            align: center
+            width: 400
+            height: 280
+            radius: 24
+            # Frosted glass effect
+            bg_color: 0xFFFFFF
+            bg_opa: 20%
+            blur_radius: 20
+            blur_backdrop: true
+            blur_quality: AUTO
+            # Subtle border
+            border_width: 1
+            border_color: 0xFFFFFF
+            border_opa: 30%
+            pad_all: 24
+            # Shadow for depth
+            shadow_width: 30
+            shadow_opa: 20%
+            shadow_color: 0x000000
+            shadow_offset_y: 10
+            layout:
+              type: flex
+              flex_flow: column
+              flex_align_main: space_between
+              flex_align_cross: center
+            widgets:
+              # Title with text outline for readability
+              - label:
+                  text: "Smart Home"
+                  text_color: white
+                  text_font: montserrat_36
+                  text_outline_stroke_color: 0x000000
+                  text_outline_stroke_opa: 40%
+                  text_outline_stroke_width: 2
+
+              # Temperature display with neon effect
+              - label:
+                  id: temp_display
+                  text: "22.5°C"
+                  text_color: 0x00FFAA
+                  text_font: montserrat_48
+                  text_outline_stroke_color: 0x00FFAA
+                  text_outline_stroke_opa: 30%
+                  text_outline_stroke_width: 4
+
+              # Slider with margins for spacing
+              - slider:
+                  width: 90%
+                  height: 10
+                  margin_top: 10
+                  margin_bottom: 10
+                  indicator:
+                    bg_color: 0x00FFAA
+                    radius: 5
+                  knob:
+                    bg_color: white
+                    radius: 10
+                  on_value:
+                    lvgl.label.update:
+                      id: temp_display
+                      text:
+                        format: "%.1f°C"
+                        args: ["x / 2.0"]
+
+              # Icon row with image opacity
+              - obj:
+                  width: 100%
+                  height: 40
+                  bg_opa: 0%
+                  layout:
+                    type: flex
+                    flex_flow: row
+                    flex_align_main: space_evenly
+                    flex_align_cross: center
+                  widgets:
+                    - img:
+                        src: icon_light
+                        image_opa: 80%
+                    - img:
+                        src: icon_fan
+                        image_opa: 50%
+                    - img:
+                        src: icon_lock
+                        image_opa: 80%
+
+
+# =============================================================================
+# ROTARY ENCODER SENSITIVITY EXAMPLE
+# =============================================================================
+# Configure in the lvgl: section of your main YAML:
+#
+# lvgl:
+#   encoders:
+#     - enter_button: encoder_button
+#       sensor: rotary_encoder
+#       rotary_sensitivity: 2.5    # 2.5x faster than default (range: 0.1 - 10.0)
+#                                  # < 1.0 = slower/more precise
+#                                  # = 1.0 = default speed
+#                                  # > 1.0 = faster/less precise
+#
+# binary_sensor:
+#   - platform: gpio
+#     id: encoder_button
+#     pin: GPIO4
+#
+# sensor:
+#   - platform: rotary_encoder
+#     id: rotary_encoder
+#     pin_a: GPIO5
+#     pin_b: GPIO6
+#     resolution: 1
+
+
+# =============================================================================
+# IMAGE COLORKEY (Transparency by Color)
+# =============================================================================
+# Makes a specific color fully transparent in an image.
+# Useful for images without alpha channel (BMP, old-style sprites).
+#
+# - img:
+#     src: my_sprite
+#     image_colorkey: 0xFF00FF    # Magenta pixels become transparent
+#
+# Common colorkey colors:
+#   0xFF00FF (magenta), 0x00FF00 (green screen), 0x000000 (black)
+
+
+# =============================================================================
+# ARC IMAGE SOURCE
+# =============================================================================
+# Sets an image to be drawn along the arc's track instead of a solid color.
+# The image is repeated/stretched along the arc path.
+#
+# - arc:
+#     width: 200
+#     height: 200
+#     indicator:
+#       arc_image_src: arc_texture    # Image used as arc track texture
+#       arc_width: 20
+#
+# image:
+#   - id: arc_texture
+#     file: "images/arc_pattern.png"
+#     type: RGBA
+
+
+# =============================================================================
+# WEBP IMAGE SUPPORT
+# =============================================================================
+# WebP images are decoded by ThorVG (built into LVGL 9.x).
+# No external library (libwebp) is needed.
+#
+# Simply declare your WebP images like any other image:
+#
+# image:
+#   - id: my_webp_photo
+#     file: "images/photo.webp"
+#     type: RGBA
+#     resize: 200x150
+#
+#   - id: my_webp_icon
+#     file: "images/icon.webp"
+#     type: RGBA
+#
+# Then use them in widgets:
+#
+# - img:
+#     src: my_webp_photo
+#     align: center
+#
+# Advantages of WebP:
+#   - Smaller file size than PNG (25-35% smaller)
+#   - Supports transparency (alpha channel)
+#   - Good quality at low file sizes
+#   - Ideal for ESP32 with limited flash storage
+
+
+# =============================================================================
+# IMAGE DECLARATIONS (uncomment and adapt paths for your project)
+# =============================================================================
+# image:
+#   - id: background_image
+#     file: "images/background.png"
+#     type: RGB565
+#     resize: 800x480
+#
+#   - id: my_icon
+#     file: "images/icon.png"
+#     type: RGBA
+#     resize: 80x80
+#
+#   - id: circle_mask
+#     file: "images/circle_mask.png"    # White circle on black = circular mask
+#     type: RGBA
+#     resize: 200x200
+#
+#   - id: icon_light
+#     file: "images/light.png"
+#     type: RGBA
+#     resize: 32x32
+#
+#   - id: icon_fan
+#     file: "images/fan.png"
+#     type: RGBA
+#     resize: 32x32
+#
+#   - id: icon_lock
+#     file: "images/lock.png"
+#     type: RGBA
+#     resize: 32x32

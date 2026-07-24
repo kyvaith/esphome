@@ -1,7 +1,7 @@
 """
-LVGL 9.5 SVG Widget for ESPHome
+LVGL 9.4 SVG Widget for ESPHome
 
-Renders static SVG images using the ThorVG vector engine built into LVGL 9.5.
+Renders static SVG images using the ThorVG vector engine built into LVGL 9.4.
 The SVG is rasterised once (at the requested size) in a FreeRTOS task with a
 64 KB PSRAM stack, then displayed via an lv_canvas widget.
 
@@ -45,11 +45,12 @@ from esphome.core import CORE
 
 from ..defines import CONF_MAIN, CONF_SRC, add_lv_use
 from ..lv_validation import size
-from ..lvcode import lv_obj
+from ..lvcode import lv_add, lv_obj
 from ..types import LvType
 from . import Widget, WidgetType
 
-_SVG_INCLUDES_ADDED: set[str] = set()
+# Global flag – add the #include once
+_svg_include_added = False
 
 CONF_SVG = "svg"
 
@@ -65,7 +66,9 @@ def svg_path_validator(value):
             f"Example: '/sdcard/icons/home.svg'"
         )
     if not value.lower().endswith(".svg"):
-        raise cv.Invalid(f"SVG src must be an .svg file, got: '{value}'")
+        raise cv.Invalid(
+            f"SVG src must be an .svg file, got: '{value}'"
+        )
     return value
 
 
@@ -136,12 +139,11 @@ def validate_svg_source(config):
     # For file method, auto-detect dimensions from SVG
     if has_file:
         file_path = config[CONF_FILE]
-        path = Path(file_path)
         try:
-            with path.open(encoding="utf-8") as f:
+            with Path(file_path).open(encoding="utf-8") as f:
                 svg_text = f.read()
             svg_w, svg_h = _parse_svg_dimensions(svg_text)
-        except (OSError, UnicodeDecodeError) as err:
+        except (OSError, UnicodeError) as err:
             raise cv.Invalid(f"Error reading SVG file {file_path}: {err}") from err
 
         # Use auto-detected dimensions unless the user explicitly provided them
@@ -155,12 +157,10 @@ def validate_svg_source(config):
             config[CONF_SVG_WIDTH] = svg_w
             config[CONF_SVG_HEIGHT] = svg_h
         elif CONF_WIDTH in config and CONF_HEIGHT in config:
-            # User specified both - use those
+            # User specified both – use those
             pass
         else:
-            raise cv.Invalid(
-                "Specify both 'width' and 'height', or neither (for auto-detect)."
-            )
+            raise cv.Invalid("Specify both 'width' and 'height', or neither (for auto-detect).")
 
     return config
 
@@ -191,12 +191,12 @@ class SvgType(WidgetType):
         return ("CANVAS", "SVG", "THORVG_INTERNAL", "VECTOR_GRAPHIC")
 
     async def to_code(self, w: Widget, config):
+        global _svg_include_added  # noqa: PLW0603
+
         add_lv_use("CANVAS")
         add_lv_use("SVG")
         add_lv_use("THORVG_INTERNAL")
         add_lv_use("VECTOR_GRAPHIC")
-
-        from ..lvcode import lv_add
 
         # Determine dimensions
         if CONF_SVG_WIDTH in config:
@@ -213,8 +213,8 @@ class SvgType(WidgetType):
         # (user's 'hidden' config is saved and restored after rendering)
 
         # Add include once
-        if CONF_SVG not in _SVG_INCLUDES_ADDED:
-            _SVG_INCLUDES_ADDED.add(CONF_SVG)
+        if not _svg_include_added:
+            _svg_include_added = True
             cg.add_global(
                 cg.RawStatement('#include "esphome/components/lvgl/svg_loader.h"')
             )
@@ -226,10 +226,8 @@ class SvgType(WidgetType):
             # ------- Filesystem SVG -------
             # The file is read inside the async render task (on the large
             # PSRAM stack).  We only pass the path string here.
-            lv_add(
-                cg.RawStatement(f"""
-    esphome::lvgl::svg_setup_and_render_file({w.obj}, "{src}", {width}, {height}, {user_wants_hidden});""")
-            )
+            lv_add(cg.RawStatement(f"""
+    esphome::lvgl::svg_setup_and_render_file({w.obj}, "{src}", {width}, {height}, {user_wants_hidden});"""))
 
         elif file_path := config.get(CONF_FILE):
             # ------- Embedded SVG -------
@@ -242,10 +240,8 @@ class SvgType(WidgetType):
             raw_data_id = config[CONF_RAW_DATA_ID]
             prog_arr = cg.progmem_array(raw_data_id, list(svg_data_with_null))
 
-            lv_add(
-                cg.RawStatement(f"""
-    esphome::lvgl::svg_setup_and_render({w.obj}, (const char *){prog_arr}, {len(svg_data)}, {width}, {height}, {user_wants_hidden});""")
-            )
+            lv_add(cg.RawStatement(f"""
+    esphome::lvgl::svg_setup_and_render({w.obj}, (const char *){prog_arr}, {len(svg_data)}, {width}, {height}, {user_wants_hidden});"""))
 
 
 svg_spec = SvgType()

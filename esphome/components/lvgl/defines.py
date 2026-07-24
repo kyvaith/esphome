@@ -8,6 +8,16 @@ import logging
 from typing import Any
 
 from esphome import codegen as cg, config_validation as cv
+
+# Re-exported for existing LVGL widget imports.
+from esphome.components.const import (  # pylint: disable=unused-import
+    CONF_ANGLE_RANGE,  # noqa: F401
+    CONF_COLOR_END,  # noqa: F401
+    CONF_COLOR_START,  # noqa: F401
+    CONF_POINTS,  # noqa: F401
+    CONF_SCALE,  # noqa: F401
+    CONF_STRIDE,  # noqa: F401
+)
 from esphome.const import CONF_ITEMS
 from esphome.core import CORE, ID, Lambda
 from esphome.cpp_generator import (
@@ -214,14 +224,11 @@ class LValidator:
     has `process()` to convert a value during code generation
     """
 
-    def __init__(
-        self, validator, rtype: MockObj, retmapper=None, requires=None, animatable=False
-    ):
+    def __init__(self, validator, rtype: MockObj, retmapper=None, requires=None):
         self.validator = validator
         self.rtype = rtype
         self.retmapper = retmapper
         self.requires = requires
-        self.animatable = animatable
 
     def __call__(self, value):
         if self.requires:
@@ -231,10 +238,7 @@ class LValidator:
         return self.validator(value)
 
     async def process(
-        self,
-        value: Any,
-        args: list[tuple[SafeExpType, str]] | None = None,
-        raw_lambda: bool = False,
+        self, value: Any, args: list[tuple[SafeExpType, str]] | None = None
     ) -> Expression:
         if value is None:
             return None
@@ -242,15 +246,11 @@ class LValidator:
             # Local import to avoid circular import
             from .lvcode import get_lambda_context_args
 
-            # `args is None` means "inherit the enclosing lambda context"; an explicit
-            # empty list means "no parameters" and must be preserved as-is.
-            if args is None:
-                args = get_lambda_context_args()
+            args = args or get_lambda_context_args()
 
-            lamb = await cg.process_lambda(value, args, return_type=self.rtype)
-            if raw_lambda:
-                return lamb
-            return call_lambda(lamb)
+            return call_lambda(
+                await cg.process_lambda(value, args, return_type=self.rtype)
+            )
         if self.retmapper is not None:
             return self.retmapper(value)
         if isinstance(value, ID):
@@ -329,6 +329,8 @@ class LvConstant(LValidator):
 
 # Parts
 CONF_MAIN = "main"
+CONF_HEADER = "header"
+CONF_SIDEBAR = "sidebar"
 CONF_SCROLLBAR = "scrollbar"
 CONF_INDICATOR = "indicator"
 CONF_KNOB = "knob"
@@ -357,10 +359,14 @@ LV_EVENT_MAP = {
     "CANCEL": "CANCEL",
     "CHANGE": "VALUE_CHANGED",
     "CHILD_CHANGE": "CHILD_CHANGED",
+    "CHILD_CHANGED": "CHILD_CHANGED",
     "CHILD_CREATE": "CHILD_CREATED",
+    "CHILD_CREATED": "CHILD_CREATED",
     "CHILD_DELETE": "CHILD_DELETED",
+    "CHILD_DELETED": "CHILD_DELETED",
     "CLICK": "CLICKED",
     "COLOR_FORMAT_CHANGE": "COLOR_FORMAT_CHANGED",
+    "COLOR_FORMAT_CHANGED": "COLOR_FORMAT_CHANGED",
     "COVER_CHECK": "COVER_CHECK",
     "CREATE": "CREATE",
     "DEFOCUS": "DEFOCUSED",
@@ -373,6 +379,7 @@ LV_EVENT_MAP = {
     "DRAW_POST_BEGIN": "DRAW_POST_BEGIN",
     "DRAW_POST_END": "DRAW_POST_END",
     "DRAW_TASK_ADD": "DRAW_TASK_ADDED",
+    "DRAW_TASK_ADDED": "DRAW_TASK_ADDED",
     "FOCUS": "FOCUSED",
     "GESTURE": "GESTURE",
     "GET_SELF_SIZE": "GET_SELF_SIZE",
@@ -384,6 +391,7 @@ LV_EVENT_MAP = {
     "INVALIDATE_AREA": "INVALIDATE_AREA",
     "KEY": "KEY",
     "LAYOUT_CHANGE": "LAYOUT_CHANGED",
+    "LAYOUT_CHANGED": "LAYOUT_CHANGED",
     "LEAVE": "LEAVE",
     "LONG_PRESS": "LONG_PRESSED",
     "LONG_PRESS_REPEAT": "LONG_PRESSED_REPEAT",
@@ -402,8 +410,10 @@ LV_EVENT_MAP = {
     "SHORT_CLICK": "SHORT_CLICKED",
     "SINGLE_CLICK": "SINGLE_CLICKED",
     "SIZE_CHANGE": "SIZE_CHANGED",
+    "SIZE_CHANGED": "SIZE_CHANGED",
     "STATE_CHANGE": "STATE_CHANGED",
     "STYLE_CHANGE": "STYLE_CHANGED",
+    "STYLE_CHANGED": "STYLE_CHANGED",
     "TRIPLE_CLICK": "TRIPLE_CLICKED",
 }
 
@@ -424,8 +434,10 @@ def is_press_event(event: str) -> bool:
 LV_SCREEN_EVENT_MAP = {
     "SCREEN_LOAD": "SCREEN_LOADED",
     "SCREEN_LOAD_START": "SCREEN_LOAD_START",
+    "SCREEN_LOADED": "SCREEN_LOADED",
     "SCREEN_UNLOAD": "SCREEN_UNLOADED",
     "SCREEN_UNLOAD_START": "SCREEN_UNLOAD_START",
+    "SCREEN_UNLOADED": "SCREEN_UNLOADED",
 }
 
 LV_DISPLAY_EVENT_MAP = {
@@ -439,6 +451,7 @@ LV_DISPLAY_EVENT_MAP = {
     "RENDER_READY": "RENDER_READY",
     "RENDER_START": "RENDER_START",
     "RESOLUTION_CHANGE": "RESOLUTION_CHANGED",
+    "RESOLUTION_CHANGED": "RESOLUTION_CHANGED",
     "UPDATE_LAYOUT_COMPLETE": "UPDATE_LAYOUT_COMPLETED",
     "VSYNC": "VSYNC",
     "VSYNC_REQUEST": "VSYNC_REQUEST",
@@ -494,7 +507,7 @@ LV_LONG_MODES = LvConstant(
 )
 
 STATES = (
-    # default state not included here
+    "default",
     "checked",
     "focused",
     "focus_key",
@@ -503,6 +516,7 @@ STATES = (
     "pressed",
     "scrolled",
     "disabled",
+    "alt",  # LVGL 9.5: LV_STATE_ALT for dark/light mode switching
     "user_1",
     "user_2",
     "user_3",
@@ -511,12 +525,14 @@ STATES = (
 
 PARTS = (
     CONF_MAIN,
+    CONF_HEADER,
+    CONF_SIDEBAR,
     CONF_SCROLLBAR,
     CONF_INDICATOR,
     CONF_KNOB,
     CONF_SELECTED,
     CONF_ITEMS,
-    # CONF_TICKS,
+    # Note: CONF_TICKS removed - LV_PART_TICKS doesn't exist in LVGL 9.x
     CONF_CURSOR,
     CONF_TEXTAREA_PLACEHOLDER,
 )
@@ -601,6 +617,7 @@ OBJ_FLAGS = (
     "layout_1",
     "layout_2",
     "send_draw_task_events",
+    "radio_button",  # LVGL 9.5: LV_OBJ_FLAG_RADIO_BUTTON for radio group behavior
     "widget_1",
     "widget_2",
     "user_1",
@@ -666,6 +683,7 @@ LV_CHART_TYPES = (
     "LINE",
     "BAR",
     "SCATTER",
+    "CURVE",  # LVGL 9.5: Bézier curved charts (requires Vector Graphics/ThorVG)
 )
 LV_CHART_AXES = (
     "PRIMARY_Y",
@@ -679,7 +697,6 @@ CONF_ADJUSTABLE = "adjustable"
 CONF_ALIGN = "align"
 CONF_ALIGN_TO = "align_to"
 CONF_ALIGN_TO_LAMBDA_ID = "align_to_lambda_id"
-CONF_ANGLE_RANGE = "angle_range"
 CONF_ANIMATED = "animated"
 CONF_ANIMATION = "animation"
 CONF_ANIMATIONS = "animations"
@@ -701,8 +718,6 @@ CONF_BUTTONS = "buttons"
 CONF_CHANGE_RATE = "change_rate"
 CONF_CLOSE_BUTTON = "close_button"
 CONF_COLOR_DEPTH = "color_depth"
-CONF_COLOR_END = "color_end"
-CONF_COLOR_START = "color_start"
 CONF_CONTAINER = "container"
 CONF_CONTROL = "control"
 CONF_DEFAULT_FONT = "default_font"
@@ -725,6 +740,7 @@ CONF_FLEX_GROW = "flex_grow"
 CONF_FREEZE = "freeze"
 CONF_DARK_MODE = "dark_mode"
 CONF_FULL_REFRESH = "full_refresh"
+CONF_DIRECT_MODE = "direct_mode"
 CONF_GRADIENTS = "gradients"
 CONF_GRID_CELL_ROW_POS = "grid_cell_row_pos"
 CONF_GRID_CELL_COLUMN_POS = "grid_cell_column_pos"
@@ -739,7 +755,6 @@ CONF_GRID_ROWS = "grid_rows"
 CONF_HEADER_BUTTONS = "header_buttons"
 CONF_HEADER_MODE = "header_mode"
 CONF_HOME = "home"
-CONF_IMAGE = "image"
 CONF_INDICATORS = "indicators"
 CONF_INITIAL_FOCUS = "initial_focus"
 CONF_SELECTED_DIGIT = "selected_digit"
@@ -753,19 +768,15 @@ CONF_LONG_PRESS_REPEAT_TIME = "long_press_repeat_time"
 CONF_LVGL_ID = "lvgl_id"
 CONF_LONG_MODE = "long_mode"
 CONF_MAJOR_TICKS_STYLE = "major_ticks_style"
-CONF_MAPPING = "mapping"
 CONF_MSGBOXES = "msgboxes"
 CONF_OBJ = "obj"
 CONF_ONE_CHECKED = "one_checked"
 CONF_ONE_LINE = "one_line"
 CONF_ON_DRAW_START = "on_draw_start"
 CONF_ON_DRAW_END = "on_draw_end"
-CONF_ON_LANDSCAPE = "on_landscape"
 CONF_ON_PAUSE = "on_pause"
-CONF_ON_PORTRAIT = "on_portrait"
 CONF_ON_RESUME = "on_resume"
 CONF_ON_SELECT = "on_select"
-CONF_ON_STOP = "on_stop"
 CONF_OPA = "opa"
 CONF_NEXT = "next"
 CONF_PAD_ROW = "pad_row"
@@ -773,14 +784,11 @@ CONF_PAD_COLUMN = "pad_column"
 CONF_PAGE = "page"
 CONF_PAGE_WRAP = "page_wrap"
 CONF_PASSWORD_MODE = "password_mode"
-CONF_PAUSED = "paused"
 CONF_PIVOT_X = "pivot_x"
 CONF_PIVOT_Y = "pivot_y"
 CONF_PLACEHOLDER_TEXT = "placeholder_text"
-CONF_POINTS = "points"
 CONF_PREVIOUS = "previous"
 CONF_RADIUS = "radius"
-CONF_REFRESH_INTERVAL = "refresh_interval"
 CONF_REPEAT_COUNT = "repeat_count"
 CONF_RECOLOR = "recolor"
 CONF_RESUME_ON_INPUT = "resume_on_input"
@@ -788,7 +796,6 @@ CONF_RIGHT_BUTTON = "right_button"
 CONF_ROLLOVER = "rollover"
 CONF_ROOT_BACK_BTN = "root_back_btn"
 CONF_ROWS = "rows"
-CONF_SCALE = "scale"
 CONF_SCALE_LINES = "scale_lines"
 CONF_SCROLLBAR_MODE = "scrollbar_mode"
 CONF_SCROLL_DIR = "scroll_dir"
@@ -802,7 +809,6 @@ CONF_SRC = "src"
 CONF_START_ANGLE = "start_angle"
 CONF_START_VALUE = "start_value"
 CONF_STATES = "states"
-CONF_STRIDE = "stride"
 CONF_STYLE = "style"
 CONF_STYLES = "styles"
 CONF_STYLE_DEFINITIONS = "style_definitions"
@@ -830,6 +836,97 @@ CONF_VISIBLE_ROW_COUNT = "visible_row_count"
 CONF_WIDGET = "widget"
 CONF_WIDGETS = "widgets"
 CONF_ZOOM = "zoom"
+
+# LVGL 9.5 blur / frosted glass properties
+CONF_BLUR_RADIUS = "blur_radius"
+CONF_BLUR_BACKDROP = "blur_backdrop"
+CONF_BLUR_QUALITY = "blur_quality"
+
+# LVGL 9.5 gradient opacity properties
+CONF_BG_MAIN_OPA = "bg_main_opa"
+CONF_BG_GRAD_OPA = "bg_grad_opa"
+
+# LVGL 9.5 image properties
+CONF_IMAGE_OPA = "image_opa"
+
+# LVGL 9.5 bitmap mask
+CONF_BITMAP_MASK_SRC = "bitmap_mask_src"
+
+# LVGL 9.5 margin properties (for flex/grid layouts)
+CONF_MARGIN_TOP = "margin_top"
+CONF_MARGIN_BOTTOM = "margin_bottom"
+CONF_MARGIN_LEFT = "margin_left"
+CONF_MARGIN_RIGHT = "margin_right"
+
+# LVGL 9.5 text outline stroke properties
+CONF_TEXT_OUTLINE_STROKE_COLOR = "text_outline_stroke_color"
+CONF_TEXT_OUTLINE_STROKE_OPA = "text_outline_stroke_opa"
+CONF_TEXT_OUTLINE_STROKE_WIDTH = "text_outline_stroke_width"
+
+# LVGL 9.5 drop shadow properties
+CONF_DROP_SHADOW_RADIUS = "drop_shadow_radius"
+CONF_DROP_SHADOW_OFFSET_X = "drop_shadow_offset_x"
+CONF_DROP_SHADOW_OFFSET_Y = "drop_shadow_offset_y"
+CONF_DROP_SHADOW_COLOR = "drop_shadow_color"
+CONF_DROP_SHADOW_OPA = "drop_shadow_opa"
+CONF_DROP_SHADOW_QUALITY = "drop_shadow_quality"
+
+# LVGL 9.5 additional image properties
+CONF_IMAGE_COLORKEY = "image_colorkey"
+CONF_ARC_IMAGE_SRC = "arc_image_src"
+
+# LVGL 9.5 rotary encoder sensitivity
+CONF_ROTARY_SENSITIVITY = "rotary_sensitivity"
+
+# fmt: off
+LV_COLOR_FORMATS = (
+    "RGB565", "SWAPPED", "RGB565A8", "RGB888", "XRGB8888", "ARGB8888",
+    "PREMULTIPLIED", "L8", "AL88", "A8", "I1",
+)
+
+LV_DEFINES = (
+    "LV_USE_FREERTOS_TASK_NOTIFY", "LV_DRAW_BUF_STRIDE_ALIGN", "LV_USE_DRAW_SW",
+    "LV_DRAW_SW_DRAW_UNIT_CNT", "LV_DRAW_SW_COMPLEX", "LV_USE_DRAW_PXP",
+    "LV_USE_PXP_DRAW_THREAD", "LV_USE_DRAW_G2D", "LV_USE_G2D_DRAW_THREAD",
+    "LV_VG_LITE_USE_BOX_SHADOW", "LV_VG_LITE_THORVG_16PIXELS_ALIGN",
+    "LV_LOG_USE_TIMESTAMP", "LV_LOG_USE_FILE_LINE", "LV_USE_OBJ_ID_BUILTIN",
+    "LV_USE_OBJ_PROPERTY_NAME", "LV_ATTRIBUTE_MEM_ALIGN_SIZE",
+    "LV_FONT_MONTSERRAT_14", "LV_USE_FONT_PLACEHOLDER",
+    "LV_WIDGETS_HAS_DEFAULT_VALUE", "LV_USE_ARCLABEL", "LV_USE_CALENDAR",
+    "LV_USE_CALENDAR_HEADER_ARROW", "LV_USE_CALENDAR_HEADER_DROPDOWN",
+    "LV_USE_CHART", "LV_USE_LIST", "LV_USE_MENU", "LV_USE_MSGBOX",
+    "LV_USE_SCALE", "LV_USE_TABLE", "LV_USE_SPAN", "LV_USE_WIN",
+    "LV_USE_THEME_DEFAULT", "LV_THEME_DEFAULT_GROW", "LV_USE_THEME_SIMPLE",
+    "LV_USE_THEME_MONO", "LV_USE_FLEX", "LV_USE_GRID",
+    "LV_USE_PROFILER_BUILTIN", "LV_PROFILER_BUILTIN_DEFAULT_ENABLE",
+    "LV_PROFILER_LAYOUT", "LV_PROFILER_REFR", "LV_PROFILER_DRAW",
+    "LV_PROFILER_INDEV", "LV_PROFILER_DECODER", "LV_PROFILER_FONT",
+    "LV_PROFILER_FS", "LV_PROFILER_TIMER", "LV_PROFILER_CACHE",
+    "LV_PROFILER_EVENT", "LV_USE_OBSERVER", "LV_IME_PINYIN_USE_DEFAULT_DICT",
+    "LV_IME_PINYIN_USE_K9_MODE", "LV_FILE_EXPLORER_QUICK_ACCESS",
+    "LV_TEST_SCREENSHOT_CREATE_REFERENCE_IMAGE", "LV_LINUX_FBDEV_MMAP",
+    "LV_USE_NUTTX_MOUSE_MOVE_STEP", "LV_USE_GENERIC_MIPI", "LV_BUILD_EXAMPLES",
+    "LV_BUILD_DEMOS", "LV_WAYLAND_USE_EGL", "LV_WAYLAND_USE_G2D",
+    "LV_WAYLAND_USE_SHM", "LV_LINUX_DRM_USE_EGL", "LV_USE_LZ4",
+    "LV_USE_THORVG", "LV_SDL_USE_EGL", "LV_USE_EGL", "LV_LABEL_LONG_TXT_HINT",
+    "LV_LABEL_TEXT_SELECTION",
+) + tuple(f"LV_DRAW_SW_SUPPORT_{fmt}" for fmt in LV_COLOR_FORMATS)
+# fmt: on
+
+# Transition properties for animated state changes
+CONF_STYLE_TRANSITION_TIME = "style_transition_time"
+CONF_STYLE_TRANSITION_DELAY = "style_transition_delay"
+CONF_STYLE_TRANSITION_PATH = "style_transition_path"
+
+ANIM_PATHS = {
+    "linear": "lv_anim_path_linear",
+    "ease_in": "lv_anim_path_ease_in",
+    "ease_out": "lv_anim_path_ease_out",
+    "ease_in_out": "lv_anim_path_ease_in_out",
+    "overshoot": "lv_anim_path_overshoot",
+    "bounce": "lv_anim_path_bounce",
+    "step": "lv_anim_path_step",
+}
 
 # Keypad keys
 
@@ -871,44 +968,3 @@ def join_enums(enums, prefix=""):
     if prefix:
         return literal("|".join(f"{prefix}{e.upper()}" for e in enums))
     return literal("|".join(f"(int){e.upper()}" for e in enums))
-
-
-# fmt: off
-LV_COLOR_FORMATS = (
-    "RGB565", "SWAPPED", "RGB565A8", "RGB888", "XRGB8888", "ARGB8888", "PREMULTIPLIED", "L8", "AL88", "A8", "I1",
-)
-
-LV_DEFINES = (
-    "LV_USE_FREERTOS_TASK_NOTIFY", "LV_DRAW_BUF_STRIDE_ALIGN", "LV_USE_DRAW_SW", "LV_DRAW_SW_DRAW_UNIT_CNT",
-    "LV_DRAW_SW_COMPLEX", "LV_USE_DRAW_PXP", "LV_USE_PXP_DRAW_THREAD", "LV_USE_DRAW_G2D",
-    "LV_USE_G2D_DRAW_THREAD", "LV_VG_LITE_USE_BOX_SHADOW", "LV_VG_LITE_THORVG_16PIXELS_ALIGN", "LV_LOG_USE_TIMESTAMP",
-    "LV_LOG_USE_FILE_LINE", "LV_USE_OBJ_ID_BUILTIN", "LV_USE_OBJ_PROPERTY_NAME", "LV_ATTRIBUTE_MEM_ALIGN_SIZE",
-    "LV_FONT_MONTSERRAT_14", "LV_USE_FONT_PLACEHOLDER", "LV_WIDGETS_HAS_DEFAULT_VALUE", "LV_USE_ARCLABEL",
-    "LV_USE_CALENDAR", "LV_USE_CALENDAR_HEADER_ARROW", "LV_USE_CALENDAR_HEADER_DROPDOWN", "LV_USE_CHART",
-    "LV_USE_LIST", "LV_USE_MENU", "LV_USE_MSGBOX", "LV_USE_SCALE",
-    "LV_USE_TABLE", "LV_USE_SPAN", "LV_USE_WIN", "LV_USE_THEME_DEFAULT",
-    "LV_THEME_DEFAULT_GROW", "LV_USE_THEME_SIMPLE", "LV_USE_THEME_MONO", "LV_USE_FLEX",
-    "LV_USE_GRID", "LV_USE_PROFILER_BUILTIN", "LV_PROFILER_BUILTIN_DEFAULT_ENABLE", "LV_PROFILER_LAYOUT",
-    "LV_PROFILER_REFR", "LV_PROFILER_DRAW", "LV_PROFILER_INDEV", "LV_PROFILER_DECODER",
-    "LV_PROFILER_FONT", "LV_PROFILER_FS", "LV_PROFILER_TIMER", "LV_PROFILER_CACHE",
-    "LV_PROFILER_EVENT", "LV_USE_OBSERVER", "LV_IME_PINYIN_USE_DEFAULT_DICT", "LV_IME_PINYIN_USE_K9_MODE",
-    "LV_FILE_EXPLORER_QUICK_ACCESS", "LV_TEST_SCREENSHOT_CREATE_REFERENCE_IMAGE", "LV_LINUX_FBDEV_MMAP",
-    "LV_USE_NUTTX_MOUSE_MOVE_STEP", "LV_USE_GENERIC_MIPI", "LV_BUILD_EXAMPLES", "LV_BUILD_DEMOS",
-    "LV_WAYLAND_USE_EGL", "LV_WAYLAND_USE_G2D", "LV_WAYLAND_USE_SHM", "LV_LINUX_DRM_USE_EGL",
-    "LV_USE_LZ4", "LV_USE_THORVG", "LV_SDL_USE_EGL", "LV_USE_EGL", "LV_LABEL_LONG_TXT_HINT", "LV_LABEL_TEXT_SELECTION",
-) + tuple(f"LV_DRAW_SW_SUPPORT_{f}" for f in LV_COLOR_FORMATS)
-
-# Optional animation applied when an object's LVGL state changes.
-CONF_STYLE_TRANSITION_TIME = "style_transition_time"
-CONF_STYLE_TRANSITION_DELAY = "style_transition_delay"
-CONF_STYLE_TRANSITION_PATH = "style_transition_path"
-
-ANIM_PATHS = {
-    "linear": "lv_anim_path_linear",
-    "ease_in": "lv_anim_path_ease_in",
-    "ease_out": "lv_anim_path_ease_out",
-    "ease_in_out": "lv_anim_path_ease_in_out",
-    "overshoot": "lv_anim_path_overshoot",
-    "bounce": "lv_anim_path_bounce",
-    "step": "lv_anim_path_step",
-}
