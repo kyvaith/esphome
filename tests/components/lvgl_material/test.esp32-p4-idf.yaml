@@ -74,12 +74,50 @@ lvgl:
         y: 120
         bg_opa: TRANSP
         border_width: 0
+    - button:
+        id: material_volume_activation
+        width: 120
+        height: 48
+        align: TOP_MID
+        widgets:
+          - label:
+              text: "12:34"
+    - arc:
+        id: material_volume_arc
+        width: 730
+        height: 730
+        align: CENTER
+        min_value: 0
+        max_value: 100
+        value: 50
+        start_angle: 180
+        end_angle: 360
+        adjustable: false
+        arc_width: 15
+        indicator:
+          arc_width: 15
+    - obj:
+        id: material_volume_knob
+        width: 56
+        height: 56
+        radius: 28
+    - label:
+        id: material_volume_label
+        align: CENTER
+        text: "50%"
 
 lvgl_material:
   direct_marquees:
     - id: test_direct_marquee
       label: material_marquee_label
       viewport: material_marquee_viewport
+  direct_volume_overlays:
+    - id: test_direct_volume_overlay
+      arc: material_volume_arc
+      knob: material_volume_knob
+      label: material_volume_label
+      activation_widget: material_volume_activation
+      scrim_opacity: 72%
   pressed_styles:
     - id: test_pressed_style
       widgets:
