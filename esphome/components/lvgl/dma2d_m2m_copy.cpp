@@ -24,6 +24,7 @@ namespace {
 
 static const char *const TAG = "lvgl.dma2d_m2m";
 static constexpr size_t DMA2D_MAX_BATCH_SPANS = 192;
+static constexpr uint32_t DMA2D_DATA_BURST_LENGTH = 128;
 
 struct alignas(64) Dma2dM2mContext {
   alignas(64) dma2d_descriptor_t tx_descriptors[DMA2D_MAX_BATCH_SPANS]{};
@@ -123,7 +124,7 @@ bool initialize_context() {
     return false;
   }
 
-  context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH_128;
+  context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH;
   context.transfer_ability.desc_burst_en = true;
   context.transfer_ability.mb_size = DMA2D_MACRO_BLOCK_SIZE_NONE;
   context.transaction_config.tx_channel_num = 1;
@@ -261,7 +262,7 @@ bool dma2d_m2m_compose_rgb888_circle(const uint8_t *background, int background_s
   // home-page compositor. DSI admission is handled before the transaction;
   // halving this burst only stretched every full-resolution transition frame
   // beyond the 16.7 ms display budget.
-  context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH_128;
+  context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH;
   size_t descriptor_count = 0;
   bool complete = true;
 
@@ -307,7 +308,7 @@ bool dma2d_m2m_compose_rgb888_circle(const uint8_t *background, int background_s
     add_span(background, background_stride_pixels, y, foreground_x2 + 1, target_width - foreground_x2 - 1);
   }
   flush_batch();
-  context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH_128;
+  context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH;
   xSemaphoreGive(context.lock);
   return complete;
 #else
@@ -330,7 +331,7 @@ bool dma2d_m2m_update_rgb888_circle(const uint8_t *background, int background_st
   if (xSemaphoreTake(context.lock, pdMS_TO_TICKS(20)) != pdTRUE)
     return false;
 
-  context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH_128;
+  context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH;
   size_t descriptor_count = 0;
   bool complete = true;
 
@@ -397,7 +398,7 @@ bool dma2d_m2m_update_rgb888_circle(const uint8_t *background, int background_st
                             old_x2);
   }
   flush_batch();
-  context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH_128;
+  context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH;
   xSemaphoreGive(context.lock);
   return complete;
 #else

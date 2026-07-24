@@ -232,13 +232,14 @@ static uint32_t integer_sqrt_u32(uint32_t value) {
 #define CONFIG_ESPHOME_LVGL_PPA_DIRECT_REGION_DSI_WAIT_US 3000
 #endif
 
-static inline void lvgl_esphome_wait_direct_region_dsi_fifo() {
+static inline bool lvgl_esphome_wait_direct_region_dsi_fifo() {
 #if defined(USE_MIPI_DSI)
   if (esphome_mipi_dsi_wait_fifo_margin != nullptr) {
-    esphome_mipi_dsi_wait_fifo_margin(CONFIG_ESPHOME_LVGL_PPA_DIRECT_REGION_DSI_FIFO_MIN,
-                                      CONFIG_ESPHOME_LVGL_PPA_DIRECT_REGION_DSI_WAIT_US);
+    return esphome_mipi_dsi_wait_fifo_margin(CONFIG_ESPHOME_LVGL_PPA_DIRECT_REGION_DSI_FIFO_MIN,
+                                             CONFIG_ESPHOME_LVGL_PPA_DIRECT_REGION_DSI_WAIT_US);
   }
 #endif
+  return true;
 }
 
 static inline void lvgl_esphome_wait_snapshot_dsi_fifo() {
@@ -3240,7 +3241,7 @@ bool LvglComponent::direct_blit_(const uint8_t *src, int src_stride, int x, int 
   }
 
   int64_t phase_started_us = esp_timer_get_time();
-  const bool fifo_ready = mipi_display->wait_for_fifo_margin(896, 1500);
+  const bool fifo_ready = lvgl_esphome_wait_direct_region_dsi_fifo();
   uint8_t *frame_buffer = mipi_display->get_presented_frame_buffer();
   const uint32_t fifo_wait_us = (uint32_t) (esp_timer_get_time() - phase_started_us);
   if (frame_buffer == nullptr)
@@ -3670,7 +3671,7 @@ bool LvglComponent::prepare_direct_framebuffer_dma_ownership_(uint8_t *framebuff
   constexpr size_t CACHE_HANDOFF_CHUNK = 64U * 1024U;
   for (size_t offset = 0; offset < framebuffer_size; offset += CACHE_HANDOFF_CHUNK) {
     const size_t chunk = std::min(CACHE_HANDOFF_CHUNK, framebuffer_size - offset);
-    mipi_display->wait_for_fifo_margin(768, 3000);
+    lvgl_esphome_wait_snapshot_dsi_fifo();
     /* PPA replaces every byte of this idle framebuffer before it is queued to
      * DSI. Writing LVGL's obsolete cache contents back to PSRAM first doubles
      * the hand-off traffic and can starve scanout. M2C invalidation alone
@@ -6237,7 +6238,7 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     if (dma_ok && this->displays_.size() == 1) {
       auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
       if (mipi_display != nullptr)
-        mipi_display->wait_for_fifo_margin(832, 3000);
+        lvgl_esphome_wait_snapshot_dsi_fifo();
     }
 #endif
     const int64_t compose_started_us = esp_timer_get_time();
@@ -6535,7 +6536,7 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
         constexpr size_t CACHE_HANDOFF_CHUNK = 64U * 1024U;
         for (size_t offset = 0; offset < fb_bytes && low_res_ok; offset += CACHE_HANDOFF_CHUNK) {
           const size_t chunk = std::min(CACHE_HANDOFF_CHUNK, fb_bytes - offset);
-          mipi_display->wait_for_fifo_margin(768, 3000);
+          lvgl_esphome_wait_snapshot_dsi_fifo();
           low_res_ok = lvgl_cache_msync_external_result(target + offset, chunk,
                                                         ESP_CACHE_MSYNC_FLAG_DIR_M2C) == ESP_OK;
         }
@@ -6891,7 +6892,7 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
       constexpr size_t CACHE_HANDOFF_CHUNK = 64U * 1024U;
       for (size_t offset = 0; offset < fb_bytes && ppa_ok; offset += CACHE_HANDOFF_CHUNK) {
         const size_t chunk = std::min(CACHE_HANDOFF_CHUNK, fb_bytes - offset);
-        mipi_display->wait_for_fifo_margin(768, 3000);
+        lvgl_esphome_wait_snapshot_dsi_fifo();
         ppa_ok = lvgl_cache_msync_external_result(target + offset, chunk,
                                                   ESP_CACHE_MSYNC_FLAG_DIR_M2C) == ESP_OK;
       }
