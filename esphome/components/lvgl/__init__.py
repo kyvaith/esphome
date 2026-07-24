@@ -646,6 +646,13 @@ async def to_code(configs):
     if any(BASE_PROPS.get(x) is lvalid.lv_image for x in styles_used):
         add_lv_use(CONF_IMAGE)
     lv_uses = df.get_lv_uses()
+    normalized_lv_uses = {use.upper() for use in lv_uses}
+    if "LOTTIE" in normalized_lv_uses:
+        # LVGL's Lottie widget is implemented on top of canvas and image.
+        # Keep both the generated LV_USE_* defines and the source filter in
+        # sync even when the widget registered its use with a different case.
+        lv_uses.update({"canvas", "image"})
+        normalized_lv_uses.update({"CANVAS", "IMAGE"})
     # Currently always need RGB565 for the display buffer, and ARGB8888 is used for layer blending.
     lv_image_formats = {"RGB565", "ARGB8888"}
 
@@ -730,7 +737,8 @@ async def to_code(configs):
     # Only enable ThorVG/SVG/Lottie/Vector Graphics if actually needed.
     # This saves ~500KB-1MB of flash on ESP32 devices.
     needs_thorvg = bool(
-        {"THORVG_INTERNAL", "SVG", "LOTTIE", "VECTOR_GRAPHIC"} & lv_uses
+        {"THORVG_INTERNAL", "SVG", "LOTTIE", "VECTOR_GRAPHIC"}
+        & normalized_lv_uses
     )
 
     if needs_thorvg:

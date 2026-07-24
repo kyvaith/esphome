@@ -13,6 +13,7 @@ from ..lvcode import lv_add
 from ..navigation import CONF_APPLICATIONS, CONF_HOME, CONF_PAGE
 from ..types import (
     LvglApplication,
+    LvglDirectSnapshotCompositor,
     LvglScrollSnapshotController,
     LvglSnapshotCompositor,
     LvglSnapshotStore,
@@ -29,6 +30,7 @@ from ..types import (
 from ..widgets import get_widgets
 
 CONF_APPLICATION = "application"
+CONF_BACKEND = "backend"
 CONF_DECODED_SLOTS = "decoded_slots"
 CONF_APPLICATION_TRANSITIONS = "application_transitions"
 CONF_CLOSE_TARGET_X = "close_target_x"
@@ -50,6 +52,8 @@ CONF_MAX_INERTIA_DURATION = "max_inertia_duration"
 
 COMPRESSION_NONE = "none"
 COMPRESSION_JPEG = "jpeg"
+BACKEND_LVGL = "lvgl"
+BACKEND_DIRECT = "direct"
 
 APPLICATION_TRANSITIONS_SCHEMA = cv.Schema(
     {
@@ -113,6 +117,9 @@ SNAPSHOT_SCHEMA = cv.All(
             cv.GenerateID(CONF_INTERNAL_COMPOSITOR_ID): cv.declare_id(
                 LvglSnapshotCompositor
             ),
+            cv.Optional(CONF_BACKEND, default=BACKEND_LVGL): cv.one_of(
+                BACKEND_LVGL, BACKEND_DIRECT, lower=True
+            ),
             cv.Optional(
                 CONF_COMPRESSION, default=COMPRESSION_NONE
             ): _validate_compression,
@@ -158,7 +165,8 @@ async def snapshot_to_code(lv_component, config, navigation_config):
 
     page_ids = _registered_page_ids(snapshot_config, navigation_config)
     home_widget_ids = _registered_home_widget_ids(navigation_config)
-    registered_count = len(page_ids) + len(home_widget_ids)
+    direct_backend = snapshot_config[CONF_BACKEND] == BACKEND_DIRECT
+    registered_count = len(page_ids) + (0 if direct_backend else len(home_widget_ids))
     if registered_count > snapshot_config[CONF_MAX_ENTRIES]:
         raise cv.Invalid(
             f"snapshot_compositor registers {registered_count} views, but max_entries "
@@ -184,15 +192,24 @@ async def snapshot_to_code(lv_component, config, navigation_config):
     home_widgets = await get_widgets(
         [{CONF_ID: widget_id} for widget_id in home_widget_ids]
     )
-    for widget in home_widgets:
-        lv_add(store.register_object(widget.obj))
+    if not direct_backend:
+        for widget in home_widgets:
+            lv_add(store.register_object(widget.obj))
 
     if navigation_config is not None:
         navigation = await cg.get_variable(navigation_config[CONF_ID])
-        compositor = cg.new_Pvariable(
+        if direct_backend and not home_widget_ids:
+            raise cv.Invalid(
+                "The direct snapshot backend currently requires home widget "
+                "navigation on a shared host page"
+            )
+        compositor_type = (
+            LvglDirectSnapshotCompositor if direct_backend else LvglSnapshotCompositor
+        )
+        compositor = cg.Pvariable(
             snapshot_config[CONF_INTERNAL_COMPOSITOR_ID],
-            lv_component,
-            store,
+            compositor_type.new(lv_component, store),
+            type_=LvglSnapshotCompositor,
         )
         cg.add(
             compositor.set_settle_duration(
@@ -207,6 +224,8 @@ async def snapshot_to_code(lv_component, config, navigation_config):
         else:
             for widget in home_widgets:
                 lv_add(compositor.add_home_view(widget.obj))
+            if direct_backend and snapshot_config[CONF_PRELOAD]:
+                lv_add(compositor.prepare_home(0))
         if transitions := snapshot_config.get(CONF_APPLICATION_TRANSITIONS):
             cg.add(compositor.set_application_transitions_enabled(True))
             cg.add(

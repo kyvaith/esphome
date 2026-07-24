@@ -68,6 +68,9 @@ LvglNavigation = lvgl_ns.class_("LvglNavigation")
 LvglApplication = lvgl_ns.class_("LvglApplication")
 LvglSnapshotStore = lvgl_ns.class_("LvglSnapshotStore", Component)
 LvglSnapshotCompositor = lvgl_ns.class_("LvglSnapshotCompositor")
+LvglDirectSnapshotCompositor = lvgl_ns.class_(
+    "LvglDirectSnapshotCompositor", LvglSnapshotCompositor
+)
 LvglScrollSnapshotController = lvgl_ns.class_("LvglScrollSnapshotController")
 NavigationOpenAction = lvgl_ns.class_("NavigationOpenAction", automation.Action)
 NavigationCloseAction = lvgl_ns.class_("NavigationCloseAction", automation.Action)

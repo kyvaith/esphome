@@ -22,7 +22,9 @@
 #endif
 #ifdef USE_ESP32_JPEG
 #include "esphome/components/esp32_jpeg/esp32_jpeg.h"
+#ifndef USE_LVGL_SNAPSHOT_JPEG_CACHE
 #define USE_LVGL_SNAPSHOT_JPEG_CACHE 1
+#endif
 #endif
 #ifdef USE_ESP32
 #include "esp_cache.h"
@@ -167,6 +169,18 @@ static uint32_t integer_sqrt_u32(uint32_t value) {
 #endif
 #ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_GAP_US
 #define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_BAND_GAP_US 0
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DSI_FIFO_MIN
+#define CONFIG_ESPHOME_LVGL_PPA_DSI_FIFO_MIN 768
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US
+#define CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US 2000
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_FIFO_MIN
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_FIFO_MIN CONFIG_ESPHOME_LVGL_PPA_DSI_FIFO_MIN
+#endif
+#ifndef CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_WAIT_US
+#define CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_WAIT_US CONFIG_ESPHOME_LVGL_PPA_DSI_WAIT_US
 #endif
 #ifndef CONFIG_ESPHOME_LVGL_PPA_DIRECT_FULL_FRAME
 #define CONFIG_ESPHOME_LVGL_PPA_DIRECT_FULL_FRAME 0
@@ -1423,6 +1437,63 @@ void LvglComponent::set_paused(bool paused, bool show_snow) {
     this->pause_callback_->trigger();
   if (!paused && this->resume_callback_ != nullptr)
     this->resume_callback_->trigger();
+}
+
+bool LvglComponent::begin_frame_buffer_presentation(uint32_t timeout_ms) {
+  if (this->paused_ || this->disp_ == nullptr || this->displays_.size() != 1 ||
+      this->frame_buffer_presentation_active_.exchange(true, std::memory_order_acq_rel)) {
+    return false;
+  }
+
+  this->frame_buffer_presentation_refr_timer_ = lv_display_get_refr_timer(this->disp_);
+  if (this->frame_buffer_presentation_refr_timer_ == nullptr) {
+    this->frame_buffer_presentation_active_.store(false, std::memory_order_release);
+    return false;
+  }
+
+  lv_timer_set_period(this->frame_buffer_presentation_refr_timer_, 5 * 60 * 1000);
+  lv_timer_reset(this->frame_buffer_presentation_refr_timer_);
+  if (!this->displays_[0]->begin_frame_buffer_session(timeout_ms)) {
+    lv_timer_set_period(this->frame_buffer_presentation_refr_timer_, this->frame_buffer_presentation_refr_period_);
+    lv_timer_ready(this->frame_buffer_presentation_refr_timer_);
+    this->frame_buffer_presentation_refr_timer_ = nullptr;
+    this->frame_buffer_presentation_active_.store(false, std::memory_order_release);
+    return false;
+  }
+  return true;
+}
+
+bool LvglComponent::acquire_presentation_frame(display::FrameBufferLease *lease, BufferWriter writer,
+                                               uint32_t timeout_ms) {
+  return this->frame_buffer_presentation_active_.load(std::memory_order_acquire) && this->displays_.size() == 1 &&
+         this->displays_[0]->acquire_frame_buffer(lease, writer, timeout_ms);
+}
+
+bool LvglComponent::present_presentation_frame(display::FrameBufferLease *lease, uint32_t timeout_ms) {
+  return this->frame_buffer_presentation_active_.load(std::memory_order_acquire) && this->displays_.size() == 1 &&
+         this->displays_[0]->present_frame_buffer_lease(lease, timeout_ms);
+}
+
+bool LvglComponent::release_presentation_frame(display::FrameBufferLease *lease) {
+  return this->frame_buffer_presentation_active_.load(std::memory_order_acquire) && this->displays_.size() == 1 &&
+         this->displays_[0]->release_frame_buffer(lease);
+}
+
+bool LvglComponent::end_frame_buffer_presentation(uint32_t timeout_ms) {
+  if (!this->frame_buffer_presentation_active_.load(std::memory_order_acquire) || this->displays_.size() != 1 ||
+      !this->displays_[0]->end_frame_buffer_session(timeout_ms)) {
+    return false;
+  }
+
+  this->frame_buffer_presentation_active_.store(false, std::memory_order_release);
+  if (this->frame_buffer_presentation_refr_timer_ != nullptr) {
+    lv_timer_set_period(this->frame_buffer_presentation_refr_timer_, this->frame_buffer_presentation_refr_period_);
+    if (auto *screen = lv_display_get_screen_active(this->disp_); screen != nullptr)
+      lv_obj_invalidate(screen);
+    lv_timer_ready(this->frame_buffer_presentation_refr_timer_);
+    this->frame_buffer_presentation_refr_timer_ = nullptr;
+  }
+  return true;
 }
 
 void LvglComponent::esphome_lvgl_init() {
@@ -7892,7 +7963,7 @@ void LvKeyboardType::set_obj(lv_obj_t *lv_obj) {
 void LvglComponent::draw_end_() {
   if (this->draw_end_callback_ != nullptr)
     this->draw_end_callback_->trigger();
-  if (this->update_when_display_idle_) {
+  if (this->update_when_display_idle_ && !this->frame_buffer_presentation_active_.load(std::memory_order_acquire)) {
     for (auto *disp : this->displays_)
       disp->update();
   }
@@ -8194,10 +8265,15 @@ void LvglComponent::loop() {
     ESP_LOGD(TAG, "LVGL loop started - system is now fully ready");
   }
 
-  if (this->is_paused()) {
+  const bool frame_buffer_presentation_active = this->frame_buffer_presentation_active_.load(std::memory_order_acquire);
+  if (!frame_buffer_presentation_active && this->is_paused()) {
     if (this->paused_ && this->show_snow_)
       this->write_random_();
   } else {
+    if (frame_buffer_presentation_active) {
+      lv_timer_handler();
+      return;
+    }
     // A direct image animator owns the idle DSI framebuffer and presents it at
     // VSYNC. Running LVGL's refresh timer in parallel would redraw the same
     // full screen and erase the performance benefit of the direct path.

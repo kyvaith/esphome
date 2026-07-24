@@ -14,7 +14,6 @@ touchscreen:
 lvgl:
   byte_order: little_endian
   color_depth: 32
-  rotation: 90
   use_ppa: true
   use_ppa_img: true
   touchscreens:
@@ -117,6 +116,7 @@ lvgl:
           - logger.log: Application closed
   snapshot_compositor:
     id: test_snapshots
+    backend: direct
     compression: jpeg
     quality: 95
     max_entries: 4
