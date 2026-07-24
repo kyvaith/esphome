@@ -20,6 +20,16 @@ void LvglSnapshotCompositor::add_home_view(lv_obj_t *view) {
     this->home_views_.push_back(view);
 }
 
+bool LvglSnapshotCompositor::prepare_applications(const std::vector<LvglApplication *> &applications) {
+  bool prepared = true;
+  for (auto *application : applications) {
+    auto *view = application == nullptr ? nullptr : application->get_view();
+    if (view != nullptr)
+      prepared = this->store_->capture_object(view) && prepared;
+  }
+  return prepared;
+}
+
 bool LvglSnapshotCompositor::begin_home(int page_index) {
   if (this->home_active_ || page_index < 0 || page_index >= static_cast<int>(this->home_views_.size()))
     return false;

@@ -35,6 +35,7 @@ lvgl:
               - label:
                   text: Home 2
   navigation:
+    id: direct_navigation
     home:
       pages:
         - direct_home_one
@@ -70,3 +71,14 @@ psram:
 esp_ldo:
   - channel: 3
     voltage: 2.5V
+
+esphome:
+  on_boot:
+    then:
+      - lvgl.navigation.prepare_applications: direct_navigation
+      - lvgl.navigation.refresh: direct_navigation
+      - if:
+          condition:
+            lvgl.navigation.home_snapshot_prepared: direct_navigation
+          then:
+            - logger.log: Home snapshots are prepared

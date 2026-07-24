@@ -29,10 +29,25 @@ bool LvglDirectSnapshotCompositor::can_use_direct_application_(LvglApplication *
 }
 
 bool LvglDirectSnapshotCompositor::prepare_home(int page_index) {
-  if (!this->can_use_direct_home_() || page_index < 0 || page_index >= static_cast<int>(this->home_views_.size()))
+  if (!this->can_use_direct_home_() || page_index < 0 || page_index >= static_cast<int>(this->home_views_.size())) {
+    this->home_prepared_ = false;
     return false;
-  return lvgl_esphome_snapshot_cache_tile_window(this->home_views_.data(), static_cast<int>(this->home_views_.size()),
-                                                 page_index + 1, this->parent_->get_width());
+  }
+  this->home_prepared_ =
+      lvgl_esphome_snapshot_cache_tile_window(this->home_views_.data(), static_cast<int>(this->home_views_.size()),
+                                              page_index + 1, this->parent_->get_width());
+  return this->home_prepared_;
+}
+
+bool LvglDirectSnapshotCompositor::prepare_applications(
+    const std::vector<LvglApplication *> &applications) {
+  bool prepared = true;
+  for (auto *application : applications) {
+    auto *view = application == nullptr ? nullptr : application->get_view();
+    if (view != nullptr)
+      prepared = lvgl_esphome_snapshot_cache_compressed_page(view) && prepared;
+  }
+  return prepared;
 }
 
 bool LvglDirectSnapshotCompositor::begin_home(int page_index) {
