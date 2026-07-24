@@ -76,6 +76,12 @@ NavigationOpenAction = lvgl_ns.class_("NavigationOpenAction", automation.Action)
 NavigationCloseAction = lvgl_ns.class_("NavigationCloseAction", automation.Action)
 NavigationHomeAction = lvgl_ns.class_("NavigationHomeAction", automation.Action)
 NavigationRefreshAction = lvgl_ns.class_("NavigationRefreshAction", automation.Action)
+NavigationPrepareApplicationsAction = lvgl_ns.class_(
+    "NavigationPrepareApplicationsAction", automation.Action
+)
+NavigationHomePreparedCondition = lvgl_ns.class_(
+    "NavigationHomePreparedCondition", automation.Condition
+)
 NavigationIsOpenCondition = lvgl_ns.class_(
     "NavigationIsOpenCondition", automation.Condition
 )

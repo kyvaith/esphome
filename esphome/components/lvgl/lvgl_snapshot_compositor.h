@@ -18,6 +18,8 @@ class LvglSnapshotCompositor {
   virtual void add_home_page(LvPageType *page);
   virtual void add_home_view(lv_obj_t *view);
   virtual bool prepare_home(int page_index) { return false; }
+  virtual bool prepare_applications(const std::vector<LvglApplication *> &applications);
+  virtual bool is_home_prepared() const { return false; }
   void set_navigation(LvglNavigation *navigation) { this->navigation_ = navigation; }
   void set_settle_duration(uint32_t duration) { this->settle_duration_ = duration; }
   void set_application_transitions_enabled(bool enabled) { this->application_transitions_enabled_ = enabled; }

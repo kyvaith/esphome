@@ -415,6 +415,21 @@ void LvglNavigation::refresh_home() {
 #endif
 }
 
+void LvglNavigation::prepare_application_snapshots() {
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+  if (this->snapshot_compositor_ != nullptr)
+    this->snapshot_compositor_->prepare_applications(this->applications_);
+#endif
+}
+
+bool LvglNavigation::is_home_snapshot_prepared() const {
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+  return this->snapshot_compositor_ != nullptr && this->snapshot_compositor_->is_home_prepared();
+#else
+  return false;
+#endif
+}
+
 bool LvglNavigation::is_application_open(const LvglApplication *application) const {
   return application != nullptr && application == this->find_active_application_();
 }

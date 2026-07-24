@@ -9,8 +9,10 @@ from ..types import (
     LvglNavigation,
     NavigationCloseAction,
     NavigationHomeAction,
+    NavigationHomePreparedCondition,
     NavigationIsOpenCondition,
     NavigationOpenAction,
+    NavigationPrepareApplicationsAction,
     NavigationRefreshAction,
     lv_page_t,
     lv_pseudo_button_t,
@@ -328,6 +330,39 @@ async def navigation_refresh_to_code(config, action_id, template_arg, args):
     action = cg.new_Pvariable(action_id, template_arg)
     await cg.register_parented(action, config[CONF_ID])
     return action
+
+
+@automation.register_action(
+    "lvgl.navigation.prepare_applications",
+    NavigationPrepareApplicationsAction,
+    cv.maybe_simple_value(
+        cv.Schema({cv.Required(CONF_ID): cv.use_id(LvglNavigation)}),
+        key=CONF_ID,
+    ),
+    synchronous=True,
+)
+async def navigation_prepare_applications_to_code(
+    config, action_id, template_arg, args
+):
+    action = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(action, config[CONF_ID])
+    return action
+
+
+@automation.register_condition(
+    "lvgl.navigation.home_snapshot_prepared",
+    NavigationHomePreparedCondition,
+    cv.maybe_simple_value(
+        cv.Schema({cv.Required(CONF_ID): cv.use_id(LvglNavigation)}),
+        key=CONF_ID,
+    ),
+)
+async def navigation_home_snapshot_prepared_to_code(
+    config, condition_id, template_arg, args
+):
+    condition = cg.new_Pvariable(condition_id, template_arg)
+    await cg.register_parented(condition, config[CONF_ID])
+    return condition
 
 
 @automation.register_condition(

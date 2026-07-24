@@ -135,6 +135,8 @@ class LvglNavigation {
   void close_application();
   void show_home();
   void refresh_home();
+  void prepare_application_snapshots();
+  bool is_home_snapshot_prepared() const;
 
   bool is_application_open(const LvglApplication *application) const;
   LvglApplication *get_active_application() const;
@@ -215,6 +217,18 @@ template<typename... Ts> class NavigationHomeAction final : public Action<Ts...>
 template<typename... Ts> class NavigationRefreshAction final : public Action<Ts...>, public Parented<LvglNavigation> {
  protected:
   void play(const Ts &...x) override { this->parent_->refresh_home(); }
+};
+
+template<typename... Ts>
+class NavigationPrepareApplicationsAction final : public Action<Ts...>, public Parented<LvglNavigation> {
+ protected:
+  void play(const Ts &...x) override { this->parent_->prepare_application_snapshots(); }
+};
+
+template<typename... Ts>
+class NavigationHomePreparedCondition final : public Condition<Ts...>, public Parented<LvglNavigation> {
+ protected:
+  bool check(const Ts &...x) override { return this->parent_->is_home_snapshot_prepared(); }
 };
 
 template<typename... Ts> class NavigationIsOpenCondition final : public Condition<Ts...> {
