@@ -8,6 +8,7 @@
 namespace esphome::lvgl {
 
 class LvglNavigation;
+class LvglApplication;
 
 class LvglSnapshotCompositor {
  public:
@@ -34,8 +35,8 @@ class LvglSnapshotCompositor {
   virtual void cancel_home();
   virtual bool is_home_active() const { return this->home_active_; }
 
-  virtual bool open_application(LvPageType *application, int home_index);
-  virtual bool begin_application_close(LvPageType *application, int home_index);
+  virtual bool open_application(LvglApplication *application, int home_index);
+  virtual bool begin_application_close(LvglApplication *application, int home_index);
   virtual bool update_application_close(int32_t delta_y);
   virtual bool settle_application_close(bool close);
   virtual void cancel_application();
@@ -60,7 +61,7 @@ class LvglSnapshotCompositor {
   void set_home_offset_(int32_t offset);
   void complete_home_();
   void release_home_();
-  bool bind_application_(LvPageType *page, bool force_capture);
+  bool bind_application_(LvglApplication *application, bool force_capture);
   void set_application_progress_(int32_t progress);
   bool animate_application_to_(int32_t progress, uint32_t duration);
   void complete_application_();
@@ -82,7 +83,7 @@ class LvglSnapshotCompositor {
   bool home_active_{};
   lv_obj_t *application_mask_{};
   lv_obj_t *application_image_{};
-  LvPageType *application_page_{};
+  LvglApplication *application_{};
   lv_draw_buf_t *application_buffer_{};
   int application_home_index_{-1};
   int32_t application_progress_{};

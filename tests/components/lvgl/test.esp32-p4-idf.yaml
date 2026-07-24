@@ -66,6 +66,25 @@ lvgl:
             widgets:
               - label:
                   text: Home 2
+              - button:
+                  y: 48
+                  widgets:
+                    - label:
+                        text: Open overlay
+                  on_click:
+                    - lvgl.navigation.open: test_overlay_application
+        - obj:
+            id: overlay_application_widget
+            width: 100%
+            height: 100%
+            hidden: true
+            widgets:
+              - button:
+                  widgets:
+                    - label:
+                        text: Close overlay
+                  on_click:
+                    - lvgl.navigation.close: test_navigation
     - id: application_page
       widgets:
         - obj:
@@ -114,6 +133,17 @@ lvgl:
           - logger.log: Application closing
         on_closed:
           - logger.log: Application closed
+      - id: test_overlay_application
+        page: home_widget_page
+        widget: overlay_application_widget
+        on_open:
+          - logger.log: Overlay application opening
+        on_opened:
+          - logger.log: Overlay application opened
+        on_close:
+          - logger.log: Overlay application closing
+        on_closed:
+          - logger.log: Overlay application closed
   snapshot_compositor:
     id: test_snapshots
     backend: direct

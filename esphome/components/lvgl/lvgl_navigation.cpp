@@ -31,6 +31,8 @@ void LvglNavigation::add_application(LvglApplication *application) {
   if (application == nullptr)
     return;
   application->set_parent(this);
+  if (application->get_widget() != nullptr)
+    lv_obj_add_flag(application->get_widget(), LV_OBJ_FLAG_HIDDEN);
   this->applications_.push_back(application);
 }
 
@@ -60,17 +62,12 @@ int LvglNavigation::find_home_view_index_() const {
 }
 
 LvglApplication *LvglNavigation::find_active_application_() const {
+  if (this->active_application_ != nullptr)
+    return this->active_application_;
   const size_t current_page = this->parent_->get_current_page();
   for (auto *application : this->applications_) {
-    if (application != nullptr && application->get_page() != nullptr && application->get_page()->index == current_page)
-      return application;
-  }
-  return nullptr;
-}
-
-LvglApplication *LvglNavigation::find_application_(const LvPageType *page) const {
-  for (auto *application : this->applications_) {
-    if (application != nullptr && application->get_page() == page)
+    if (application != nullptr && !application->is_widget_application() && application->get_page() != nullptr &&
+        application->get_page()->index == current_page)
       return application;
   }
   return nullptr;
@@ -120,8 +117,7 @@ bool LvglNavigation::touch_update(int32_t x, int32_t y) {
   } else if (this->touch_context_ == TouchContext::APPLICATION_CLOSE && sample.captured &&
              this->snapshot_compositor_ != nullptr) {
     if (sample.just_captured && this->gesture_application_ != nullptr)
-      this->snapshot_compositor_->begin_application_close(this->gesture_application_->get_page(),
-                                                          this->last_home_page_index_);
+      this->snapshot_compositor_->begin_application_close(this->gesture_application_, this->last_home_page_index_);
     if (this->snapshot_compositor_->is_application_active())
       this->snapshot_compositor_->update_application_close(sample.delta_y);
   } else if (this->touch_context_ == TouchContext::APPLICATION_SCROLL && sample.captured &&
@@ -183,6 +179,8 @@ bool LvglNavigation::touch_end() {
       if (!this->snapshot_compositor_->settle_application_close(close)) {
         this->snapshot_compositor_->cancel_application();
         if (close && gesture_application != nullptr) {
+          this->deactivate_application_view_(gesture_application);
+          this->active_application_ = nullptr;
           this->activate_home_view(this->last_home_page_index_);
           gesture_application->call_on_closed_callbacks();
         }
@@ -192,6 +190,8 @@ bool LvglNavigation::touch_end() {
 #endif
     if (close && gesture_application != nullptr) {
       gesture_application->call_on_close_callbacks();
+      this->deactivate_application_view_(gesture_application);
+      this->active_application_ = nullptr;
       this->activate_home_view(this->last_home_page_index_);
       gesture_application->call_on_closed_callbacks();
     }
@@ -229,7 +229,8 @@ void LvglNavigation::reset_touch_() {
 }
 
 void LvglNavigation::open_application(LvglApplication *application) {
-  if (application == nullptr || application->get_page() == nullptr)
+  if (application == nullptr || application->get_page() == nullptr || application->get_view() == nullptr ||
+      this->find_active_application_() != nullptr)
     return;
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->snapshot_compositor_ != nullptr) {
@@ -239,15 +240,16 @@ void LvglNavigation::open_application(LvglApplication *application) {
 #endif
   if (const int home_index = this->find_home_view_index_(); home_index >= 0)
     this->last_home_page_index_ = home_index;
+  this->active_application_ = application;
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->snapshot_compositor_ != nullptr &&
-      this->snapshot_compositor_->open_application(application->get_page(), this->last_home_page_index_)) {
+      this->snapshot_compositor_->open_application(application, this->last_home_page_index_)) {
     application->call_on_open_callbacks();
     return;
   }
 #endif
   application->call_on_open_callbacks();
-  this->parent_->show_page(application->get_page()->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
+  this->activate_application_view_(application);
   application->call_on_opened_callbacks();
 }
 
@@ -255,19 +257,24 @@ void LvglNavigation::close_application() {
   auto *application = this->find_active_application_();
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (application != nullptr && this->snapshot_compositor_ != nullptr &&
-      this->snapshot_compositor_->begin_application_close(application->get_page(), this->last_home_page_index_)) {
+      this->snapshot_compositor_->begin_application_close(application, this->last_home_page_index_)) {
     application->call_on_close_callbacks();
     if (this->snapshot_compositor_->settle_application_close(true))
       return;
     this->snapshot_compositor_->cancel_application();
+    this->deactivate_application_view_(application);
+    this->active_application_ = nullptr;
     this->activate_home_view(this->last_home_page_index_);
     application->call_on_closed_callbacks();
     return;
   }
 #endif
-  if (application != nullptr)
+  if (application != nullptr) {
     application->call_on_close_callbacks();
-  this->show_home();
+    this->deactivate_application_view_(application);
+    this->active_application_ = nullptr;
+  }
+  this->activate_home_view(this->last_home_page_index_);
   if (application != nullptr)
     application->call_on_closed_callbacks();
 }
@@ -275,14 +282,22 @@ void LvglNavigation::close_application() {
 void LvglNavigation::show_home() {
   if (this->get_home_view_count_() == 0)
     return;
+  auto *application = this->find_active_application_();
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->snapshot_compositor_ != nullptr) {
     this->snapshot_compositor_->cancel_home();
     this->snapshot_compositor_->cancel_application();
   }
 #endif
+  if (application != nullptr) {
+    application->call_on_close_callbacks();
+    this->deactivate_application_view_(application);
+    this->active_application_ = nullptr;
+  }
   const int target = std::clamp(this->last_home_page_index_, 0, static_cast<int>(this->get_home_view_count_()) - 1);
   this->activate_home_view(target);
+  if (application != nullptr)
+    application->call_on_closed_callbacks();
 }
 
 bool LvglNavigation::is_application_open(const LvglApplication *application) const {
@@ -291,14 +306,39 @@ bool LvglNavigation::is_application_open(const LvglApplication *application) con
 
 LvglApplication *LvglNavigation::get_active_application() const { return this->find_active_application_(); }
 
-void LvglNavigation::complete_application_transition(LvPageType *page, bool opening, bool close_committed) {
-  auto *application = this->find_application_(page);
+void LvglNavigation::prepare_application_transition(LvglApplication *application, bool opening, bool close_committed) {
+  if (application == nullptr)
+    return;
+  if (opening || !close_committed)
+    this->activate_application_view_(application);
+  else
+    this->deactivate_application_view_(application);
+}
+
+void LvglNavigation::complete_application_transition(LvglApplication *application, bool opening, bool close_committed) {
   if (application == nullptr)
     return;
   if (opening)
     application->call_on_opened_callbacks();
-  else if (close_committed)
+  else if (close_committed) {
+    this->active_application_ = nullptr;
     application->call_on_closed_callbacks();
+  }
+}
+
+void LvglNavigation::activate_application_view_(LvglApplication *application) {
+  if (application == nullptr || application->get_page() == nullptr)
+    return;
+  this->parent_->show_page(application->get_page()->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
+  if (application->get_widget() != nullptr) {
+    lv_obj_remove_flag(application->get_widget(), LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(application->get_widget());
+  }
+}
+
+void LvglNavigation::deactivate_application_view_(LvglApplication *application) {
+  if (application != nullptr && application->get_widget() != nullptr)
+    lv_obj_add_flag(application->get_widget(), LV_OBJ_FLAG_HIDDEN);
 }
 
 size_t LvglNavigation::get_home_view_count_() const {
