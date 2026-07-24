@@ -42,6 +42,7 @@ esphome/components/anova/* @buxtronix
 esphome/components/apds9306/* @aodrenah
 esphome/components/api/* @esphome/core
 esphome/components/aqi/* @freekode @jasstrong @ximex
+esphome/components/artwork_image/* @jtenniswood
 esphome/components/as5600/* @ammmze
 esphome/components/as5600/sensor/* @ammmze
 esphome/components/as7341/* @mrgnr
@@ -266,6 +267,7 @@ esphome/components/i2s_audio/microphone/* @jesserockz
 esphome/components/i2s_audio/speaker/* @jesserockz @kahrendt
 esphome/components/iaqcore/* @yozik04
 esphome/components/ili9xxx/* @clydebarrow @nielsnl68
+esphome/components/immich_gallery/* @kyvaith
 esphome/components/improv_base/* @esphome/core
 esphome/components/improv_serial/* @esphome/core
 esphome/components/ina226/* @latonita @Sergio303
@@ -591,6 +593,7 @@ esphome/components/uponor_smatrix/* @kroimon
 esphome/components/usb_cdc_acm/* @kbx81
 esphome/components/usb_host/* @clydebarrow
 esphome/components/usb_uart/* @clydebarrow
+esphome/components/va_client/* @maxmaxme
 esphome/components/valve/* @esphome/core
 esphome/components/vbus/* @ssieb
 esphome/components/veml3235/* @kbx81
