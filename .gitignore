@@ -102,6 +102,7 @@ venv-*/
 !.vscode/tasks.json
 CMakeListsPrivate.txt
 CMakeLists.txt
+!esphome/components/mipi_dsi/mipi_dsi_framework_patch/CMakeLists.txt
 
 # User-specific stuff:
 .idea/**/workspace.xml

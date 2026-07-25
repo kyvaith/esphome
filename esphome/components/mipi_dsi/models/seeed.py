@@ -1,8 +1,9 @@
-from . import DsiDriverChip
+from esphome.components.mipi import DriverChip
+import esphome.config_validation as cv
 
 # Standalone display
 # Product page: https://www.seeedstudio.com/reTerminal-D1001-p-6729.html
-DsiDriverChip(
+DriverChip(
     "SEEED-RETERMINAL-D1001",
     height=1280,
     width=800,
@@ -14,10 +15,10 @@ DsiDriverChip(
     vsync_front_porch=30,
     pclk_frequency="80MHz",
     lane_bit_rate="1.5Gbps",
+    swap_xy=cv.UNDEFINED,
     color_order="RGB",
     enable_pin=[{"xl9535": None, "number": 0}, {"xl9535": None, "number": 7}],
     reset_pin={"xl9535": None, "number": 2},
-    requires={"psram", "xl9535"},
     initsequence=(
         (0xE0, 0x00),
         (0xE1, 0x93),
