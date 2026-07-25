@@ -24,7 +24,8 @@ namespace {
 
 static const char *const TAG = "lvgl.dma2d_m2m";
 static constexpr size_t DMA2D_MAX_BATCH_SPANS = 192;
-static constexpr uint32_t DMA2D_DATA_BURST_LENGTH = 128;
+using Dma2dBurstLength = decltype(dma2d_transfer_ability_t{}.data_burst_length);
+static constexpr Dma2dBurstLength DMA2D_DATA_BURST_LENGTH = static_cast<Dma2dBurstLength>(128);
 
 struct alignas(64) Dma2dM2mContext {
   alignas(64) dma2d_descriptor_t tx_descriptors[DMA2D_MAX_BATCH_SPANS]{};

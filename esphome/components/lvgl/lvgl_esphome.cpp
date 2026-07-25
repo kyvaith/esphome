@@ -340,6 +340,13 @@ static constexpr int SNAPSHOT_PAGE_INDICATOR_H = 10;
 static constexpr int SNAPSHOT_CLOCK_Y = 10;
 static constexpr int SNAPSHOT_CLOCK_H = 52;
 
+static bool snapshot_prepare_clock_glyph_buffer() {
+  if (s_snapshot_clock_glyph_buffer != nullptr)
+    return true;
+  s_snapshot_clock_glyph_buffer = lv_draw_buf_create(64, 64, LV_COLOR_FORMAT_A8, LV_STRIDE_AUTO);
+  return s_snapshot_clock_glyph_buffer != nullptr;
+}
+
 static bool snapshot_draw_clock_rgb888(uint8_t *buffer, int width, int height) {
   static_assert(sizeof(lv_color_t) == 3, "Snapshot clock compositor requires RGB888");
   if (buffer == nullptr || width <= 0 || height <= 0 || s_snapshot_clock_font == nullptr)
@@ -356,11 +363,8 @@ static bool snapshot_draw_clock_rgb888(uint8_t *buffer, int width, int height) {
   if (len == 0)
     return false;
 
-  if (s_snapshot_clock_glyph_buffer == nullptr) {
-    s_snapshot_clock_glyph_buffer = lv_draw_buf_create(64, 64, LV_COLOR_FORMAT_A8, LV_STRIDE_AUTO);
-    if (s_snapshot_clock_glyph_buffer == nullptr)
-      return false;
-  }
+  if (!snapshot_prepare_clock_glyph_buffer())
+    return false;
 
   lv_font_glyph_dsc_t glyphs[8]{};
   int glyph_count = 0;
@@ -11970,12 +11974,6 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
   snapshot_swipe_state.current_root = current;
   snapshot_swipe_state.next_root = next;
 
-  lv_obj_clear_flag(current, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_clear_flag(next, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_align(current, LV_ALIGN_CENTER, 0, 0);
-  lv_obj_align(next, LV_ALIGN_CENTER, next_x, 0);
-  lv_obj_update_layout(parent);
-
   auto *disp = lv_obj_get_display(current);
   auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
   if (component != nullptr && SNAPSHOT_DIRECT_COMPOSITOR_ENABLED) {
@@ -12042,6 +12040,14 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
   }
 
 #if LV_USE_IMAGE
+  // Cached direct swipes never need to expose or lay out the live LVGL trees.
+  // Only prepare them when the fallback must take a fresh LVGL snapshot.
+  lv_obj_clear_flag(current, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(next, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_align(current, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_align(next, LV_ALIGN_CENTER, next_x, 0);
+  lv_obj_update_layout(parent);
+
   snapshot_swipe_state.current_buf = snapshot_cache_find(current);
   snapshot_swipe_state.next_buf = snapshot_cache_find(next);
   if (snapshot_swipe_state.current_buf == nullptr) {
@@ -12156,10 +12162,6 @@ extern "C" bool lvgl_esphome_snapshot_swipe_edge_begin(lv_obj_t *current, int wi
   if (component == nullptr || !SNAPSHOT_DIRECT_COMPOSITOR_ENABLED)
     return false;
 
-  lv_obj_clear_flag(current, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_align(current, LV_ALIGN_CENTER, 0, 0);
-  lv_obj_update_layout(parent);
-
   SnapshotPanoramaPageSource panorama_source{};
   if (snapshot_panorama_source_from_cache(current, width, 1, &panorama_source) &&
       panorama_source.owner != nullptr && panorama_source.owner->buf != nullptr && panorama_source.width == width &&
@@ -12181,6 +12183,11 @@ extern "C" bool lvgl_esphome_snapshot_swipe_edge_begin(lv_obj_t *current, int wi
   if (snapshot_swipe_state.current_buf == nullptr)
     snapshot_swipe_state.current_buf = snapshot_cache_find(current);
   if (snapshot_swipe_state.current_buf == nullptr) {
+    // A cached edge bounce does not touch the live tree. Prepare it only for
+    // the slow fallback capture path.
+    lv_obj_clear_flag(current, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_align(current, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_update_layout(parent);
     snapshot_swipe_state.current_buf = lv_snapshot_take(current, SNAPSHOT_CF);
     snapshot_swipe_state.owns_current_buf = true;
   }
@@ -12220,7 +12227,10 @@ extern "C" void lvgl_esphome_snapshot_set_clock_text(const char *text) {
   s_snapshot_clock_text[sizeof(s_snapshot_clock_text) - 1] = '\0';
 }
 
-extern "C" void lvgl_esphome_snapshot_set_clock_font(const lv_font_t *font) { s_snapshot_clock_font = font; }
+extern "C" void lvgl_esphome_snapshot_set_clock_font(const lv_font_t *font) {
+  s_snapshot_clock_font = font;
+  snapshot_prepare_clock_glyph_buffer();
+}
 
 extern "C" void lvgl_esphome_snapshot_swipe_update(int current_x, int next_x) {
   if (snapshot_swipe_state.direct_render && snapshot_swipe_state.component != nullptr) {
@@ -12452,12 +12462,9 @@ extern "C" bool lvgl_esphome_snapshot_scroll_begin(lv_obj_t *obj, int viewport_w
       !snapshot_scroll_state.direct_render) {
     snapshot_swipe_cleanup();
     snapshot_scroll_state.current_scroll_y = snapshot_scroll_clamp_y(lv_obj_get_scroll_y(obj));
-    if (!snapshot_scroll_state.component->snapshot_scroll_direct_render(
-            snapshot_scroll_state.content_buf, snapshot_scroll_state.content_tail_buf,
-            snapshot_scroll_state.content_tail_y, snapshot_scroll_state.current_scroll_y, viewport_w, viewport_h)) {
-      snapshot_scroll_cleanup();
-      return false;
-    }
+    // The currently scanned LVGL frame already represents this exact offset.
+    // Presenting it again here duplicates a full-screen copy on the first
+    // captured touch sample and creates the visible start hitch.
     snapshot_scroll_state.direct_render = true;
     s_snapshot_direct_active = true;
     lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -12613,8 +12620,8 @@ extern "C" void lvgl_esphome_snapshot_scroll_finish(int scroll_y) {
   }
 
   lv_obj_t *root = snapshot_scroll_state.root;
-  lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
   lv_obj_scroll_to_y(root, clamped_y, LV_ANIM_OFF);
+  lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
   snapshot_scroll_log_summary();
   snapshot_scroll_cleanup();
   lv_obj_invalidate(lv_screen_active());
@@ -12650,8 +12657,8 @@ extern "C" void lvgl_esphome_snapshot_scroll_finish_retain(int scroll_y) {
   }
 
   lv_obj_t *root = snapshot_scroll_state.root;
-  lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
   lv_obj_scroll_to_y(root, clamped_y, LV_ANIM_OFF);
+  lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
   snapshot_scroll_state.current_scroll_y = clamped_y;
   snapshot_scroll_state.direct_render = false;
   s_snapshot_direct_active = false;

@@ -133,6 +133,19 @@ void MaterialDirectMarquee::present_done_(void *arg) {
 
 void MaterialDirectMarquee::end(bool restore_native) {
   const bool was_active = this->active_.exchange(false, std::memory_order_acq_rel);
+  this->pending_x_.store(INT_MIN, std::memory_order_release);
+#ifdef USE_ESP32
+  if (this->worker_handle_ != nullptr)
+    xTaskNotifyGive(this->worker_handle_);
+  const int64_t deadline_us = esp_timer_get_time() + 80000;
+  while ((this->present_in_flight_.load(std::memory_order_acquire) ||
+          this->worker_busy_.load(std::memory_order_acquire)) &&
+         esp_timer_get_time() < deadline_us) {
+    this->service(false);
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+  this->service(false);
+#endif
   if (was_active) {
     this->lvgl_component_->direct_blit_rgb888_release(this->screen_x_, this->screen_y_, this->width_, this->height_);
   }
@@ -141,7 +154,6 @@ void MaterialDirectMarquee::end(bool restore_native) {
     lv_obj_clear_flag(this->label_, LV_OBJ_FLAG_HIDDEN);
   }
   this->cleanup_pending_ = true;
-  this->pending_x_.store(INT_MIN, std::memory_order_release);
 #ifdef USE_ESP32
   if (this->worker_handle_ != nullptr)
     xTaskNotifyGive(this->worker_handle_);

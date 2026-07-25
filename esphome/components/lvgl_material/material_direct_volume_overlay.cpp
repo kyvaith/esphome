@@ -221,6 +221,30 @@ void MaterialDirectVolumeOverlay::redraw_track_in_region_(lv_color_t *buffer, in
   }
 }
 
+bool MaterialDirectVolumeOverlay::rebuild_background_() {
+  if (this->original_ == nullptr || this->background_ == nullptr || this->screen_width_ <= 0 ||
+      this->screen_height_ <= 0)
+    return false;
+
+  const size_t screen_pixel_count = static_cast<size_t>(this->screen_width_) * this->screen_height_;
+  std::memcpy(this->background_, this->original_, screen_pixel_count * sizeof(lv_color_t));
+  for (int pct = 0; pct <= 100; pct++)
+    this->point_for_pct_(pct, this->point_x_[pct], this->point_y_[pct]);
+
+  const int retained_opacity = 255 - this->scrim_opacity_;
+  uint8_t dim_lut[256];
+  for (int value = 0; value < 256; value++)
+    dim_lut[value] = static_cast<uint8_t>((value * retained_opacity + 127) / 255);
+  for (size_t i = 0; i < screen_pixel_count; i++) {
+    this->background_[i].red = dim_lut[this->background_[i].red];
+    this->background_[i].green = dim_lut[this->background_[i].green];
+    this->background_[i].blue = dim_lut[this->background_[i].blue];
+  }
+  this->redraw_track_in_region_(this->background_, this->screen_width_, 0, 0, this->screen_width_,
+                                this->capture_height_, 0, 100, this->inactive_color_);
+  return true;
+}
+
 bool MaterialDirectVolumeOverlay::prepare() {
   this->end();
   static_assert(sizeof(lv_color_t) == 3, "The direct volume overlay requires RGB888");
@@ -252,21 +276,10 @@ bool MaterialDirectVolumeOverlay::prepare() {
     return false;
   }
 
-  std::memcpy(this->background_, this->original_, screen_byte_count);
-  for (int pct = 0; pct <= 100; pct++)
-    this->point_for_pct_(pct, this->point_x_[pct], this->point_y_[pct]);
-
-  const int retained_opacity = 255 - this->scrim_opacity_;
-  uint8_t dim_lut[256];
-  for (int value = 0; value < 256; value++)
-    dim_lut[value] = static_cast<uint8_t>((value * retained_opacity + 127) / 255);
-  for (size_t i = 0; i < screen_pixel_count; i++) {
-    this->background_[i].red = dim_lut[this->background_[i].red];
-    this->background_[i].green = dim_lut[this->background_[i].green];
-    this->background_[i].blue = dim_lut[this->background_[i].blue];
+  if (!this->rebuild_background_()) {
+    this->release_();
+    return false;
   }
-  this->redraw_track_in_region_(this->background_, this->screen_width_, 0, 0, this->screen_width_,
-                                this->capture_height_, 0, 100, this->inactive_color_);
 
   this->prepared_ = true;
   this->visual_pct_ = -1;
@@ -284,36 +297,18 @@ bool MaterialDirectVolumeOverlay::begin() {
   lv_obj_add_flag(this->label_, LV_OBJ_FLAG_HIDDEN);
 
   if (this->activation_widget_ != nullptr) {
-    lv_area_t area{};
-    lv_obj_get_coords(this->activation_widget_, &area);
-    const int track_width = std::max(1, static_cast<int>(std::lround(this->track_radius_ * 2.0f)));
-    const int margin_x = track_width * 2;
-    const int margin_y = track_width + std::max(1, track_width / 2);
-    const int x1 = std::clamp(static_cast<int>(area.x1) - margin_x, 0, this->screen_width_ - 1);
-    const int y1 = std::clamp(static_cast<int>(area.y1) - margin_y, 0, this->screen_height_ - 1);
-    const int x2 = std::clamp(static_cast<int>(area.x2) + margin_x, x1, this->screen_width_ - 1);
-    const int y2 = std::clamp(static_cast<int>(area.y2) + margin_y, y1, this->screen_height_ - 1);
-    const int width = x2 - x1 + 1;
-    const int height = y2 - y1 + 1;
-    lv_color_t *target = this->original_ + static_cast<size_t>(y1) * this->screen_width_ + x1;
-    if (!this->lvgl_component_->direct_capture_rgb888(reinterpret_cast<uint8_t *>(target),
-                                                      this->screen_width_ * static_cast<int>(sizeof(lv_color_t)), x1,
-                                                      y1, width, height)) {
+    // The activation widget is hidden immediately before begin(). Recapture
+    // the whole frame so the dimmed background remains uniform. Patching only
+    // the former clock rectangle used a different source frame and left a
+    // visible rectangular cutout across the volume arc.
+    if (!this->lvgl_component_->direct_capture_rgb888(
+            reinterpret_cast<uint8_t *>(this->original_),
+            this->screen_width_ * static_cast<int>(sizeof(lv_color_t)), 0, 0, this->screen_width_,
+            this->screen_height_) ||
+        !this->rebuild_background_()) {
       this->end(false);
       return false;
     }
-    const int retained_opacity = 255 - this->scrim_opacity_;
-    for (int y = y1; y <= y2; y++) {
-      for (int x = x1; x <= x2; x++) {
-        const lv_color_t source = this->original_[static_cast<size_t>(y) * this->screen_width_ + x];
-        lv_color_t &dest = this->background_[static_cast<size_t>(y) * this->screen_width_ + x];
-        dest.red = static_cast<uint8_t>((static_cast<int>(source.red) * retained_opacity + 127) / 255);
-        dest.green = static_cast<uint8_t>((static_cast<int>(source.green) * retained_opacity + 127) / 255);
-        dest.blue = static_cast<uint8_t>((static_cast<int>(source.blue) * retained_opacity + 127) / 255);
-      }
-    }
-    this->redraw_track_in_region_(this->background_, this->screen_width_, x1, y1, width, height, 0, 100,
-                                  this->inactive_color_);
   }
 
   this->active_ = true;

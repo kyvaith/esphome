@@ -256,7 +256,12 @@ int JpegDecoder::decode_hardware_(uint8_t *buffer, size_t size) {
     }
     return DECODE_ERROR_OUT_OF_MEMORY;
   }
-  if (aligned_w == frame_w && aligned_h == frame_h) {
+  // RGB888 output is adopted without a CPU fitting pass, including JPEGs whose
+  // hardware output dimensions include alignment padding. Preserve DMA
+  // ownership so presentation does not write back the whole image to PSRAM.
+  // RGB565 fitting records its own ownership when PPA is used; an exact buffer
+  // can be marked here as before.
+  if (!output_rgb565 || (aligned_w == frame_w && aligned_h == frame_h)) {
     this->image_->mark_decode_buffer_written_by_dma();
   }
 

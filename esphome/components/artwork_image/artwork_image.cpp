@@ -1695,13 +1695,6 @@ bool ArtworkImage::apply_decode_buffer_scrim_() {
       this->transparency_ != image::TRANSPARENCY_ALPHA_CHANNEL &&
       (reinterpret_cast<uintptr_t>(this->decode_buffer_) & 63U) == 0 && (buffer_size & 63U) == 0 &&
       ensure_artwork_ppa_blend_resources(this->decode_buffer_width_, this->decode_buffer_height_)) {
-    // JPEG writes this buffer through DMA. Invalidate stale CPU cache lines
-    // before the in-place blend; no full-frame CPU pass or C2M writeback is
-    // needed after PPA has produced the final RGB565 pixels.
-    if (this->decode_buffer_written_by_dma_) {
-      esp_cache_msync(this->decode_buffer_, buffer_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
-    }
-
     ppa_blend_oper_config_t cfg = {};
     cfg.in_bg.buffer = this->decode_buffer_;
     cfg.in_bg.pic_w = this->decode_buffer_width_;

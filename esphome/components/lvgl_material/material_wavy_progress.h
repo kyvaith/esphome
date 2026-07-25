@@ -22,6 +22,7 @@ class MaterialWavyProgress : public Component {
   void set_value_permille(int progress);
   void set_value(int progress);
   void set_playing(bool playing);
+  void set_pressed(bool pressed);
   void set_direct_present(bool enabled);
   bool is_background_ready();
   bool service_present();

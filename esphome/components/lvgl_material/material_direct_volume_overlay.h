@@ -49,6 +49,7 @@ class MaterialDirectVolumeOverlay : public Component {
   void release_();
   void reset_visual_cache_();
   bool update_geometry_();
+  bool rebuild_background_();
   void point_for_pct_(int pct, float &x, float &y) const;
   bool direct_draw_value_(int value_pct);
   bool direct_update_(int visual_pct, int value_pct);

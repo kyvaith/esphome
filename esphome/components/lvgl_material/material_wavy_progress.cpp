@@ -70,11 +70,13 @@ struct WavyArcState {
   int value_basis_points{0};
   bool playing{false};
   bool pending{false};
+  bool pressed{false};
   int phase_deg{0};
   int last_rendered_value{-1};
   int last_rendered_phase{-1};
   bool last_rendered_pending{false};
   bool last_rendered_playing{false};
+  bool last_rendered_pressed{false};
   std::atomic<bool> direct_present_enabled{false};
   lv_color32_t *pixels{nullptr};
   lv_color32_t *worker_pixels{nullptr};
@@ -82,6 +84,9 @@ struct WavyArcState {
   lv_color32_t *icon_buffer_pixels[3]{};
   bool icon_buffer_valid[3]{};
   bool icon_buffer_playing[3]{};
+  bool icon_buffer_pressed[3]{};
+  bool blob_buffer_valid[3]{};
+  bool blob_buffer_pressed[3]{};
   lv_color_t *backdrop_pixels{nullptr};
   WavePolarPixel *dynamic_pixels{nullptr};
   WavePixelSpan *dynamic_spans{nullptr};
@@ -102,6 +107,7 @@ struct WavyArcState {
   std::atomic<int> queued_value_basis_points{-1};
   std::atomic<int> queued_playing{-1};
   std::atomic<int> queued_pending{-1};
+  std::atomic<int> queued_pressed{-1};
   uint32_t render_generation{0};
   uint32_t ready_generation{0};
   bool frame_ready{false};
@@ -518,6 +524,7 @@ static bool rebuild_backdrop(WavyArcState *state, const lv_image_dsc_t *source, 
   state->last_rendered_phase = -1;
   state->dirty = true;
   memset(state->icon_buffer_valid, 0, sizeof(state->icon_buffer_valid));
+  memset(state->blob_buffer_valid, 0, sizeof(state->blob_buffer_valid));
   memcpy(state->worker_pixels, state->pixels, WAVE_BYTES);
   if (state->spare_pixels != nullptr)
     memcpy(state->spare_pixels, state->pixels, WAVE_BYTES);
@@ -532,12 +539,39 @@ static void reset_control_icon_area(WavyArcState *state) {
   constexpr int x2 = WAVE_CENTER + 33;
   constexpr int y1 = WAVE_CENTER - 32;
   constexpr int y2 = WAVE_CENTER + 32;
-  const lv_color32_t fill = make_overlay(0xE4, 0xC2, 0xFF, 255);
+  const lv_color32_t fill =
+      state->pressed ? make_overlay(0xC4, 0xA7, 0xDB, 255) : make_overlay(0xE4, 0xC2, 0xFF, 255);
   for (int y = y1; y <= y2; y++) {
     lv_color32_t *row = state->pixels + y * WAVE_SIZE;
     for (int x = x1; x <= x2; x++) {
       row[x] = fill;
     }
+  }
+}
+
+static void update_static_blob_if_needed(WavyArcState *state) {
+  constexpr int static_blob_radius = 78;
+  constexpr int static_blob_radius_sq = static_blob_radius * static_blob_radius;
+  for (size_t i = 0; i < 3; i++) {
+    if (state->icon_buffer_pixels[i] != state->pixels)
+      continue;
+    if (state->blob_buffer_valid[i] && state->blob_buffer_pressed[i] == state->pressed)
+      return;
+    const lv_color32_t fill =
+        state->pressed ? make_overlay(0xC4, 0xA7, 0xDB, 255) : make_overlay(0xE4, 0xC2, 0xFF, 255);
+    for (int y = WAVE_CENTER - static_blob_radius; y <= WAVE_CENTER + static_blob_radius; y++) {
+      const int dy = y - WAVE_CENTER;
+      lv_color32_t *row = state->pixels + y * WAVE_SIZE;
+      for (int x = WAVE_CENTER - static_blob_radius; x <= WAVE_CENTER + static_blob_radius; x++) {
+        const int dx = x - WAVE_CENTER;
+        if (dx * dx + dy * dy <= static_blob_radius_sq)
+          row[x] = fill;
+      }
+    }
+    state->blob_buffer_pressed[i] = state->pressed;
+    state->blob_buffer_valid[i] = true;
+    state->icon_buffer_valid[i] = false;
+    return;
   }
 }
 
@@ -611,11 +645,13 @@ static void update_control_icon_if_needed(WavyArcState *state) {
   for (size_t i = 0; i < 3; i++) {
     if (state->icon_buffer_pixels[i] != state->pixels)
       continue;
-    if (state->icon_buffer_valid[i] && state->icon_buffer_playing[i] == state->playing)
+    if (state->icon_buffer_valid[i] && state->icon_buffer_playing[i] == state->playing &&
+        state->icon_buffer_pressed[i] == state->pressed)
       return;
     reset_control_icon_area(state);
     draw_control_icon(state);
     state->icon_buffer_playing[i] = state->playing;
+    state->icon_buffer_pressed[i] = state->pressed;
     state->icon_buffer_valid[i] = true;
     return;
   }
@@ -631,7 +667,8 @@ static void render_bitmap(WavyArcState *state) {
       state->value_basis_points < 0 ? 0 : (state->value_basis_points > 10000 ? 10000 : state->value_basis_points);
   const bool pending = state->pending;
   if (!state->dirty && state->last_rendered_phase == phase && state->last_rendered_value == progress &&
-      state->last_rendered_pending == pending && state->last_rendered_playing == state->playing) {
+      state->last_rendered_pending == pending && state->last_rendered_playing == state->playing &&
+      state->last_rendered_pressed == state->pressed) {
     return;
   }
 
@@ -697,6 +734,8 @@ static void render_bitmap(WavyArcState *state) {
     state->cap_mask_by_angle[angle] = cap_mask;
   }
 
+  update_static_blob_if_needed(state);
+
   // Pixels outside these two radial bands are transparent for every phase and
   // were cleared once when the buffer was allocated. Avoid touching them.
   constexpr int blob_possible_max_q4 = (84 + 4 + 1) * 16;
@@ -715,7 +754,9 @@ static void render_bitmap(WavyArcState *state) {
 
       if (radius <= blob_possible_max_q4) {
         const uint8_t fill_alpha = edge_coverage(state->blob_boundary_by_angle[angle] - radius);
-        state->pixels[pixel_index] = make_overlay(0xE4, 0xC2, 0xFF, fill_alpha);
+        state->pixels[pixel_index] =
+            state->pressed ? make_overlay(0xC4, 0xA7, 0xDB, fill_alpha)
+                           : make_overlay(0xE4, 0xC2, 0xFF, fill_alpha);
         continue;
       }
 
@@ -795,6 +836,7 @@ static void render_bitmap(WavyArcState *state) {
   state->last_rendered_value = progress;
   state->last_rendered_pending = pending;
   state->last_rendered_playing = state->playing;
+  state->last_rendered_pressed = state->pressed;
   state->dirty = false;
 
 #ifdef ESP_PLATFORM
@@ -884,6 +926,11 @@ static void render_worker_task(void *arg) {
     const int queued_pending = state->queued_pending.exchange(-1, std::memory_order_acquire);
     if (queued_pending >= 0 && state->pending != (queued_pending != 0)) {
       state->pending = queued_pending != 0;
+      control_changed = true;
+    }
+    const int queued_pressed = state->queued_pressed.exchange(-1, std::memory_order_acquire);
+    if (queued_pressed >= 0 && state->pressed != (queued_pressed != 0)) {
+      state->pressed = queued_pressed != 0;
       control_changed = true;
     }
     if (control_changed) {
@@ -1247,6 +1294,42 @@ inline void media_wavy_arc_set_direct_present(bool enabled) {
 #endif
 }
 
+inline void media_wavy_arc_set_pressed(bool pressed) {
+  auto &state = media_wavy_arc;
+#ifdef ESP_PLATFORM
+  if (state.render_task != nullptr) {
+    state.queued_pressed.store(pressed ? 1 : 0, std::memory_order_release);
+    if (state.direct_present_enabled.load(std::memory_order_relaxed))
+      notify_render_worker(&state);
+    return;
+  }
+  if (!lock_render_state(&state))
+    return;
+#endif
+  if (state.pressed == pressed) {
+#ifdef ESP_PLATFORM
+    unlock_render_state(&state);
+#endif
+    return;
+  }
+  state.pressed = pressed;
+  state.dirty = true;
+#ifdef ESP_PLATFORM
+  state.render_generation++;
+  const bool use_worker = state.render_task != nullptr;
+  unlock_render_state(&state);
+  if (use_worker) {
+    if (state.direct_present_enabled.load(std::memory_order_relaxed))
+      notify_render_worker(&state);
+  } else if (state.arc != nullptr && state.direct_present_enabled.load(std::memory_order_relaxed)) {
+    invalidate_bitmap(&state);
+  }
+#else
+  if (state.arc != nullptr)
+    invalidate_bitmap(&state);
+#endif
+}
+
 inline bool media_wavy_arc_background_ready() {
 #ifdef ESP_PLATFORM
   auto &state = media_wavy_arc;
@@ -1308,7 +1391,8 @@ inline bool media_wavy_arc_present_ready() {
                       state.queued_phase_delta.load(std::memory_order_relaxed) != 0 ||
                       state.queued_value_basis_points.load(std::memory_order_relaxed) >= 0 ||
                       state.queued_playing.load(std::memory_order_relaxed) >= 0 ||
-                      state.queued_pending.load(std::memory_order_relaxed) >= 0;
+                      state.queued_pending.load(std::memory_order_relaxed) >= 0 ||
+                      state.queued_pressed.load(std::memory_order_relaxed) >= 0;
     unlock_render_state(&state);
     if (request_another)
       notify_render_worker(&state);
@@ -1390,7 +1474,8 @@ inline bool media_wavy_arc_present_ready() {
                     state.queued_phase_delta.load(std::memory_order_relaxed) != 0 ||
                     state.queued_value_basis_points.load(std::memory_order_relaxed) >= 0 ||
                     state.queued_playing.load(std::memory_order_relaxed) >= 0 ||
-                    state.queued_pending.load(std::memory_order_relaxed) >= 0;
+                    state.queued_pending.load(std::memory_order_relaxed) >= 0 ||
+                    state.queued_pressed.load(std::memory_order_relaxed) >= 0;
   unlock_render_state(&state);
 
   if (invalidate && state.arc != nullptr)
@@ -1507,6 +1592,8 @@ void MaterialWavyProgress::set_value_permille(int progress) {
 void MaterialWavyProgress::set_value(int progress) { wavy_progress_internal::media_wavy_arc_set_value(progress); }
 
 void MaterialWavyProgress::set_playing(bool playing) { wavy_progress_internal::media_wavy_arc_set_playing(playing); }
+
+void MaterialWavyProgress::set_pressed(bool pressed) { wavy_progress_internal::media_wavy_arc_set_pressed(pressed); }
 
 void MaterialWavyProgress::set_direct_present(bool enabled) {
   wavy_progress_internal::media_wavy_arc_set_direct_present(enabled);
