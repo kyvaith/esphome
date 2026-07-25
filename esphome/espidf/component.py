@@ -8,7 +8,6 @@ ESP-IDF platform/framework compatibility defaults.
 """
 
 import logging
-import os
 from pathlib import Path
 
 from esphome.core import CORE, Library
@@ -142,7 +141,11 @@ def generate_cmakelists_txt(component: IDFComponent) -> str:
     }
 
     # Only keep sources
-    build_src_files = [os.path.relpath(p, component.path) for p in build_src_files]
+    # CMake treats backslashes as escape characters. Always serialize component
+    # source paths with POSIX separators, including for native Windows builds.
+    build_src_files = [
+        Path(p).relative_to(component.path).as_posix() for p in build_src_files
+    ]
     build_src_files = [
         f for f in build_src_files if Path(f).suffix in SRC_FILE_EXTENSIONS
     ]

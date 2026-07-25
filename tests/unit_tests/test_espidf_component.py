@@ -169,24 +169,23 @@ def test_generate_cmakelists_txt_with_flags(tmp_component, tmp_path):
     }
 
     content = generate_cmakelists_txt(tmp_component)
-    sep = "\\\\" if os.name == "nt" else "/"
     assert (
         content
-        == f"""idf_component_register(
-  SRCS "src{sep}main.c"
+        == """idf_component_register(
+  SRCS "src/main.c"
   INCLUDE_DIRS "src"
-  REQUIRES dep ${{ESPHOME_PROJECT_MANAGED_COMPONENTS}} ${{ESPHOME_PROJECT_BUILTIN_COMPONENTS}}
+  REQUIRES dep ${ESPHOME_PROJECT_MANAGED_COMPONENTS} ${ESPHOME_PROJECT_BUILTIN_COMPONENTS}
 )
-target_compile_options(${{COMPONENT_LIB}} PUBLIC
+target_compile_options(${COMPONENT_LIB} PUBLIC
   "-DTEST"
 )
-target_compile_options(${{COMPONENT_LIB}} PRIVATE
+target_compile_options(${COMPONENT_LIB} PRIVATE
   "-Wall"
 )
-target_link_directories(${{COMPONENT_LIB}} INTERFACE
+target_link_directories(${COMPONENT_LIB} INTERFACE
   "lib"
 )
-target_link_libraries(${{COMPONENT_LIB}} INTERFACE
+target_link_libraries(${COMPONENT_LIB} INTERFACE
   "mylib"
 )
 """
