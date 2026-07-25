@@ -753,8 +753,9 @@ bool ESPAudioStack::prepare_i2s_channels_() {
 #endif
 #endif
 
+  using I2SPortId = decltype(i2s_chan_config_t{}.id);
   i2s_chan_config_t chan_cfg =
-      I2S_CHANNEL_DEFAULT_CONFIG(static_cast<i2s_port_t>(dual_bus ? tx_i2s_num : this->i2s_num_),
+      I2S_CHANNEL_DEFAULT_CONFIG(static_cast<I2SPortId>(dual_bus ? tx_i2s_num : this->i2s_num_),
                                  this->i2s_mode_secondary_ ? I2S_ROLE_SLAVE : I2S_ROLE_MASTER);  // NOLINT
   chan_cfg.dma_desc_num = dma_desc_num;
   chan_cfg.dma_frame_num = dma_frame_num;
@@ -768,7 +769,7 @@ bool ESPAudioStack::prepare_i2s_channels_() {
 #ifdef USE_ESP_AUDIO_STACK_DUAL_BUS
   if (dual_bus) {
     if (need_tx) {
-      chan_cfg.id = static_cast<i2s_port_t>(tx_i2s_num);
+      chan_cfg.id = static_cast<I2SPortId>(tx_i2s_num);
       err = i2s_new_channel(&chan_cfg, &this->tx_handle_, nullptr);
       if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create TX I2S channel on port %u: %s", tx_i2s_num, esp_err_to_name(err));
@@ -777,7 +778,7 @@ bool ESPAudioStack::prepare_i2s_channels_() {
       }
     }
     if (need_rx) {
-      chan_cfg.id = static_cast<i2s_port_t>(rx_i2s_num);
+      chan_cfg.id = static_cast<I2SPortId>(rx_i2s_num);
       err = i2s_new_channel(&chan_cfg, nullptr, &this->rx_handle_);
       if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create RX I2S channel on port %u: %s", rx_i2s_num, esp_err_to_name(err));
