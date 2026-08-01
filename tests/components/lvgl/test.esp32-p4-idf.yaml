@@ -211,7 +211,7 @@ lvgl:
         momentum_duration: 560ms
         bounce_duration: 320ms
         max_inertia_duration: 900ms
-        swipe_start_distance: 2
+        swipe_start_distance: 0
         axis_bias: 6
 
 psram:

@@ -2,6 +2,8 @@
 
 #include "lvgl_esphome.h"
 
+#include "esphome/core/log.h"
+
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
 #include "lvgl_scroll_snapshot.h"
 #include "lvgl_snapshot_compositor.h"
@@ -11,6 +13,8 @@
 #include <cmath>
 
 namespace esphome::lvgl {
+
+static const char *const TAG = "lvgl.navigation";
 
 void LvglNavigation::add_home_page(LvPageType *page) {
   if (page != nullptr)
@@ -93,8 +97,28 @@ LvglApplication *LvglNavigation::find_active_application_() const {
 
 void LvglNavigation::touch_begin(int32_t x, int32_t y) {
   this->reset_touch_();
+  const uint32_t now = millis();
 
-  if (auto *application = this->find_active_application_(); application != nullptr) {
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+  if (this->snapshot_compositor_ != nullptr && this->snapshot_compositor_->is_home_active()) {
+    int page_index = -1;
+    int32_t offset_x = 0;
+    if (this->snapshot_compositor_->take_over_home(&page_index, &offset_x)) {
+      this->gesture_home_page_index_ = page_index;
+      this->home_touch_base_offset_ = offset_x;
+      this->home_touch_takeover_ = true;
+      this->touch_context_ = TouchContext::HOME;
+      this->gesture_router_.begin(x, y, GestureAxis::HORIZONTAL, now);
+      this->gesture_router_.capture(GestureAxis::HORIZONTAL);
+      return;
+    }
+  }
+#endif
+
+  auto *application = this->find_active_application_();
+  if (lvgl_esphome_get_swipe_logging_enabled())
+    ESP_LOGI(TAG, "touch begin x=%d y=%d application=%p", static_cast<int>(x), static_cast<int>(y), application);
+  if (application != nullptr) {
     const int32_t height = this->parent_->get_height();
     const int32_t edge_size = this->close_edge_pixels_ >= 0
                                   ? this->close_edge_pixels_
@@ -103,15 +127,24 @@ void LvglNavigation::touch_begin(int32_t x, int32_t y) {
     if (application->is_close_gesture_enabled() && y >= edge_start) {
       this->gesture_application_ = application;
       this->touch_context_ = TouchContext::APPLICATION_CLOSE;
-      this->gesture_router_.begin(x, y, GestureAxis::VERTICAL);
+      this->gesture_router_.begin(x, y, GestureAxis::VERTICAL, now);
       return;
     }
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
-    if (auto *scroll = application->get_scroll_snapshot(); scroll != nullptr && scroll->contains(x, y)) {
+    auto *scroll = application->get_scroll_snapshot();
+    const bool scroll_contains_touch = scroll != nullptr && scroll->contains(x, y);
+    if (lvgl_esphome_get_swipe_logging_enabled())
+      ESP_LOGI(TAG, "scroll region=%p contains=%d", scroll, scroll_contains_touch);
+    if (scroll_contains_touch) {
       this->gesture_application_ = application;
       this->touch_context_ = TouchContext::APPLICATION_SCROLL;
-      scroll->touch_begin(y);
-      this->gesture_router_.begin(x, y, GestureAxis::VERTICAL, scroll->get_start_distance(), scroll->get_axis_bias());
+      const bool takeover = scroll->touch_begin(y);
+      this->gesture_router_.begin(x, y, GestureAxis::VERTICAL, scroll->get_start_distance(), scroll->get_axis_bias(),
+                                  now);
+      if (takeover)
+        this->gesture_router_.capture(GestureAxis::VERTICAL);
+      if (lvgl_esphome_get_swipe_logging_enabled())
+        ESP_LOGI(TAG, "scroll touch accepted takeover=%d active=%d", takeover, scroll->is_active());
     }
 #endif
     return;
@@ -123,8 +156,10 @@ void LvglNavigation::touch_begin(int32_t x, int32_t y) {
   const int home_index = this->find_home_view_index_();
   if (home_index >= 0) {
     this->last_home_page_index_ = home_index;
+    this->gesture_home_page_index_ = home_index;
+    this->home_touch_base_offset_ = 0;
     this->touch_context_ = TouchContext::HOME;
-    this->gesture_router_.begin(x, y, GestureAxis::HORIZONTAL);
+    this->gesture_router_.begin(x, y, GestureAxis::HORIZONTAL, now);
   }
 }
 
@@ -135,7 +170,7 @@ bool LvglNavigation::touch_update(int32_t x, int32_t y) {
     this->touch_cancel();
     return false;
   }
-  const auto &sample = this->gesture_router_.update(x, y);
+  const auto &sample = this->gesture_router_.update(x, y, millis());
   if (this->touch_context_ == TouchContext::APPLICATION_CLOSE && sample.captured &&
       this->gesture_application_ != nullptr && this->gesture_application_->is_close_on_threshold()) {
     const int32_t threshold = std::max<int32_t>(
@@ -150,10 +185,10 @@ bool LvglNavigation::touch_update(int32_t x, int32_t y) {
   }
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->touch_context_ == TouchContext::HOME && sample.captured && this->snapshot_compositor_ != nullptr) {
-    if (sample.just_captured)
-      this->snapshot_compositor_->begin_home(this->last_home_page_index_);
+    if (sample.just_captured && !this->home_touch_takeover_)
+      this->snapshot_compositor_->begin_home(this->gesture_home_page_index_);
     if (this->snapshot_compositor_->is_home_active())
-      this->snapshot_compositor_->update_home(sample.delta_x);
+      this->snapshot_compositor_->update_home(this->home_touch_base_offset_ + sample.delta_x);
   } else if (this->touch_context_ == TouchContext::APPLICATION_CLOSE && sample.captured &&
              this->snapshot_compositor_ != nullptr) {
     if (sample.just_captured && this->gesture_application_ != nullptr) {
@@ -167,12 +202,12 @@ bool LvglNavigation::touch_update(int32_t x, int32_t y) {
              this->gesture_application_ != nullptr) {
     auto *scroll = this->gesture_application_->get_scroll_snapshot();
     if (scroll != nullptr) {
-      if (sample.just_captured && !scroll->begin()) {
+      if (sample.just_captured && !scroll->is_active() && !scroll->begin()) {
         this->reset_touch_();
         return false;
       }
       if (scroll->is_active())
-        scroll->update(sample.delta_y, y, millis());
+        scroll->update(sample.delta_y, sample.velocity_y);
     }
   }
 #endif
@@ -185,21 +220,32 @@ bool LvglNavigation::touch_end() {
 
   const TouchContext context = this->touch_context_;
   auto *gesture_application = this->gesture_application_;
-  const GestureSample sample = this->gesture_router_.finish();
+  const GestureSample sample = this->gesture_router_.finish(millis());
   this->touch_context_ = TouchContext::NONE;
   this->gesture_application_ = nullptr;
-  if (!sample.captured)
+  if (!sample.captured) {
+    this->gesture_home_page_index_ = -1;
+    this->home_touch_base_offset_ = 0;
+    this->home_touch_takeover_ = false;
     return false;
+  }
 
   if (context == TouchContext::HOME && this->get_home_view_count_() != 0) {
-    const int current = this->find_home_view_index_();
+    int current = this->gesture_home_page_index_;
+    int32_t offset_x = this->home_touch_base_offset_ + sample.delta_x;
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+    if (this->snapshot_compositor_ != nullptr)
+      this->snapshot_compositor_->get_home_position(&current, &offset_x);
+#endif
     int target = current;
     const int32_t threshold = std::max<int32_t>(
         1, this->home_commit_pixels_ >= 0
                ? this->home_commit_pixels_
                : static_cast<int32_t>(std::lround(this->parent_->get_width() * this->home_commit_ratio_)));
-    if (current >= 0 && std::abs(sample.delta_x) >= threshold) {
-      const int candidate = current + (sample.delta_x < 0 ? 1 : -1);
+    const bool velocity_commit =
+        std::abs(sample.velocity_x) >= 480 && offset_x != 0 && ((offset_x < 0) == (sample.velocity_x < 0));
+    if (current >= 0 && (std::abs(offset_x) >= threshold || velocity_commit)) {
+      const int candidate = current + (offset_x < 0 ? 1 : -1);
       if (candidate >= 0 && candidate < static_cast<int>(this->get_home_view_count_()))
         target = candidate;
     }
@@ -207,10 +253,13 @@ bool LvglNavigation::touch_end() {
       this->last_home_page_index_ = target;
       this->notify_home_changed_(target);
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
-      if (this->snapshot_compositor_ == nullptr || !this->snapshot_compositor_->settle_home(target))
+      if (this->snapshot_compositor_ == nullptr || !this->snapshot_compositor_->settle_home(target, sample.velocity_x))
 #endif
         this->activate_home_view(target);
     }
+    this->gesture_home_page_index_ = -1;
+    this->home_touch_base_offset_ = 0;
+    this->home_touch_takeover_ = false;
     return true;
   }
 
@@ -266,7 +315,7 @@ bool LvglNavigation::touch_end() {
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (context == TouchContext::APPLICATION_SCROLL && gesture_application != nullptr) {
     if (auto *scroll = gesture_application->get_scroll_snapshot(); scroll != nullptr)
-      scroll->finish();
+      scroll->finish(sample.velocity_y);
   }
 #endif
   return true;
@@ -309,6 +358,45 @@ void LvglNavigation::reset_touch_() {
   this->gesture_router_.cancel();
   this->gesture_application_ = nullptr;
   this->touch_context_ = TouchContext::NONE;
+  this->gesture_home_page_index_ = -1;
+  this->home_touch_base_offset_ = 0;
+  this->home_touch_takeover_ = false;
+}
+
+bool LvglNavigation::should_defer_press(lv_obj_t *target) const {
+  if (this->touch_context_ == TouchContext::HOME) {
+    if (this->home_touch_takeover_)
+      return true;
+    if (target == nullptr)
+      return false;
+
+    lv_obj_t *root = nullptr;
+    if (this->home_widget_page_ != nullptr && this->gesture_home_page_index_ >= 0 &&
+        this->gesture_home_page_index_ < static_cast<int>(this->home_widgets_.size())) {
+      root = this->home_widgets_[this->gesture_home_page_index_];
+    } else if (this->gesture_home_page_index_ >= 0 &&
+               this->gesture_home_page_index_ < static_cast<int>(this->home_pages_.size()) &&
+               this->home_pages_[this->gesture_home_page_index_] != nullptr) {
+      root = this->home_pages_[this->gesture_home_page_index_]->obj;
+    }
+    for (auto *obj = target; obj != nullptr; obj = lv_obj_get_parent(obj)) {
+      if (obj == root)
+        return true;
+    }
+    return false;
+  }
+
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+  if (this->touch_context_ == TouchContext::APPLICATION_SCROLL && this->gesture_application_ != nullptr) {
+    auto *scroll = this->gesture_application_->get_scroll_snapshot();
+    // A running snapshot has hidden its source tree, so there may be no LVGL
+    // child target to inspect. The touch context was already bounded by the
+    // registered scroll region in touch_begin().
+    return scroll != nullptr && (scroll->is_active() || scroll->owns_target(target));
+  }
+#endif
+
+  return false;
 }
 
 void LvglNavigation::schedule_application_close_() {
@@ -329,8 +417,13 @@ void LvglNavigation::loop() {
 }
 
 void LvglNavigation::open_application(LvglApplication *application) {
+  auto *active_application = this->find_active_application_();
+  if (lvgl_esphome_get_swipe_logging_enabled()) {
+    ESP_LOGI(TAG, "open application request app=%p active=%p home=%d", application, active_application,
+             this->find_home_view_index_());
+  }
   if (application == nullptr || application->get_page() == nullptr || application->get_view() == nullptr ||
-      this->find_active_application_() != nullptr)
+      active_application != nullptr)
     return;
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->snapshot_compositor_ != nullptr) {

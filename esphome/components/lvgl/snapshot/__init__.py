@@ -100,7 +100,7 @@ SCROLL_REGION_SCHEMA = cv.Schema(
             CONF_MAX_INERTIA_DURATION, default="900ms"
         ): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_SWIPE_START_DISTANCE, default=10): cv.int_range(
-            min=1, max=1000
+            min=0, max=1000
         ),
         cv.Optional(CONF_AXIS_BIAS, default=6): cv.int_range(min=0, max=1000),
     }

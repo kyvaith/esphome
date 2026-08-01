@@ -36,6 +36,8 @@ lvgl:
                   text: Home 2
   navigation:
     id: direct_navigation
+    swipe_start_distance: 0
+    axis_bias: 0
     home:
       pages:
         - direct_home_one

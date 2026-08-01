@@ -59,6 +59,27 @@ bool LvglSnapshotCompositor::begin_home(int page_index) {
   return true;
 }
 
+bool LvglSnapshotCompositor::take_over_home(int *page_index, int32_t *offset_x) {
+  if (!this->home_active_)
+    return false;
+  lv_anim_delete(this, animation_exec_);
+  if (page_index != nullptr)
+    *page_index = this->current_index_;
+  if (offset_x != nullptr)
+    *offset_x = this->home_offset_;
+  return true;
+}
+
+bool LvglSnapshotCompositor::get_home_position(int *page_index, int32_t *offset_x) const {
+  if (!this->home_active_)
+    return false;
+  if (page_index != nullptr)
+    *page_index = this->current_index_;
+  if (offset_x != nullptr)
+    *offset_x = this->home_offset_;
+  return true;
+}
+
 bool LvglSnapshotCompositor::update_home(int32_t delta_x) {
   if (!this->home_active_)
     return false;
@@ -72,7 +93,7 @@ bool LvglSnapshotCompositor::update_home(int32_t delta_x) {
   return true;
 }
 
-bool LvglSnapshotCompositor::settle_home(int target_index) {
+bool LvglSnapshotCompositor::settle_home(int target_index, int32_t release_velocity_px_s) {
   if (!this->home_active_)
     return false;
   if (target_index < 0 || target_index >= static_cast<int>(this->home_views_.size()))
@@ -96,15 +117,34 @@ bool LvglSnapshotCompositor::settle_home(int target_index) {
   lv_anim_set_var(&animation, this);
   lv_anim_set_user_data(&animation, this);
   lv_anim_set_values(&animation, this->home_offset_, target_offset);
-  const uint32_t distance = std::abs(target_offset - this->home_offset_);
-  const uint32_t width = std::max<int32_t>(1, this->parent_->get_width());
-  const uint32_t duration = std::max<uint32_t>(80, this->settle_duration_ * distance / width);
+  const uint32_t duration = this->home_settle_duration_(target_offset, release_velocity_px_s);
   lv_anim_set_duration(&animation, duration);
   lv_anim_set_path_cb(&animation, lv_anim_path_ease_out);
   lv_anim_set_exec_cb(&animation, animation_exec_);
   lv_anim_set_completed_cb(&animation, animation_completed_);
   lv_anim_start(&animation);
   return true;
+}
+
+uint32_t LvglSnapshotCompositor::home_settle_duration_(int32_t target_offset, int32_t release_velocity_px_s) const {
+  const uint32_t distance = static_cast<uint32_t>(std::abs(target_offset - this->home_offset_));
+  const uint32_t width = std::max<int32_t>(1, this->parent_->get_width());
+  const uint32_t distance_duration = std::max<uint32_t>(80, this->settle_duration_ * distance / width);
+  const int32_t remaining = target_offset - this->home_offset_;
+  if (distance == 0 || release_velocity_px_s == 0 || (remaining < 0) != (release_velocity_px_s < 0))
+    return distance_duration;
+
+  const uint32_t speed = static_cast<uint32_t>(std::abs(release_velocity_px_s));
+  if (speed < 160)
+    return distance_duration;
+
+  // Cubic ease-out starts at three times its average velocity. Select the
+  // duration from that derivative so the first compositor frame continues at
+  // the finger's release speed instead of visibly accelerating or braking.
+  const uint32_t velocity_duration =
+      std::clamp<uint32_t>(static_cast<uint32_t>((static_cast<uint64_t>(distance) * 3000ULL) / speed), 80U,
+                           std::max<uint32_t>(this->settle_duration_ * 2U, 320U));
+  return (distance_duration + velocity_duration * 7U) / 8U;
 }
 
 void LvglSnapshotCompositor::cancel_home() {

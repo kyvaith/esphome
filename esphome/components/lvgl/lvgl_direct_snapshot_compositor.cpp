@@ -33,14 +33,12 @@ bool LvglDirectSnapshotCompositor::prepare_home(int page_index) {
     this->home_prepared_ = false;
     return false;
   }
-  this->home_prepared_ =
-      lvgl_esphome_snapshot_cache_tile_window(this->home_views_.data(), static_cast<int>(this->home_views_.size()),
-                                              page_index + 1, this->parent_->get_width());
+  this->home_prepared_ = lvgl_esphome_snapshot_cache_tile_window(
+      this->home_views_.data(), static_cast<int>(this->home_views_.size()), page_index + 1, this->parent_->get_width());
   return this->home_prepared_;
 }
 
-bool LvglDirectSnapshotCompositor::prepare_applications(
-    const std::vector<LvglApplication *> &applications) {
+bool LvglDirectSnapshotCompositor::prepare_applications(const std::vector<LvglApplication *> &applications) {
   bool prepared = true;
   for (auto *application : applications) {
     auto *view = application == nullptr ? nullptr : application->get_view();
@@ -69,6 +67,27 @@ bool LvglDirectSnapshotCompositor::begin_home(int page_index) {
   this->direct_edge_ = false;
   this->direct_neighbor_index_ = -1;
   this->direct_neighbor_origin_ = 0;
+  this->gesture_input_shift_ = 0;
+  return true;
+}
+
+bool LvglDirectSnapshotCompositor::take_over_home(int *page_index, int32_t *offset_x) {
+  if (this->widget_fallback_)
+    return LvglSnapshotCompositor::take_over_home(page_index, offset_x);
+  if (!this->home_active_ || !this->direct_active_)
+    return false;
+
+  int current_x = 0;
+  int next_x = 0;
+  if (!lvgl_esphome_snapshot_swipe_pause(&current_x, &next_x))
+    return false;
+  this->home_offset_ = current_x;
+  this->target_index_ = this->current_index_;
+  this->gesture_input_shift_ = 0;
+  if (page_index != nullptr)
+    *page_index = this->current_index_;
+  if (offset_x != nullptr)
+    *offset_x = this->direct_edge_ ? current_x * 2 : current_x;
   return true;
 }
 
@@ -123,6 +142,32 @@ bool LvglDirectSnapshotCompositor::start_direct_home_(int32_t delta_x) {
   return LvglSnapshotCompositor::begin_home(fallback_index);
 }
 
+bool LvglDirectSnapshotCompositor::rebase_direct_home_(int new_current_index, int direction, int32_t current_x) {
+  if (new_current_index < 0 || new_current_index >= static_cast<int>(this->home_views_.size()) || direction == 0)
+    return false;
+  const int32_t width = this->parent_->get_width();
+  const int candidate = new_current_index + direction;
+  const int32_t origin = direction > 0 ? width : -width;
+  bool rebased = false;
+  if (candidate >= 0 && candidate < static_cast<int>(this->home_views_.size())) {
+    rebased = lvgl_esphome_snapshot_swipe_rebase(this->home_views_[new_current_index], this->home_views_[candidate],
+                                                 width, origin, current_x);
+  } else {
+    rebased = lvgl_esphome_snapshot_swipe_rebase_edge(this->home_views_[new_current_index], width, current_x / 2);
+  }
+  if (!rebased)
+    return false;
+
+  this->current_index_ = new_current_index;
+  this->target_index_ = new_current_index;
+  this->direct_neighbor_index_ = candidate >= 0 && candidate < static_cast<int>(this->home_views_.size()) ? candidate
+                                                                                                           : -1;
+  this->direct_neighbor_origin_ = this->direct_neighbor_index_ >= 0 ? origin : 0;
+  this->direct_edge_ = this->direct_neighbor_index_ < 0;
+  this->home_offset_ = this->direct_edge_ ? current_x / 2 : current_x;
+  return true;
+}
+
 bool LvglDirectSnapshotCompositor::update_home(int32_t delta_x) {
   if (this->widget_fallback_)
     return LvglSnapshotCompositor::update_home(delta_x);
@@ -137,7 +182,24 @@ bool LvglDirectSnapshotCompositor::update_home(int32_t delta_x) {
     return false;
 
   const int32_t width = this->parent_->get_width();
-  int32_t current_x = std::clamp(delta_x, -width, width);
+  int32_t input_x = delta_x - this->gesture_input_shift_;
+
+  while (!this->direct_edge_ && this->direct_neighbor_index_ >= 0 &&
+         ((this->direct_neighbor_origin_ > 0 && input_x <= -width) ||
+          (this->direct_neighbor_origin_ < 0 && input_x >= width))) {
+    const int direction = this->direct_neighbor_origin_ > 0 ? 1 : -1;
+    this->gesture_input_shift_ += direction > 0 ? -width : width;
+    input_x = delta_x - this->gesture_input_shift_;
+    if (!this->rebase_direct_home_(this->direct_neighbor_index_, direction, input_x))
+      break;
+  }
+
+  const int desired_direction = input_x < 0 ? 1 : (input_x > 0 ? -1 : 0);
+  const int active_direction = this->direct_edge_ ? 0 : (this->direct_neighbor_origin_ > 0 ? 1 : -1);
+  if (desired_direction != 0 && desired_direction != active_direction)
+    this->rebase_direct_home_(this->current_index_, desired_direction, input_x);
+
+  int32_t current_x = std::clamp(input_x, -width, width);
   if (this->direct_edge_)
     current_x /= 2;
   const int32_t next_x = this->direct_edge_ ? 0 : this->direct_neighbor_origin_ + current_x;
@@ -146,9 +208,9 @@ bool LvglDirectSnapshotCompositor::update_home(int32_t delta_x) {
   return true;
 }
 
-bool LvglDirectSnapshotCompositor::settle_home(int target_index) {
+bool LvglDirectSnapshotCompositor::settle_home(int target_index, int32_t release_velocity_px_s) {
   if (this->widget_fallback_)
-    return LvglSnapshotCompositor::settle_home(target_index);
+    return LvglSnapshotCompositor::settle_home(target_index, release_velocity_px_s);
   if (!this->home_active_)
     return false;
 
@@ -163,12 +225,23 @@ bool LvglDirectSnapshotCompositor::settle_home(int target_index) {
   target_index = std::clamp(target_index, 0, static_cast<int>(this->home_views_.size()) - 1);
   const bool commit = !this->direct_edge_ && target_index == this->direct_neighbor_index_;
   this->target_index_ = commit ? target_index : this->current_index_;
-  const int32_t width = this->parent_->get_width();
   const int32_t current_x = commit ? -this->direct_neighbor_origin_ : 0;
   const int32_t next_x = commit ? 0 : this->direct_neighbor_origin_;
-  const uint32_t distance = static_cast<uint32_t>(std::abs(current_x - this->home_offset_));
-  const uint32_t duration = std::max<uint32_t>(80, this->settle_duration_ * distance / std::max<int32_t>(1, width));
-  lvgl_esphome_snapshot_swipe_request_finish(current_x, next_x, duration, commit);
+  uint32_t duration = this->home_settle_duration_(current_x, release_velocity_px_s);
+  if (this->direct_edge_) {
+    const uint32_t width = std::max<int32_t>(1, this->parent_->get_width());
+    const uint32_t distance = static_cast<uint32_t>(std::abs(this->home_offset_));
+    duration = 240U + std::min<uint32_t>(160U, distance * 320U / width);
+  }
+  if (commit) {
+    // The destination window differs by at most one tile. Decode that JPEG
+    // into the outgoing third slot while the 60 Hz worker is still settling
+    // the visible pair, rather than blocking the LVGL loop after animation.
+    lvgl_esphome_snapshot_cache_prefetch_tile_window(this->home_views_.data(),
+                                                     static_cast<int>(this->home_views_.size()),
+                                                     this->target_index_ + 1, this->parent_->get_width());
+  }
+  lvgl_esphome_snapshot_swipe_request_finish(current_x, next_x, duration, commit, this->direct_edge_);
   return true;
 }
 
@@ -180,12 +253,15 @@ void LvglDirectSnapshotCompositor::cancel_home() {
   }
   if (this->direct_pending_ || this->direct_active_)
     lvgl_esphome_snapshot_swipe_end();
+  lvgl_esphome_snapshot_cache_complete_tile_prefetch(1000);
   this->reset_direct_home_();
 }
 
 bool LvglDirectSnapshotCompositor::open_application(LvglApplication *application, int home_index) {
   this->application_fallback_ = false;
   if (!this->can_use_direct_application_(application, home_index)) {
+    if (lvgl_esphome_get_swipe_logging_enabled())
+      ESP_LOGI(TAG, "application open uses widget fallback app=%p home=%d", application, home_index);
     this->application_fallback_ = true;
     return LvglSnapshotCompositor::open_application(application, home_index);
   }
@@ -193,9 +269,15 @@ bool LvglDirectSnapshotCompositor::open_application(LvglApplication *application
   const int32_t width = this->parent_->get_width();
   if (!lvgl_esphome_snapshot_app_open(application->get_view(), this->home_views_[home_index], width,
                                       this->application_open_duration_)) {
+    if (lvgl_esphome_get_swipe_logging_enabled())
+      ESP_LOGI(TAG, "application open direct start failed app=%p home=%d", application, home_index);
     this->application_fallback_ = true;
     return LvglSnapshotCompositor::open_application(application, home_index);
   }
+
+  if (lvgl_esphome_get_swipe_logging_enabled())
+    ESP_LOGI(TAG, "application open direct start app=%p home=%d duration=%ums", application, home_index,
+             static_cast<unsigned>(this->application_open_duration_));
 
   this->application_ = application;
   this->application_home_index_ = home_index;
@@ -289,9 +371,32 @@ void LvglDirectSnapshotCompositor::loop() {
 
 void LvglDirectSnapshotCompositor::complete_direct_home_() {
   const int target = this->target_index_;
+  // The JPEG worker normally finishes during the settle animation. If it is
+  // still busy, leave the final compositor frame on screen and try again in
+  // the next component loop instead of blocking touch/LVGL for up to a second.
+  if (!lvgl_esphome_snapshot_cache_complete_tile_prefetch(0))
+    return;
   this->reset_direct_home_();
-  if (target >= 0)
+  if (target >= 0) {
+    // Rebuild the adjacent tile window before exposing the native page. The
+    // navigation controller then becomes the single source of truth for
+    // widget visibility, including recovery from an interrupted transition.
     this->prepare_home(target);
+    if (this->navigation_ != nullptr) {
+      this->navigation_->activate_home_view(target);
+    } else {
+      lv_obj_remove_flag(this->home_views_[target], LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_align(this->home_views_[target], LV_ALIGN_CENTER, 0, 0);
+    if (lv_obj_has_flag(this->home_views_[target], LV_OBJ_FLAG_HIDDEN)) {
+      ESP_LOGW(TAG, "Home handoff left target %d hidden; recovering visibility", target);
+      lv_obj_remove_flag(this->home_views_[target], LV_OBJ_FLAG_HIDDEN);
+    }
+    // Commit schedules the real LVGL page behind the exact final snapshot.
+    // The redraw is asynchronous, so scanout keeps the snapshot until the
+    // complete native frame is ready.
+    lv_obj_invalidate(this->home_views_[target]);
+  }
 }
 
 void LvglDirectSnapshotCompositor::complete_direct_application_() {
@@ -320,6 +425,7 @@ void LvglDirectSnapshotCompositor::reset_direct_home_() {
   this->direct_edge_ = false;
   this->direct_neighbor_index_ = -1;
   this->direct_neighbor_origin_ = 0;
+  this->gesture_input_shift_ = 0;
   this->home_active_ = false;
   this->current_index_ = -1;
   this->target_index_ = -1;

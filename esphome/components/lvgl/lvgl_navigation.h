@@ -128,6 +128,7 @@ class LvglNavigation {
   void touch_begin(int32_t x, int32_t y);
   bool touch_update(int32_t x, int32_t y);
   bool touch_end();
+  bool should_defer_press(lv_obj_t *target) const;
   void touch_cancel();
   void loop();
 
@@ -180,6 +181,9 @@ class LvglNavigation {
   LvglApplication *gesture_application_{};
   TouchContext touch_context_{TouchContext::NONE};
   int last_home_page_index_{};
+  int gesture_home_page_index_{-1};
+  int32_t home_touch_base_offset_{};
+  bool home_touch_takeover_{};
   int last_notified_home_index_{-1};
   LazyCallbackManager<void(uint16_t)> home_changed_callbacks_{};
   float home_commit_ratio_{0.25f};

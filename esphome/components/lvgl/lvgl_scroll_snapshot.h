@@ -34,10 +34,11 @@ class LvglScrollSnapshotController {
   void release();
 
   bool contains(int32_t x, int32_t y) const;
-  void touch_begin(int32_t y);
+  bool owns_target(lv_obj_t *target) const;
+  bool touch_begin(int32_t y);
   bool begin();
-  void update(int32_t delta_y, int32_t touch_y, uint32_t now);
-  void finish();
+  void update(int32_t delta_y, int32_t finger_velocity_y);
+  void finish(int32_t finger_velocity_y);
   void cancel();
   bool is_active() const { return this->active_; }
   uint16_t get_start_distance() const { return this->start_distance_; }
@@ -64,7 +65,7 @@ class LvglScrollSnapshotController {
   bool refresh_direct_();
   void release_direct_();
   bool begin_direct_();
-  void update_direct_(int32_t delta_y, int32_t touch_y, uint32_t now);
+  void update_direct_(int32_t delta_y, int32_t finger_velocity_y);
   void finish_direct_();
   void cancel_direct_();
   bool configure_direct_();
@@ -86,8 +87,6 @@ class LvglScrollSnapshotController {
   int32_t max_scroll_y_{};
   int32_t start_scroll_y_{};
   int32_t visual_scroll_y_{};
-  int32_t last_touch_y_{};
-  uint32_t last_touch_ms_{};
   int32_t velocity_px_s_{};
   int32_t animation_final_y_{};
   bool preload_{true};

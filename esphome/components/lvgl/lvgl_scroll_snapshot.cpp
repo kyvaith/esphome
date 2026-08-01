@@ -74,17 +74,42 @@ void LvglScrollSnapshotController::release() {
 }
 
 bool LvglScrollSnapshotController::contains(int32_t x, int32_t y) const {
-  if (this->root_ == nullptr || !lv_obj_is_visible(this->root_))
+  if (this->root_ == nullptr)
     return false;
+  // Snapshot playback deliberately hides the source tree. Its geometry remains
+  // valid and must stay hit-testable so a new touch can take over inertia.
   lv_area_t area;
   lv_obj_get_coords(this->root_, &area);
   return x >= area.x1 && x <= area.x2 && y >= area.y1 && y <= area.y2;
 }
 
-void LvglScrollSnapshotController::touch_begin(int32_t y) {
-  this->last_touch_y_ = y;
-  this->last_touch_ms_ = millis();
+bool LvglScrollSnapshotController::owns_target(lv_obj_t *target) const {
+  for (auto *obj = target; obj != nullptr; obj = lv_obj_get_parent(obj)) {
+    if (obj == this->root_)
+      return true;
+  }
+  return false;
+}
+
+bool LvglScrollSnapshotController::touch_begin(int32_t y) {
+  (void) y;
   this->velocity_px_s_ = 0;
+  if (this->backend_ == ScrollSnapshotBackend::DIRECT) {
+    int scroll_y = 0;
+    if (!lvgl_esphome_snapshot_scroll_take_over(&scroll_y))
+      return false;
+    this->start_scroll_y_ = scroll_y;
+    this->visual_scroll_y_ = scroll_y;
+    this->active_ = true;
+    return true;
+  }
+
+  if (!this->active_)
+    return false;
+  lv_anim_delete(this, animation_exec_);
+  this->start_scroll_y_ = this->visual_scroll_y_;
+  this->bounce_pending_ = false;
+  return true;
 }
 
 bool LvglScrollSnapshotController::begin() {
@@ -111,25 +136,20 @@ bool LvglScrollSnapshotController::begin() {
   return true;
 }
 
-void LvglScrollSnapshotController::update(int32_t delta_y, int32_t touch_y, uint32_t now) {
+void LvglScrollSnapshotController::update(int32_t delta_y, int32_t finger_velocity_y) {
   if (this->backend_ == ScrollSnapshotBackend::DIRECT) {
-    this->update_direct_(delta_y, touch_y, now);
+    this->update_direct_(delta_y, finger_velocity_y);
     return;
   }
   if (!this->active_)
     return;
 
-  const uint32_t elapsed = now - this->last_touch_ms_;
-  if (elapsed > 0 && elapsed <= 100) {
-    const int32_t instantaneous = -((touch_y - this->last_touch_y_) * 1000) / static_cast<int32_t>(elapsed);
-    this->velocity_px_s_ = (this->velocity_px_s_ * 2 + instantaneous) / 3;
-  }
-  this->last_touch_y_ = touch_y;
-  this->last_touch_ms_ = now;
+  this->velocity_px_s_ = -finger_velocity_y;
   this->set_visual_scroll_(this->resist_scroll_(this->start_scroll_y_ - delta_y));
 }
 
-void LvglScrollSnapshotController::finish() {
+void LvglScrollSnapshotController::finish(int32_t finger_velocity_y) {
+  this->velocity_px_s_ = -finger_velocity_y;
   if (this->backend_ == ScrollSnapshotBackend::DIRECT) {
     this->finish_direct_();
     return;
@@ -508,17 +528,11 @@ bool LvglScrollSnapshotController::begin_direct_() {
   return true;
 }
 
-void LvglScrollSnapshotController::update_direct_(int32_t delta_y, int32_t touch_y, uint32_t now) {
+void LvglScrollSnapshotController::update_direct_(int32_t delta_y, int32_t finger_velocity_y) {
   if (!this->active_)
     return;
 
-  const uint32_t elapsed = now - this->last_touch_ms_;
-  if (elapsed > 0 && elapsed <= 100) {
-    const int32_t instantaneous = -((touch_y - this->last_touch_y_) * 1000) / static_cast<int32_t>(elapsed);
-    this->velocity_px_s_ = (this->velocity_px_s_ * 2 + instantaneous) / 3;
-  }
-  this->last_touch_y_ = touch_y;
-  this->last_touch_ms_ = now;
+  this->velocity_px_s_ = -finger_velocity_y;
   this->visual_scroll_y_ = this->start_scroll_y_ - delta_y;
   lvgl_esphome_snapshot_scroll_update(this->visual_scroll_y_);
 }

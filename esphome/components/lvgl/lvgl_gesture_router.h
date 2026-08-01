@@ -17,6 +17,8 @@ struct GestureSample {
   int32_t y{};
   int32_t delta_x{};
   int32_t delta_y{};
+  int32_t velocity_x{};
+  int32_t velocity_y{};
   GestureAxis axis{GestureAxis::NONE};
   bool captured{};
   bool just_captured{};
@@ -28,10 +30,11 @@ class GestureRouter {
   void set_start_distance(uint16_t start_distance) { this->start_distance_ = start_distance; }
   void set_axis_bias(uint16_t axis_bias) { this->axis_bias_ = axis_bias; }
 
-  void begin(int32_t x, int32_t y, GestureAxis allowed_axis);
-  void begin(int32_t x, int32_t y, GestureAxis allowed_axis, uint16_t start_distance, uint16_t axis_bias);
-  const GestureSample &update(int32_t x, int32_t y);
-  GestureSample finish();
+  void begin(int32_t x, int32_t y, GestureAxis allowed_axis, uint32_t now);
+  void begin(int32_t x, int32_t y, GestureAxis allowed_axis, uint16_t start_distance, uint16_t axis_bias, uint32_t now);
+  const GestureSample &update(int32_t x, int32_t y, uint32_t now);
+  GestureSample finish(uint32_t now);
+  void capture(GestureAxis axis);
   void cancel();
 
   const GestureSample &sample() const { return this->sample_; }
@@ -44,6 +47,10 @@ class GestureRouter {
   uint16_t active_axis_bias_{6};
   GestureAxis allowed_axis_{GestureAxis::NONE};
   GestureSample sample_{};
+  int32_t last_x_{};
+  int32_t last_y_{};
+  uint32_t start_ms_{};
+  uint32_t last_update_ms_{};
   bool tracking_{};
   bool rejected_{};
 };

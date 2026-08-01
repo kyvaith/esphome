@@ -33,10 +33,12 @@ class LvglSnapshotCompositor {
   }
 
   virtual bool begin_home(int page_index);
+  virtual bool take_over_home(int *page_index, int32_t *offset_x);
   virtual bool update_home(int32_t delta_x);
-  virtual bool settle_home(int target_index);
+  virtual bool settle_home(int target_index, int32_t release_velocity_px_s = 0);
   virtual void cancel_home();
   virtual bool is_home_active() const { return this->home_active_; }
+  virtual bool get_home_position(int *page_index, int32_t *offset_x) const;
 
   virtual bool open_application(LvglApplication *application, int home_index);
   virtual bool begin_application_close(LvglApplication *application, int home_index);
@@ -62,6 +64,7 @@ class LvglSnapshotCompositor {
   bool bind_surface_(Surface &surface, lv_obj_t *view, int32_t origin_x);
   void release_surface_(Surface &surface);
   void set_home_offset_(int32_t offset);
+  uint32_t home_settle_duration_(int32_t target_offset, int32_t release_velocity_px_s) const;
   void complete_home_();
   void release_home_();
   bool bind_application_(LvglApplication *application, bool force_capture);

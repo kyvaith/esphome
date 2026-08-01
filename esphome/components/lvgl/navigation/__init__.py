@@ -165,7 +165,7 @@ NAVIGATION_SCHEMA = cv.All(
             ),
             cv.Optional(CONF_ON_HOME_CHANGED): automation.validate_automation({}),
             cv.Optional(CONF_SWIPE_START_DISTANCE, default=10): cv.int_range(
-                min=1, max=1000
+                min=0, max=1000
             ),
             cv.Optional(CONF_AXIS_BIAS, default=6): cv.int_range(min=0, max=1000),
             cv.Optional(
