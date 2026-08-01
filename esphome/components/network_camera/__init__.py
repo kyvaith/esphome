@@ -1,14 +1,14 @@
 from esphome import automation
 import esphome.codegen as cg
-from esphome.components import esp32, socket
+from esphome.components import esp32, select, socket
 from esphome.components.const import CONF_REQUEST_HEADERS
 from esphome.components.esp32 import VARIANT_ESP32P4, only_on_variant
 from esphome.components.image import CONF_OPAQUE, Image_, add_metadata
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_NAME, CONF_URL
+from esphome.const import CONF_ID, CONF_NAME, CONF_URL, ENTITY_CATEGORY_CONFIG
 
 CODEOWNERS = ["@kyvaith"]
-AUTO_LOAD = ["esp32_jpeg", "image"]
+AUTO_LOAD = ["esp32_jpeg", "image", "select"]
 DEPENDENCIES = ["esp32", "network"]
 
 CONF_FRAME_INTERVAL = "frame_interval"
@@ -23,12 +23,16 @@ CONF_RECONNECT_INTERVAL = "reconnect_interval"
 CONF_RELEASE_BUFFER_ON_STOP = "release_buffer_on_stop"
 CONF_REQUEST_TIMEOUT = "request_timeout"
 CONF_SOURCES = "sources"
+CONF_SOURCE_SELECT = "source_select"
 CONF_TASK_CORE = "task_core"
 CONF_TASK_PRIORITY = "task_priority"
 CONF_TASK_STACK_SIZE = "task_stack_size"
 
 network_camera_ns = cg.esphome_ns.namespace("network_camera")
 NetworkCamera = network_camera_ns.class_("NetworkCamera", cg.Component, Image_)
+NetworkCameraSourceSelect = network_camera_ns.class_(
+    "NetworkCameraSourceSelect", select.Select, cg.Parented.template(NetworkCamera)
+)
 NetworkCameraStartAction = network_camera_ns.class_(
     "NetworkCameraStartAction", automation.Action, cg.Parented.template(NetworkCamera)
 )
@@ -89,6 +93,11 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_TASK_STACK_SIZE, default=8192): cv.int_range(
                 min=4096, max=32768
             ),
+            cv.Optional(CONF_SOURCE_SELECT): select.select_schema(
+                NetworkCameraSourceSelect,
+                entity_category=ENTITY_CATEGORY_CONFIG,
+                icon="mdi:camera-switch",
+            ),
             cv.Optional(CONF_ON_FIRST_FRAME): automation.validate_automation({}),
             cv.Optional(CONF_ON_STATE): automation.validate_automation({}),
             cv.Optional(CONF_ON_SOURCE): automation.validate_automation({}),
@@ -139,6 +148,14 @@ async def to_code(config):
     cg.add(var.set_task_core(config[CONF_TASK_CORE]))
     cg.add(var.set_task_priority(config[CONF_TASK_PRIORITY]))
     cg.add(var.set_task_stack_size(config[CONF_TASK_STACK_SIZE]))
+
+    if source_select_config := config.get(CONF_SOURCE_SELECT):
+        source_select = await select.new_select(
+            source_select_config,
+            options=[source[CONF_NAME] for source in config[CONF_SOURCES]],
+        )
+        await cg.register_parented(source_select, var)
+        cg.add(var.set_source_select(source_select))
 
     await automation.build_callback_automations(var, config, _CALLBACK_AUTOMATIONS)
 

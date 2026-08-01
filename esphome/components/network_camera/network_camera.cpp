@@ -119,6 +119,7 @@ void NetworkCamera::setup() {
     this->mark_failed();
     return;
   }
+  this->queue_source_event_();
 #else
   ESP_LOGE(TAG, "Network camera requires ESP-IDF");
   this->mark_failed();
@@ -134,6 +135,8 @@ void NetworkCamera::loop() {
 
   if (this->source_event_pending_.exchange(false, std::memory_order_acq_rel) && !this->sources_.empty()) {
     const size_t index = std::min(this->active_source_.load(std::memory_order_acquire), this->sources_.size() - 1U);
+    if (this->source_select_ != nullptr)
+      this->source_select_->publish_state(index);
     this->source_callback_.call(this->sources_[index].name);
   }
 

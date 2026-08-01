@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -8,6 +9,7 @@
 #include <vector>
 
 #include "esphome/components/image/image.h"
+#include "esphome/components/select/select.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
@@ -19,6 +21,8 @@
 #endif
 
 namespace esphome::network_camera {
+
+class NetworkCameraSourceSelect;
 
 enum class StreamState : uint8_t {
   IDLE,
@@ -59,6 +63,7 @@ class NetworkCamera : public Component, public image::Image {
   void set_task_core(int8_t core) { this->task_core_ = core; }
   void set_task_priority(uint8_t priority) { this->task_priority_ = priority; }
   void set_task_stack_size(uint32_t size) { this->task_stack_size_ = size; }
+  void set_source_select(NetworkCameraSourceSelect *source_select) { this->source_select_ = source_select; }
 
   void start();
   void stop();
@@ -70,6 +75,12 @@ class NetworkCamera : public Component, public image::Image {
   bool has_frame() const { return this->generation_.load(std::memory_order_acquire) != 0; }
   size_t source_count() const { return this->sources_.size(); }
   size_t active_source_index() const { return this->active_source_.load(std::memory_order_acquire); }
+  std::string active_source_name() const {
+    if (this->sources_.empty())
+      return {};
+    const size_t index = std::min(this->active_source_index(), this->sources_.size() - 1U);
+    return this->sources_[index].name;
+  }
   const char *state_name() const;
   float measured_fps() const { return this->measured_fps_.load(std::memory_order_relaxed); }
   uint32_t decoded_frames() const { return this->decoded_frames_.load(std::memory_order_relaxed); }
@@ -155,6 +166,7 @@ class NetworkCamera : public Component, public image::Image {
   LazyCallbackManager<void()> first_frame_callback_{};
   LazyCallbackManager<void(std::string)> state_callback_{};
   LazyCallbackManager<void(std::string)> source_callback_{};
+  NetworkCameraSourceSelect *source_select_{nullptr};
 
 #ifdef USE_ESP_IDF
   TaskHandle_t stream_task_handle_{nullptr};
@@ -166,6 +178,11 @@ class NetworkCamera : public Component, public image::Image {
   bool jpeg_started_{false};
   bool previous_byte_ff_{false};
 #endif
+};
+
+class NetworkCameraSourceSelect final : public select::Select, public Parented<NetworkCamera> {
+ protected:
+  void control(size_t index) override { this->parent_->select_source(index); }
 };
 
 template<typename... Ts> class NetworkCameraStartAction : public Action<Ts...>, public Parented<NetworkCamera> {

@@ -1,5 +1,7 @@
 network_camera:
   id: test_camera
+  source_select:
+    name: Camera source
   sources:
     - name: Local camera
       url: http://192.168.1.2:1984/api/stream.mjpeg?src=front
