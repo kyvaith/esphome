@@ -25,6 +25,7 @@ class LvglImagePresenter : public Component {
   void set_phase_duration(uint32_t duration_ms) { this->phase_duration_ms_ = duration_ms; }
   void set_frame_interval(uint32_t interval_ms) { this->frame_interval_ms_ = interval_ms; }
   void set_direct(bool direct) { this->use_direct_ = direct; }
+  void set_continuous(bool continuous) { this->continuous_ = continuous; }
   void set_zoom(uint16_t start, uint16_t end) {
     this->zoom_start_ = start;
     this->zoom_end_ = end;
@@ -104,6 +105,7 @@ class LvglImagePresenter : public Component {
   bool fade_through_black_{false};
   bool paused_{false};
   bool use_direct_{false};
+  bool continuous_{false};
   bool direct_frozen_{false};
   bool direct_backend_ready_{false};
   bool direct_session_active_{false};

@@ -379,6 +379,7 @@ esphome/components/ms8607/* @e28eta
 esphome/components/msa3xx/* @latonita
 esphome/components/nau7802/* @cujomalainey
 esphome/components/network/* @esphome/core
+esphome/components/network_camera/* @kyvaith
 esphome/components/nextion/* @edwardtfn @senexcrenshaw
 esphome/components/nextion/binary_sensor/* @senexcrenshaw
 esphome/components/nextion/sensor/* @senexcrenshaw
@@ -541,6 +542,7 @@ esphome/components/sx127x/* @swoboda1337
 esphome/components/sy6970/* @linkedupbits
 esphome/components/syslog/* @clydebarrow
 esphome/components/t6615/* @tylermenezes
+esphome/components/task_runtime_profiler/* @kyvaith
 esphome/components/tc74/* @sethgirvan
 esphome/components/tca9548a/* @andreashergert1984
 esphome/components/tca9555/* @mobrembski

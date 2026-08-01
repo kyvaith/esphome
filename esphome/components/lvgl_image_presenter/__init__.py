@@ -15,6 +15,7 @@ DEPENDENCIES = ["lvgl"]
 MULTI_CONF = True
 
 CONF_DIRECT = "direct"
+CONF_CONTINUOUS = "continuous"
 CONF_FADE_THROUGH_BLACK = "fade_through_black"
 CONF_FRAME_INTERVAL = "frame_interval"
 CONF_PAN_LIMIT = "pan_limit"
@@ -82,6 +83,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_WIDGET): cv.use_id(lv_image_t),
             cv.Optional(CONF_SOURCE): cv.use_id(Image_),
             cv.Optional(CONF_DIRECT, default=False): cv.boolean,
+            cv.Optional(CONF_CONTINUOUS, default=False): cv.boolean,
             cv.Optional(
                 CONF_PHASE_DURATION, default="18s"
             ): cv.positive_time_period_milliseconds,
@@ -118,6 +120,7 @@ async def to_code(config):
     cg.add(var.set_phase_duration(config[CONF_PHASE_DURATION].total_milliseconds))
     cg.add(var.set_frame_interval(config[CONF_FRAME_INTERVAL].total_milliseconds))
     cg.add(var.set_direct(config[CONF_DIRECT]))
+    cg.add(var.set_continuous(config[CONF_CONTINUOUS]))
     cg.add(
         var.set_zoom(
             round(config[CONF_ZOOM_START] * 256),

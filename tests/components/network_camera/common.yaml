@@ -1,0 +1,40 @@
+network_camera:
+  id: test_camera
+  sources:
+    - name: Local camera
+      url: http://192.168.1.2:1984/api/stream.mjpeg?src=front
+    - name: Home Assistant proxy
+      url: http://homeassistant.local:8123/api/camera_proxy_stream/camera.front
+      request_headers:
+        Authorization: Bearer test-token
+  frame_interval: 50ms
+  reconnect_interval: 3s
+  request_timeout: 2s
+  max_frame_size: 768kB
+  max_width: 1920
+  max_height: 1080
+  release_buffer_on_stop: true
+  task_core: -1
+  task_priority: 5
+  task_stack_size: 8192
+  on_first_frame:
+    - logger.log: First camera frame
+  on_state:
+    - logger.log:
+        format: "Camera state: %s"
+        args: [state.c_str()]
+  on_source:
+    - logger.log:
+        format: "Camera source: %s"
+        args: [source.c_str()]
+
+script:
+  - id: exercise_network_camera_actions
+    then:
+      - network_camera.start: test_camera
+      - network_camera.next: test_camera
+      - network_camera.previous: test_camera
+      - network_camera.select:
+          id: test_camera
+          index: 0
+      - network_camera.stop: test_camera

@@ -72,6 +72,7 @@ void LvglImagePresenter::dump_config() {
   ESP_LOGCONFIG(TAG, "  Pan limit: %.1f%%", static_cast<double>(this->pan_limit_) * 100.0);
   ESP_LOGCONFIG(TAG, "  Direct backend: %s",
                 !this->use_direct_ ? "disabled" : (this->direct_backend_ready_ ? "ready" : "unavailable"));
+  ESP_LOGCONFIG(TAG, "  Continuous source: %s", YESNO(this->continuous_));
 }
 
 void LvglImagePresenter::loop() {
@@ -96,7 +97,7 @@ void LvglImagePresenter::loop() {
   if (this->use_direct_ && this->direct_backend_ready_) {
     if (this->direct_target_lease_ && !this->present_pending_direct_frame_(50))
       return;
-    if (!this->phase_complete_) {
+    if (this->continuous_ || !this->phase_complete_) {
       this->phase_elapsed_ms_ =
           std::min(this->phase_duration_ms_, this->phase_elapsed_ms_ + std::min(delta, this->frame_interval_ms_ * 3U));
       this->phase_complete_ = this->phase_elapsed_ms_ >= this->phase_duration_ms_;
