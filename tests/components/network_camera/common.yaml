@@ -15,6 +15,7 @@ network_camera:
   max_frame_size: 768kB
   max_width: 1920
   max_height: 1080
+  max_runtime_sources: 8
   release_buffer_on_stop: true
   task_core: -1
   task_priority: 5
@@ -39,4 +40,10 @@ script:
       - network_camera.select:
           id: test_camera
           index: 0
+      - network_camera.replace_sources:
+          id: test_camera
+          names: [Entrance, Driveway]
+          urls:
+            - http://homeassistant.local:8123/api/camera_proxy_stream/camera.entrance
+            - http://homeassistant.local:8123/api/camera_proxy_stream/camera.driveway
       - network_camera.stop: test_camera

@@ -63,6 +63,7 @@ class NetworkCamera : public Component, public image::Image {
   void set_task_core(int8_t core) { this->task_core_ = core; }
   void set_task_priority(uint8_t priority) { this->task_priority_ = priority; }
   void set_task_stack_size(uint32_t size) { this->task_stack_size_ = size; }
+  void set_max_runtime_sources(size_t count) { this->max_runtime_sources_ = count; }
   void set_source_select(NetworkCameraSourceSelect *source_select) { this->source_select_ = source_select; }
 
   void start();
@@ -70,17 +71,15 @@ class NetworkCamera : public Component, public image::Image {
   void next_source();
   void previous_source();
   void select_source(size_t index);
+  bool replace_sources(const std::vector<std::string> &names, const std::vector<std::string> &urls);
 
   bool is_running() const { return this->running_requested_.load(std::memory_order_acquire); }
   bool has_frame() const { return this->generation_.load(std::memory_order_acquire) != 0; }
-  size_t source_count() const { return this->sources_.size(); }
+  size_t source_count() const;
   size_t active_source_index() const { return this->active_source_.load(std::memory_order_acquire); }
-  std::string active_source_name() const {
-    if (this->sources_.empty())
-      return {};
-    const size_t index = std::min(this->active_source_index(), this->sources_.size() - 1U);
-    return this->sources_[index].name;
-  }
+  std::string source_name(size_t index) const;
+  std::vector<std::string> source_names() const;
+  std::string active_source_name() const;
   const char *state_name() const;
   float measured_fps() const { return this->measured_fps_.load(std::memory_order_relaxed); }
   uint32_t decoded_frames() const { return this->decoded_frames_.load(std::memory_order_relaxed); }
@@ -120,8 +119,11 @@ class NetworkCamera : public Component, public image::Image {
   void set_state_(StreamState state);
   void queue_source_event_();
   void reset_parser_();
+  bool get_source_(size_t index, StreamSource *source) const;
 
+  mutable Mutex source_mutex_{};
   std::vector<StreamSource> sources_{};
+  size_t max_runtime_sources_{16};
   size_t max_frame_size_{512 * 1024};
   uint16_t max_width_{1920};
   uint16_t max_height_{1080};
@@ -209,6 +211,19 @@ template<typename... Ts> class NetworkCameraSelectAction : public Action<Ts...>,
  public:
   TEMPLATABLE_VALUE(uint16_t, index)
   void play(const Ts &...x) override { this->parent_->select_source(this->index_.value(x...)); }
+};
+
+template<typename... Ts>
+class NetworkCameraReplaceSourcesAction : public Action<Ts...>, public Parented<NetworkCamera> {
+ public:
+  TEMPLATABLE_VALUE(std::vector<std::string>, names)
+  TEMPLATABLE_VALUE(std::vector<std::string>, urls)
+
+  void play(const Ts &...x) override {
+    auto names = this->names_.value(x...);
+    auto urls = this->urls_.value(x...);
+    this->parent_->replace_sources(names, urls);
+  }
 };
 
 }  // namespace esphome::network_camera
