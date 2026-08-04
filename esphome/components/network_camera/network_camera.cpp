@@ -555,9 +555,25 @@ bool NetworkCamera::finish_jpeg_frame_() {
     this->dropped_frames_.fetch_add(1, std::memory_order_relaxed);
     return true;
   }
-  if (!this->decode_jpeg_frame_(this->encoded_buffer_, this->encoded_size_)) {
-    this->dropped_frames_.fetch_add(1, std::memory_order_relaxed);
-    return false;
+  bool frame_ready = false;
+  if (auto *consumer = this->jpeg_frame_consumer_.load(std::memory_order_acquire); consumer != nullptr) {
+    const image::JpegFrameResult result = consumer->consume_jpeg_frame(this->encoded_buffer_, this->encoded_size_);
+    if (result == image::JpegFrameResult::DROPPED) {
+      this->dropped_frames_.fetch_add(1, std::memory_order_relaxed);
+      return true;
+    }
+    if (result == image::JpegFrameResult::CONSUMED) {
+      this->direct_frames_.fetch_add(1, std::memory_order_relaxed);
+      this->generation_.fetch_add(1, std::memory_order_release);
+      frame_ready = true;
+    }
+  }
+  if (!frame_ready) {
+    if (!this->decode_jpeg_frame_(this->encoded_buffer_, this->encoded_size_)) {
+      this->dropped_frames_.fetch_add(1, std::memory_order_relaxed);
+      return false;
+    }
+    frame_ready = true;
   }
 
   this->last_frame_ms_ = now;

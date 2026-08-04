@@ -83,6 +83,7 @@ class NetworkCamera : public Component, public image::Image {
   const char *state_name() const;
   float measured_fps() const { return this->measured_fps_.load(std::memory_order_relaxed); }
   uint32_t decoded_frames() const { return this->decoded_frames_.load(std::memory_order_relaxed); }
+  uint32_t direct_frames() const { return this->direct_frames_.load(std::memory_order_relaxed); }
   uint32_t dropped_frames() const { return this->dropped_frames_.load(std::memory_order_relaxed); }
   uint32_t reconnects() const { return this->reconnects_.load(std::memory_order_relaxed); }
   uint32_t last_decode_us() const { return this->last_decode_us_.load(std::memory_order_relaxed); }
@@ -91,6 +92,10 @@ class NetworkCamera : public Component, public image::Image {
   BufferWriter get_buffer_writer() const override { return BufferWriter::DMA; }
   bool acquire_buffer(image::ImageBufferLease *lease) const override;
   bool release_buffer(image::ImageBufferLease *lease) const override;
+  bool set_jpeg_frame_consumer(image::JpegFrameConsumer *consumer) override {
+    this->jpeg_frame_consumer_.store(consumer, std::memory_order_release);
+    return true;
+  }
 
   template<typename F> void add_on_first_frame_callback(F &&callback) {
     this->first_frame_callback_.add(std::forward<F>(callback));
@@ -157,10 +162,12 @@ class NetworkCamera : public Component, public image::Image {
   std::atomic<bool> source_event_pending_{false};
 
   std::atomic<uint32_t> decoded_frames_{0};
+  std::atomic<uint32_t> direct_frames_{0};
   std::atomic<uint32_t> dropped_frames_{0};
   std::atomic<uint32_t> reconnects_{0};
   std::atomic<uint32_t> last_decode_us_{0};
   std::atomic<float> measured_fps_{0.0f};
+  std::atomic<image::JpegFrameConsumer *> jpeg_frame_consumer_{nullptr};
   uint32_t fps_window_started_ms_{0};
   uint32_t fps_window_frames_{0};
   uint32_t last_frame_ms_{0};

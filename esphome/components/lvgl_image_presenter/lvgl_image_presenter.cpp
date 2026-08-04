@@ -8,6 +8,11 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
+#ifdef USE_ESP32_JPEG
+#include "esphome/components/esp32_jpeg/esp32_jpeg.h"
+#include "esp_timer.h"
+#endif
+
 #ifdef USE_ESP32_VARIANT_ESP32P4
 #include "esp_cache.h"
 #include "esp_heap_caps.h"
@@ -22,6 +27,7 @@ static const char *const TAG = "lvgl_image_presenter";
 void LvglImagePresenter::setup() {
   this->select_pan_direction_(this->pan_forward_);
   this->last_loop_ms_ = millis();
+  this->present_fps_window_started_ms_ = this->last_loop_ms_;
 
   lv_lock();
   if (this->obj_ != nullptr && lv_obj_is_valid(this->obj_))
@@ -30,6 +36,14 @@ void LvglImagePresenter::setup() {
 
   if (!this->use_direct_)
     return;
+
+  if (this->use_direct_jpeg_ && this->source_ != nullptr) {
+    this->direct_jpeg_registered_ = this->source_->set_jpeg_frame_consumer(this);
+    if (!this->direct_jpeg_registered_) {
+      ESP_LOGW(TAG, "Source does not expose encoded JPEG frames; using decoded-image presentation");
+      this->use_direct_jpeg_ = false;
+    }
+  }
 
 #ifdef USE_ESP32_VARIANT_ESP32P4
   ppa_client_config_t config{};
@@ -54,7 +68,12 @@ void LvglImagePresenter::setup() {
 
 void LvglImagePresenter::on_shutdown() {
   this->paused_ = true;
+  this->accept_direct_jpeg_.store(false, std::memory_order_release);
   this->stop_direct_session_(500);
+  if (this->direct_jpeg_registered_ && this->source_ != nullptr) {
+    this->source_->set_jpeg_frame_consumer(nullptr);
+    this->direct_jpeg_registered_ = false;
+  }
 #ifdef USE_ESP32_VARIANT_ESP32P4
   if (this->direct_srm_client_ != nullptr) {
     ppa_unregister_client(this->direct_srm_client_);
@@ -73,6 +92,9 @@ void LvglImagePresenter::dump_config() {
   ESP_LOGCONFIG(TAG, "  Direct backend: %s",
                 !this->use_direct_ ? "disabled" : (this->direct_backend_ready_ ? "ready" : "unavailable"));
   ESP_LOGCONFIG(TAG, "  Continuous source: %s", YESNO(this->continuous_));
+  ESP_LOGCONFIG(TAG, "  Direct JPEG to framebuffer: %s", YESNO(this->use_direct_jpeg_));
+  ESP_LOGCONFIG(TAG, "  Presented frames: %u (%.1f fps)", static_cast<unsigned>(this->presented_frames()),
+                static_cast<double>(this->measured_present_fps()));
 }
 
 void LvglImagePresenter::loop() {
@@ -97,13 +119,23 @@ void LvglImagePresenter::loop() {
   if (this->use_direct_ && this->direct_backend_ready_) {
     if (this->direct_target_lease_ && !this->present_pending_direct_frame_(50))
       return;
-    if (this->continuous_ || !this->phase_complete_) {
+    if (this->use_direct_jpeg_) {
+      if (this->ensure_direct_session_()) {
+        this->accept_direct_jpeg_.store(true, std::memory_order_release);
+        return;
+      }
+      if (this->direct_backend_ready_)
+        return;
+    } else if (this->continuous_ || !this->phase_complete_) {
       this->phase_elapsed_ms_ =
           std::min(this->phase_duration_ms_, this->phase_elapsed_ms_ + std::min(delta, this->frame_interval_ms_ * 3U));
       this->phase_complete_ = this->phase_elapsed_ms_ >= this->phase_duration_ms_;
-      this->update_direct_frame_(this->phase_elapsed_ms_);
+      const bool updated = this->update_direct_frame_(this->phase_elapsed_ms_);
+      if (!updated && !this->direct_backend_ready_)
+        this->refresh_continuous_source_();
     }
-    return;
+    if (this->direct_backend_ready_)
+      return;
   }
 
   if (this->direct_session_active_) {
@@ -122,6 +154,8 @@ void LvglImagePresenter::loop() {
     this->phase_complete_ = this->phase_elapsed_ms_ >= this->phase_duration_ms_;
     this->update_transform_(this->phase_elapsed_ms_);
   }
+  if (this->continuous_)
+    this->refresh_continuous_source_();
 }
 
 void LvglImagePresenter::restart() {
@@ -338,8 +372,19 @@ bool LvglImagePresenter::ensure_direct_session_() {
     this->disable_direct_backend_("widget must cover the complete display");
     return false;
   }
-  if (!this->lvgl_component_->begin_frame_buffer_presentation(100))
+  const uint32_t now = millis();
+  if (now < this->direct_session_retry_after_ms_)
     return false;
+  if (!this->lvgl_component_->begin_frame_buffer_presentation(100)) {
+    this->direct_session_failures_++;
+    this->direct_session_retry_after_ms_ = now + 100;
+    if (this->direct_session_failures_ == 1)
+      ESP_LOGW(TAG, "Display rejected the direct framebuffer session; retrying");
+    if (this->direct_session_failures_ >= 5)
+      this->disable_direct_backend_("display repeatedly rejected framebuffer sessions");
+    return false;
+  }
+  this->direct_session_failures_ = 0;
   this->direct_session_active_ = true;
   this->direct_target_width_ = 0;
   this->direct_target_height_ = 0;
@@ -350,11 +395,47 @@ bool LvglImagePresenter::ensure_direct_session_() {
 bool LvglImagePresenter::present_pending_direct_frame_(uint32_t timeout_ms) {
   if (!this->direct_target_lease_)
     return true;
-  return this->lvgl_component_ != nullptr &&
-         this->lvgl_component_->present_presentation_frame(&this->direct_target_lease_, timeout_ms);
+  const uint32_t started_us = micros();
+  const bool presented = this->lvgl_component_ != nullptr &&
+                         this->lvgl_component_->present_presentation_frame(&this->direct_target_lease_, timeout_ms);
+  if (presented)
+    this->record_presented_frame_(micros() - started_us);
+  return presented;
+}
+
+void LvglImagePresenter::record_presented_frame_(uint32_t elapsed_us) {
+  this->presented_frames_.fetch_add(1, std::memory_order_relaxed);
+  this->last_present_us_.store(elapsed_us, std::memory_order_relaxed);
+  this->present_fps_window_frames_++;
+  const uint32_t now = millis();
+  const uint32_t elapsed_ms = now - this->present_fps_window_started_ms_;
+  if (elapsed_ms >= 2000) {
+    this->measured_present_fps_.store(static_cast<float>(this->present_fps_window_frames_) * 1000.0f / elapsed_ms,
+                                      std::memory_order_relaxed);
+    this->present_fps_window_frames_ = 0;
+    this->present_fps_window_started_ms_ = now;
+  }
+}
+
+void LvglImagePresenter::refresh_continuous_source_() {
+  if (!this->continuous_ || this->source_ == nullptr || this->obj_ == nullptr)
+    return;
+  image::ImageBufferLease source;
+  if (!this->source_->acquire_buffer(&source))
+    return;
+  const uint32_t generation = source.generation;
+  this->source_->release_buffer(&source);
+  if (generation == 0 || generation == this->last_fallback_source_generation_)
+    return;
+  this->last_fallback_source_generation_ = generation;
+  lv_lock();
+  if (lv_obj_is_valid(this->obj_))
+    lv_obj_invalidate(this->obj_);
+  lv_unlock();
 }
 
 bool LvglImagePresenter::stop_direct_session_(uint32_t timeout_ms) {
+  this->accept_direct_jpeg_.store(false, std::memory_order_release);
   if (!this->direct_session_active_)
     return true;
   if (this->lvgl_component_ == nullptr)
@@ -362,6 +443,10 @@ bool LvglImagePresenter::stop_direct_session_(uint32_t timeout_ms) {
 
   const uint32_t started = millis();
   do {
+    if (this->direct_jpeg_busy_.load(std::memory_order_acquire)) {
+      delay(1);
+      continue;
+    }
     if (!this->present_pending_direct_frame_(std::min<uint32_t>(timeout_ms, 50))) {
       delay(1);
       continue;
@@ -376,6 +461,78 @@ bool LvglImagePresenter::stop_direct_session_(uint32_t timeout_ms) {
     delay(1);
   } while (millis() - started < timeout_ms);
   return false;
+}
+
+image::JpegFrameResult LvglImagePresenter::consume_jpeg_frame(const uint8_t *data, size_t size) {
+#if defined(USE_ESP32_JPEG) && defined(USE_ESP32_VARIANT_ESP32P4)
+  if (!this->use_direct_jpeg_ || !this->accept_direct_jpeg_.load(std::memory_order_acquire) || data == nullptr ||
+      size == 0 || this->lvgl_component_ == nullptr) {
+    return image::JpegFrameResult::UNSUPPORTED;
+  }
+
+  bool expected = false;
+  if (!this->direct_jpeg_busy_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+    return image::JpegFrameResult::DROPPED;
+  struct BusyGuard {
+    std::atomic<bool> &busy;
+    ~BusyGuard() { this->busy.store(false, std::memory_order_release); }
+  } busy_guard{this->direct_jpeg_busy_};
+
+  if (!this->accept_direct_jpeg_.load(std::memory_order_acquire))
+    return image::JpegFrameResult::DROPPED;
+
+  esp32_jpeg::PictureInfo info{};
+  if (esp32_jpeg::get_info(data, size, &info) != ESP_OK)
+    return image::JpegFrameResult::UNSUPPORTED;
+
+  display::FrameBufferLease target;
+  if (!this->lvgl_component_->acquire_presentation_frame(&target, BufferWriter::DMA, 20))
+    return image::JpegFrameResult::DROPPED;
+
+  auto release_target = [&]() {
+    if (target)
+      this->lvgl_component_->release_presentation_frame(&target);
+  };
+  if (target.bitness != display::COLOR_BITNESS_888 || target.color_order == display::COLOR_ORDER_GRB ||
+      target.width != info.width || target.height != info.height || target.stride != target.width * 3U ||
+      target.size < target.stride * target.height) {
+    release_target();
+    return image::JpegFrameResult::UNSUPPORTED;
+  }
+
+  const esp32_jpeg::DecodeConfig config{
+      .output_format = esp32_jpeg::PixelFormat::RGB888,
+      .rgb_order = target.color_order == display::COLOR_ORDER_RGB ? esp32_jpeg::RgbElementOrder::RGB
+                                                                  : esp32_jpeg::RgbElementOrder::BGR,
+      .color_conversion = esp32_jpeg::ColorConversionStandard::BT601,
+      .direct_output = true,
+      .skip_output_cache_sync = true,
+      .timeout_ms = 80,
+  };
+  size_t written = 0;
+  const int64_t started_us = esp_timer_get_time();
+  const esp_err_t error = esp32_jpeg::decode(config, data, size, target.data, target.size, &written);
+  const uint32_t decode_us = static_cast<uint32_t>(esp_timer_get_time() - started_us);
+  this->last_direct_jpeg_decode_us_.store(decode_us, std::memory_order_relaxed);
+  if (error != ESP_OK || written < target.stride * target.height) {
+    release_target();
+    ESP_LOGW(TAG, "Direct JPEG decode failed: %s written=%zu", esp_err_to_name(error), written);
+    return image::JpegFrameResult::DROPPED;
+  }
+
+  const uint32_t present_started_us = micros();
+  if (!this->lvgl_component_->present_presentation_frame(&target, 50)) {
+    release_target();
+    return image::JpegFrameResult::DROPPED;
+  }
+  this->direct_jpeg_frames_.fetch_add(1, std::memory_order_relaxed);
+  this->record_presented_frame_(micros() - present_started_us);
+  return image::JpegFrameResult::CONSUMED;
+#else
+  (void) data;
+  (void) size;
+  return image::JpegFrameResult::UNSUPPORTED;
+#endif
 }
 
 void LvglImagePresenter::disable_direct_backend_(const char *reason) {
@@ -462,8 +619,8 @@ bool LvglImagePresenter::calculate_direct_crop_(const image::ImageBufferLease &s
 bool LvglImagePresenter::sync_dma_source_for_ppa_(const image::ImageBufferLease &source) const {
   if (source.writer != BufferWriter::DMA || !esp_ptr_external_ram(source.data))
     return true;
-  const esp_err_t error = esp_cache_msync(const_cast<uint8_t *>(source.data), source.size,
-                                          ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+  const esp_err_t error =
+      esp_cache_msync(const_cast<uint8_t *>(source.data), source.size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
   if (error != ESP_OK)
     ESP_LOGW(TAG, "Source DMA ownership transfer failed: %s", esp_err_to_name(error));
   return error == ESP_OK;

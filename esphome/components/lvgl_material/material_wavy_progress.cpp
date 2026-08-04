@@ -37,6 +37,8 @@ namespace {
 // StackType_t units while giving the raster worker enough headroom for LVGL,
 // PPA and cache-sync calls.
 constexpr uint32_t WAVE_RENDER_STACK_BYTES = 8192;
+constexpr UBaseType_t WAVE_RENDER_TASK_PRIORITY = 1;
+constexpr UBaseType_t WAVE_CONTROL_TASK_PRIORITY = 3;
 
 // A 244-pixel RGB888 row is 4-byte aligned, allowing the DSI DMA2D path to
 // consume the worker buffer directly instead of allocating/copying staging.
@@ -111,6 +113,7 @@ struct WavyArcState {
   uint32_t render_generation{0};
   uint32_t ready_generation{0};
   bool frame_ready{false};
+  uint32_t stale_ready_drop_count{0};
   const lv_image_dsc_t *pending_background_source{nullptr};
   bool pending_background_scrim{false};
   bool background_pending{false};
@@ -703,6 +706,7 @@ static void render_bitmap(WavyArcState *state) {
   const int remaining_sweep_q4 =
       finite_track ? (finite_available_sweep_q4 - played_sweep_q4) : (full_circle_q4 - progress_sweep_q4);
   const int loading_start_q4 = (track_start_q4 + (phase * 5 * 16)) % full_circle_q4;
+  const int loading_end_q4 = (loading_start_q4 + loading_sweep_q4) % full_circle_q4;
   const bool full_progress = progress >= 10000;
   const bool no_progress = progress <= 0;
   // The inactive part always uses the same light translucent Material color.
@@ -716,9 +720,9 @@ static void render_bitmap(WavyArcState *state) {
     state->blob_boundary_by_angle[angle] = blob_radius_q4 + (blob_amplitude_q4 * wave_q8) / 256;
     state->ring_boundary_by_angle[angle] = ring_radius_q4 + (ring_amplitude_q4 * wave_q8) / 256;
 
+    const int angle_q4 = angle * 16;
     uint8_t cap_mask = 0;
     if (finite_track) {
-      const int angle_q4 = angle * 16;
       // Rounded progress endpoints occupy only a few angular bins. Building
       // this tiny map once avoids four circular-distance calculations for
       // every one of the ~19k ring pixels in each animation frame.
@@ -730,6 +734,12 @@ static void render_bitmap(WavyArcState *state) {
         cap_mask |= 0x04;
       if (angle_distance_q4(angle_q4, remaining_end_q4) <= 6 * 16)
         cap_mask |= 0x08;
+    }
+    if (pending) {
+      if (angle_distance_q4(angle_q4, loading_start_q4) <= 6 * 16)
+        cap_mask |= 0x10;
+      if (angle_distance_q4(angle_q4, loading_end_q4) <= 6 * 16)
+        cap_mask |= 0x20;
     }
     state->cap_mask_by_angle[angle] = cap_mask;
   }
@@ -777,11 +787,10 @@ static void render_bitmap(WavyArcState *state) {
         in_remaining =
             track_delta_q4 >= played_sweep_q4 + split_gap_q4 && track_delta_q4 <= full_circle_q4 - split_gap_q4;
       }
-      const bool in_loading = pending && angle_in_segment_q4(loading_start_q4, loading_sweep_q4, angle_q4) &&
-                              (full_progress || no_progress || !in_played);
-      const uint8_t kind = in_loading ? 3 : (in_played ? 1 : (in_remaining ? 2 : 0));
-      uint8_t played_coverage = kind == 1 ? ring_alpha : 0;
-      uint8_t remaining_coverage = kind == 2 ? ring_alpha : 0;
+      const bool in_loading = pending && angle_in_segment_q4(loading_start_q4, loading_sweep_q4, angle_q4);
+      uint8_t loading_coverage = in_loading ? ring_alpha : 0;
+      uint8_t played_coverage = in_played ? ring_alpha : 0;
+      uint8_t remaining_coverage = in_remaining ? ring_alpha : 0;
       const uint8_t cap_mask = state->cap_mask_by_angle[angle];
       if (cap_mask != 0) {
         constexpr int cap_half_width_q4 = ring_half_width_q4;
@@ -813,10 +822,24 @@ static void render_bitmap(WavyArcState *state) {
           if (coverage > remaining_coverage)
             remaining_coverage = coverage;
         }
+        if ((cap_mask & 0x10) != 0) {
+          const uint8_t coverage =
+              cap_coverage(radius, angle_q4, loading_start_q4,
+                           state->ring_boundary_by_angle[((loading_start_q4 + 8) / 16) % 360], cap_half_width_q4);
+          if (coverage > loading_coverage)
+            loading_coverage = coverage;
+        }
+        if ((cap_mask & 0x20) != 0) {
+          const uint8_t coverage =
+              cap_coverage(radius, angle_q4, loading_end_q4,
+                           state->ring_boundary_by_angle[((loading_end_q4 + 8) / 16) % 360], cap_half_width_q4);
+          if (coverage > loading_coverage)
+            loading_coverage = coverage;
+        }
       }
 
-      if (kind == 3 && ring_alpha > 0) {
-        state->pixels[pixel_index] = make_overlay(0xF8, 0xEC, 0xFF, scaled_alpha(ring_alpha, 232));
+      if (loading_coverage > 0) {
+        state->pixels[pixel_index] = make_overlay(0xF8, 0xEC, 0xFF, scaled_alpha(loading_coverage, 232));
       } else if (played_coverage >= remaining_coverage && played_coverage > 0) {
         state->pixels[pixel_index] = make_overlay(0xF1, 0xDC, 0xFF, scaled_alpha(played_coverage, 224));
       } else if (remaining_coverage > 0) {
@@ -913,6 +936,7 @@ static void render_worker_task(void *arg) {
       continue;
     bool background_rebuilt = false;
     bool control_changed = false;
+    bool pressed_update_received = false;
     const int queued_value = state->queued_value_basis_points.exchange(-1, std::memory_order_acquire);
     if (queued_value >= 0 && state->value_basis_points != queued_value) {
       state->value_basis_points = queued_value;
@@ -929,6 +953,7 @@ static void render_worker_task(void *arg) {
       control_changed = true;
     }
     const int queued_pressed = state->queued_pressed.exchange(-1, std::memory_order_acquire);
+    pressed_update_received = queued_pressed >= 0;
     if (queued_pressed >= 0 && state->pressed != (queued_pressed != 0)) {
       state->pressed = queued_pressed != 0;
       control_changed = true;
@@ -937,11 +962,19 @@ static void render_worker_task(void *arg) {
       state->dirty = true;
       state->render_generation++;
     }
-    // Keep the completed buffer immutable until the LVGL task presents it.
-    // This naturally coalesces updates while the display path is busy.
+    // A completed buffer is immutable while it is current. If a newer control
+    // state arrived before presentation, the buffer is still worker-owned and
+    // can be discarded instead of briefly presenting the obsolete geometry.
     if (state->frame_ready) {
-      xSemaphoreGive(state->render_mutex);
-      continue;
+      if (state->ready_generation == state->render_generation) {
+        xSemaphoreGive(state->render_mutex);
+        if (pressed_update_received)
+          vTaskPrioritySet(state->render_task, WAVE_RENDER_TASK_PRIORITY);
+        continue;
+      }
+      state->frame_ready = false;
+      state->dirty = true;
+      state->stale_ready_drop_count++;
     }
     if (state->background_pending && !state->present_in_flight.load(std::memory_order_acquire)) {
       const lv_image_dsc_t *source = state->pending_background_source;
@@ -959,6 +992,8 @@ static void render_worker_task(void *arg) {
     const bool prepare_hidden_frame = background_rebuilt && state->dirty;
     if ((!state->direct_present_enabled && !prepare_hidden_frame) || (!state->dirty && !phase_requested)) {
       xSemaphoreGive(state->render_mutex);
+      if (pressed_update_received)
+        vTaskPrioritySet(state->render_task, WAVE_RENDER_TASK_PRIORITY);
       continue;
     }
 
@@ -976,6 +1011,8 @@ static void render_worker_task(void *arg) {
     render_bitmap(state);
     state->pixels = front;
     xSemaphoreGive(state->render_mutex);
+    if (pressed_update_received)
+      vTaskPrioritySet(state->render_task, WAVE_RENDER_TASK_PRIORITY);
 
     if (xSemaphoreTake(state->render_mutex, portMAX_DELAY) != pdTRUE)
       continue;
@@ -1017,8 +1054,9 @@ static bool ensure_render_worker(WavyArcState *state) {
 #endif
   // Audio and AFE tasks use much higher priorities, so they can still pre-empt
   // this best-effort worker without the UI renderer stalling audio delivery.
-  TaskHandle_t task = xTaskCreateStaticPinnedToCore(render_worker_task, "media_wave", WAVE_RENDER_STACK_BYTES, state, 1,
-                                                    state->render_task_stack, &state->render_task_storage, render_core);
+  TaskHandle_t task = xTaskCreateStaticPinnedToCore(render_worker_task, "media_wave", WAVE_RENDER_STACK_BYTES, state,
+                                                    WAVE_RENDER_TASK_PRIORITY, state->render_task_stack,
+                                                    &state->render_task_storage, render_core);
   if (task == nullptr) {
     heap_caps_free(state->render_task_stack);
     state->render_task_stack = nullptr;
@@ -1101,6 +1139,12 @@ inline void media_wavy_arc_set_background(const lv_image_dsc_t *source, bool app
     state.pending_background_source = source;
     state.pending_background_scrim = apply_scrim;
     state.background_pending = true;
+    // A completed worker frame is tied to the backdrop that was current when
+    // it was rasterized.  The renderer can remain disabled across page/camera
+    // transitions, leaving such a frame queued but not presented.  Drop it
+    // when a new backdrop arrives; otherwise render_worker_task() observes
+    // frame_ready first and indefinitely postpones the background rebuild.
+    state.frame_ready = false;
     state.dirty = true;
     state.render_generation++;
     unlock_render_state(&state);
@@ -1131,12 +1175,18 @@ inline void media_wavy_arc_log_state(const char *reason) {
   auto &state = media_wavy_arc;
   ESP_LOGW("media.wave",
            "%s registered=%s buffers=%s worker=%p direct=%s dirty=%s ready=%s bg_pending=%s "
-           "generation=%u/%u phase=%d value=%d playing=%s pending=%s",
+           "generation=%u/%u phase=%d value=%d playing=%s pending=%s in_flight=%s stale_drops=%u "
+           "queued=%d/%d/%d/%d",
            reason == nullptr ? "state" : reason, YESNO(state.registered), YESNO(state.buffers_ready), state.render_task,
            YESNO(state.direct_present_enabled.load(std::memory_order_relaxed)), YESNO(state.dirty),
            YESNO(state.frame_ready), YESNO(state.background_pending), static_cast<unsigned>(state.ready_generation),
            static_cast<unsigned>(state.render_generation), state.phase_deg, state.value_basis_points,
-           YESNO(state.playing), YESNO(state.pending));
+           YESNO(state.playing), YESNO(state.pending),
+           YESNO(state.present_in_flight.load(std::memory_order_relaxed)),
+           static_cast<unsigned>(state.stale_ready_drop_count),
+           state.queued_value_basis_points.load(std::memory_order_relaxed),
+           state.queued_playing.load(std::memory_order_relaxed), state.queued_pending.load(std::memory_order_relaxed),
+           state.queued_pressed.load(std::memory_order_relaxed));
 #else
   (void) reason;
 #endif
@@ -1299,8 +1349,13 @@ inline void media_wavy_arc_set_pressed(bool pressed) {
 #ifdef ESP_PLATFORM
   if (state.render_task != nullptr) {
     state.queued_pressed.store(pressed ? 1 : 0, std::memory_order_release);
-    if (state.direct_present_enabled.load(std::memory_order_relaxed))
+    if (state.direct_present_enabled.load(std::memory_order_relaxed)) {
+      // A press is latency-sensitive while phase updates are disposable. Boost
+      // only this raster frame so the previous bright state cannot linger
+      // before the Material state layer darkens.
+      vTaskPrioritySet(state.render_task, WAVE_CONTROL_TASK_PRIORITY);
       notify_render_worker(&state);
+    }
     return;
   }
   if (!lock_render_state(&state))
@@ -1337,8 +1392,10 @@ inline bool media_wavy_arc_background_ready() {
     return !state.background_pending;
   if (state.render_mutex == nullptr || xSemaphoreTake(state.render_mutex, 0) != pdTRUE)
     return false;
-  const bool ready =
-      !state.background_pending && state.frame_ready && state.ready_generation == state.render_generation;
+  // Holding render_mutex guarantees that an in-progress backdrop rebuild has
+  // completed. The rendered frame may already have been handed to the direct
+  // presenter, so frame_ready is not a valid backdrop-readiness condition.
+  const bool ready = !state.background_pending;
   unlock_render_state(&state);
   return ready;
 #else
@@ -1349,13 +1406,19 @@ inline bool media_wavy_arc_background_ready() {
 inline bool media_wavy_arc_present_ready() {
 #ifdef ESP_PLATFORM
   auto &state = media_wavy_arc;
-  if (state.render_task == nullptr || !state.direct_present_enabled.load(std::memory_order_relaxed)) {
+  if (state.render_task == nullptr) {
     return false;
   }
 
   lv_color32_t *rendered = nullptr;
   uint32_t ready_generation = 0;
   bool request_another = false;
+  auto control_update_pending = [&state]() {
+    return state.queued_value_basis_points.load(std::memory_order_acquire) >= 0 ||
+           state.queued_playing.load(std::memory_order_acquire) >= 0 ||
+           state.queued_pending.load(std::memory_order_acquire) >= 0 ||
+           state.queued_pressed.load(std::memory_order_acquire) >= 0;
+  };
 
   if (state.present_in_flight.load(std::memory_order_acquire)) {
     if (!state.present_complete.load(std::memory_order_acquire))
@@ -1373,7 +1436,8 @@ inline bool media_wavy_arc_present_ready() {
       return true;
     rendered = state.present_pixels;
     ready_generation = state.present_generation;
-    if (rendered != nullptr && ready_generation == state.render_generation && state.direct_present_enabled) {
+    if (rendered != nullptr && ready_generation == state.render_generation && state.direct_present_enabled &&
+        !control_update_pending()) {
       lv_color32_t *old_front = state.pixels;
       state.pixels = rendered;
       state.image.data = reinterpret_cast<const uint8_t *>(state.pixels);
@@ -1396,19 +1460,45 @@ inline bool media_wavy_arc_present_ready() {
     unlock_render_state(&state);
     if (request_another)
       notify_render_worker(&state);
-    // The third buffer may already contain the next rasterized wave frame.
-    // Submit it during this same service tick; returning here inserted an
-    // extra 16 ms gap after every DSI acknowledgement when marquee and wave
-    // updates shared the regional compositor.
+    // The completed buffer has just been returned to the renderer. Do not
+    // accidentally submit that stale pointer again: when an artwork backdrop
+    // is pending, doing so keeps present_in_flight asserted and prevents the
+    // worker from ever rebuilding the backdrop. The frame_ready check below
+    // can still pick up and submit a genuinely new frame during this tick.
+    rendered = nullptr;
+    ready_generation = 0;
   }
+
+  // Disabling direct presentation is also used as the artwork handoff
+  // boundary.  A PPA request submitted immediately before that boundary can
+  // finish while presentation is disabled.  Its completion still has to be
+  // retired above so the rendered buffer returns to the spare pool and the
+  // worker can rebuild the backdrop.  Returning before servicing the
+  // completion left present_in_flight asserted forever, timed out the
+  // handoff, and later exposed the stale wave/background frame.
+  if (!state.direct_present_enabled.load(std::memory_order_relaxed))
+    return false;
 
   if (state.render_mutex != nullptr && xSemaphoreTake(state.render_mutex, 0) != pdTRUE)
     return false;
   if (state.frame_ready) {
-    rendered = state.worker_pixels;
-    ready_generation = state.ready_generation;
+    if (state.ready_generation == state.render_generation && !control_update_pending()) {
+      rendered = state.worker_pixels;
+      ready_generation = state.ready_generation;
+    } else {
+      // set_playing()/set_pressed() enqueue without blocking the LVGL task.
+      // Do not submit a frame completed just before that state change; once it
+      // reaches the DSI queue, a generation check can no longer hide it.
+      state.frame_ready = false;
+      state.dirty = true;
+      state.stale_ready_drop_count++;
+      request_another = true;
+    }
   }
   unlock_render_state(&state);
+
+  if (request_another)
+    notify_render_worker(&state);
 
   if (rendered == nullptr)
     return false;

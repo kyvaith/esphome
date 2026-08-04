@@ -17,7 +17,7 @@
 
 namespace esphome::lvgl_image_presenter {
 
-class LvglImagePresenter : public Component {
+class LvglImagePresenter : public Component, public image::JpegFrameConsumer {
  public:
   void set_obj(lv_obj_t *obj) { this->obj_ = obj; }
   void set_lvgl_component(lvgl::LvglComponent *component) { this->lvgl_component_ = component; }
@@ -25,6 +25,7 @@ class LvglImagePresenter : public Component {
   void set_phase_duration(uint32_t duration_ms) { this->phase_duration_ms_ = duration_ms; }
   void set_frame_interval(uint32_t interval_ms) { this->frame_interval_ms_ = interval_ms; }
   void set_direct(bool direct) { this->use_direct_ = direct; }
+  void set_direct_jpeg(bool direct_jpeg) { this->use_direct_jpeg_ = direct_jpeg; }
   void set_continuous(bool continuous) { this->continuous_ = continuous; }
   void set_zoom(uint16_t start, uint16_t end) {
     this->zoom_start_ = start;
@@ -49,6 +50,14 @@ class LvglImagePresenter : public Component {
   bool is_transition_pending_or_active() const;
   bool transition_failed() const;
   bool is_phase_complete() const { return this->phase_complete_.load(std::memory_order_acquire); }
+  uint32_t presented_frames() const { return this->presented_frames_.load(std::memory_order_relaxed); }
+  float measured_present_fps() const { return this->measured_present_fps_.load(std::memory_order_relaxed); }
+  uint32_t last_present_us() const { return this->last_present_us_.load(std::memory_order_relaxed); }
+  uint32_t direct_jpeg_frames() const { return this->direct_jpeg_frames_.load(std::memory_order_relaxed); }
+  uint32_t last_direct_jpeg_decode_us() const {
+    return this->last_direct_jpeg_decode_us_.load(std::memory_order_relaxed);
+  }
+  image::JpegFrameResult consume_jpeg_frame(const uint8_t *data, size_t size) override;
   bool freeze_direct();
   void resume_direct();
   size_t memory_usage_bytes() const { return 0; }
@@ -76,6 +85,8 @@ class LvglImagePresenter : public Component {
                               uint16_t *scale_q4) const;
   bool render_direct_frame_(uint32_t elapsed_ms);
   bool present_pending_direct_frame_(uint32_t timeout_ms);
+  void refresh_continuous_source_();
+  void record_presented_frame_(uint32_t elapsed_us);
   void reset_direct_frame_cache_();
   void disable_direct_backend_(const char *reason);
 
@@ -110,6 +121,12 @@ class LvglImagePresenter : public Component {
   bool direct_backend_ready_{false};
   bool direct_session_active_{false};
   bool direct_backend_failed_{false};
+  bool use_direct_jpeg_{false};
+  bool direct_jpeg_registered_{false};
+  std::atomic<bool> accept_direct_jpeg_{false};
+  std::atomic<bool> direct_jpeg_busy_{false};
+  uint8_t direct_session_failures_{0};
+  uint32_t direct_session_retry_after_ms_{0};
   TransitionState transition_state_{TransitionState::NONE};
   image::Image *transition_source_{nullptr};
   uint32_t transition_duration_ms_{800};
@@ -125,6 +142,14 @@ class LvglImagePresenter : public Component {
   int last_direct_crop_height_{-1};
   size_t direct_target_width_{0};
   size_t direct_target_height_{0};
+  uint32_t last_fallback_source_generation_{0};
+  std::atomic<uint32_t> presented_frames_{0};
+  std::atomic<uint32_t> last_present_us_{0};
+  std::atomic<float> measured_present_fps_{0.0f};
+  std::atomic<uint32_t> direct_jpeg_frames_{0};
+  std::atomic<uint32_t> last_direct_jpeg_decode_us_{0};
+  uint32_t present_fps_window_started_ms_{0};
+  uint32_t present_fps_window_frames_{0};
 
 #ifdef USE_ESP32_VARIANT_ESP32P4
   ppa_client_handle_t direct_srm_client_{nullptr};

@@ -100,8 +100,8 @@ static esp_err_t cache_writeback_external_for_dma(const void *ptr, size_t size) 
   static constexpr size_t CACHE_SYNC_ALIGN_BYTES = 128;
   uintptr_t start = reinterpret_cast<uintptr_t>(ptr);
   uintptr_t aligned_start = start & ~(static_cast<uintptr_t>(CACHE_SYNC_ALIGN_BYTES) - 1U);
-  uintptr_t aligned_end = (start + size + CACHE_SYNC_ALIGN_BYTES - 1U) &
-                          ~(static_cast<uintptr_t>(CACHE_SYNC_ALIGN_BYTES) - 1U);
+  uintptr_t aligned_end =
+      (start + size + CACHE_SYNC_ALIGN_BYTES - 1U) & ~(static_cast<uintptr_t>(CACHE_SYNC_ALIGN_BYTES) - 1U);
   if (aligned_end <= aligned_start)
     return ESP_OK;
   if (!esp_ptr_external_ram(reinterpret_cast<const void *>(aligned_start)) ||
@@ -118,16 +118,15 @@ extern "C" void IRAM_ATTR esphome_mipi_dsi_note_underrun(void) {
   dsi_underrun_last_tick = static_cast<uint32_t>(xTaskGetTickCountFromISR());
 }
 
-extern "C" void IRAM_ATTR esphome_mipi_dsi_note_status(uint32_t bridge_status, uint32_t bridge_raw,
-                                                        uint32_t fifo_depth, uint32_t host_status0,
-                                                        uint32_t host_status1) {
+extern "C" void IRAM_ATTR esphome_mipi_dsi_note_status(uint32_t bridge_status, uint32_t bridge_raw, uint32_t fifo_depth,
+                                                       uint32_t host_status0, uint32_t host_status1) {
   const bool bridge_underrun = (bridge_status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN) != 0;
   const bool host_status = host_status0 != 0 || host_status1 != 0;
   if (!bridge_underrun && !host_status)
     return;
 
-  if (!bridge_underrun && bridge_status == dsi_diag_last_bridge_status &&
-      host_status0 == dsi_diag_last_host_status0 && host_status1 == dsi_diag_last_host_status1) {
+  if (!bridge_underrun && bridge_status == dsi_diag_last_bridge_status && host_status0 == dsi_diag_last_host_status0 &&
+      host_status1 == dsi_diag_last_host_status1) {
     dsi_diag_same_status_suppressed++;
     return;
   }
@@ -148,16 +147,14 @@ extern "C" void IRAM_ATTR esphome_mipi_dsi_note_status(uint32_t bridge_status, u
 }
 
 extern "C" esp_err_t esphome_mipi_dsi_poll_status(esp_lcd_panel_handle_t panel, uint32_t *bridge_status,
-                                                     uint32_t *bridge_raw, uint32_t *fifo_depth,
-                                                     uint32_t *host_status0,
-                                                     uint32_t *host_status1) __attribute__((weak));
-extern "C" esp_err_t esphome_mipi_dsi_poll_video_status(esp_lcd_panel_handle_t panel,
-                                                           uint32_t *video_status) __attribute__((weak));
-extern "C" esp_err_t esphome_mipi_dsi_poll_dma_ring(esp_lcd_panel_handle_t panel, uint32_t *lookup_failures,
-                                                       uint8_t *active_fb_index,
-                                                       uint8_t *pending_fb_index) __attribute__((weak));
-extern "C" esp_err_t esphome_mipi_dsi_set_frame_ack(esp_lcd_panel_handle_t panel, bool enable)
+                                                  uint32_t *bridge_raw, uint32_t *fifo_depth, uint32_t *host_status0,
+                                                  uint32_t *host_status1) __attribute__((weak));
+extern "C" esp_err_t esphome_mipi_dsi_poll_video_status(esp_lcd_panel_handle_t panel, uint32_t *video_status)
     __attribute__((weak));
+extern "C" esp_err_t esphome_mipi_dsi_poll_dma_ring(esp_lcd_panel_handle_t panel, uint32_t *lookup_failures,
+                                                    uint8_t *active_fb_index, uint8_t *pending_fb_index)
+    __attribute__((weak));
+extern "C" esp_err_t esphome_mipi_dsi_set_frame_ack(esp_lcd_panel_handle_t panel, bool enable) __attribute__((weak));
 extern "C" esp_err_t esphome_mipi_dsi_queue_dma_framebuffer(esp_lcd_panel_handle_t panel, void *frame_buffer)
     __attribute__((weak));
 
@@ -186,12 +183,12 @@ extern "C" bool esphome_mipi_dsi_wait_fifo_margin(uint32_t min_depth, uint32_t t
 }
 
 extern "C" bool esphome_mipi_dsi_wait_vblank_fifo_margin(uint32_t min_depth, uint32_t timeout_us,
-                                                           uint32_t window_start_us, uint32_t window_end_us,
-                                                           uint32_t reservation_us) {
+                                                         uint32_t window_start_us, uint32_t window_end_us,
+                                                         uint32_t reservation_us) {
   if (active_dsi_instance == nullptr)
     return false;
   return active_dsi_instance->wait_for_vblank_fifo_margin(min_depth, timeout_us, window_start_us, window_end_us,
-                                                           reservation_us);
+                                                          reservation_us);
 }
 
 extern "C" bool esphome_mipi_dsi_vblank_guard_active() {
@@ -376,8 +373,8 @@ void MipiDsi::setup() {
     this->active_frame_buffer_.store(this->frame_buffers_[0], std::memory_order_release);
     constexpr size_t cache_alignment = 128;
     ESP_LOGW(TAG, "DPI framebuffers exposed at %p / %p / %p (%zu bytes each, cache_align=%zu, mod=%u/%u/%u)",
-             this->frame_buffers_[0], this->frame_buffers_[1], this->frame_buffers_[2], this->get_frame_buffer_size(), cache_alignment,
-             (unsigned) (reinterpret_cast<uintptr_t>(this->frame_buffers_[0]) % cache_alignment),
+             this->frame_buffers_[0], this->frame_buffers_[1], this->frame_buffers_[2], this->get_frame_buffer_size(),
+             cache_alignment, (unsigned) (reinterpret_cast<uintptr_t>(this->frame_buffers_[0]) % cache_alignment),
              (unsigned) (reinterpret_cast<uintptr_t>(this->frame_buffers_[1]) % cache_alignment),
              (unsigned) (reinterpret_cast<uintptr_t>(this->frame_buffers_[2]) % cache_alignment));
   } else {
@@ -387,8 +384,7 @@ void MipiDsi::setup() {
   // DSI scanout is a real-time PSRAM reader. Keep cache/CPU writes, such as
   // artwork downloads, below the DSI DW-GDMA read priority configured in the
   // ESP-IDF DSI patch so short PSRAM write bursts don't drain the bridge FIFO.
-  axi_icm_ll_set_cache_qos_arbiter_prio(CONFIG_ESPHOME_DSI_CACHE_WRITE_QOS,
-                                        CONFIG_ESPHOME_DSI_CACHE_READ_QOS);
+  axi_icm_ll_set_cache_qos_arbiter_prio(CONFIG_ESPHOME_DSI_CACHE_WRITE_QOS, CONFIG_ESPHOME_DSI_CACHE_READ_QOS);
   axi_icm_ll_set_cpu_qos_arbiter_prio(CONFIG_ESPHOME_DSI_CPU_WRITE_QOS, CONFIG_ESPHOME_DSI_CPU_READ_QOS);
   axi_icm_ll_set_gdma_qos_arbiter_prio(CONFIG_ESPHOME_DSI_GDMA_WRITE_QOS, CONFIG_ESPHOME_DSI_GDMA_READ_QOS);
   ESP_LOGW(TAG, "DSI AXI QoS cache wr/rd=%u/%u cpu wr/rd=%u/%u gdma wr/rd=%u/%u",
@@ -406,15 +402,12 @@ void MipiDsi::setup() {
   }
 #endif
   ESP_LOGCONFIG(TAG, "DPI DMA2D draw hook: %s", YESNO(this->use_dma2d_));
-  ESP_LOGCONFIG(TAG, "DPI low-power transitions: %s",
-                CONFIG_ESPHOME_MIPI_DSI_DISABLE_LP ? "disabled" : "enabled");
-  ESP_LOGCONFIG(TAG, "DPI frame ACK: %s",
-                CONFIG_ESPHOME_MIPI_DSI_DISABLE_FRAME_ACK ? "disabled" : "enabled");
-  ESP_LOGCONFIG(TAG, "DPI video mode: %s", CONFIG_ESPHOME_MIPI_DSI_NON_BURST_SYNC_PULSES
-                                            ? "non-burst with sync pulses"
-                                            : "burst with sync pulses");
-  ESP_LOGCONFIG(TAG, "DPI clock lane: %s",
-                CONFIG_ESPHOME_MIPI_DSI_CONTINUOUS_HS_CLOCK ? "continuous HS" : "auto");
+  ESP_LOGCONFIG(TAG, "DPI low-power transitions: %s", CONFIG_ESPHOME_MIPI_DSI_DISABLE_LP ? "disabled" : "enabled");
+  ESP_LOGCONFIG(TAG, "DPI frame ACK: %s", CONFIG_ESPHOME_MIPI_DSI_DISABLE_FRAME_ACK ? "disabled" : "enabled");
+  ESP_LOGCONFIG(
+      TAG, "DPI video mode: %s",
+      CONFIG_ESPHOME_MIPI_DSI_NON_BURST_SYNC_PULSES ? "non-burst with sync pulses" : "burst with sync pulses");
+  ESP_LOGCONFIG(TAG, "DPI clock lane: %s", CONFIG_ESPHOME_MIPI_DSI_CONTINUOUS_HS_CLOCK ? "continuous HS" : "auto");
   if (this->reset_pin_ != nullptr) {
     this->reset_pin_->setup();
     this->reset_pin_->digital_write(true);
@@ -476,11 +469,13 @@ void MipiDsi::setup() {
   }
   this->io_lock_ = xSemaphoreCreateBinary();
   this->draw_submission_lock_ = xSemaphoreCreateBinary();
+  this->frame_buffer_session_lock_ = xSemaphoreCreateMutex();
   this->refresh_lock_ = xSemaphoreCreateBinary();
   this->vblank_lock_ = xSemaphoreCreateBinary();
   this->frame_active_lock_ = xSemaphoreCreateBinary();
-  if (this->io_lock_ == nullptr || this->draw_submission_lock_ == nullptr || this->refresh_lock_ == nullptr ||
-      this->vblank_lock_ == nullptr || this->frame_active_lock_ == nullptr) {
+  if (this->io_lock_ == nullptr || this->draw_submission_lock_ == nullptr ||
+      this->frame_buffer_session_lock_ == nullptr || this->refresh_lock_ == nullptr || this->vblank_lock_ == nullptr ||
+      this->frame_active_lock_ == nullptr) {
     this->mark_failed(LOG_STR("MIPI DSI synchronization allocation failed"));
     return;
   }
@@ -506,8 +501,8 @@ void MipiDsi::setup() {
                                     this->hsync_back_porch_ + this->hsync_front_porch_;
   const uint64_t vertical_total = static_cast<uint64_t>(this->height_) + this->vsync_pulse_width_ +
                                   this->vsync_back_porch_ + this->vsync_front_porch_;
-  this->expected_frame_interval_us_ = static_cast<uint32_t>(
-      (horizontal_total * vertical_total + this->pclk_frequency_ - 1U) / this->pclk_frequency_);
+  this->expected_frame_interval_us_ =
+      static_cast<uint32_t>((horizontal_total * vertical_total + this->pclk_frequency_ - 1U) / this->pclk_frequency_);
   this->refresh_late_threshold_us_ =
       this->expected_frame_interval_us_ + std::max<uint32_t>(1000, this->expected_frame_interval_us_ / 10U);
   this->callback_context_.refresh_late_threshold_us = &this->refresh_late_threshold_us_;
@@ -558,9 +553,7 @@ void MipiDsi::start_async_flush_task_() {
   ESP_LOGCONFIG(TAG, "Async LVGL flush ready task enabled on core %d", (int) flush_core);
 }
 
-void MipiDsi::async_flush_task_trampoline(void *arg) {
-  static_cast<MipiDsi *>(arg)->async_flush_task_();
-}
+void MipiDsi::async_flush_task_trampoline(void *arg) { static_cast<MipiDsi *>(arg)->async_flush_task_(); }
 
 void MipiDsi::async_flush_task_() {
   while (true) {
@@ -606,8 +599,8 @@ void MipiDsi::start_dsi_diagnostics_task_() {
   // Diagnostics must never compete with display rendering. In particular, the
   // Lottie renderer also runs on core 0 at priority 2. Keeping this task below
   // it makes status polling observational instead of changing UI timing.
-  const BaseType_t ok = xTaskCreatePinnedToCore(&MipiDsi::dsi_diagnostics_task_trampoline, "mipi_dsi_diag", 3072,
-                                                this, 1, &task_handle, diag_core);
+  const BaseType_t ok = xTaskCreatePinnedToCore(&MipiDsi::dsi_diagnostics_task_trampoline, "mipi_dsi_diag", 3072, this,
+                                                1, &task_handle, diag_core);
   if (ok != pdPASS) {
     ESP_LOGW(TAG, "DSI diagnostics task allocation failed");
     return;
@@ -616,9 +609,7 @@ void MipiDsi::start_dsi_diagnostics_task_() {
   ESP_LOGCONFIG(TAG, "DSI diagnostics poll task enabled on core %d", (int) diag_core);
 }
 
-void MipiDsi::dsi_diagnostics_task_trampoline(void *arg) {
-  static_cast<MipiDsi *>(arg)->dsi_diagnostics_task_();
-}
+void MipiDsi::dsi_diagnostics_task_trampoline(void *arg) { static_cast<MipiDsi *>(arg)->dsi_diagnostics_task_(); }
 
 void MipiDsi::dsi_diagnostics_task_() {
   while (true) {
@@ -705,26 +696,22 @@ void MipiDsi::mark_stress_window(const char *label, uint32_t duration_ms) {
     this->dsi_previous_stress_ms_ = this->dsi_recent_stress_ms_;
   }
   if (this->dsi_stress_active_ &&
-      (this->dsi_stress_nonzero_ != 0 || this->dsi_stress_bridge_underrun_ != 0 ||
-       this->dsi_stress_host_under_ != 0)) {
+      (this->dsi_stress_nonzero_ != 0 || this->dsi_stress_bridge_underrun_ != 0 || this->dsi_stress_host_under_ != 0)) {
     ESP_LOGW(TAG,
              "dsi stress interrupted: %s samples=%" PRIu32 " nonzero=%" PRIu32 " brg_under=%" PRIu32
-             " host_under=%" PRIu32 " fifo_zero=%" PRIu32 " fifo_min=%" PRIu32
-             " last brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32
-             " host0=0x%08" PRIx32 " host1=0x%08" PRIx32
-             " or brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
+             " host_under=%" PRIu32 " fifo_zero=%" PRIu32 " fifo_min=%" PRIu32 " last brg=0x%08" PRIx32
+             " raw=0x%08" PRIx32 " fifo=%" PRIu32 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32 " or brg=0x%08" PRIx32
+             " raw=0x%08" PRIx32 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
              this->dsi_stress_label_, this->dsi_stress_samples_, this->dsi_stress_nonzero_,
              this->dsi_stress_bridge_underrun_, this->dsi_stress_host_under_, this->dsi_stress_fifo_zero_,
              this->dsi_stress_fifo_min_ == UINT32_MAX ? 0 : this->dsi_stress_fifo_min_,
-             this->dsi_stress_last_bridge_status_, this->dsi_stress_last_bridge_raw_,
-             this->dsi_stress_last_fifo_depth_, this->dsi_stress_last_host_status0_,
-             this->dsi_stress_last_host_status1_, this->dsi_stress_or_bridge_status_,
-             this->dsi_stress_or_bridge_raw_, this->dsi_stress_or_host_status0_,
+             this->dsi_stress_last_bridge_status_, this->dsi_stress_last_bridge_raw_, this->dsi_stress_last_fifo_depth_,
+             this->dsi_stress_last_host_status0_, this->dsi_stress_last_host_status1_,
+             this->dsi_stress_or_bridge_status_, this->dsi_stress_or_bridge_raw_, this->dsi_stress_or_host_status0_,
              this->dsi_stress_or_host_status1_);
   }
   std::snprintf(this->dsi_stress_label_, sizeof(this->dsi_stress_label_), "%s", normalized_label);
-  std::snprintf(this->dsi_recent_stress_label_, sizeof(this->dsi_recent_stress_label_), "%s",
-                normalized_label);
+  std::snprintf(this->dsi_recent_stress_label_, sizeof(this->dsi_recent_stress_label_), "%s", normalized_label);
   this->dsi_recent_stress_ms_ = now;
   this->dsi_stress_until_ms_ = now + duration_ms;
   this->dsi_stress_last_log_ms_ = 0;
@@ -857,8 +844,7 @@ bool MipiDsi::wait_for_vblank_fifo_margin(uint32_t min_depth, uint32_t timeout_u
     }
 
     // Close the race between draining an old signal and a new frame ending.
-    const uint32_t recheck_age_us =
-        static_cast<uint32_t>(esp_timer_get_time()) - this->last_refresh_done_us_;
+    const uint32_t recheck_age_us = static_cast<uint32_t>(esp_timer_get_time()) - this->last_refresh_done_us_;
     if (recheck_age_us <= window_end_us)
       continue;
 
@@ -917,20 +903,88 @@ bool MipiDsi::is_frame_buffer_(const uint8_t *frame_buffer) const {
   return false;
 }
 
+void MipiDsi::record_direct_frame_trace_(char event, const uint8_t *frame_buffer) {
+  if (!this->direct_frame_trace_enabled_.load(std::memory_order_relaxed))
+    return;
+  uint8_t frame_index = 9;
+  for (uint8_t index = 0; index < MIPI_DSI_FRAME_BUFFER_COUNT; index++) {
+    if (this->frame_buffers_[index] == frame_buffer) {
+      frame_index = index;
+      break;
+    }
+  }
+  const uint32_t position = this->direct_frame_trace_position_.fetch_add(1, std::memory_order_relaxed);
+  if (position < DIRECT_FRAME_TRACE_CAPACITY) {
+    this->direct_frame_trace_events_[position].store(
+        static_cast<uint16_t>(static_cast<uint8_t>(event)) | (static_cast<uint16_t>(frame_index) << 8U),
+        std::memory_order_relaxed);
+  }
+}
+
+void MipiDsi::reset_direct_frame_trace() {
+  this->direct_frame_trace_enabled_.store(false, std::memory_order_release);
+  this->direct_frame_trace_position_.store(0, std::memory_order_relaxed);
+  this->direct_frame_trace_queued_.store(0, std::memory_order_relaxed);
+  this->direct_frame_trace_staged_.store(0, std::memory_order_relaxed);
+  this->direct_frame_trace_active_.store(0, std::memory_order_relaxed);
+  this->direct_frame_trace_rejected_.store(0, std::memory_order_relaxed);
+  for (auto &event : this->direct_frame_trace_events_)
+    event.store(0, std::memory_order_relaxed);
+  this->direct_frame_trace_enabled_.store(true, std::memory_order_release);
+}
+
+void MipiDsi::log_direct_frame_trace(const char *label) {
+  this->direct_frame_trace_enabled_.store(false, std::memory_order_release);
+  const uint32_t event_count =
+      std::min<uint32_t>(this->direct_frame_trace_position_.load(std::memory_order_acquire), DIRECT_FRAME_TRACE_CAPACITY);
+  char sequence[DIRECT_FRAME_TRACE_CAPACITY * 2 + 1]{};
+  size_t offset = 0;
+  for (uint32_t index = 0; index < event_count && offset + 2 < sizeof(sequence); index++) {
+    const uint16_t event = this->direct_frame_trace_events_[index].load(std::memory_order_relaxed);
+    sequence[offset++] = static_cast<char>(event & 0xFFU);
+    sequence[offset++] = static_cast<char>('0' + ((event >> 8U) & 0x0FU));
+  }
+  sequence[offset] = '\0';
+  ESP_LOGI(TAG, "frame trace %s: queued=%u staged=%u active=%u rejected=%u events=%s", label == nullptr ? "" : label,
+           static_cast<unsigned>(this->direct_frame_trace_queued_.load(std::memory_order_relaxed)),
+           static_cast<unsigned>(this->direct_frame_trace_staged_.load(std::memory_order_relaxed)),
+           static_cast<unsigned>(this->direct_frame_trace_active_.load(std::memory_order_relaxed)),
+           static_cast<unsigned>(this->direct_frame_trace_rejected_.load(std::memory_order_relaxed)), sequence);
+}
+
 uint8_t *MipiDsi::get_direct_render_frame_buffer(const uint8_t *exclude_a, const uint8_t *exclude_b) const {
   auto *active = this->active_frame_buffer_.load(std::memory_order_acquire);
   auto *queued = this->queued_frame_buffer_.load(std::memory_order_acquire);
   auto *staged = this->staged_frame_buffer_.load(std::memory_order_acquire);
+  auto *reserved = this->reserved_render_frame_buffer_.load(std::memory_order_acquire);
   for (auto *candidate : this->frame_buffers_) {
-    if (candidate != nullptr && candidate != active && candidate != queued && candidate != staged && candidate != exclude_a &&
-        candidate != exclude_b)
+    if (candidate != nullptr && candidate != active && candidate != queued && candidate != staged &&
+        candidate != reserved && candidate != exclude_a && candidate != exclude_b)
       return candidate;
   }
   return nullptr;
 }
 
+bool MipiDsi::reserve_direct_render_frame_buffer(uint8_t *frame_buffer) {
+  if (!this->is_frame_buffer_(frame_buffer) || frame_buffer == this->active_frame_buffer_.load(std::memory_order_acquire) ||
+      frame_buffer == this->queued_frame_buffer_.load(std::memory_order_acquire) ||
+      frame_buffer == this->staged_frame_buffer_.load(std::memory_order_acquire))
+    return false;
+
+  uint8_t *expected = nullptr;
+  return this->reserved_render_frame_buffer_.compare_exchange_strong(expected, frame_buffer,
+                                                                     std::memory_order_acq_rel);
+}
+
+void MipiDsi::release_direct_render_frame_buffer(uint8_t *frame_buffer) {
+  if (frame_buffer == nullptr)
+    return;
+  auto *expected = frame_buffer;
+  this->reserved_render_frame_buffer_.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
+}
+
 uint8_t *MipiDsi::wait_for_direct_render_frame_buffer(const uint8_t *exclude_a, const uint8_t *exclude_b,
-                                                       uint32_t timeout_ms) {
+                                                      uint32_t timeout_ms) {
   const TickType_t started = xTaskGetTickCount();
   const TickType_t timeout = std::max<TickType_t>(1, pdMS_TO_TICKS(timeout_ms));
   while (true) {
@@ -951,6 +1005,8 @@ bool MipiDsi::on_frame_buffer_staged_from_isr(esp_lcd_panel_handle_t panel, uint
   if (panel != this->handle_ || !this->is_frame_buffer_(frame_buffer))
     return false;
   this->staged_frame_buffer_.store(frame_buffer, std::memory_order_release);
+  this->direct_frame_trace_staged_.fetch_add(1, std::memory_order_relaxed);
+  this->record_direct_frame_trace_('S', frame_buffer);
   return false;
 }
 
@@ -960,6 +1016,8 @@ bool MipiDsi::on_frame_buffer_active_from_isr(esp_lcd_panel_handle_t panel, uint
 
   auto *previous = this->active_frame_buffer_.exchange(frame_buffer, std::memory_order_acq_rel);
   this->presented_frame_buffer_.store(frame_buffer, std::memory_order_release);
+  this->direct_frame_trace_active_.fetch_add(1, std::memory_order_relaxed);
+  this->record_direct_frame_trace_('A', frame_buffer);
   auto *staged = frame_buffer;
   this->staged_frame_buffer_.compare_exchange_strong(staged, nullptr, std::memory_order_acq_rel);
   const bool completed_queue = this->queued_frame_buffer_.load(std::memory_order_acquire) == frame_buffer;
@@ -995,9 +1053,205 @@ bool MipiDsi::wait_for_direct_frame_queue_idle(uint32_t timeout_ms) {
   return true;
 }
 
-bool MipiDsi::queue_direct_frame_buffer(uint8_t *frame_buffer, uint32_t timeout_ms, bool wait_for_active) {
-  if (!this->is_frame_buffer_(frame_buffer) || frame_buffer == this->active_frame_buffer_.load(std::memory_order_acquire))
+bool MipiDsi::begin_frame_buffer_session(uint32_t timeout_ms) {
+  if (this->frame_buffer_session_lock_ == nullptr ||
+      this->frame_buffer_session_active_.load(std::memory_order_acquire) ||
+      this->frame_buffers_[0] == nullptr || this->frame_buffers_[1] == nullptr || this->frame_buffers_[2] == nullptr ||
+      xSemaphoreTake(this->frame_buffer_session_lock_, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
     return false;
+  }
+
+  const TickType_t started = xTaskGetTickCount();
+  const TickType_t timeout = std::max<TickType_t>(1, pdMS_TO_TICKS(timeout_ms));
+  while (this->async_flush_pending_) {
+    if (xTaskGetTickCount() - started >= timeout) {
+      xSemaphoreGive(this->frame_buffer_session_lock_);
+      return false;
+    }
+    vTaskDelay(1);
+  }
+  const TickType_t elapsed = xTaskGetTickCount() - started;
+  if (elapsed >= timeout || !this->wait_for_direct_frame_queue_idle(pdTICKS_TO_MS(timeout - elapsed))) {
+    xSemaphoreGive(this->frame_buffer_session_lock_);
+    return false;
+  }
+
+  this->session_leased_frame_buffer_ = nullptr;
+  this->session_leased_writer_ = BufferWriter::CPU;
+  this->frame_buffer_session_generation_++;
+  if (this->frame_buffer_session_generation_ == 0)
+    this->frame_buffer_session_generation_++;
+  this->frame_buffer_session_active_.store(true, std::memory_order_release);
+  return true;
+}
+
+bool MipiDsi::acquire_frame_buffer(display::FrameBufferLease *lease, BufferWriter writer, uint32_t timeout_ms) {
+  if (lease == nullptr || !this->frame_buffer_session_active_.load(std::memory_order_acquire) ||
+      this->session_leased_frame_buffer_ != nullptr)
+    return false;
+
+  uint8_t *frame_buffer = this->wait_for_direct_render_frame_buffer(nullptr, nullptr, timeout_ms);
+  if (frame_buffer == nullptr)
+    return false;
+
+  size_t index = MIPI_DSI_FRAME_BUFFER_COUNT;
+  for (size_t candidate = 0; candidate < MIPI_DSI_FRAME_BUFFER_COUNT; candidate++) {
+    if (this->frame_buffers_[candidate] == frame_buffer) {
+      index = candidate;
+      break;
+    }
+  }
+  if (index == MIPI_DSI_FRAME_BUFFER_COUNT)
+    return false;
+
+  if (writer == BufferWriter::DMA && esp_ptr_external_ram(frame_buffer)) {
+    const esp_err_t error =
+        esp_cache_msync(frame_buffer, this->get_frame_buffer_size(), ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    if (error != ESP_OK) {
+      ESP_LOGW(TAG, "Framebuffer DMA ownership transfer failed: %s", esp_err_to_name(error));
+      return false;
+    }
+  }
+
+  this->session_leased_frame_buffer_ = frame_buffer;
+  this->session_leased_writer_ = writer;
+  *lease = {
+      .owner = this,
+      .data = frame_buffer,
+      .size = this->get_frame_buffer_size(),
+      .stride = this->get_frame_buffer_stride(),
+      .width = this->width_,
+      .height = this->height_,
+      .bitness = this->color_depth_,
+      .color_order = this->color_mode_,
+      .big_endian = false,
+      .writer = writer,
+      .index = index,
+      .generation = this->frame_buffer_session_generation_,
+  };
+  return true;
+}
+
+bool MipiDsi::get_active_frame_buffer(display::FrameBufferView *view, BufferReader reader) const {
+  if (view == nullptr || !this->frame_buffer_session_active_.load(std::memory_order_acquire))
+    return false;
+
+  const uint8_t *frame_buffer = this->active_frame_buffer_.load(std::memory_order_acquire);
+  size_t index = MIPI_DSI_FRAME_BUFFER_COUNT;
+  for (size_t candidate = 0; candidate < MIPI_DSI_FRAME_BUFFER_COUNT; candidate++) {
+    if (this->frame_buffers_[candidate] == frame_buffer) {
+      index = candidate;
+      break;
+    }
+  }
+  if (index == MIPI_DSI_FRAME_BUFFER_COUNT)
+    return false;
+
+  const BufferWriter writer = this->frame_buffer_writers_[index];
+  if (esp_ptr_external_ram(frame_buffer)) {
+    int flags = 0;
+    if (reader == BufferReader::CPU && writer == BufferWriter::DMA)
+      flags = ESP_CACHE_MSYNC_FLAG_DIR_M2C;
+    else if (reader == BufferReader::DMA && writer == BufferWriter::CPU)
+      flags = ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED;
+    if (flags != 0) {
+      const esp_err_t error =
+          esp_cache_msync(const_cast<uint8_t *>(frame_buffer), this->get_frame_buffer_size(), flags);
+      if (error != ESP_OK) {
+        ESP_LOGW(TAG, "Active framebuffer ownership transfer failed: %s", esp_err_to_name(error));
+        return false;
+      }
+    }
+  }
+
+  *view = {
+      .owner = this,
+      .data = frame_buffer,
+      .size = this->get_frame_buffer_size(),
+      .stride = this->get_frame_buffer_stride(),
+      .width = this->width_,
+      .height = this->height_,
+      .bitness = this->color_depth_,
+      .color_order = this->color_mode_,
+      .big_endian = false,
+      .writer = writer,
+      .index = index,
+      .generation = this->frame_buffer_session_generation_,
+  };
+  return true;
+}
+
+bool MipiDsi::present_frame_buffer_lease(display::FrameBufferLease *lease, uint32_t timeout_ms) {
+  if (!this->validate_frame_buffer_lease_(lease))
+    return false;
+
+  if (lease->writer == BufferWriter::CPU && esp_ptr_external_ram(lease->data)) {
+    const esp_err_t error =
+        esp_cache_msync(lease->data, lease->size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+    if (error != ESP_OK) {
+      ESP_LOGW(TAG, "Framebuffer display ownership transfer failed: %s", esp_err_to_name(error));
+      return false;
+    }
+  }
+
+  if (!this->queue_direct_frame_buffer(lease->data, timeout_ms, true, true))
+    return false;
+  this->frame_buffer_writers_[lease->index] = lease->writer;
+  this->session_leased_frame_buffer_ = nullptr;
+  this->session_leased_writer_ = BufferWriter::CPU;
+  this->clear_frame_buffer_lease_(lease);
+  return true;
+}
+
+bool MipiDsi::release_frame_buffer(display::FrameBufferLease *lease) {
+  if (!this->validate_frame_buffer_lease_(lease))
+    return false;
+  this->session_leased_frame_buffer_ = nullptr;
+  this->session_leased_writer_ = BufferWriter::CPU;
+  this->clear_frame_buffer_lease_(lease);
+  return true;
+}
+
+bool MipiDsi::end_frame_buffer_session(uint32_t timeout_ms) {
+  if (!this->frame_buffer_session_active_.load(std::memory_order_acquire) ||
+      this->session_leased_frame_buffer_ != nullptr ||
+      !this->wait_for_direct_frame_queue_idle(timeout_ms)) {
+    return false;
+  }
+  this->frame_buffer_session_active_.store(false, std::memory_order_release);
+  xSemaphoreGive(this->frame_buffer_session_lock_);
+  return true;
+}
+
+bool MipiDsi::validate_frame_buffer_lease_(const display::FrameBufferLease *lease) const {
+  return lease != nullptr && lease->owner == this && lease->data == this->session_leased_frame_buffer_ &&
+         lease->generation == this->frame_buffer_session_generation_ && lease->index < MIPI_DSI_FRAME_BUFFER_COUNT &&
+         this->frame_buffers_[lease->index] == lease->data;
+}
+
+void MipiDsi::clear_frame_buffer_lease_(display::FrameBufferLease *lease) const {
+  if (lease != nullptr)
+    *lease = {};
+}
+
+bool MipiDsi::queue_direct_frame_buffer(uint8_t *frame_buffer, uint32_t timeout_ms, bool wait_for_active,
+                                        bool frame_buffer_session_owner,
+                                        const uint8_t *expected_active_frame_buffer) {
+  // A framebuffer session owns all three DSI buffers. Reject independent
+  // snapshot/region producers while a camera or another external presenter is
+  // cycling them; otherwise a late PPA frame can replace part of the external
+  // image and leave LVGL with stale frame history when the session ends.
+  if (this->frame_buffer_session_active_.load(std::memory_order_acquire) && !frame_buffer_session_owner) {
+    this->direct_frame_trace_rejected_.fetch_add(1, std::memory_order_relaxed);
+    this->record_direct_frame_trace_('X', frame_buffer);
+    return false;
+  }
+  if (!this->is_frame_buffer_(frame_buffer) ||
+      frame_buffer == this->active_frame_buffer_.load(std::memory_order_acquire)) {
+    this->direct_frame_trace_rejected_.fetch_add(1, std::memory_order_relaxed);
+    this->record_direct_frame_trace_('X', frame_buffer);
+    return false;
+  }
 
   // Synchronous callers retain the original one-pending-frame contract.
   // Animation compositors can instead replace a not-yet-active frame: the
@@ -1018,6 +1272,18 @@ bool MipiDsi::queue_direct_frame_buffer(uint8_t *frame_buffer, uint32_t timeout_
     ~SubmissionUnlock() { xSemaphoreGive(lock); }
   } submission_unlock{this->draw_submission_lock_};
 
+  // Regional compositors build their target from a specific active base. A
+  // complete LVGL frame can be presented after the compositor's generation
+  // check but before it obtains this submission lock. Reject that stale target
+  // here, at the final serialized ownership boundary, instead of briefly
+  // showing old pixels over the newly presented native frame.
+  if (expected_active_frame_buffer != nullptr &&
+      this->active_frame_buffer_.load(std::memory_order_acquire) != expected_active_frame_buffer) {
+    this->direct_frame_trace_rejected_.fetch_add(1, std::memory_order_relaxed);
+    this->record_direct_frame_trace_('X', frame_buffer);
+    return false;
+  }
+
   while (this->io_lock_ != nullptr && xSemaphoreTake(this->io_lock_, 0) == pdTRUE) {
   }
   this->queued_frame_buffer_.store(frame_buffer, std::memory_order_release);
@@ -1035,6 +1301,8 @@ bool MipiDsi::queue_direct_frame_buffer(uint8_t *frame_buffer, uint32_t timeout_
     ESP_LOGW(TAG, "Queueing direct framebuffer failed: %s", esp_err_to_name(err));
     return false;
   }
+  this->direct_frame_trace_queued_.fetch_add(1, std::memory_order_relaxed);
+  this->record_direct_frame_trace_('Q', frame_buffer);
   // The DMA callback can make this buffer active between the initial check
   // and the patched IDF queue helper. Reconcile that narrow race immediately;
   // otherwise an already visible frame remains marked as pending forever.
@@ -1117,8 +1385,8 @@ void MipiDsi::log_dsi_diagnostics_() {
   if (underrun_total != this->last_underrun_total_) {
     const uint32_t now = millis();
     if (this->last_underrun_log_ms_ == 0 || now - this->last_underrun_log_ms_ >= DSI_DIAG_LOG_INTERVAL_MS) {
-      ESP_LOGW(TAG, "dsi underrun irq: total=%" PRIu32 " (+%" PRIu32 ") tick=%" PRIu32,
-               underrun_total, underrun_total - this->last_underrun_total_, dsi_underrun_last_tick);
+      ESP_LOGW(TAG, "dsi underrun irq: total=%" PRIu32 " (+%" PRIu32 ") tick=%" PRIu32, underrun_total,
+               underrun_total - this->last_underrun_total_, dsi_underrun_last_tick);
       this->last_underrun_total_ = underrun_total;
       this->last_underrun_log_ms_ = now;
     }
@@ -1131,8 +1399,7 @@ void MipiDsi::log_dsi_diagnostics_() {
     if (esphome_mipi_dsi_poll_dma_ring(this->handle_, &lookup_failures, &active_fb_index, &pending_fb_index) ==
             ESP_OK &&
         lookup_failures != this->last_dma_lli_lookup_failures_) {
-      ESP_LOGE(TAG, "DSI DMA ring lost descriptor ownership: total=%" PRIu32 " (+%" PRIu32
-                    ") active=%u pending=%u",
+      ESP_LOGE(TAG, "DSI DMA ring lost descriptor ownership: total=%" PRIu32 " (+%" PRIu32 ") active=%u pending=%u",
                lookup_failures, lookup_failures - this->last_dma_lli_lookup_failures_, active_fb_index,
                pending_fb_index);
       this->last_dma_lli_lookup_failures_ = lookup_failures;
@@ -1151,14 +1418,13 @@ void MipiDsi::log_dsi_diagnostics_() {
       if (esphome_mipi_dsi_poll_status(this->handle_, &bridge_status, &bridge_raw, &fifo_depth, &host_status0,
                                        &host_status1) == ESP_OK) {
         const bool interesting = bridge_status != 0 || bridge_raw != 0 || host_status0 != 0 || host_status1 != 0;
-        const bool changed = bridge_status != this->last_polled_bridge_status_ ||
-                             bridge_raw != this->last_polled_bridge_raw_ ||
-                             host_status0 != this->last_polled_host_status0_ ||
-                             host_status1 != this->last_polled_host_status1_;
+        const bool changed =
+            bridge_status != this->last_polled_bridge_status_ || bridge_raw != this->last_polled_bridge_raw_ ||
+            host_status0 != this->last_polled_host_status0_ || host_status1 != this->last_polled_host_status1_;
         if (interesting && changed) {
           ESP_LOGW(TAG,
-                   "dsi poll: brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32
-                   " host0=0x%08" PRIx32 " host1=0x%08" PRIx32 " dpi_under=%s",
+                   "dsi poll: brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32 " host0=0x%08" PRIx32
+                   " host1=0x%08" PRIx32 " dpi_under=%s",
                    bridge_status, bridge_raw, fifo_depth, host_status0, host_status1,
                    YESNO((host_status1 & DSI_DIAG_HOST_DPI_BUFF_PLD_UNDER) != 0));
           this->last_polled_bridge_status_ = bridge_status;
@@ -1182,22 +1448,19 @@ void MipiDsi::log_dsi_diagnostics_() {
 
     const uint32_t transfers = stats.rx_calls + stats.tx_calls;
     if (stats.guard_calls != 0 || transfers != 0) {
-      const uint32_t guard_avg_us = stats.guard_calls == 0
-                                        ? 0
-                                        : static_cast<uint32_t>(stats.guard_wait_total_us / stats.guard_calls);
-      const uint32_t rx_avg_us = stats.rx_calls == 0
-                                     ? 0
-                                     : static_cast<uint32_t>(stats.rx_time_total_us / stats.rx_calls);
-      const uint32_t tx_avg_us = stats.tx_calls == 0
-                                     ? 0
-                                     : static_cast<uint32_t>(stats.tx_time_total_us / stats.tx_calls);
+      const uint32_t guard_avg_us =
+          stats.guard_calls == 0 ? 0 : static_cast<uint32_t>(stats.guard_wait_total_us / stats.guard_calls);
+      const uint32_t rx_avg_us =
+          stats.rx_calls == 0 ? 0 : static_cast<uint32_t>(stats.rx_time_total_us / stats.rx_calls);
+      const uint32_t tx_avg_us =
+          stats.tx_calls == 0 ? 0 : static_cast<uint32_t>(stats.tx_time_total_us / stats.tx_calls);
       ESP_LOGW(TAG,
-               "sdio/dsi 5s: guard=%" PRIu32 " waited=%" PRIu32 " fail=%" PRIu32
-               " wait=%" PRIu32 "/%" PRIu32 "us rx=%" PRIu32 "/%" PRIu64 "B %" PRIu32 "/%" PRIu32
-               "us tx=%" PRIu32 "/%" PRIu64 "B %" PRIu32 "/%" PRIu32 "us",
-               stats.guard_calls, stats.guard_waited, stats.guard_failures, guard_avg_us,
-               stats.guard_wait_max_us, stats.rx_calls, stats.rx_bytes, rx_avg_us, stats.rx_time_max_us,
-               stats.tx_calls, stats.tx_bytes, tx_avg_us, stats.tx_time_max_us);
+               "sdio/dsi 5s: guard=%" PRIu32 " waited=%" PRIu32 " fail=%" PRIu32 " wait=%" PRIu32 "/%" PRIu32
+               "us rx=%" PRIu32 "/%" PRIu64 "B %" PRIu32 "/%" PRIu32 "us tx=%" PRIu32 "/%" PRIu64 "B %" PRIu32
+               "/%" PRIu32 "us",
+               stats.guard_calls, stats.guard_waited, stats.guard_failures, guard_avg_us, stats.guard_wait_max_us,
+               stats.rx_calls, stats.rx_bytes, rx_avg_us, stats.rx_time_max_us, stats.tx_calls, stats.tx_bytes,
+               tx_avg_us, stats.tx_time_max_us);
     }
   }
 #endif
@@ -1207,8 +1470,8 @@ void MipiDsi::log_dsi_diagnostics_() {
     const uint32_t max_interval_us = this->max_refresh_interval_us_;
     this->max_refresh_interval_us_ = this->last_refresh_interval_us_;
     ESP_LOGW(TAG,
-             "dsi frame late: total=%" PRIu32 " (+%" PRIu32 ") frame=%" PRIu32
-             "us max=%" PRIu32 "us expected=%" PRIu32 "us stress=%s",
+             "dsi frame late: total=%" PRIu32 " (+%" PRIu32 ") frame=%" PRIu32 "us max=%" PRIu32 "us expected=%" PRIu32
+             "us stress=%s",
              late_frames, late_frames - this->last_logged_refresh_late_count_, this->last_refresh_interval_us_,
              max_interval_us, this->expected_frame_interval_us_,
              this->dsi_stress_active_ ? this->dsi_stress_label_ : "none");
@@ -1218,11 +1481,10 @@ void MipiDsi::log_dsi_diagnostics_() {
 #if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
   if (this->dsi_stress_active_) {
     const bool expired = static_cast<int32_t>(now - this->dsi_stress_until_ms_) >= 0;
-    const bool anomaly = this->dsi_stress_nonzero_ != 0 || this->dsi_stress_bridge_underrun_ != 0 ||
-                         this->dsi_stress_host_under_ != 0;
-    const bool due = expired ||
-                     (anomaly && (this->dsi_stress_last_log_ms_ == 0 ||
-                                  now - this->dsi_stress_last_log_ms_ >= 250));
+    const bool anomaly =
+        this->dsi_stress_nonzero_ != 0 || this->dsi_stress_bridge_underrun_ != 0 || this->dsi_stress_host_under_ != 0;
+    const bool due =
+        expired || (anomaly && (this->dsi_stress_last_log_ms_ == 0 || now - this->dsi_stress_last_log_ms_ >= 250));
     if (due) {
       const uint32_t samples = this->dsi_stress_samples_;
       const uint32_t nonzero = this->dsi_stress_nonzero_;
@@ -1251,11 +1513,10 @@ void MipiDsi::log_dsi_diagnostics_() {
       this->dsi_stress_or_host_status1_ = 0;
       this->dsi_stress_last_log_ms_ = now;
       ESP_LOGW(TAG,
-               "dsi stress: %s%s samples=%" PRIu32 " nonzero=%" PRIu32 " brg_under=%" PRIu32
-               " host_under=%" PRIu32 " fifo_zero=%" PRIu32 " fifo_min=%" PRIu32
-               " last brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32
-               " host0=0x%08" PRIx32 " host1=0x%08" PRIx32
-               " or brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
+               "dsi stress: %s%s samples=%" PRIu32 " nonzero=%" PRIu32 " brg_under=%" PRIu32 " host_under=%" PRIu32
+               " fifo_zero=%" PRIu32 " fifo_min=%" PRIu32 " last brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32
+               " host0=0x%08" PRIx32 " host1=0x%08" PRIx32 " or brg=0x%08" PRIx32 " raw=0x%08" PRIx32
+               " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
                this->dsi_stress_label_, expired ? " done" : "", samples, nonzero, bridge_underrun, host_under,
                fifo_zero, fifo_min, last_bridge_status, last_bridge_raw, last_fifo, last_host_status0,
                last_host_status1, or_bridge_status, or_bridge_raw, or_host_status0, or_host_status1);
@@ -1294,11 +1555,10 @@ void MipiDsi::log_dsi_diagnostics_() {
       this->dsi_monitor_or_host_status1_ = 0;
       if (nonzero != 0 || bridge_underrun != 0 || host_under != 0) {
         ESP_LOGW(TAG,
-                 "dsi monitor: samples=%" PRIu32 " nonzero=%" PRIu32 " brg_under=%" PRIu32
-                 " host_under=%" PRIu32 " fifo_zero=%" PRIu32 " fifo_min=%" PRIu32
-                 " last brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32
-                 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32
-                 " or brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
+                 "dsi monitor: samples=%" PRIu32 " nonzero=%" PRIu32 " brg_under=%" PRIu32 " host_under=%" PRIu32
+                 " fifo_zero=%" PRIu32 " fifo_min=%" PRIu32 " last brg=0x%08" PRIx32 " raw=0x%08" PRIx32
+                 " fifo=%" PRIu32 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32 " or brg=0x%08" PRIx32 " raw=0x%08" PRIx32
+                 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32,
                  samples, nonzero, bridge_underrun, host_under, fifo_zero, fifo_min, last_bridge_status,
                  last_bridge_raw, last_fifo, last_host_status0, last_host_status1, or_bridge_status, or_bridge_raw,
                  or_host_status0, or_host_status1);
@@ -1325,9 +1585,8 @@ void MipiDsi::log_dsi_diagnostics_() {
   event.host_status1 = dsi_diag_events[index].host_status1;
 
   ESP_LOGW(TAG,
-           "dsi diag: events=%" PRIu32 " (+%" PRIu32 ") suppressed=%" PRIu32 " tick=%" PRIu32
-           " brg=0x%08" PRIx32 " raw=0x%08" PRIx32 " fifo=%" PRIu32 " host0=0x%08" PRIx32
-           " host1=0x%08" PRIx32 " dpi_under=%s",
+           "dsi diag: events=%" PRIu32 " (+%" PRIu32 ") suppressed=%" PRIu32 " tick=%" PRIu32 " brg=0x%08" PRIx32
+           " raw=0x%08" PRIx32 " fifo=%" PRIu32 " host0=0x%08" PRIx32 " host1=0x%08" PRIx32 " dpi_under=%s",
            count, count - this->last_diag_event_count_, dsi_diag_same_status_suppressed, event.tick,
            event.bridge_status, event.bridge_raw, event.fifo_depth, event.host_status0, event.host_status1,
            YESNO((event.host_status1 & DSI_DIAG_HOST_DPI_BUFF_PLD_UNDER) != 0));
@@ -1351,9 +1610,9 @@ void MipiDsi::draw_pixels_at(int x_start, int y_start, int w, int h, const uint8
 }
 
 bool MipiDsi::draw_pixels_at_async(int x_start, int y_start, int w, int h, const uint8_t *ptr,
-                                    display::ColorOrder order, display::ColorBitness bitness, bool big_endian,
-                                    int x_offset, int y_offset, int x_pad, AsyncFlushReadyCallback ready_callback,
-                                    void *ready_arg) {
+                                   display::ColorOrder order, display::ColorBitness bitness, bool big_endian,
+                                   int x_offset, int y_offset, int x_pad, AsyncFlushReadyCallback ready_callback,
+                                   void *ready_arg) {
   if (!this->async_lvgl_flush_ || this->async_flush_done_ == nullptr || this->async_flush_task_handle_ == nullptr ||
       ready_callback == nullptr)
     return false;
@@ -1401,8 +1660,8 @@ bool MipiDsi::draw_pixels_at_async(int x_start, int y_start, int w, int h, const
     esp_err_t sync_err = cache_writeback_external_for_dma(this->async_staging_buffer_, payload_size);
     sync_us = (uint32_t) (esp_timer_get_time() - sync_start_us);
     if (sync_err != ESP_OK) {
-      ESP_LOGW(TAG, "async staging cache sync failed: %s size=%zu w=%d h=%d row=%zu",
-               esp_err_to_name(sync_err), payload_size, w, h, row_bytes);
+      ESP_LOGW(TAG, "async staging cache sync failed: %s size=%zu w=%d h=%d row=%zu", esp_err_to_name(sync_err),
+               payload_size, w, h, row_bytes);
       return false;
     }
     flush_ptr = this->async_staging_buffer_;
@@ -1456,9 +1715,9 @@ bool MipiDsi::draw_pixels_at_async(int x_start, int y_start, int w, int h, const
   return true;
 }
 
-Dma2dRegionResult MipiDsi::draw_pixels_at_dma2d_blocking(int x_start, int y_start, int w, int h,
-                                                          const uint8_t *ptr, display::ColorOrder order,
-                                                          display::ColorBitness bitness, uint32_t queue_timeout_ms) {
+Dma2dRegionResult MipiDsi::draw_pixels_at_dma2d_blocking(int x_start, int y_start, int w, int h, const uint8_t *ptr,
+                                                         display::ColorOrder order, display::ColorBitness bitness,
+                                                         uint32_t queue_timeout_ms) {
   if (!this->async_lvgl_flush_ || !this->use_dma2d_ || this->blocking_region_done_ == nullptr)
     return Dma2dRegionResult::UNAVAILABLE;
 
@@ -1485,10 +1744,9 @@ Dma2dRegionResult MipiDsi::draw_pixels_at_dma2d_blocking(int x_start, int y_star
   return Dma2dRegionResult::COMPLETE;
 }
 
-Dma2dRegionResult MipiDsi::draw_pixels_at_dma2d_async(int x_start, int y_start, int w, int h,
-                                                       const uint8_t *ptr, display::ColorOrder order,
-                                                       display::ColorBitness bitness,
-                                                       AsyncFlushReadyCallback ready_callback, void *ready_arg) {
+Dma2dRegionResult MipiDsi::draw_pixels_at_dma2d_async(int x_start, int y_start, int w, int h, const uint8_t *ptr,
+                                                      display::ColorOrder order, display::ColorBitness bitness,
+                                                      AsyncFlushReadyCallback ready_callback, void *ready_arg) {
   if (!this->async_lvgl_flush_ || !this->use_dma2d_ || this->async_flush_done_ == nullptr ||
       this->async_flush_task_handle_ == nullptr || ready_callback == nullptr) {
     return Dma2dRegionResult::UNAVAILABLE;
@@ -1607,7 +1865,7 @@ bool MipiDsi::present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end
 }
 
 void MipiDsi::write_to_display_(int x_start, int y_start, int w, int h, const uint8_t *ptr, int x_offset, int y_offset,
-                                 int x_pad) {
+                                int x_pad) {
   esp_err_t err = ESP_OK;
   auto bytes_per_pixel = this->get_bytes_per_pixel_();
   auto stride = (x_offset + w + x_pad) * bytes_per_pixel;
@@ -1631,8 +1889,7 @@ void MipiDsi::write_to_display_(int x_start, int y_start, int w, int h, const ui
       return;
     }
     if (err == ESP_OK && x_start == 0 && y_start == 0 && w == static_cast<int>(this->width_) &&
-        h == static_cast<int>(this->height_) &&
-        this->is_frame_buffer_(ptr)) {
+        h == static_cast<int>(this->height_) && this->is_frame_buffer_(ptr)) {
       this->presented_frame_buffer_.store(const_cast<uint8_t *>(ptr), std::memory_order_release);
     }
 

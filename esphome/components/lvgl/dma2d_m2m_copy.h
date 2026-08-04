@@ -29,6 +29,11 @@ bool dma2d_m2m_compose_rgb888_circle(const uint8_t *background, int background_s
                                      int foreground_stride_pixels, int foreground_height, uint8_t *target,
                                      int target_width, int target_height, int center_x, int center_y, int radius);
 
+bool dma2d_m2m_compose_rgb888_circle_region(
+    const uint8_t *background, int background_stride_pixels, int background_height, const uint8_t *foreground,
+    int foreground_stride_pixels, int foreground_height, uint8_t *target, int target_width, int target_height,
+    int center_x, int center_y, int radius, int region_x, int region_y, int region_width, int region_height);
+
 bool dma2d_m2m_update_rgb888_circle(const uint8_t *background, int background_stride_pixels,
                                     int background_height, const uint8_t *foreground,
                                     int foreground_stride_pixels, int foreground_height, uint8_t *target,

@@ -69,6 +69,7 @@ extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_async(const uint8_t *backg
                                                             void *ready_arg);
 extern "C" void lvgl_esphome_direct_blit_rgb888_release(int x, int y, int width, int height);
 extern "C" bool lvgl_esphome_direct_regions_pause(bool paused, uint32_t timeout_ms);
+extern "C" uint32_t lvgl_esphome_get_direct_region_base_generation();
 extern "C" void lvgl_esphome_synchronize_direct_framebuffer_area(int x, int y, int width, int height);
 extern "C" bool lvgl_esphome_wait_for_direct_frame_presented(uint32_t timeout_ms);
 extern "C" bool lvgl_esphome_direct_blit_xrgb8888(const uint8_t *src, int src_stride, int x, int y, int width,
@@ -113,6 +114,7 @@ extern "C" bool lvgl_esphome_snapshot_swipe_rebase_edge(lv_obj_t *current, int w
 extern "C" void lvgl_esphome_snapshot_swipe_set_page_indicator(int page, int page_count);
 extern "C" void lvgl_esphome_snapshot_set_clock_text(const char *text);
 extern "C" void lvgl_esphome_snapshot_set_clock_font(const lv_font_t *font);
+extern "C" void lvgl_esphome_snapshot_sync_clock_widget(lv_obj_t *label);
 extern "C" void lvgl_esphome_snapshot_swipe_update(int current_x, int next_x);
 extern "C" void lvgl_esphome_snapshot_swipe_request_update(int current_x, int next_x);
 extern "C" void lvgl_esphome_snapshot_swipe_finish(int current_x, int next_x, uint32_t duration_ms, bool commit);
@@ -308,6 +310,8 @@ class LvglComponent : public PollingComponent {
 
   static void render_end_cb(lv_event_t *event);
   static void render_start_cb(lv_event_t *event);
+  static void direct_region_refresh_start_cb(lv_event_t *event);
+  static void direct_region_refresh_end_cb(lv_event_t *event);
   void dump_config() override;
   lv_display_t *get_disp() { return this->disp_; }
   lv_obj_t *get_screen_active() { return lv_display_get_screen_active(this->disp_); }
@@ -428,6 +432,8 @@ class LvglComponent : public PollingComponent {
   bool snapshot_present_current_frame();
   bool synchronize_direct_framebuffers();
   bool wait_for_direct_frame_presented(uint32_t timeout_ms);
+  void reset_direct_frame_trace();
+  void log_direct_frame_trace(const char *label);
   void realign_direct_buffer_after_manual_present(bool synchronize = true);
   void synchronize_direct_framebuffer_area(int x, int y, int width, int height);
   void synchronize_direct_framebuffer_rows(int y, int height);
@@ -486,10 +492,13 @@ class LvglComponent : public PollingComponent {
                                       int foreground_x, int foreground_y, int x, int y, int width, int height,
                                       LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
   void direct_blit_rgb888_release(int x, int y, int width, int height);
+  bool direct_blit_rgb888_region_active(int x, int y, int width, int height);
   bool direct_regions_pause(bool paused, uint32_t timeout_ms);
+  uint32_t get_direct_region_base_generation() const;
   bool direct_blit_xrgb8888(const uint8_t *src, int src_stride, int x, int y, int width, int height);
   bool direct_blit_xrgb8888_coherent(const uint8_t *src, int src_stride, int x, int y, int width, int height);
   bool direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, int y, int width, int height);
+  bool render_area_rgb888(lv_obj_t *root, uint8_t *dst, int dst_stride, int x, int y, int width, int height);
 
  protected:
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
@@ -545,6 +554,11 @@ class LvglComponent : public PollingComponent {
   bool direct_region_compose_to_(const DirectRegionRequest *requests, size_t request_count, uint8_t *active,
                                  uint8_t *target);
   DirectRegionSlot *direct_region_find_slot_(int x, int y, int width, int height, bool create);
+  void direct_region_refresh_begin_();
+  void direct_region_refresh_allow_compositor_();
+  void direct_region_refresh_relock_();
+  void direct_region_sync_to_lvgl_target_();
+  void direct_region_refresh_end_();
 #endif
   void draw_end_();
   // Not checking for non-null callback since the
@@ -621,8 +635,14 @@ class LvglComponent : public PollingComponent {
   std::atomic<uint32_t> direct_region_copy_submitted_{0};
   std::atomic<uint32_t> direct_region_blend_submitted_{0};
   std::atomic<uint32_t> direct_region_submit_busy_{0};
+  std::atomic<uint32_t> direct_region_concurrent_refreshes_{0};
+  std::atomic<uint32_t> direct_region_refresh_fallbacks_{0};
+  std::atomic<uint32_t> direct_region_refresh_relock_us_{0};
+  std::atomic<uint32_t> direct_region_refresh_relock_max_us_{0};
   std::atomic<bool> direct_region_paused_{false};
   uint32_t direct_region_buffer_generation_[3]{};
+  bool direct_region_refresh_locked_{false};
+  uint8_t *direct_region_refresh_reserved_buffer_{nullptr};
 #endif
 #ifdef USE_ESP32
   static constexpr size_t PARTIAL_COMPOSITOR_MAX_DIRTY_AREAS = 48;
@@ -652,6 +672,7 @@ class LvglComponent : public PollingComponent {
   LvglNavigation *navigation_{};
   bool big_endian_{};
   std::atomic<bool> frame_buffer_presentation_active_{false};
+  bool frame_buffer_presentation_paused_regions_{false};
   lv_timer_t *frame_buffer_presentation_refr_timer_{};
   uint32_t frame_buffer_presentation_refr_period_{LV_DEF_REFR_PERIOD};
   std::map<lv_group_t *, lv_obj_t *> focus_marks_{};

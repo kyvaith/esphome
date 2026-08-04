@@ -61,6 +61,7 @@ class MaterialDirectMarquee : public Component {
   std::atomic<int> pending_x_{INT_MIN};
   std::atomic<bool> active_{false};
   bool cleanup_pending_{false};
+  bool handoff_pending_{false};
   std::atomic<bool> present_in_flight_{false};
   std::atomic<bool> present_complete_{false};
 #ifdef USE_ESP32
@@ -79,6 +80,7 @@ class MaterialDirectMarquee : public Component {
   uint32_t perf_dma_max_us_{0};
   int64_t perf_window_start_us_{0};
   int64_t present_started_us_{0};
+  int64_t handoff_deadline_us_{0};
 #endif
 };
 

@@ -23,6 +23,23 @@ enum Transparency {
 
 class Image;
 
+enum class JpegFrameResult : uint8_t {
+  UNSUPPORTED,
+  CONSUMED,
+  DROPPED,
+};
+
+/** Optional sink for encoded JPEG frames produced by a runtime image source.
+ *
+ * A sink can decode directly into display-owned memory and avoid allocating
+ * and copying an intermediate RGB image. The JPEG data is valid only for the
+ * duration of consume_jpeg_frame().
+ */
+class JpegFrameConsumer {
+ public:
+  virtual JpegFrameResult consume_jpeg_frame(const uint8_t *data, size_t size) = 0;
+};
+
 /** A stable view of an image's pixel buffer.
  *
  * Runtime image implementations may hold an internal read lock until the
@@ -54,6 +71,7 @@ class Image : public display::BaseImage {
   virtual BufferWriter get_buffer_writer() const { return BufferWriter::CPU; }
   virtual bool acquire_buffer(ImageBufferLease *lease) const;
   virtual bool release_buffer(ImageBufferLease *lease) const;
+  virtual bool set_jpeg_frame_consumer(JpegFrameConsumer *consumer) { return false; }
   ImageType get_type() const;
 
   int get_bpp() const { return this->bpp_; }

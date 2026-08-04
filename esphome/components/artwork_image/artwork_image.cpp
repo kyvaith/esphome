@@ -155,6 +155,10 @@ static const char *artwork_task_stack_location(const void *stack) {
 #define CONFIG_ESPHOME_ARTWORK_PPA_SRM_BAND_HEIGHT 8
 #endif
 
+#ifndef CONFIG_ESPHOME_ARTWORK_PPA_BLEND_BAND_HEIGHT
+#define CONFIG_ESPHOME_ARTWORK_PPA_BLEND_BAND_HEIGHT 32
+#endif
+
 #if defined(USE_ESP_IDF) && defined(CONFIG_SOC_PPA_SUPPORTED)
 #if CONFIG_ESPHOME_ARTWORK_PPA_SRM_BURST_LENGTH == 128
 #define ARTWORK_PPA_SRM_BURST_LENGTH PPA_DATA_BURST_LENGTH_128
@@ -173,6 +177,7 @@ static const char *artwork_task_stack_location(const void *stack) {
 
 extern "C" void esphome_mipi_dsi_mark_stress(const char *label, uint32_t duration_ms) __attribute__((weak));
 extern "C" bool esphome_mipi_dsi_wait_fifo_margin(uint32_t min_depth, uint32_t timeout_us) __attribute__((weak));
+extern "C" uint32_t lvgl_esphome_get_perf_logging_enabled(void) __attribute__((weak));
 
 #include "image_decoder.h"
 
@@ -1688,6 +1693,7 @@ bool ArtworkImage::apply_decode_buffer_scrim_() {
   const uint8_t scrim_green = static_cast<uint8_t>((this->scrim_color_ >> 8) & 0xFFU);
   const uint8_t scrim_blue = static_cast<uint8_t>(this->scrim_color_ & 0xFFU);
   const int bytes_per_pixel = this->get_bpp() / 8;
+  int cpu_start_y = 0;
 
 #if defined(USE_ESP_IDF) && defined(CONFIG_SOC_PPA_SUPPORTED) && defined(USE_ESP32_JPEG)
   const size_t buffer_size = this->get_decode_buffer_size_();
@@ -1700,18 +1706,24 @@ bool ArtworkImage::apply_decode_buffer_scrim_() {
     cfg.in_bg.pic_w = this->decode_buffer_width_;
     cfg.in_bg.pic_h = this->decode_buffer_height_;
     cfg.in_bg.block_w = this->decode_buffer_width_;
-    cfg.in_bg.block_h = this->decode_buffer_height_;
+    cfg.in_bg.block_h = 0;
+    cfg.in_bg.block_offset_x = 0;
+    cfg.in_bg.block_offset_y = 0;
     cfg.in_bg.blend_cm = PPA_BLEND_COLOR_MODE_RGB565;
     cfg.in_fg.buffer = artwork_ppa_alpha_mask;
     cfg.in_fg.pic_w = this->decode_buffer_width_;
     cfg.in_fg.pic_h = this->decode_buffer_height_;
     cfg.in_fg.block_w = this->decode_buffer_width_;
-    cfg.in_fg.block_h = this->decode_buffer_height_;
+    cfg.in_fg.block_h = 0;
+    cfg.in_fg.block_offset_x = 0;
+    cfg.in_fg.block_offset_y = 0;
     cfg.in_fg.blend_cm = PPA_BLEND_COLOR_MODE_A8;
     cfg.out.buffer = this->decode_buffer_;
     cfg.out.buffer_size = buffer_size;
     cfg.out.pic_w = this->decode_buffer_width_;
     cfg.out.pic_h = this->decode_buffer_height_;
+    cfg.out.block_offset_x = 0;
+    cfg.out.block_offset_y = 0;
     cfg.out.blend_cm = PPA_BLEND_COLOR_MODE_RGB565;
     cfg.bg_alpha_update_mode = PPA_ALPHA_FIX_VALUE;
     cfg.bg_alpha_fix_val = 0xFF;
@@ -1723,14 +1735,39 @@ bool ArtworkImage::apply_decode_buffer_scrim_() {
     cfg.mode = PPA_TRANS_MODE_BLOCKING;
 
     mark_display_stress("artwork-scrim-ppa", 1000);
-    wait_for_display_fifo_margin("artwork-scrim-ppa");
     esp_err_t result = ESP_ERR_TIMEOUT;
+    const uint64_t ppa_start_us = esp_timer_get_time();
+    uint32_t band_count = 0;
+    const int ppa_band_height = std::max(1, static_cast<int>(CONFIG_ESPHOME_ARTWORK_PPA_BLEND_BAND_HEIGHT));
     // Multiple artwork sources can finish concurrently. A PPA client with one
     // transaction descriptor otherwise returns ESP_FAIL immediately, which used
     // to trigger a multi-second full-frame CPU blend on the ESPHome loop task.
     if (xSemaphoreTake(artwork_ppa_blend_mutex, pdMS_TO_TICKS(250)) == pdTRUE) {
-      result = ppa_do_blend(artwork_ppa_blend_client, &cfg);
+      result = ESP_OK;
+      for (int y = 0; y < this->decode_buffer_height_; y += ppa_band_height) {
+        const int rows = std::min(ppa_band_height, this->decode_buffer_height_ - y);
+        cfg.in_bg.block_h = rows;
+        cfg.in_bg.block_offset_y = y;
+        cfg.in_fg.block_h = rows;
+        cfg.in_fg.block_offset_y = y;
+        cfg.out.block_offset_y = y;
+        wait_for_display_fifo_margin("artwork-scrim-ppa");
+        result = ppa_do_blend(artwork_ppa_blend_client, &cfg);
+        if (result != ESP_OK)
+          break;
+        cpu_start_y = y + rows;
+        band_count++;
+        // End the PPA transaction at every band so the display's regional
+        // compositor can submit a wave or marquee frame between artwork rows.
+        taskYIELD();
+      }
       xSemaphoreGive(artwork_ppa_blend_mutex);
+    }
+    if (lvgl_esphome_get_perf_logging_enabled != nullptr && lvgl_esphome_get_perf_logging_enabled() != 0) {
+      ESP_LOGI(TAG, "perf artwork scrim: %dx%d bands=%u/%u elapsed=%lluus result=%s", this->decode_buffer_width_,
+               this->decode_buffer_height_, static_cast<unsigned>(band_count),
+               static_cast<unsigned>((this->decode_buffer_height_ + ppa_band_height - 1) / ppa_band_height),
+               static_cast<unsigned long long>(esp_timer_get_time() - ppa_start_us), esp_err_to_name(result));
     }
     if (result == ESP_OK) {
       this->decode_buffer_written_by_dma_ = true;
@@ -1739,7 +1776,10 @@ bool ArtworkImage::apply_decode_buffer_scrim_() {
       log_slow_artwork_stage("scrim-buffer-ppa", start);
       return true;
     }
-    ESP_LOGW(TAG, "Artwork PPA scrim failed: %s; using CPU fallback", esp_err_to_name(result));
+    if (cpu_start_y > 0)
+      this->decode_buffer_written_by_dma_ = true;
+    ESP_LOGW(TAG, "Artwork PPA scrim failed after %d rows: %s; finishing with CPU fallback", cpu_start_y,
+             esp_err_to_name(result));
   }
 #endif
 
@@ -1752,7 +1792,7 @@ bool ArtworkImage::apply_decode_buffer_scrim_() {
   }
 
   mark_display_stress("artwork-scrim", 1500);
-  for (int y = 0; y < this->decode_buffer_height_; y++) {
+  for (int y = cpu_start_y; y < this->decode_buffer_height_; y++) {
     if ((y & 7) == 0) {
       wait_for_display_fifo_margin("artwork-scrim");
 #ifdef USE_ESP_IDF

@@ -317,6 +317,78 @@ bool dma2d_m2m_compose_rgb888_circle(const uint8_t *background, int background_s
 #endif
 }
 
+bool dma2d_m2m_compose_rgb888_circle_region(
+    const uint8_t *background, int background_stride_pixels, int background_height, const uint8_t *foreground,
+    int foreground_stride_pixels, int foreground_height, uint8_t *target, int target_width, int target_height,
+    int center_x, int center_y, int radius, int region_x, int region_y, int region_width, int region_height) {
+#if defined(USE_ESP32) && defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (background == nullptr || foreground == nullptr || target == nullptr || background_stride_pixels < target_width ||
+      foreground_stride_pixels < target_width || background_height < target_height ||
+      foreground_height < target_height || target_width <= 0 || target_height <= 0 || radius < 0 || region_x < 0 ||
+      region_y < 0 || region_width <= 0 || region_height <= 0 || region_x + region_width > target_width ||
+      region_y + region_height > target_height || !initialize_context()) {
+    return false;
+  }
+  if (xSemaphoreTake(context.lock, pdMS_TO_TICKS(20)) != pdTRUE)
+    return false;
+
+  context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH;
+  size_t descriptor_count = 0;
+  bool complete = true;
+
+  auto flush_batch = [&]() {
+    if (descriptor_count == 0 || !complete)
+      return;
+    complete = run_transaction_locked(descriptor_count, pdMS_TO_TICKS(100));
+    descriptor_count = 0;
+  };
+  auto add_span = [&](const uint8_t *source, int source_stride_pixels, int source_height, int y, int x, int width) {
+    if (!complete || width <= 0)
+      return;
+    if (descriptor_count == DMA2D_MAX_BATCH_SPANS)
+      flush_batch();
+    if (!complete)
+      return;
+    init_descriptor(&context.tx_descriptors[descriptor_count], const_cast<uint8_t *>(source), source_stride_pixels,
+                    source_height, x, y, width, 1);
+    init_descriptor(&context.rx_descriptors[descriptor_count], target, target_width, target_height, x, y, width, 1);
+    descriptor_count++;
+  };
+
+  const int region_x2 = region_x + region_width - 1;
+  const int region_y2 = region_y + region_height - 1;
+  const int radius_sq = radius * radius;
+  for (int y = region_y; y <= region_y2 && complete; y++) {
+    int foreground_x1 = region_x;
+    int foreground_x2 = region_x - 1;
+    if (radius > 0) {
+      const int dy = y - center_y;
+      if (dy >= -radius && dy <= radius) {
+        const int span = static_cast<int>(integer_sqrt(static_cast<uint32_t>(radius_sq - dy * dy)));
+        foreground_x1 = std::max(region_x, center_x - span);
+        foreground_x2 = std::min(region_x2, center_x + span);
+      }
+    }
+
+    if (foreground_x2 < foreground_x1) {
+      add_span(background, background_stride_pixels, background_height, y, region_x, region_width);
+      continue;
+    }
+    add_span(background, background_stride_pixels, background_height, y, region_x, foreground_x1 - region_x);
+    add_span(foreground, foreground_stride_pixels, foreground_height, y, foreground_x1,
+             foreground_x2 - foreground_x1 + 1);
+    add_span(background, background_stride_pixels, background_height, y, foreground_x2 + 1,
+             region_x2 - foreground_x2);
+  }
+  flush_batch();
+  context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH;
+  xSemaphoreGive(context.lock);
+  return complete;
+#else
+  return false;
+#endif
+}
+
 bool dma2d_m2m_update_rgb888_circle(const uint8_t *background, int background_stride_pixels,
                                     int background_height, const uint8_t *foreground,
                                     int foreground_stride_pixels, int foreground_height, uint8_t *target,

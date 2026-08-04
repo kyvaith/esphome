@@ -15,6 +15,7 @@ DEPENDENCIES = ["lvgl"]
 MULTI_CONF = True
 
 CONF_DIRECT = "direct"
+CONF_DIRECT_JPEG = "direct_jpeg"
 CONF_CONTINUOUS = "continuous"
 CONF_FADE_THROUGH_BLACK = "fade_through_black"
 CONF_FRAME_INTERVAL = "frame_interval"
@@ -68,6 +69,10 @@ def _validate_zoom(config):
         raise cv.Invalid(f"{CONF_ZOOM_END} must not be lower than {CONF_ZOOM_START}")
     if config[CONF_DIRECT] and CONF_SOURCE not in config:
         raise cv.Invalid(f"{CONF_SOURCE} is required when {CONF_DIRECT} is enabled")
+    if config[CONF_DIRECT_JPEG]:
+        if not config[CONF_DIRECT]:
+            raise cv.Invalid(f"{CONF_DIRECT_JPEG} requires {CONF_DIRECT}: true")
+        cv.requires_component("esp32_jpeg")(config)
     if config[CONF_DIRECT] and config[CONF_ZOOM_END] != config[CONF_ZOOM_START]:
         raise cv.Invalid(
             "Direct image presentation currently supports panning at a fixed zoom only"
@@ -83,6 +88,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_WIDGET): cv.use_id(lv_image_t),
             cv.Optional(CONF_SOURCE): cv.use_id(Image_),
             cv.Optional(CONF_DIRECT, default=False): cv.boolean,
+            cv.Optional(CONF_DIRECT_JPEG, default=False): cv.boolean,
             cv.Optional(CONF_CONTINUOUS, default=False): cv.boolean,
             cv.Optional(
                 CONF_PHASE_DURATION, default="18s"
@@ -120,6 +126,7 @@ async def to_code(config):
     cg.add(var.set_phase_duration(config[CONF_PHASE_DURATION].total_milliseconds))
     cg.add(var.set_frame_interval(config[CONF_FRAME_INTERVAL].total_milliseconds))
     cg.add(var.set_direct(config[CONF_DIRECT]))
+    cg.add(var.set_direct_jpeg(config[CONF_DIRECT_JPEG]))
     cg.add(var.set_continuous(config[CONF_CONTINUOUS]))
     cg.add(
         var.set_zoom(

@@ -7,9 +7,12 @@
 #include "lvgl_navigation.h"
 
 #include "core/lv_obj_class_private.h"
+#include "core/lv_obj_draw_private.h"
 #include "core/lv_refr.h"
+#include "core/lv_refr_private.h"
 #include "display/lv_display_private.h"
 #include "draw/lv_draw_buf_private.h"
+#include "draw/lv_draw_private.h"
 #include "misc/lv_ll.h"
 
 #include <atomic>
@@ -329,14 +332,19 @@ static volatile uint32_t s_swipe_logging_enabled = 0;
 static volatile bool s_snapshot_swipe_active = false;
 static volatile bool s_snapshot_direct_active = false;
 static bool s_snapshot_app_open_frame_held = false;
+static bool s_snapshot_app_regions_paused = false;
+static LvglComponent *s_snapshot_app_regions_component = nullptr;
 static volatile int s_snapshot_page_indicator_page = 0;
 static volatile int s_snapshot_page_indicator_count = 0;
 static char s_snapshot_clock_text[8] = "9:30";
 static const lv_font_t *s_snapshot_clock_font = nullptr;
 static lv_draw_buf_t *s_snapshot_clock_glyph_buffer = nullptr;
+static lv_area_t s_snapshot_clock_text_area{};
+static bool s_snapshot_clock_text_area_valid = false;
 
 static constexpr int SNAPSHOT_PAGE_INDICATOR_Y = 716;
 static constexpr int SNAPSHOT_PAGE_INDICATOR_H = 10;
+static constexpr int SNAPSHOT_CLOCK_W = 180;
 static constexpr int SNAPSHOT_CLOCK_Y = 10;
 static constexpr int SNAPSHOT_CLOCK_H = 52;
 
@@ -381,7 +389,13 @@ static bool snapshot_draw_clock_rgb888(uint8_t *buffer, int width, int height) {
 
   lv_color_t *pixels = reinterpret_cast<lv_color_t *>(buffer);
   int pen_x = (width - text_width) / 2;
-  const int line_y = SNAPSHOT_CLOCK_Y + (SNAPSHOT_CLOCK_H - s_snapshot_clock_font->line_height) / 2;
+  int line_y = SNAPSHOT_CLOCK_Y + (SNAPSHOT_CLOCK_H - s_snapshot_clock_font->line_height) / 2;
+  if (s_snapshot_clock_text_area_valid) {
+    const int area_width = lv_area_get_width(&s_snapshot_clock_text_area);
+    const int area_height = lv_area_get_height(&s_snapshot_clock_text_area);
+    pen_x = s_snapshot_clock_text_area.x1 + (area_width - text_width) / 2;
+    line_y = s_snapshot_clock_text_area.y1 + (area_height - s_snapshot_clock_font->line_height) / 2;
+  }
   for (int i = 0; i < glyph_count; i++) {
     auto &glyph = glyphs[i];
     const auto *draw_buf =
@@ -533,6 +547,7 @@ struct SnapshotAppFrameMetrics {
   uint32_t cache_sync_us{0};
   uint32_t ppa_us{0};
   uint32_t present_us{0};
+  uint32_t signature{0};
 };
 
 static SnapshotAppFrameMetrics s_snapshot_app_last_frame_metrics;
@@ -1399,8 +1414,30 @@ void LvglComponent::render_start_cb(lv_event_t *event) {
   ESP_LOGVV(TAG, "Draw start");
   auto *comp = static_cast<LvglComponent *>(lv_event_get_user_data(event));
   comp->direct_dirty_sync_after_lvgl_copy_();
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  comp->direct_region_sync_to_lvgl_target_();
+  comp->direct_region_refresh_allow_compositor_();
+#endif
   if (comp->draw_start_callback_ != nullptr)
     comp->draw_start_();
+}
+
+void LvglComponent::direct_region_refresh_start_cb(lv_event_t *event) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  auto *component = static_cast<LvglComponent *>(lv_event_get_user_data(event));
+  component->direct_region_refresh_begin_();
+#else
+  (void) event;
+#endif
+}
+
+void LvglComponent::direct_region_refresh_end_cb(lv_event_t *event) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  auto *component = static_cast<LvglComponent *>(lv_event_get_user_data(event));
+  component->direct_region_refresh_end_();
+#else
+  (void) event;
+#endif
 }
 
 lv_event_code_t lv_update_event;  // NOLINT
@@ -1451,18 +1488,40 @@ bool LvglComponent::begin_frame_buffer_presentation(uint32_t timeout_ms) {
     return false;
   }
 
+  lv_lock();
   this->frame_buffer_presentation_refr_timer_ = lv_display_get_refr_timer(this->disp_);
   if (this->frame_buffer_presentation_refr_timer_ == nullptr) {
+    lv_unlock();
     this->frame_buffer_presentation_active_.store(false, std::memory_order_release);
     return false;
   }
 
   lv_timer_set_period(this->frame_buffer_presentation_refr_timer_, 5 * 60 * 1000);
   lv_timer_reset(this->frame_buffer_presentation_refr_timer_);
-  if (!this->displays_[0]->begin_frame_buffer_session(timeout_ms)) {
+  lv_unlock();
+
+  this->frame_buffer_presentation_paused_regions_ =
+      !this->direct_region_paused_.load(std::memory_order_acquire);
+  if (this->frame_buffer_presentation_paused_regions_ && !this->direct_regions_pause(true, timeout_ms)) {
+    this->direct_regions_pause(false, 0);
+    this->frame_buffer_presentation_paused_regions_ = false;
+    lv_lock();
     lv_timer_set_period(this->frame_buffer_presentation_refr_timer_, this->frame_buffer_presentation_refr_period_);
     lv_timer_ready(this->frame_buffer_presentation_refr_timer_);
     this->frame_buffer_presentation_refr_timer_ = nullptr;
+    lv_unlock();
+    this->frame_buffer_presentation_active_.store(false, std::memory_order_release);
+    return false;
+  }
+  if (!this->displays_[0]->begin_frame_buffer_session(timeout_ms)) {
+    lv_lock();
+    lv_timer_set_period(this->frame_buffer_presentation_refr_timer_, this->frame_buffer_presentation_refr_period_);
+    lv_timer_ready(this->frame_buffer_presentation_refr_timer_);
+    this->frame_buffer_presentation_refr_timer_ = nullptr;
+    lv_unlock();
+    if (this->frame_buffer_presentation_paused_regions_)
+      this->direct_regions_pause(false, 0);
+    this->frame_buffer_presentation_paused_regions_ = false;
     this->frame_buffer_presentation_active_.store(false, std::memory_order_release);
     return false;
   }
@@ -1486,12 +1545,28 @@ bool LvglComponent::release_presentation_frame(display::FrameBufferLease *lease)
 }
 
 bool LvglComponent::end_frame_buffer_presentation(uint32_t timeout_ms) {
-  if (!this->frame_buffer_presentation_active_.load(std::memory_order_acquire) || this->displays_.size() != 1 ||
-      !this->displays_[0]->end_frame_buffer_session(timeout_ms)) {
+  if (!this->frame_buffer_presentation_active_.load(std::memory_order_acquire) || this->displays_.size() != 1)
+    return false;
+
+  display::FrameBufferView final_frame;
+  const bool have_final_frame =
+      this->direct_mode_active_ &&
+      this->displays_[0]->get_active_frame_buffer(&final_frame, BufferReader::CPU);
+  lv_lock();
+  if (!this->displays_[0]->end_frame_buffer_session(timeout_ms)) {
+    lv_unlock();
     return false;
   }
 
   this->frame_buffer_presentation_active_.store(false, std::memory_order_release);
+  if (have_final_frame) {
+    // A DMA renderer can cycle through both LVGL buffers and the third DSI
+    // framebuffer. Rebase LVGL from the frame that actually reached the panel
+    // before partial invalidation resumes. get_active_frame_buffer() has
+    // already invalidated any stale CPU cache lines for a DMA-written source.
+    this->direct_last_flushed_buf_ = const_cast<uint8_t *>(final_frame.data);
+    this->realign_direct_buffer_after_manual_present();
+  }
   if (this->frame_buffer_presentation_refr_timer_ != nullptr) {
     lv_timer_set_period(this->frame_buffer_presentation_refr_timer_, this->frame_buffer_presentation_refr_period_);
     if (auto *screen = lv_display_get_screen_active(this->disp_); screen != nullptr)
@@ -1499,6 +1574,10 @@ bool LvglComponent::end_frame_buffer_presentation(uint32_t timeout_ms) {
     lv_timer_ready(this->frame_buffer_presentation_refr_timer_);
     this->frame_buffer_presentation_refr_timer_ = nullptr;
   }
+  lv_unlock();
+  if (this->frame_buffer_presentation_paused_regions_)
+    this->direct_regions_pause(false, 0);
+  this->frame_buffer_presentation_paused_regions_ = false;
   return true;
 }
 
@@ -1890,6 +1969,9 @@ void LvglComponent::flush_cb_(lv_display_t *disp_drv, const lv_area_t *area, uin
     }
 #endif
     if (this->direct_mode_active_) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+      this->direct_region_refresh_relock_();
+#endif
       this->direct_last_flushed_buf_ = color_p;
       this->direct_dirty_record_(area);
       // LVGL has already synchronized unchanged regions from the previous
@@ -2178,6 +2260,26 @@ bool LvglComponent::present_snapshot_render_buffer_(uint8_t *buffer, bool wait_f
   this->present_direct_render_buffer_(buffer);
   this->snapshot_last_presented_buf_ = buffer;
   return true;
+}
+
+void LvglComponent::reset_direct_frame_trace() {
+#ifdef USE_MIPI_DSI
+  if (this->displays_.size() == 1) {
+    auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+    if (mipi_display != nullptr)
+      mipi_display->reset_direct_frame_trace();
+  }
+#endif
+}
+
+void LvglComponent::log_direct_frame_trace(const char *label) {
+#ifdef USE_MIPI_DSI
+  if (this->displays_.size() == 1) {
+    auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+    if (mipi_display != nullptr)
+      mipi_display->log_direct_frame_trace(label);
+  }
+#endif
 }
 
 bool LvglComponent::snapshot_present_current_frame() {
@@ -2622,6 +2724,55 @@ bool LvglComponent::direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, i
 #endif
 }
 
+bool LvglComponent::render_area_rgb888(lv_obj_t *root, uint8_t *dst, int dst_stride, int x, int y, int width,
+                                       int height) {
+  if (root == nullptr || dst == nullptr || width <= 0 || height <= 0 || dst_stride < width * 3)
+    return false;
+
+  auto *display = lv_obj_get_display(root);
+  if (display == nullptr)
+    return false;
+  const int display_width = lv_display_get_horizontal_resolution(display);
+  const int display_height = lv_display_get_vertical_resolution(display);
+  if (x < 0 || y < 0 || x + width > display_width || y + height > display_height)
+    return false;
+
+  lv_obj_update_layout(root);
+  lv_draw_buf_t draw_buf{};
+  const size_t data_size = static_cast<size_t>(dst_stride) * height;
+  if (lv_draw_buf_init(&draw_buf, width, height, LV_COLOR_FORMAT_RGB888, dst_stride, dst, data_size) != LV_RESULT_OK)
+    return false;
+  lv_draw_buf_clear(&draw_buf, nullptr);
+
+  const lv_area_t area{x, y, x + width - 1, y + height - 1};
+  lv_layer_t layer;
+  lv_layer_init(&layer);
+  layer.draw_buf = &draw_buf;
+  layer.buf_area = area;
+  layer.color_format = LV_COLOR_FORMAT_RGB888;
+  layer._clip_area = area;
+  layer.phy_clip_area = area;
+
+  lv_draw_unit_send_event(nullptr, LV_EVENT_CHILD_CREATED, &layer);
+  auto *old_display = lv_refr_get_disp_refreshing();
+  auto *old_layer = display->layer_head;
+  display->layer_head = &layer;
+  lv_refr_set_disp_refreshing(display);
+
+  lv_obj_redraw(&layer, root);
+  layer.all_tasks_added = true;
+  while (layer.draw_task_head != nullptr) {
+    lv_draw_dispatch_wait_for_request();
+    lv_draw_dispatch();
+  }
+
+  display->layer_head = old_layer;
+  lv_refr_set_disp_refreshing(old_display);
+  lv_draw_unit_send_event(nullptr, LV_EVENT_SCREEN_LOAD_START, &layer);
+  lv_draw_unit_send_event(nullptr, LV_EVENT_CHILD_DELETED, &layer);
+  return true;
+}
+
 extern "C" bool lvgl_esphome_direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, int y, int width, int height) {
   auto *disp = lv_display_get_default();
   auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
@@ -2883,8 +3034,12 @@ bool LvglComponent::start_direct_region_compositor_() {
         static_cast<StackType_t *>(heap_caps_aligned_alloc(16, task_stack_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   }
   if (this->direct_region_task_stack_ != nullptr) {
+    // Keep display-cadence composition ahead of best-effort image decoders.
+    // Audio tasks run at higher priorities and remain able to pre-empt it.
+    constexpr UBaseType_t task_priority = 2;
     this->direct_region_task_handle_ =
-        xTaskCreateStaticPinnedToCore(direct_region_task_trampoline_, "lvgl_region", task_stack_size, this, 1,
+        xTaskCreateStaticPinnedToCore(direct_region_task_trampoline_, "lvgl_region", task_stack_size, this,
+                                      task_priority,
                                       this->direct_region_task_stack_, &this->direct_region_task_storage_, task_core);
   }
   if (this->direct_region_task_handle_ == nullptr) {
@@ -3007,6 +3162,136 @@ bool LvglComponent::direct_region_compose_to_(const DirectRegionRequest *request
   return true;
 }
 
+void LvglComponent::direct_region_refresh_begin_() {
+  if (s_region_srm_mutex == nullptr || this->direct_region_refresh_locked_ ||
+      this->direct_region_refresh_reserved_buffer_ != nullptr || this->disp_ == nullptr)
+    return;
+
+  // LVGL's DIRECT-mode synchronization and the independent PPA region
+  // compositor share the three physical DSI framebuffers. Own them for the
+  // complete LVGL refresh, beginning before refr_sync_areas() copies any CPU
+  // cache lines. Otherwise PPA can update a buffer while LVGL is copying or
+  // drawing it, and the later CPU writeback appears as short horizontal
+  // streaks or replaces the first application-transition frames.
+  if (xSemaphoreTake(s_region_srm_mutex, portMAX_DELAY) != pdTRUE)
+    return;
+  this->direct_region_refresh_locked_ = true;
+
+  if (this->displays_.size() != 1)
+    return;
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  const bool queue_idle = mipi_display != nullptr && mipi_display->wait_for_direct_frame_queue_idle(50);
+  auto *active = mipi_display == nullptr ? nullptr : mipi_display->get_presented_frame_buffer();
+  if (active == nullptr)
+    return;
+
+  this->direct_last_flushed_buf_ = active;
+  // If a regional frame currently occupies one of LVGL's two buffers, render
+  // into the other one. This mirrors LVGL's normal DIRECT-mode ownership before
+  // it calculates and synchronizes dirty areas.
+  this->realign_direct_buffer_after_manual_present(false);
+
+  // Keep LVGL's off-screen target out of the regional compositor's pool. Once
+  // refr_sync_areas() has completed, the compositor can continue animating on
+  // the other two DSI buffers while LVGL builds this native frame in parallel.
+  // If the queue does not settle or the target cannot be reserved, retain the
+  // previous coarse lock for this refresh.
+  if (queue_idle && this->disp_->buf_act != nullptr) {
+    auto *target = static_cast<uint8_t *>(this->disp_->buf_act->data);
+    if (mipi_display->reserve_direct_render_frame_buffer(target)) {
+      this->direct_region_refresh_reserved_buffer_ = target;
+      this->direct_region_concurrent_refreshes_.fetch_add(1, std::memory_order_relaxed);
+      return;
+    }
+  }
+  this->direct_region_refresh_fallbacks_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void LvglComponent::direct_region_refresh_allow_compositor_() {
+  if (this->direct_region_refresh_reserved_buffer_ == nullptr || !this->direct_region_refresh_locked_)
+    return;
+  this->direct_region_refresh_locked_ = false;
+  xSemaphoreGive(s_region_srm_mutex);
+}
+
+void LvglComponent::direct_region_refresh_relock_() {
+  if (this->direct_region_refresh_reserved_buffer_ == nullptr || this->direct_region_refresh_locked_ ||
+      s_region_srm_mutex == nullptr)
+    return;
+  const uint32_t started_us = micros();
+  if (xSemaphoreTake(s_region_srm_mutex, portMAX_DELAY) == pdTRUE) {
+    const uint32_t elapsed_us = micros() - started_us;
+    this->direct_region_refresh_relock_us_.fetch_add(elapsed_us, std::memory_order_relaxed);
+    uint32_t previous_max = this->direct_region_refresh_relock_max_us_.load(std::memory_order_relaxed);
+    while (elapsed_us > previous_max &&
+           !this->direct_region_refresh_relock_max_us_.compare_exchange_weak(previous_max, elapsed_us,
+                                                                             std::memory_order_relaxed)) {
+    }
+    this->direct_region_refresh_locked_ = true;
+  }
+}
+
+void LvglComponent::direct_region_sync_to_lvgl_target_() {
+  if (!this->direct_region_refresh_locked_ || this->disp_ == nullptr || this->disp_->buf_act == nullptr ||
+      this->disp_->buf_act->data == nullptr || this->displays_.size() != 1)
+    return;
+
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  auto *source = mipi_display == nullptr ? nullptr : mipi_display->get_presented_frame_buffer();
+  auto *target = static_cast<uint8_t *>(this->disp_->buf_act->data);
+  if (source == nullptr || target == nullptr || source == target)
+    return;
+
+  // Regional PPA frames may become the displayed third DSI buffer while
+  // LVGL's two DIRECT buffers still contain an older animation phase. LVGL's
+  // normal refr_sync_areas() only copies its own invalidated areas, so a clock
+  // or label refresh could otherwise present that stale phase for one frame.
+  // Rebase only the live regional rectangles after LVGL has synchronized its
+  // dirty areas and before native drawing starts. This preserves the current
+  // wave/marquee without paying for a full-screen copy.
+  if (target == mipi_display->get_queued_frame_buffer() || target == mipi_display->get_staged_frame_buffer()) {
+    ESP_LOGW(TAG, "direct regions: LVGL selected a DSI-owned target; keeping the current frame");
+    return;
+  }
+
+  constexpr size_t bytes_per_pixel = 3;
+  const size_t frame_size = mipi_display->get_frame_buffer_size();
+  const size_t frame_stride = mipi_display->get_frame_buffer_stride();
+  for (const auto &slot : this->direct_region_slots_) {
+    if (!slot.valid)
+      continue;
+
+    auto *target_region = target + static_cast<size_t>(slot.y) * frame_stride +
+                          static_cast<size_t>(slot.x) * bytes_per_pixel;
+    const size_t target_span = static_cast<size_t>(slot.height - 1) * frame_stride +
+                               static_cast<size_t>(slot.width) * bytes_per_pixel;
+    // refr_sync_areas() has already been written back by
+    // direct_dirty_sync_after_lvgl_copy_(). Invalidate the old cached view of
+    // this rectangle before PPA replaces it, so a later CPU access cannot
+    // write an obsolete animation phase back over the DMA result.
+    if (lvgl_cache_msync_external_result(target_region, target_span, ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK ||
+        !this->direct_region_ppa_copy_(source, this->width_, this->height_, slot.x, slot.y, slot.width, slot.height,
+                                       target, frame_size, this->width_, this->height_, slot.x, slot.y, false, false)) {
+      ESP_LOGW(TAG, "direct regions: failed to rebase %dx%d region at %d,%d", slot.width, slot.height, slot.x,
+               slot.y);
+      return;
+    }
+  }
+}
+
+void LvglComponent::direct_region_refresh_end_() {
+  if (this->direct_region_refresh_reserved_buffer_ != nullptr && this->displays_.size() == 1) {
+    auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+    if (mipi_display != nullptr)
+      mipi_display->release_direct_render_frame_buffer(this->direct_region_refresh_reserved_buffer_);
+    this->direct_region_refresh_reserved_buffer_ = nullptr;
+  }
+  if (this->direct_region_refresh_locked_) {
+    this->direct_region_refresh_locked_ = false;
+    xSemaphoreGive(s_region_srm_mutex);
+  }
+}
+
 void LvglComponent::direct_region_task_() {
   // Pace all independent regions to the display refresh. Requests for the
   // same region are coalesced below, so a producer running ahead of VSYNC
@@ -3109,7 +3394,14 @@ void LvglComponent::direct_region_task_() {
           this->direct_region_compose_to_(requests, request_count, active, target) &&
           generation == this->direct_region_base_generation_.load(std::memory_order_acquire)) {
         auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
-        presented = mipi_display->queue_direct_frame_buffer(target, 40);
+        // Composition has finished, so producers may reuse their source
+        // buffers as soon as this frame is accepted by the DSI queue. The
+        // driver performs the visible switch on VSYNC and safely replaces an
+        // older not-yet-active animation frame. Waiting for scanout here costs
+        // another display period and effectively halves animated-region FPS.
+        auto *expected_active = mipi_display->get_presented_frame_buffer();
+        presented = expected_active != nullptr &&
+                    mipi_display->queue_direct_frame_buffer(target, 40, false, false, expected_active);
         if (presented) {
           for (size_t i = 0; i < request_count; i++) {
             const auto &request = requests[i];
@@ -3124,6 +3416,13 @@ void LvglComponent::direct_region_task_() {
               slot->valid = true;
             }
           }
+        } else {
+          // The target has already been modified. If the active base changed
+          // before submission, this frame must never be reused as though it
+          // still represented the current generation; doing so leaks stale
+          // horizontal regions into a later native LVGL update.
+          for (auto &buffer_generation : this->direct_region_buffer_generation_)
+            buffer_generation = 0;
         }
       } else {
         for (auto &buffer_generation : this->direct_region_buffer_generation_)
@@ -3156,16 +3455,27 @@ void LvglComponent::direct_region_task_() {
         const uint32_t submitted_copy = this->direct_region_copy_submitted_.exchange(0, std::memory_order_acq_rel);
         const uint32_t submitted_blend = this->direct_region_blend_submitted_.exchange(0, std::memory_order_acq_rel);
         const uint32_t submit_busy = this->direct_region_submit_busy_.exchange(0, std::memory_order_acq_rel);
+        const uint32_t concurrent_refreshes =
+            this->direct_region_concurrent_refreshes_.exchange(0, std::memory_order_acq_rel);
+        const uint32_t refresh_fallbacks =
+            this->direct_region_refresh_fallbacks_.exchange(0, std::memory_order_acq_rel);
+        const uint32_t refresh_relock_us =
+            this->direct_region_refresh_relock_us_.exchange(0, std::memory_order_acq_rel);
+        const uint32_t refresh_relock_max_us =
+            this->direct_region_refresh_relock_max_us_.exchange(0, std::memory_order_acq_rel);
         ESP_LOGI("lvgl.region",
                  "perf2s: frames=%u received=%u submitted=%u/%u busy=%u coalesced=%u batch_max=%u "
-                 "avg=%uus max=%uus queued=%u last=%s",
+                 "avg=%uus max=%uus queued=%u last=%s refresh=%u/%u relock=%u/%uus",
                  static_cast<unsigned>(perf_count), static_cast<unsigned>(perf_request_count),
                  static_cast<unsigned>(submitted_copy), static_cast<unsigned>(submitted_blend),
                  static_cast<unsigned>(submit_busy), static_cast<unsigned>(perf_coalesced_count),
                  static_cast<unsigned>(perf_max_batch_count),
                  static_cast<unsigned>(perf_total_us / std::max<uint32_t>(1, perf_count)),
                  static_cast<unsigned>(perf_max_us),
-                 static_cast<unsigned>(uxQueueMessagesWaiting(this->direct_region_queue_)), YESNO(presented));
+                 static_cast<unsigned>(uxQueueMessagesWaiting(this->direct_region_queue_)), YESNO(presented),
+                 static_cast<unsigned>(concurrent_refreshes), static_cast<unsigned>(refresh_fallbacks),
+                 static_cast<unsigned>(refresh_relock_us / std::max<uint32_t>(1, concurrent_refreshes)),
+                 static_cast<unsigned>(refresh_relock_max_us));
         perf_count = 0;
         perf_request_count = 0;
         perf_coalesced_count = 0;
@@ -3311,6 +3621,23 @@ void LvglComponent::direct_blit_rgb888_release(int x, int y, int width, int heig
 #endif
 }
 
+bool LvglComponent::direct_blit_rgb888_region_active(int x, int y, int width, int height) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  if (s_region_srm_mutex == nullptr || xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(5)) != pdTRUE)
+    return false;
+  const auto *slot = this->direct_region_find_slot_(x, y, width, height, false);
+  const bool active = slot != nullptr && slot->valid;
+  xSemaphoreGive(s_region_srm_mutex);
+  return active;
+#else
+  (void) x;
+  (void) y;
+  (void) width;
+  (void) height;
+  return false;
+#endif
+}
+
 bool LvglComponent::direct_regions_pause(bool paused, uint32_t timeout_ms) {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
   if (!paused) {
@@ -3350,6 +3677,14 @@ bool LvglComponent::direct_regions_pause(bool paused, uint32_t timeout_ms) {
   (void) paused;
   (void) timeout_ms;
   return true;
+#endif
+}
+
+uint32_t LvglComponent::get_direct_region_base_generation() const {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  return this->direct_region_base_generation_.load(std::memory_order_acquire);
+#else
+  return 0;
 #endif
 }
 
@@ -3569,6 +3904,12 @@ extern "C" bool lvgl_esphome_direct_regions_pause(bool paused, uint32_t timeout_
   auto *disp = lv_display_get_default();
   auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
   return component == nullptr || component->direct_regions_pause(paused, timeout_ms);
+}
+
+extern "C" uint32_t lvgl_esphome_get_direct_region_base_generation() {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component == nullptr ? 0 : component->get_direct_region_base_generation();
 }
 
 extern "C" void lvgl_esphome_synchronize_direct_framebuffer_area(int x, int y, int width, int height) {
@@ -6280,6 +6621,26 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
   int dirty_y2 = -1;
   auto sync_full = [&]() { lvgl_cache_msync_external(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M); };
 
+  // Sample a sparse grid after a DMA renderer hands the target back to the
+  // CPU. This is diagnostic only: it proves whether consecutive DSI swaps
+  // contain distinct reveal frames without scanning the 1.92 MB framebuffer.
+  auto frame_signature = [&]() -> uint32_t {
+    uint32_t hash = 2166136261U;
+    constexpr int SAMPLE_COLUMNS = 16;
+    constexpr int SAMPLE_ROWS = 16;
+    for (int sample_y = 0; sample_y < SAMPLE_ROWS; sample_y++) {
+      const int y = (sample_y * (this->height_ - 1)) / (SAMPLE_ROWS - 1);
+      for (int sample_x = 0; sample_x < SAMPLE_COLUMNS; sample_x++) {
+        const int x = (sample_x * (this->width_ - 1)) / (SAMPLE_COLUMNS - 1);
+        const uint8_t *pixel = target + static_cast<size_t>(y) * row_bytes + static_cast<size_t>(x) * 3U;
+        hash = (hash ^ pixel[0]) * 16777619U;
+        hash = (hash ^ pixel[1]) * 16777619U;
+        hash = (hash ^ pixel[2]) * 16777619U;
+      }
+    }
+    return hash;
+  };
+
   auto copy_full = [&](const lv_draw_buf_t *src) -> bool {
     if (src == nullptr)
       return false;
@@ -6424,6 +6785,23 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
                                                  app->header.h, target, this->width_, this->height_, center_x, center_y,
                                                  dma_radius);
       }
+      if (dma_ok && target_has_frame && !final_close) {
+        // The clock is alpha-blended after every frame is composed. Incremental
+        // circle updates leave the previous glyph pixels untouched, so restore
+        // its small source region before drawing the current clock exactly once.
+        const int display_width = static_cast<int>(this->width_);
+        const int display_height = static_cast<int>(this->height_);
+        const int clock_width = std::min(display_width, SNAPSHOT_CLOCK_W);
+        const int clock_x = (display_width - clock_width) / 2;
+        const int clock_y = std::clamp(SNAPSHOT_CLOCK_Y, 0, display_height);
+        const int clock_height = std::min(SNAPSHOT_CLOCK_H, display_height - clock_y);
+        if (clock_width > 0 && clock_height > 0) {
+          dma_ok = dma2d_m2m_compose_rgb888_circle_region(
+              background->data, background->header.stride / BYTES_PER_PIXEL, background->header.h, app->data,
+              app->header.stride / BYTES_PER_PIXEL, app->header.h, target, this->width_, this->height_, center_x,
+              center_y, dma_radius, clock_x, clock_y, clock_width, clock_height);
+        }
+      }
     }
     circle_us = static_cast<uint32_t>(esp_timer_get_time() - compose_started_us);
 
@@ -6456,6 +6834,7 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
           .cache_sync_us = cache_sync_us,
           .ppa_us = 0,
           .present_us = present_us,
+          .signature = frame_signature(),
       };
       if (s_perf_logging_enabled && total_us > 30000U) {
         ESP_LOGW("lvgl.app", "DMA2D frame total=%uus prepare=%uus compose=%uus sync=%uus present=%uus size=%d",
@@ -8343,6 +8722,10 @@ void LvglComponent::setup() {
   this->buffers_configured_ = true;
 
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  if (this->direct_mode_active_) {
+    lv_display_add_event_cb(this->disp_, direct_region_refresh_start_cb, LV_EVENT_REFR_START, this);
+    lv_display_add_event_cb(this->disp_, direct_region_refresh_end_cb, LV_EVENT_REFR_READY, this);
+  }
   if (this->direct_mode_active_ && !this->start_direct_region_compositor_()) {
     ESP_LOGW(TAG, "Direct region compositor unavailable; regional widgets will use LVGL invalidation");
   }
@@ -8831,6 +9214,7 @@ struct SnapshotAppState {
   int end_center_x{0};
   int end_center_y{0};
   LvglComponent *component{nullptr};
+  bool worker_start_pending{false};
   bool worker_enabled{false};
 };
 
@@ -9246,9 +9630,42 @@ SnapshotCacheEntry *snapshot_cache_find_entry(lv_obj_t *obj) {
   return nullptr;
 }
 
+bool snapshot_cache_raw_is_valid(const SnapshotCacheEntry &entry) {
+  if (entry.buf == nullptr)
+    return false;
+  return entry.buf != snapshot_app_work_buf || snapshot_app_work_obj == entry.obj;
+}
+
+uint32_t snapshot_draw_buf_signature(const lv_draw_buf_t *buf) {
+  if (buf == nullptr || buf->data == nullptr || buf->header.cf != LV_COLOR_FORMAT_RGB888 || buf->header.w == 0 ||
+      buf->header.h == 0 || buf->header.stride < buf->header.w * 3U) {
+    return 0;
+  }
+
+  uint32_t hash = 2166136261U;
+  constexpr int sample_columns = 16;
+  constexpr int sample_rows = 16;
+  const auto *data = static_cast<const uint8_t *>(buf->data);
+  for (int sample_y = 0; sample_y < sample_rows; sample_y++) {
+    const uint32_t y = (sample_y * (buf->header.h - 1U)) / (sample_rows - 1);
+    for (int sample_x = 0; sample_x < sample_columns; sample_x++) {
+      const uint32_t x = (sample_x * (buf->header.w - 1U)) / (sample_columns - 1);
+      const uint8_t *pixel = data + static_cast<size_t>(y) * buf->header.stride + static_cast<size_t>(x) * 3U;
+      hash = (hash ^ pixel[0]) * 16777619U;
+      hash = (hash ^ pixel[1]) * 16777619U;
+      hash = (hash ^ pixel[2]) * 16777619U;
+    }
+  }
+  return hash;
+}
+
 void snapshot_cache_destroy_raw(SnapshotCacheEntry &entry) {
   if (entry.buf != nullptr) {
-    lv_draw_buf_destroy(entry.buf);
+    // The application work surface is shared by every application and owned
+    // separately from cache entries. A cache entry may only borrow it while
+    // snapshot_app_work_obj identifies that same application.
+    if (entry.buf != snapshot_app_work_buf)
+      lv_draw_buf_destroy(entry.buf);
     entry.buf = nullptr;
   }
   entry.decoded_from_jpeg = false;
@@ -9456,8 +9873,10 @@ bool snapshot_cache_decode_jpeg_to_draw_buf(SnapshotCacheEntry &entry, lv_draw_b
 
 lv_draw_buf_t *snapshot_cache_decode_jpeg(SnapshotCacheEntry &entry) {
 #if defined(USE_LVGL_SNAPSHOT_JPEG_CACHE) && LV_COLOR_DEPTH == 32
-  if (entry.buf != nullptr)
+  if (snapshot_cache_raw_is_valid(entry))
     return entry.buf;
+  if (entry.buf != nullptr && entry.buf == snapshot_app_work_buf)
+    entry.buf = nullptr;
   if (entry.jpeg.empty() || entry.width == 0 || entry.height == 0)
     return nullptr;
 
@@ -9482,8 +9901,10 @@ lv_draw_buf_t *snapshot_cache_find(lv_obj_t *obj) {
   auto *entry = snapshot_cache_find_entry(obj);
   if (entry == nullptr)
     return nullptr;
-  if (entry->buf != nullptr)
+  if (snapshot_cache_raw_is_valid(*entry))
     return entry->buf;
+  if (entry->buf != nullptr && entry->buf == snapshot_app_work_buf)
+    entry->buf = nullptr;
   // Home pages outside the three-slot working set stay JPEG-only. They are
   // decoded into a recycled tile slot by snapshot_cache_tile_window(); never
   // allocate a fourth display-sized raw buffer from this generic lookup.
@@ -9625,6 +10046,10 @@ bool snapshot_cache_store_compressed_view(lv_obj_t *obj, lv_draw_buf_t *buf) {
   if (slot == nullptr)
     return false;
 
+  if (s_perf_logging_enabled) {
+    ESP_LOGI("lvgl.app", "snapshot cache store app=%p source=%p signature=%08x", obj, buf->data,
+             static_cast<unsigned>(snapshot_draw_buf_signature(buf)));
+  }
   snapshot_panorama_cache_invalidate(slot->obj);
   snapshot_cache_free_entry(*slot);
   slot->obj = obj;
@@ -9641,6 +10066,10 @@ lv_draw_buf_t *snapshot_take_centered(lv_obj_t *obj);
 void snapshot_cache_store_raw_only(lv_obj_t *obj, lv_draw_buf_t *buf) {
   if (obj == nullptr || buf == nullptr)
     return;
+  if (buf == snapshot_app_work_buf) {
+    ESP_LOGE(TAG, "snapshot cache: refusing to persist shared application work buffer for obj=%p", obj);
+    return;
+  }
   SnapshotCacheEntry *slot = snapshot_cache_find_entry(obj);
   if (slot == nullptr) {
     for (auto &entry : snapshot_cache) {
@@ -9732,8 +10161,10 @@ bool snapshot_cache_prepare_raw_page(lv_obj_t *obj) {
   if (obj == nullptr)
     return false;
   auto *entry = snapshot_cache_find_entry(obj);
-  if (entry != nullptr && entry->buf != nullptr)
+  if (entry != nullptr && snapshot_cache_raw_is_valid(*entry))
     return true;
+  if (entry != nullptr && entry->buf != nullptr && entry->buf == snapshot_app_work_buf)
+    entry->buf = nullptr;
 
 #ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
   // Boot already stores every home page as a compact JPEG. Decode that image
@@ -10823,6 +11254,10 @@ void snapshot_app_worker_task(void *) {
     uint64_t cache_sync_total_us = 0;
     uint64_t ppa_total_us = 0;
     uint64_t present_total_us = 0;
+    constexpr size_t FRAME_TRACE_CAPACITY = 40;
+    uint16_t frame_sizes[FRAME_TRACE_CAPACITY]{};
+    uint32_t frame_signatures[FRAME_TRACE_CAPACITY]{};
+    size_t frame_trace_count = 0;
     auto render_frame = [&](int center_x, int center_y, int size) {
       const int64_t started_us = esp_timer_get_time();
       const bool rendered = component->snapshot_app_direct_render(background, app, center_x, center_y, size, size);
@@ -10836,11 +11271,18 @@ void snapshot_app_worker_task(void *) {
         cache_sync_total_us += s_snapshot_app_last_frame_metrics.cache_sync_us;
         ppa_total_us += s_snapshot_app_last_frame_metrics.ppa_us;
         present_total_us += s_snapshot_app_last_frame_metrics.present_us;
+        if (frame_trace_count < FRAME_TRACE_CAPACITY) {
+          frame_sizes[frame_trace_count] = static_cast<uint16_t>(std::clamp(size, 0, 65535));
+          frame_signatures[frame_trace_count] = s_snapshot_app_last_frame_metrics.signature;
+          frame_trace_count++;
+        }
       }
       return rendered;
     };
 
     bool success = component != nullptr && background != nullptr && app != nullptr;
+    if (success)
+      component->reset_direct_frame_trace();
     if (success) {
       success = render_frame(start_center_x, start_center_y, start_size);
     }
@@ -10888,6 +11330,19 @@ void snapshot_app_worker_task(void *) {
     }
 
     worker.failed.store(!success, std::memory_order_release);
+    if (component != nullptr)
+      component->log_direct_frame_trace(opening ? "app-open" : "app-close");
+    if (s_perf_logging_enabled && frame_trace_count != 0) {
+      const size_t middle = frame_trace_count / 2U;
+      const size_t last = frame_trace_count - 1U;
+      ESP_LOGI("lvgl.app",
+               "frame content %s root=%p src=%p bg=%p frames=%u first=%u:%08x middle=%u:%08x final=%u:%08x",
+               opening ? "open" : "close", state.app_root, app->data, background->data,
+               static_cast<unsigned>(frame_trace_count), static_cast<unsigned>(frame_sizes[0]),
+               static_cast<unsigned>(frame_signatures[0]), static_cast<unsigned>(frame_sizes[middle]),
+               static_cast<unsigned>(frame_signatures[middle]), static_cast<unsigned>(frame_sizes[last]),
+               static_cast<unsigned>(frame_signatures[last]));
+    }
     if (s_perf_logging_enabled && rendered_frames != 0) {
       const uint32_t stack_free = static_cast<uint32_t>(uxTaskGetStackHighWaterMark(nullptr));
       ESP_LOGI("lvgl.app",
@@ -11067,25 +11522,49 @@ lv_draw_buf_t *snapshot_app_cached_or_take(lv_obj_t *obj, bool force_fresh, bool
   // and visible softness to every opening transition.
   if (!force_fresh) {
     auto *entry = snapshot_cache_find_entry(obj);
-    if (entry != nullptr && entry->buf != nullptr)
+    if (entry != nullptr && snapshot_cache_raw_is_valid(*entry)) {
+      if (s_perf_logging_enabled)
+        ESP_LOGI("lvgl.app", "snapshot source app=%p path=raw raw=%p work=%p owner=%p signature=%08x", obj,
+                 entry->buf, snapshot_app_work_buf, snapshot_app_work_obj,
+                 static_cast<unsigned>(snapshot_draw_buf_signature(entry->buf)));
       return entry->buf;
+    }
+    if (entry != nullptr && entry->buf != nullptr && entry->buf == snapshot_app_work_buf) {
+      if (s_perf_logging_enabled)
+        ESP_LOGW("lvgl.app", "detached stale shared snapshot app=%p work=%p owner=%p", obj,
+                 snapshot_app_work_buf, snapshot_app_work_obj);
+      entry->buf = nullptr;
+      entry->decoded_from_jpeg = false;
+    }
   }
 
   if (use_work_buffer && snapshot_app_reserve_work_buffer(obj)) {
-    if (!force_fresh && snapshot_app_work_obj == obj)
+    if (!force_fresh && snapshot_app_work_obj == obj) {
+      if (s_perf_logging_enabled)
+        ESP_LOGI("lvgl.app", "snapshot source app=%p path=shared work=%p owner=%p signature=%08x", obj,
+                 snapshot_app_work_buf, snapshot_app_work_obj,
+                 static_cast<unsigned>(snapshot_draw_buf_signature(snapshot_app_work_buf)));
       return snapshot_app_work_buf;
+    }
     if (!force_fresh) {
       auto *entry = snapshot_cache_find_entry(obj);
 #ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
       if (entry != nullptr && !entry->jpeg.empty() &&
           snapshot_cache_decode_jpeg_to_draw_buf(*entry, snapshot_app_work_buf)) {
         snapshot_app_work_obj = obj;
+        if (s_perf_logging_enabled)
+          ESP_LOGI("lvgl.app", "snapshot source app=%p path=jpeg work=%p jpeg=%uKB signature=%08x", obj,
+                   snapshot_app_work_buf, static_cast<unsigned>(entry->jpeg.size() / 1024),
+                   static_cast<unsigned>(snapshot_draw_buf_signature(snapshot_app_work_buf)));
         return snapshot_app_work_buf;
       }
 #endif
     }
     if (snapshot_take_centered_to(obj, snapshot_app_work_buf)) {
       snapshot_app_work_obj = obj;
+      if (s_perf_logging_enabled)
+        ESP_LOGI("lvgl.app", "snapshot source app=%p path=fresh work=%p signature=%08x", obj, snapshot_app_work_buf,
+                 static_cast<unsigned>(snapshot_draw_buf_signature(snapshot_app_work_buf)));
       return snapshot_app_work_buf;
     }
     snapshot_app_work_obj = nullptr;
@@ -11107,6 +11586,34 @@ lv_draw_buf_t *snapshot_app_cached_or_take(lv_obj_t *obj, bool force_fresh, bool
   return buf;
 }
 
+bool snapshot_app_pause_direct_regions(LvglComponent *component) {
+  if (component == nullptr)
+    return false;
+  if (s_snapshot_app_regions_paused)
+    return s_snapshot_app_regions_component == component;
+
+  // Region renderers (clock, marquee, material controls and spinners) run on
+  // their own task. Drain them before the full-screen snapshot compositor
+  // takes ownership, otherwise a late region frame can replace an animation
+  // frame with a stale native-LVGL base.
+  if (!component->direct_regions_pause(true, 120)) {
+    component->direct_regions_pause(false, 0);
+    return false;
+  }
+  s_snapshot_app_regions_component = component;
+  s_snapshot_app_regions_paused = true;
+  return true;
+}
+
+void snapshot_app_resume_direct_regions() {
+  if (!s_snapshot_app_regions_paused)
+    return;
+  if (s_snapshot_app_regions_component != nullptr)
+    s_snapshot_app_regions_component->direct_regions_pause(false, 0);
+  s_snapshot_app_regions_component = nullptr;
+  s_snapshot_app_regions_paused = false;
+}
+
 bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_center_x, int end_center_y,
                         uint32_t duration_ms, bool opening) {
 #if LV_USE_SNAPSHOT
@@ -11124,6 +11631,11 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
     return false;
 
   const bool previous_direct_active = s_snapshot_direct_active;
+  s_snapshot_direct_active = true;
+  if (!snapshot_app_pause_direct_regions(component)) {
+    s_snapshot_direct_active = previous_direct_active;
+    return false;
+  }
 
   bool owns_app = false;
   lv_draw_buf_t *app_buf = nullptr;
@@ -11145,6 +11657,7 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
     snapshot_log_heap_("app capture failed", app, true);
     if (owns_background && background_buf != nullptr)
       lv_draw_buf_destroy(background_buf);
+    snapshot_app_resume_direct_regions();
     s_snapshot_direct_active = previous_direct_active;
     return false;
   }
@@ -11169,12 +11682,13 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
   snapshot_app_state.end_center_y = end_center_y;
   snapshot_app_state.component = component;
   snapshot_app_render_buffers_reset(opening);
-  s_snapshot_direct_active = true;
 #ifdef USE_ESP32
-  snapshot_app_state.worker_enabled = snapshot_app_worker_start();
+  // Application taps are dispatched from inside lv_timer_handler(). Starting
+  // the second-core compositor here lets the current native LVGL refresh finish
+  // after the direct frames and overwrite the visible transition. Defer worker
+  // startup until LvglComponent::loop() regains control after that handler.
+  snapshot_app_state.worker_start_pending = true;
 #endif
-  if (opening && !snapshot_app_state.worker_enabled)
-    snapshot_app_direct_anim_tick();
   return true;
 #else
   return false;
@@ -11188,6 +11702,17 @@ bool snapshot_app_direct_anim_tick() {
 
   bool animation_complete = false;
 #ifdef USE_ESP32
+  if (state.worker_start_pending) {
+    state.worker_start_pending = false;
+    // The LVGL refresh which dispatched the tap can still have one framebuffer
+    // queued for the next VSYNC. Make it the stable animation base before the
+    // compositor starts cycling the other two buffers.
+    state.component->wait_for_direct_frame_presented(50);
+    state.anim_start_us = esp_timer_get_time();
+    state.worker_enabled = snapshot_app_worker_start();
+    if (state.worker_enabled)
+      return true;
+  }
   if (state.worker_enabled) {
     if (!snapshot_app_worker.done.load(std::memory_order_acquire))
       return true;
@@ -11216,10 +11741,6 @@ bool snapshot_app_direct_anim_tick() {
   }
   if (animation_complete) {
     state.component->wait_for_direct_frame_presented(50);
-    // The destination page resumes with ordinary DIRECT-mode invalidation.
-    // Preserve the exact final transition frame in both LVGL buffers so its
-    // first native widget update cannot reveal the pre-transition base.
-    state.component->realign_direct_buffer_after_manual_present();
     const bool opening = state.opening;
     if (opening && state.app_root != nullptr) {
       snapshot_cache_release_decoded_if_compressed(state.app_root);
@@ -11254,6 +11775,12 @@ bool snapshot_app_direct_anim_tick() {
       state.app_buf = nullptr;
       state.owns_app_buf = false;
     }
+    // The destination page resumes with ordinary DIRECT-mode invalidation.
+    // Preserve the exact final transition frame in both LVGL buffers so its
+    // first native widget update cannot reveal the pre-transition base. Do
+    // this only after caching a framebuffer-backed close source: realignment
+    // copies the final Home frame into every DSI buffer, including that source.
+    state.component->realign_direct_buffer_after_manual_present();
     if (!snapshot_app_cleanup())
       return true;
     // Keep the final direct frame on DSI until YAML has loaded the destination
@@ -11650,6 +12177,17 @@ extern "C" bool lvgl_esphome_snapshot_app_release_work_buffer(void) {
     return false;
   }
   if (snapshot_app_work_buf != nullptr) {
+    // A shared surface must never survive as a raw cache pointer after its
+    // allocation is released. Keep each entry's JPEG metadata intact so the
+    // next opening can decode the correct application into a new work surface.
+    for (auto &entry : snapshot_cache) {
+      if (entry.buf != snapshot_app_work_buf)
+        continue;
+      entry.buf = nullptr;
+      entry.decoded_from_jpeg = false;
+      if (snapshot_cache_latest_raw_app_obj == entry.obj)
+        snapshot_cache_latest_raw_app_obj = nullptr;
+    }
     lv_draw_buf_destroy(snapshot_app_work_buf);
     snapshot_app_work_buf = nullptr;
     snapshot_app_work_obj = nullptr;
@@ -11673,8 +12211,10 @@ extern "C" bool lvgl_esphome_snapshot_cache_current_frame_raw_page(lv_obj_t *obj
   if (obj == nullptr)
     return false;
   auto *entry = snapshot_cache_find_entry(obj);
-  if (entry != nullptr && entry->buf != nullptr)
+  if (entry != nullptr && snapshot_cache_raw_is_valid(*entry))
     return true;
+  if (entry != nullptr && entry->buf != nullptr && entry->buf == snapshot_app_work_buf)
+    entry->buf = nullptr;
 
   auto *disp = lv_obj_get_display(obj);
   auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
@@ -12371,6 +12911,7 @@ extern "C" void lvgl_esphome_snapshot_app_release_open_hold(void) {
   if (!s_snapshot_app_open_frame_held)
     return;
   s_snapshot_app_open_frame_held = false;
+  snapshot_app_resume_direct_regions();
   s_snapshot_direct_active = false;
   lv_obj_invalidate(lv_screen_active());
 #endif
@@ -12382,6 +12923,7 @@ extern "C" bool lvgl_esphome_snapshot_app_cancel(void) {
     return false;
   snapshot_app_clear_prepared_close();
   s_snapshot_app_open_frame_held = false;
+  snapshot_app_resume_direct_regions();
   s_snapshot_direct_active = false;
   lv_obj_invalidate(lv_screen_active());
   lvgl_esphome_snapshot_app_release_work_buffer();
@@ -12410,7 +12952,7 @@ extern "C" bool lvgl_esphome_snapshot_app_prepare_close(lv_obj_t *app) {
   // animation source and the next opening source, with no second full-screen
   // allocation, JPEG encode, or JPEG decode.
   auto *entry = snapshot_cache_find_entry(app);
-  if (component != nullptr && entry != nullptr && entry->buf != nullptr) {
+  if (component != nullptr && entry != nullptr && snapshot_cache_raw_is_valid(*entry)) {
     const int width = lv_display_get_horizontal_resolution(disp);
     const int height = lv_display_get_vertical_resolution(disp);
     const int stride = width * 3;
@@ -12841,6 +13383,22 @@ extern "C" void lvgl_esphome_snapshot_set_clock_text(const char *text) {
 
 extern "C" void lvgl_esphome_snapshot_set_clock_font(const lv_font_t *font) {
   s_snapshot_clock_font = font;
+  snapshot_prepare_clock_glyph_buffer();
+}
+
+extern "C" void lvgl_esphome_snapshot_sync_clock_widget(lv_obj_t *label) {
+  if (label == nullptr)
+    return;
+  lv_obj_update_layout(label);
+  lv_obj_get_content_coords(label, &s_snapshot_clock_text_area);
+  s_snapshot_clock_text_area_valid =
+      lv_area_get_width(&s_snapshot_clock_text_area) > 0 && lv_area_get_height(&s_snapshot_clock_text_area) > 0;
+  s_snapshot_clock_font = lv_obj_get_style_text_font(label, LV_PART_MAIN);
+  const char *text = lv_label_get_text(label);
+  if (text != nullptr && text[0] != '\0') {
+    std::strncpy(s_snapshot_clock_text, text, sizeof(s_snapshot_clock_text) - 1);
+    s_snapshot_clock_text[sizeof(s_snapshot_clock_text) - 1] = '\0';
+  }
   snapshot_prepare_clock_glyph_buffer();
 }
 

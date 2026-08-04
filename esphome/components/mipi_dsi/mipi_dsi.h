@@ -124,6 +124,7 @@ class MipiDsi : public display::Display {
   uint8_t *get_frame_buffer(size_t index) const {
     return index < MIPI_DSI_FRAME_BUFFER_COUNT ? this->frame_buffers_[index] : nullptr;
   }
+  size_t get_frame_buffer_count() const override { return MIPI_DSI_FRAME_BUFFER_COUNT; }
   uint8_t *get_presented_frame_buffer() const { return this->presented_frame_buffer_.load(std::memory_order_acquire); }
   uint8_t *get_queued_frame_buffer() const { return this->queued_frame_buffer_.load(std::memory_order_acquire); }
   uint8_t *get_staged_frame_buffer() const { return this->staged_frame_buffer_.load(std::memory_order_acquire); }
@@ -135,17 +136,29 @@ class MipiDsi : public display::Display {
       return this->frame_buffers_[0];
     return this->frame_buffers_[1];
   }
-  size_t get_frame_buffer_size() const { return this->width_ * this->height_ * this->get_bytes_per_pixel_(); }
+  size_t get_frame_buffer_size() const override { return this->width_ * this->height_ * this->get_bytes_per_pixel_(); }
+  size_t get_frame_buffer_stride() const override { return this->width_ * this->get_bytes_per_pixel_(); }
+  display::ColorBitness get_frame_buffer_bitness() const override { return this->color_depth_; }
   size_t get_bytes_per_pixel() const { return this->get_bytes_per_pixel_(); }
   bool wait_for_refresh_done(uint32_t timeout_ms = 50);
-  uint8_t *get_direct_render_frame_buffer(const uint8_t *exclude_a = nullptr,
-                                           const uint8_t *exclude_b = nullptr) const;
-  uint8_t *wait_for_direct_render_frame_buffer(const uint8_t *exclude_a = nullptr,
-                                                const uint8_t *exclude_b = nullptr,
-                                                uint32_t timeout_ms = 50);
-  bool queue_direct_frame_buffer(uint8_t *frame_buffer, uint32_t timeout_ms = 50,
-                                 bool wait_for_active = true);
+  uint8_t *get_direct_render_frame_buffer(const uint8_t *exclude_a = nullptr, const uint8_t *exclude_b = nullptr) const;
+  uint8_t *wait_for_direct_render_frame_buffer(const uint8_t *exclude_a = nullptr, const uint8_t *exclude_b = nullptr,
+                                               uint32_t timeout_ms = 50);
+  bool reserve_direct_render_frame_buffer(uint8_t *frame_buffer);
+  void release_direct_render_frame_buffer(uint8_t *frame_buffer);
+  bool queue_direct_frame_buffer(uint8_t *frame_buffer, uint32_t timeout_ms = 50, bool wait_for_active = true,
+                                 bool frame_buffer_session_owner = false,
+                                 const uint8_t *expected_active_frame_buffer = nullptr);
   bool wait_for_direct_frame_queue_idle(uint32_t timeout_ms = 50);
+  void reset_direct_frame_trace();
+  void log_direct_frame_trace(const char *label);
+  bool begin_frame_buffer_session(uint32_t timeout_ms = 50) override;
+  bool acquire_frame_buffer(display::FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
+                            uint32_t timeout_ms = 50) override;
+  bool get_active_frame_buffer(display::FrameBufferView *view, BufferReader reader = BufferReader::CPU) const override;
+  bool present_frame_buffer_lease(display::FrameBufferLease *lease, uint32_t timeout_ms = 50) override;
+  bool release_frame_buffer(display::FrameBufferLease *lease) override;
+  bool end_frame_buffer_session(uint32_t timeout_ms = 50) override;
   bool IRAM_ATTR on_frame_buffer_staged_from_isr(esp_lcd_panel_handle_t panel, uint8_t *frame_buffer);
   bool IRAM_ATTR on_frame_buffer_active_from_isr(esp_lcd_panel_handle_t panel, uint8_t *frame_buffer);
 
@@ -162,12 +175,12 @@ class MipiDsi : public display::Display {
                             display::ColorBitness bitness, bool big_endian, int x_offset, int y_offset, int x_pad,
                             AsyncFlushReadyCallback ready_callback, void *ready_arg);
   Dma2dRegionResult draw_pixels_at_dma2d_blocking(int x_start, int y_start, int w, int h, const uint8_t *ptr,
-                                                   display::ColorOrder order, display::ColorBitness bitness,
-                                                   uint32_t queue_timeout_ms = 2);
+                                                  display::ColorOrder order, display::ColorBitness bitness,
+                                                  uint32_t queue_timeout_ms = 2);
   Dma2dRegionResult draw_pixels_at_dma2d_async(int x_start, int y_start, int w, int h, const uint8_t *ptr,
                                                display::ColorOrder order, display::ColorBitness bitness,
                                                AsyncFlushReadyCallback ready_callback, void *ready_arg);
-  bool present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end);
+  bool present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end) override;
   void consume_async_flush_perf(AsyncFlushPerfStats *stats);
   uint32_t consume_underrun_count();
   void mark_stress_window(const char *label, uint32_t duration_ms);
@@ -199,6 +212,9 @@ class MipiDsi : public display::Display {
   void dsi_diagnostics_task_();
   bool ensure_async_staging_buffer_(size_t size);
   bool check_buffer_();
+  bool validate_frame_buffer_lease_(const display::FrameBufferLease *lease) const;
+  void clear_frame_buffer_lease_(display::FrameBufferLease *lease) const;
+  void IRAM_ATTR record_direct_frame_trace_(char event, const uint8_t *frame_buffer);
   size_t get_bytes_per_pixel_() const { return this->color_depth_ == display::COLOR_BITNESS_888 ? 3 : 2; }
   GPIOPin *reset_pin_{nullptr};
   std::vector<GPIOPin *> enable_pins_{};
@@ -228,6 +244,7 @@ class MipiDsi : public display::Display {
   esp_lcd_panel_io_handle_t io_handle_{};
   SemaphoreHandle_t io_lock_{};
   SemaphoreHandle_t draw_submission_lock_{};
+  SemaphoreHandle_t frame_buffer_session_lock_{};
   SemaphoreHandle_t refresh_lock_{};
   SemaphoreHandle_t vblank_lock_{};
   SemaphoreHandle_t frame_active_lock_{};
@@ -325,13 +342,27 @@ class MipiDsi : public display::Display {
   std::atomic<uint8_t *> active_frame_buffer_{nullptr};
   std::atomic<uint8_t *> queued_frame_buffer_{nullptr};
   std::atomic<uint8_t *> staged_frame_buffer_{nullptr};
+  std::atomic<uint8_t *> reserved_render_frame_buffer_{nullptr};
+  BufferWriter frame_buffer_writers_[MIPI_DSI_FRAME_BUFFER_COUNT]{BufferWriter::CPU, BufferWriter::CPU,
+                                                                  BufferWriter::CPU};
+  uint8_t *session_leased_frame_buffer_{nullptr};
+  BufferWriter session_leased_writer_{BufferWriter::CPU};
+  uint32_t frame_buffer_session_generation_{0};
+  std::atomic<bool> frame_buffer_session_active_{false};
+  static constexpr size_t DIRECT_FRAME_TRACE_CAPACITY = 96;
+  std::atomic<bool> direct_frame_trace_enabled_{false};
+  std::atomic<uint32_t> direct_frame_trace_position_{0};
+  std::atomic<uint32_t> direct_frame_trace_queued_{0};
+  std::atomic<uint32_t> direct_frame_trace_staged_{0};
+  std::atomic<uint32_t> direct_frame_trace_active_{0};
+  std::atomic<uint32_t> direct_frame_trace_rejected_{0};
+  std::atomic<uint16_t> direct_frame_trace_events_[DIRECT_FRAME_TRACE_CAPACITY]{};
   uint8_t *buffer_{nullptr};
   uint16_t x_low_{1};
   uint16_t y_low_{1};
   uint16_t x_high_{0};
   uint16_t y_high_{0};
 };
-
 
 }  // namespace esphome::mipi_dsi
 #endif
