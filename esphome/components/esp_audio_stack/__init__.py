@@ -1,7 +1,7 @@
 """ESP Audio Stack Component - Full duplex I2S for simultaneous mic+speaker
 
-Exposes standard ESPHome microphone and speaker platforms for compatibility with
-Voice Assistant and intercom_api components.
+Exposes standard ESPHome microphone and speaker platforms for Voice Assistant,
+wake-word, media, and other normal ESPHome audio consumers.
 
 Multi-rate support: set output_sample_rate to convert mic audio internally.
   sample_rate: I2S bus rate (e.g. 48000 for high-quality DAC output)
@@ -712,31 +712,6 @@ def _final_validate(config):
             "Use esp_afe (full AFE pipeline with AEC+NS+AGC+Speech Enhancement) "
             "or esp_aec (standalone echo cancellation), not both."
         )
-
-    # Cross-component validation: check for audio processor conflict with intercom_api.
-    # Both components accept processor_id; if both set it the audio processor is fed
-    # from two producers and races on every frame. Reject at validation time.
-
-    intercom_configs = full_config.get("intercom_api", [])
-    if intercom_configs:
-        has_audio_stack_processor = (
-            CONF_PROCESSOR_ID in config and config.get(CONF_PROCESSOR_ID) is not None
-        )
-        for ic in (
-            intercom_configs
-            if isinstance(intercom_configs, list)
-            else [intercom_configs]
-        ):
-            if (
-                isinstance(ic, dict)
-                and ic.get("processor_id") is not None
-                and has_audio_stack_processor
-            ):
-                raise cv.Invalid(
-                    "Both esp_audio_stack and intercom_api have processor_id configured. "
-                    "This causes a race condition on the audio processor. "
-                    "Use processor_id on only ONE component (esp_audio_stack recommended)."
-                )
 
     return config
 

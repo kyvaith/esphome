@@ -2374,12 +2374,21 @@ void ArtworkImage::request_update_url(const std::string &url) {
   this->update();
 }
 
+void ArtworkImage::request_decode() {
+  if (!this->defer_decode_)
+    return;
+  this->decode_requested_ = true;
+  this->enable_loop();
+}
+
 void ArtworkImage::update() {
   if (this->is_busy_()) {
     this->queue_pending_update_(this->url_);
     return;
   }
   ESP_LOGI(TAG, "Updating image %s", this->url_.c_str());
+  this->encoded_download_ready_ = false;
+  this->decode_requested_ = !this->defer_decode_;
   this->log_state_("request-start");
 
   std::vector<http_request::Header> headers = {};
@@ -2678,6 +2687,18 @@ void ArtworkImage::loop() {
     return;
   }
 #endif
+  if (this->encoded_download_ready_) {
+    if (!this->decode_requested_)
+      return;
+    this->encoded_download_ready_ = false;
+    if (!this->decode_buffered_data_()) {
+      this->fail_download_();
+      return;
+    }
+    if (this->decoder_ != nullptr && this->decoder_->is_finished())
+      this->finish_download_();
+    return;
+  }
   if (!this->decoder_ && !this->downloader_) {
     if (this->retired_buffers_.empty()) {
       this->disable_loop();
@@ -2908,6 +2929,11 @@ void ArtworkImage::loop() {
     if (this->decoder_->has_unknown_download_size()) {
       this->decoder_->set_download_size(this->downloader_->get_bytes_read());
       ESP_LOGD(TAG, "HTTP transfer complete; inferred image size: %zu bytes", this->downloader_->get_bytes_read());
+    }
+    if (this->defer_decode_ && !this->decode_requested_ && this->active_format_ == ImageFormat::JPEG &&
+        this->hardware_jpeg_) {
+      this->mark_encoded_download_ready_();
+      return;
     }
     if (!this->decode_buffered_data_()) {
       this->fail_download_();
@@ -3470,6 +3496,10 @@ bool ArtworkImage::decode_buffered_data_() {
   if (!this->decoder_ || this->download_buffer_.unread() == 0) {
     return true;
   }
+  if (this->defer_decode_ && !this->decode_requested_ && this->active_format_ == ImageFormat::JPEG &&
+      this->hardware_jpeg_) {
+    return true;
+  }
 
 #if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
   if (this->active_format_ == ImageFormat::JPEG && this->hardware_jpeg_ &&
@@ -3498,6 +3528,15 @@ bool ArtworkImage::decode_buffered_data_() {
   }
   this->download_buffer_.read(fed);
   return true;
+}
+
+void ArtworkImage::mark_encoded_download_ready_() {
+  if (this->encoded_download_ready_)
+    return;
+  this->close_downloader_();
+  this->encoded_download_ready_ = true;
+  this->trace_event_("encoded-download-ready", this->download_buffer_.unread());
+  this->defer([this]() { this->download_ready_callback_.call(); });
 }
 
 void ArtworkImage::finish_download_() {
@@ -3633,6 +3672,19 @@ void ArtworkImage::log_state_(const char *stage) {
 }
 
 void ArtworkImage::end_connection_() {
+  this->close_downloader_();
+  this->encoded_download_ready_ = false;
+  this->decode_requested_ = !this->defer_decode_;
+  this->decoder_.reset();
+  this->active_format_ = ImageFormat::AUTO;
+  this->discard_decode_buffer_();
+  this->download_buffer_.reset();
+  if (!this->hardware_jpeg_) {
+    this->download_buffer_.shrink(std::min<size_t>(this->download_buffer_initial_size_, DOWNLOAD_BUFFER_BASE_SIZE));
+  }
+}
+
+void ArtworkImage::close_downloader_() {
   if (this->downloader_) {
     this->downloader_->end();
     this->downloader_ = nullptr;
@@ -3648,13 +3700,6 @@ void ArtworkImage::end_connection_() {
   this->local_http_read_size_ = 0;
 #endif
 #endif
-  this->decoder_.reset();
-  this->active_format_ = ImageFormat::AUTO;
-  this->discard_decode_buffer_();
-  this->download_buffer_.reset();
-  if (!this->hardware_jpeg_) {
-    this->download_buffer_.shrink(std::min<size_t>(this->download_buffer_initial_size_, DOWNLOAD_BUFFER_BASE_SIZE));
-  }
 }
 
 bool ArtworkImage::validate_url_(const std::string &url) {

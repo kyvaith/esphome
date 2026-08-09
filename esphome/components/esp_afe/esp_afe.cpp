@@ -1392,7 +1392,7 @@ bool EspAfe::process(const int16_t *in_mic, const int16_t *in_ref, int16_t *out,
   }
   // Fast path when user has disabled every AFE feature: the instance is torn
   // down, but the caller still expects a frame-shaped output. Emit silence
-  // rather than leaking raw pre-AFE mic audio to MWW, VA or intercom.
+  // rather than leaking raw pre-AFE mic audio to microphone consumers.
   if (this->afe_stopped_.load(std::memory_order_acquire)) {
     int pos = this->last_spec_fetch_size_ > 0 ? this->last_spec_fetch_size_ : os;
     silence_frame(out, pos);
@@ -1514,7 +1514,7 @@ bool EspAfe::process(const int16_t *in_mic, const int16_t *in_ref, int16_t *out,
 
   // Step 2: try to pull a processed frame that the fetch task has pushed into
   // our side of the bridge. Non-blocking: if nothing is ready we emit silence,
-  // never raw pre-AFE mic. MWW, VA and intercom must only see processed AFE
+  // never raw pre-AFE mic. MWW and VA must only see processed AFE
   // output while this component is active.
   size_t output_bytes = static_cast<size_t>(os) * sizeof(int16_t);
   bool processed = false;
@@ -2216,7 +2216,7 @@ bool EspAfe::prepare_fetch_output_ring_() {
   if (!this->fetch_output_ring_) {
     // NOSPLIT keeps each processed AFE frame atomic. process() either receives
     // a whole frame or emits silence; it never consumes a short byte-buffer read
-    // that would shift the microphone surface seen by MWW/VA/intercom.
+    // that would shift the microphone surface seen by MWW/VA.
     const size_t frame_bytes = static_cast<size_t>(this->fetch_chunksize_) * sizeof(int16_t);
     const size_t ring_bytes = (frame_bytes + kRingbufferItemHeaderBytes) * kBridgeRingFrames;
     this->fetch_output_ring_ =

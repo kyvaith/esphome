@@ -32,6 +32,19 @@ class MaterialDirectMarquee : public Component {
   void end(bool restore_native = true);
   void service(bool allow_cleanup = true);
   bool is_active() const { return this->active_.load(std::memory_order_acquire); }
+  bool is_ready_for_motion() const {
+    return this->active_.load(std::memory_order_acquire) && !this->handoff_pending_;
+  }
+  bool is_at_position(int offset_x) const {
+    return this->active_.load(std::memory_order_acquire) &&
+           this->last_x_.load(std::memory_order_acquire) == offset_x &&
+           this->pending_x_.load(std::memory_order_acquire) == INT_MIN &&
+           !this->present_in_flight_.load(std::memory_order_acquire)
+#ifdef USE_ESP32
+           && !this->worker_busy_.load(std::memory_order_acquire)
+#endif
+        ;
+  }
 
  protected:
   static void present_done_(void *arg);
@@ -57,7 +70,7 @@ class MaterialDirectMarquee : public Component {
   int height_{0};
   int source_x_offset_{0};
   int source_y_offset_{0};
-  int last_x_{INT_MIN};
+  std::atomic<int> last_x_{INT_MIN};
   std::atomic<int> pending_x_{INT_MIN};
   std::atomic<bool> active_{false};
   bool cleanup_pending_{false};

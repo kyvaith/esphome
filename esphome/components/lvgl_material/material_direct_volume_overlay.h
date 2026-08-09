@@ -1,8 +1,10 @@
 #pragma once
 
+#include "esphome/components/lvgl/direct_scene_controller.h"
 #include "esphome/components/lvgl/lvgl_esphome.h"
 #include "esphome/core/component.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -10,13 +12,26 @@ namespace esphome::lvgl_material {
 
 class MaterialDirectVolumeOverlay : public Component {
  public:
+  static constexpr size_t MAX_SCENE_CONTROLLERS = 4;
+
   explicit MaterialDirectVolumeOverlay(lvgl::LvglComponent *component) : lvgl_component_(component) {}
 
   void set_arc(lv_obj_t *arc) { this->arc_ = arc; }
   void set_knob(lv_obj_t *knob) { this->knob_ = knob; }
   void set_label(lv_obj_t *label) { this->label_ = label; }
   void set_activation_widget(lv_obj_t *widget) { this->activation_widget_ = widget; }
+  void set_activation_widget_was_visible(bool visible) { this->activation_widget_was_visible_ = visible; }
   void set_scrim_opacity(lv_opa_t opacity) { this->scrim_opacity_ = opacity; }
+  void add_scene_controller(lvgl::DirectSceneController *controller) {
+    if (controller == nullptr)
+      return;
+    for (size_t index = 0; index < this->scene_controller_count_; index++) {
+      if (this->scene_controllers_[index] == controller)
+        return;
+    }
+    if (this->scene_controller_count_ < this->scene_controllers_.size())
+      this->scene_controllers_[this->scene_controller_count_++] = controller;
+  }
 
   void setup() override;
   void on_shutdown() override;
@@ -47,6 +62,9 @@ class MaterialDirectVolumeOverlay : public Component {
   };
 
   void release_();
+  bool suspend_scene_controllers_();
+  void resume_scene_controllers_();
+  bool borrow_scene_frame_();
   void reset_visual_cache_();
   bool update_geometry_();
   bool rebuild_background_();
@@ -69,9 +87,10 @@ class MaterialDirectVolumeOverlay : public Component {
   lv_obj_t *knob_{nullptr};
   lv_obj_t *label_{nullptr};
   lv_obj_t *activation_widget_{nullptr};
+  lv_display_t *display_{nullptr};
   const lv_font_t *font_{nullptr};
 
-  lv_color_t *original_{nullptr};
+  const lv_color_t *original_{nullptr};
   lv_color_t *background_{nullptr};
   lv_color_t *scratch_{nullptr};
   lv_draw_buf_t *glyph_buffer_{nullptr};
@@ -92,6 +111,8 @@ class MaterialDirectVolumeOverlay : public Component {
   int label_width_{0};
   int label_height_{0};
   size_t scratch_capacity_{0};
+  bool original_owned_{false};
+  bool activation_widget_was_visible_{true};
   lv_opa_t scrim_opacity_{LV_OPA_70};
   lv_color_t inactive_color_{lv_color_hex(0x382949)};
   lv_color_t active_color_{lv_color_hex(0xF5EEFB)};
@@ -102,6 +123,11 @@ class MaterialDirectVolumeOverlay : public Component {
   bool prepared_{false};
   bool active_{false};
   bool presented_{false};
+  bool frame_buffer_presentation_active_{false};
+  bool invalidation_suspended_{false};
+  std::array<lvgl::DirectSceneController *, MAX_SCENE_CONTROLLERS> scene_controllers_{};
+  size_t scene_controller_count_{0};
+  bool scene_controllers_suspended_{false};
 };
 
 }  // namespace esphome::lvgl_material

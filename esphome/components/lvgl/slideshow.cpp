@@ -1,4 +1,4 @@
-#include "ken_burns.h"
+#include "slideshow.h"
 
 #if LV_USE_IMAGE
 
@@ -21,9 +21,9 @@
 
 namespace esphome::lvgl {
 
-static const char *const TAG = "lvgl.ken_burns";
+static const char *const TAG = "lvgl.slideshow";
 
-void KenBurnsController::setup() {
+void SlideshowController::setup() {
   this->choose_target_();
   this->last_loop_ms_ = millis();
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
@@ -46,7 +46,7 @@ void KenBurnsController::setup() {
     }
     if (this->direct_worker_stack_ != nullptr) {
       this->direct_worker_handle_ = xTaskCreateStaticPinnedToCore(
-          &KenBurnsController::direct_worker_trampoline_, "lvgl_ken_burns", worker_stack_size, this, 1,
+          &SlideshowController::direct_worker_trampoline_, "lvgl_slideshow", worker_stack_size, this, 1,
           this->direct_worker_stack_, &this->direct_worker_storage_, worker_core);
     }
     if (this->direct_worker_handle_ == nullptr) {
@@ -63,7 +63,7 @@ void KenBurnsController::setup() {
 #endif
 }
 
-void KenBurnsController::loop() {
+void SlideshowController::loop() {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   if (this->use_direct_ && this->direct_worker_handle_ != nullptr) {
     if (this->direct_start_pending_.exchange(false)) {
@@ -125,12 +125,13 @@ void KenBurnsController::loop() {
   }
 }
 
-void KenBurnsController::restart() {
+void SlideshowController::restart() {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   this->transition_requested_.store(false);
   this->transition_active_.store(false);
   this->transition_source_.store(nullptr);
   this->direct_start_pending_.store(false);
+  this->transition_from_overlay_ = false;
   this->stop_direct_worker_();
   this->release_transition_buffers_();
   this->release_subpixel_scratch_();
@@ -155,7 +156,7 @@ void KenBurnsController::restart() {
     this->update_transform_(0);
 }
 
-bool KenBurnsController::pause() {
+bool SlideshowController::pause() {
   this->paused_ = true;
   this->last_loop_ms_ = millis();
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
@@ -186,7 +187,67 @@ bool KenBurnsController::pause() {
   return true;
 }
 
-bool KenBurnsController::pause_for_snapshot() {
+bool SlideshowController::pause_for_overlay() {
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  this->paused_ = true;
+  this->last_loop_ms_ = millis();
+  this->transition_requested_.store(false);
+  this->transition_source_.store(nullptr);
+  this->direct_start_pending_.store(false);
+  if (!this->stop_direct_worker_())
+    return false;
+  this->transition_active_.store(false);
+
+  if (!this->direct_active_)
+    return true;
+
+  auto *component = this->get_lvgl_component_();
+  if (component == nullptr || this->obj_ == nullptr || !lv_obj_is_valid(this->obj_))
+    return false;
+
+  lv_display_t *display = lv_obj_get_display(this->obj_);
+  if (display == nullptr)
+    return false;
+  const int width = lv_display_get_horizontal_resolution(display);
+  const int height = lv_display_get_vertical_resolution(display);
+  constexpr size_t BYTES_PER_PIXEL = 3;
+  const size_t frame_size = static_cast<size_t>(width) * height * BYTES_PER_PIXEL;
+  if (width <= 0 || height <= 0 || !this->ensure_subpixel_scratch_(frame_size))
+    return false;
+
+  // Preserve the exact frame currently scanned by DSI. Re-rendering the
+  // transformed source through LVGL changes its crop and can expose partially
+  // replaced JPEG rows while the navigation HUD is visible.
+  if (!component->direct_capture_rgb888(this->subpixel_scratch_, width * BYTES_PER_PIXEL, 0, 0, width, height))
+    return false;
+  if (!this->complete_snapshot_handoff())
+    return false;
+
+  this->overlay_frame_dsc_ = {};
+  this->overlay_frame_dsc_.header.cf = LV_COLOR_FORMAT_RGB888;
+  this->overlay_frame_dsc_.header.w = width;
+  this->overlay_frame_dsc_.header.h = height;
+  this->overlay_frame_dsc_.header.stride = static_cast<uint32_t>(width) * BYTES_PER_PIXEL;
+  this->overlay_frame_dsc_.data_size = frame_size;
+  this->overlay_frame_dsc_.data = this->subpixel_scratch_;
+  this->overlay_frame_active_ = true;
+
+  lv_lock();
+  if (lv_obj_is_valid(this->obj_)) {
+    lv_image_set_src(this->obj_, &this->overlay_frame_dsc_);
+    lv_image_set_pivot(this->obj_, width / 2, height / 2);
+    lv_image_set_scale(this->obj_, LV_SCALE_NONE);
+    lv_obj_set_pos(this->obj_, 0, 0);
+    lv_obj_set_size(this->obj_, width, height);
+  }
+  lv_unlock();
+  return true;
+#else
+  return this->pause();
+#endif
+}
+
+bool SlideshowController::pause_for_snapshot() {
   this->paused_ = true;
   this->last_loop_ms_ = millis();
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
@@ -204,7 +265,12 @@ bool KenBurnsController::pause_for_snapshot() {
     }
   }
   this->release_transition_buffers_();
-  this->release_subpixel_scratch_();
+  // pause_for_overlay() can leave the image widget backed by the captured
+  // frame while the application-close snapshot is being taken. Keep that
+  // allocation alive until clear(); otherwise LVGL snapshots freed PSRAM and
+  // the next open starts with striped/corrupted pixels.
+  if (!this->overlay_frame_active_)
+    this->release_subpixel_scratch_();
   // The last complete direct frame remains visible and can now be captured,
   // but LVGL owns the framebuffers again before the snapshot compositor runs.
   return true;
@@ -213,7 +279,7 @@ bool KenBurnsController::pause_for_snapshot() {
 #endif
 }
 
-bool KenBurnsController::complete_snapshot_handoff(uint32_t timeout_ms) {
+bool SlideshowController::complete_snapshot_handoff(uint32_t timeout_ms) {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   if (!this->direct_active_)
     return true;
@@ -237,10 +303,66 @@ bool KenBurnsController::complete_snapshot_handoff(uint32_t timeout_ms) {
 #endif
 }
 
-void KenBurnsController::resume() {
+void SlideshowController::clear() {
+  this->paused_ = true;
+  this->last_loop_ms_ = millis();
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  this->transition_requested_.store(false);
+  this->transition_active_.store(false);
+  this->transition_source_.store(nullptr);
+  this->direct_start_pending_.store(false);
+  this->stop_direct_worker_();
+  if (this->direct_active_)
+    this->complete_snapshot_handoff();
+
+  lv_lock();
+  if (this->obj_ != nullptr && lv_obj_is_valid(this->obj_))
+    ::lv_image_set_src(this->obj_, nullptr);
+  lv_unlock();
+
+  this->overlay_frame_active_ = false;
+  this->transition_from_overlay_ = false;
+  this->direct_active_ = false;
+  this->direct_source_ = {};
+  this->overlay_frame_dsc_ = {};
+  this->release_transition_buffers_();
+  this->release_subpixel_scratch_();
+  this->reset_direct_frame_cache_();
+#endif
+  this->phase_elapsed_ms_ = 0;
+  this->phase_complete_ = false;
+  this->geometry_source_width_ = 0;
+  this->geometry_source_height_ = 0;
+  this->geometry_viewport_width_ = 0;
+  this->geometry_viewport_height_ = 0;
+}
+
+void SlideshowController::resume() {
+  if (this->direct_overlay_suspended_) {
+    // A delayed HUD timeout can request motion while a full-screen direct
+    // overlay still owns the DSI buffers. Preserve the request and perform it
+    // only after the overlay has restored its captured frame.
+    this->direct_overlay_resume_pending_ = true;
+    return;
+  }
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   this->direct_start_pending_.store(false);
   this->stop_direct_worker_();
+  if (this->overlay_frame_active_ && this->obj_ != nullptr && lv_obj_is_valid(this->obj_)) {
+    lv_lock();
+    lv_display_t *display = lv_obj_get_display(this->obj_);
+    const bool invalidation_enabled = display != nullptr && lv_display_is_invalidation_enabled(display);
+    if (invalidation_enabled)
+      lv_display_enable_invalidation(display, false);
+    lv_image_set_src(this->obj_, &this->direct_source_);
+    lv_obj_set_pos(this->obj_, 0, 0);
+    lv_obj_set_size(this->obj_, this->direct_source_.header.w, this->direct_source_.header.h);
+    if (invalidation_enabled)
+      lv_display_enable_invalidation(display, true);
+    lv_unlock();
+    this->overlay_frame_active_ = false;
+    this->transition_from_overlay_ = false;
+  }
 #endif
   this->paused_ = false;
   this->last_loop_ms_ = millis();
@@ -251,9 +373,13 @@ void KenBurnsController::resume() {
   }
 #endif
   this->direct_active_ = this->update_direct_frame_(this->phase_elapsed_ms_);
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  if (this->direct_active_ && !this->overlay_frame_active_)
+    this->release_subpixel_scratch_();
+#endif
 }
 
-void KenBurnsController::reset_transform() {
+void SlideshowController::reset_transform() {
   if (this->obj_ == nullptr)
     return;
   lv_lock();
@@ -277,12 +403,34 @@ void KenBurnsController::reset_transform() {
   lv_unlock();
 }
 
-bool KenBurnsController::transition_to(const lv_image_dsc_t *source, uint32_t duration_ms) {
+bool SlideshowController::transition_to(const lv_image_dsc_t *source, uint32_t duration_ms) {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
-  if (!this->use_direct_ || this->paused_ || !this->direct_active_ || this->direct_worker_handle_ == nullptr ||
-      source == nullptr || source->data == nullptr || source->header.w < 2 || source->header.h < 2 ||
+  if (!this->use_direct_ || this->direct_worker_handle_ == nullptr || source == nullptr || source->data == nullptr ||
+      source->header.w < 2 || source->header.h < 2 ||
       this->transition_requested_.load() || this->transition_active_.load()) {
     return false;
+  }
+
+  const bool resume_from_overlay = this->paused_ && this->overlay_frame_active_;
+  if (this->paused_ && !resume_from_overlay)
+    return false;
+  if (!this->direct_active_) {
+    if (!resume_from_overlay)
+      return false;
+    auto *component = this->get_lvgl_component_();
+    if (component == nullptr || !component->begin_direct_image_animation())
+      return false;
+
+    // The overlay capture is the exact frame that was visible when the HUD
+    // opened. Use it as the current direct source until the crossfade worker
+    // pins that frame in DSI, rather than restarting the pan from phase zero.
+    this->direct_component_ = component;
+    this->direct_source_ = this->overlay_frame_dsc_;
+    this->direct_active_ = true;
+    this->transition_from_overlay_ = true;
+    this->paused_ = false;
+    this->last_loop_ms_ = millis();
+    this->reset_direct_frame_cache_();
   }
 
   this->transition_duration_ms_.store(std::clamp<uint32_t>(duration_ms, 200, 3000));
@@ -301,7 +449,7 @@ bool KenBurnsController::transition_to(const lv_image_dsc_t *source, uint32_t du
 #endif
 }
 
-bool KenBurnsController::is_transition_pending_or_active() const {
+bool SlideshowController::is_transition_pending_or_active() const {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   return this->transition_requested_.load(std::memory_order_acquire) ||
          this->transition_active_.load(std::memory_order_acquire);
@@ -310,7 +458,7 @@ bool KenBurnsController::is_transition_pending_or_active() const {
 #endif
 }
 
-bool KenBurnsController::transition_failed() const {
+bool SlideshowController::transition_failed() const {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   return this->transition_failed_.load(std::memory_order_acquire);
 #else
@@ -318,7 +466,7 @@ bool KenBurnsController::transition_failed() const {
 #endif
 }
 
-bool KenBurnsController::freeze_direct() {
+bool SlideshowController::freeze_direct() {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   if (!this->direct_active_ || !this->direct_worker_run_.load(std::memory_order_acquire))
     return false;
@@ -335,7 +483,7 @@ bool KenBurnsController::freeze_direct() {
 #endif
 }
 
-void KenBurnsController::resume_direct() {
+void SlideshowController::resume_direct() {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   if (!this->direct_active_ || this->paused_ || this->direct_worker_handle_ == nullptr ||
       this->direct_worker_run_.load(std::memory_order_acquire)) {
@@ -347,7 +495,139 @@ void KenBurnsController::resume_direct() {
 #endif
 }
 
-size_t KenBurnsController::memory_usage_bytes() const {
+bool SlideshowController::suspend_for_direct_overlay() {
+  if (this->direct_overlay_suspended_)
+    return true;
+  if (!this->use_direct_ || this->obj_ == nullptr)
+    return true;
+
+  lv_lock();
+  const bool visible = lv_obj_is_valid(this->obj_) && lv_obj_is_visible(this->obj_);
+  lv_unlock();
+  if (!visible)
+    return true;
+
+  const bool was_running = !this->paused_;
+  if (was_running) {
+    if (!this->pause_for_overlay()) {
+      this->resume();
+      return false;
+    }
+  }
+  this->direct_overlay_resume_pending_ = was_running;
+  this->direct_overlay_suspended_ = true;
+  return true;
+}
+
+void SlideshowController::resume_after_direct_overlay() {
+  if (!this->direct_overlay_suspended_)
+    return;
+  const bool should_resume = this->direct_overlay_resume_pending_;
+  this->direct_overlay_suspended_ = false;
+  this->direct_overlay_resume_pending_ = false;
+  if (should_resume)
+    this->resume();
+}
+
+bool SlideshowController::get_direct_overlay_frame(DirectSceneFrame &frame) const {
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  if (!this->direct_overlay_suspended_ || !this->overlay_frame_active_ ||
+      this->overlay_frame_dsc_.header.cf != LV_COLOR_FORMAT_RGB888 || this->overlay_frame_dsc_.data == nullptr) {
+    frame = {};
+    return false;
+  }
+  frame.data = this->overlay_frame_dsc_.data;
+  frame.stride = static_cast<int>(this->overlay_frame_dsc_.header.stride);
+  frame.width = static_cast<int>(this->overlay_frame_dsc_.header.w);
+  frame.height = static_cast<int>(this->overlay_frame_dsc_.header.h);
+  return frame.stride == frame.width * 3 && frame.width > 0 && frame.height > 0;
+#else
+  frame = {};
+  return false;
+#endif
+}
+
+bool SlideshowController::begin_direct_overlay_background_render() {
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  if (!this->direct_overlay_suspended_ || !this->overlay_frame_active_ || this->obj_ == nullptr ||
+      this->direct_source_.data == nullptr || this->direct_component_ == nullptr || !lv_obj_is_valid(this->obj_)) {
+    return false;
+  }
+
+  int crop_x = this->last_direct_crop_x_;
+  int crop_y = this->last_direct_crop_y_;
+  int crop_width = this->last_direct_crop_width_;
+  int crop_height = this->last_direct_crop_height_;
+  if (crop_x < 0 || crop_y < 0 || crop_width < 2 || crop_height < 2) {
+    if (!this->calculate_direct_crop_(&this->direct_source_, this->phase_elapsed_ms_, &crop_x, &crop_y, &crop_width,
+                                      &crop_height) ||
+        !this->direct_component_->direct_resolve_image_crop(&this->direct_source_, &crop_x, &crop_y, &crop_width,
+                                                             &crop_height)) {
+      return false;
+    }
+  }
+
+  lv_display_t *display = lv_obj_get_display(this->obj_);
+  if (display == nullptr)
+    return false;
+  const int output_width = lv_display_get_horizontal_resolution(display);
+  if (output_width <= 0)
+    return false;
+
+  const uint32_t scale_q16 =
+      (static_cast<uint32_t>(output_width) * 16U + static_cast<uint32_t>(crop_width) - 1U) /
+      static_cast<uint32_t>(crop_width);
+  const uint16_t lvgl_scale = static_cast<uint16_t>(std::min<uint32_t>(UINT16_MAX, scale_q16 * 16U));
+  const int image_x = -static_cast<int>((static_cast<int64_t>(crop_x) * scale_q16 + 8) / 16);
+  const int image_y = -static_cast<int>((static_cast<int64_t>(crop_y) * scale_q16 + 8) / 16);
+
+  lv_lock();
+  if (!lv_obj_is_valid(this->obj_)) {
+    lv_unlock();
+    return false;
+  }
+  const bool invalidation_enabled = lv_display_is_invalidation_enabled(display);
+  if (invalidation_enabled)
+    lv_display_enable_invalidation(display, false);
+  lv_image_set_src(this->obj_, &this->direct_source_);
+  lv_obj_set_size(this->obj_, this->direct_source_.header.w, this->direct_source_.header.h);
+  lv_image_set_pivot(this->obj_, 0, 0);
+  lv_image_set_scale(this->obj_, lvgl_scale);
+  lv_obj_set_pos(this->obj_, image_x, image_y);
+  if (invalidation_enabled)
+    lv_display_enable_invalidation(display, true);
+  lv_unlock();
+  return true;
+#else
+  return false;
+#endif
+}
+
+void SlideshowController::end_direct_overlay_background_render() {
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  if (!this->overlay_frame_active_ || this->obj_ == nullptr || !lv_obj_is_valid(this->obj_))
+    return;
+
+  lv_display_t *display = lv_obj_get_display(this->obj_);
+  lv_lock();
+  if (lv_obj_is_valid(this->obj_)) {
+    const bool invalidation_enabled = display != nullptr && lv_display_is_invalidation_enabled(display);
+    if (invalidation_enabled)
+      lv_display_enable_invalidation(display, false);
+    lv_image_set_src(this->obj_, &this->overlay_frame_dsc_);
+    lv_image_set_pivot(this->obj_, this->overlay_frame_dsc_.header.w / 2,
+                       this->overlay_frame_dsc_.header.h / 2);
+    lv_image_set_scale(this->obj_, LV_SCALE_NONE);
+    lv_obj_set_pos(this->obj_, 0, 0);
+    lv_obj_set_size(this->obj_, this->overlay_frame_dsc_.header.w, this->overlay_frame_dsc_.header.h);
+    if (invalidation_enabled)
+      lv_display_enable_invalidation(display, true);
+  }
+  lv_unlock();
+#endif
+}
+
+size_t SlideshowController::memory_usage_bytes() const {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   size_t bytes = this->direct_worker_stack_ == nullptr ? 0 : 8192;
   if (this->transition_old_frame_ != nullptr && this->transition_old_frame_owned_)
@@ -361,7 +641,7 @@ size_t KenBurnsController::memory_usage_bytes() const {
 #endif
 }
 
-void KenBurnsController::log_memory_usage(const char *phase) const {
+void SlideshowController::log_memory_usage(const char *phase) const {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   const size_t worker_bytes = this->direct_worker_stack_ == nullptr ? 0 : 8192;
   const size_t old_bytes = this->transition_old_frame_ != nullptr && this->transition_old_frame_owned_
@@ -379,14 +659,14 @@ void KenBurnsController::log_memory_usage(const char *phase) const {
 #endif
 }
 
-LvglComponent *KenBurnsController::get_lvgl_component_() const {
+LvglComponent *SlideshowController::get_lvgl_component_() const {
   if (this->obj_ == nullptr || !lv_obj_is_valid(this->obj_))
     return nullptr;
   auto *display = lv_obj_get_display(this->obj_);
   return display == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(display));
 }
 
-const lv_image_dsc_t *KenBurnsController::get_source_descriptor_() const {
+const lv_image_dsc_t *SlideshowController::get_source_descriptor_() const {
   if (this->obj_ == nullptr || !lv_obj_is_valid(this->obj_))
     return nullptr;
   const void *source = lv_image_get_src(this->obj_);
@@ -395,7 +675,7 @@ const lv_image_dsc_t *KenBurnsController::get_source_descriptor_() const {
   return static_cast<const lv_image_dsc_t *>(source);
 }
 
-bool KenBurnsController::update_direct_frame_(uint32_t elapsed_ms) {
+bool SlideshowController::update_direct_frame_(uint32_t elapsed_ms) {
   if (!this->use_direct_ || this->obj_ == nullptr || this->phase_duration_ms_ == 0)
     return false;
 
@@ -419,7 +699,7 @@ bool KenBurnsController::update_direct_frame_(uint32_t elapsed_ms) {
   return rendered;
 }
 
-bool KenBurnsController::calculate_direct_crop_(const lv_image_dsc_t *source, uint32_t elapsed_ms, int *crop_x,
+bool SlideshowController::calculate_direct_crop_(const lv_image_dsc_t *source, uint32_t elapsed_ms, int *crop_x,
                                                  int *crop_y, int *crop_width, int *crop_height,
                                                  uint8_t *subpixel_alpha, bool *subpixel_vertical) const {
   if (source == nullptr || source->data == nullptr || source->header.w < 2 ||
@@ -502,7 +782,7 @@ bool KenBurnsController::calculate_direct_crop_(const lv_image_dsc_t *source, ui
   return true;
 }
 
-bool KenBurnsController::render_direct_frame_(const lv_image_dsc_t *source, LvglComponent *component,
+bool SlideshowController::render_direct_frame_(const lv_image_dsc_t *source, LvglComponent *component,
                                                uint32_t elapsed_ms) {
   if (source == nullptr || component == nullptr || source->data == nullptr || source->header.w < 2 ||
       source->header.h < 2 || this->phase_duration_ms_ == 0)
@@ -578,7 +858,7 @@ bool KenBurnsController::render_direct_frame_(const lv_image_dsc_t *source, Lvgl
 #endif
 }
 
-void KenBurnsController::reset_direct_frame_cache_() {
+void SlideshowController::reset_direct_frame_cache_() {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   this->last_direct_source_data_ = nullptr;
   this->last_direct_crop_x_ = -1;
@@ -591,7 +871,7 @@ void KenBurnsController::reset_direct_frame_cache_() {
 }
 
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
-bool KenBurnsController::start_direct_worker_() {
+bool SlideshowController::start_direct_worker_() {
   if (!this->use_direct_ || this->paused_ || this->direct_worker_handle_ == nullptr || this->obj_ == nullptr)
     return false;
 
@@ -622,7 +902,7 @@ bool KenBurnsController::start_direct_worker_() {
   return true;
 }
 
-bool KenBurnsController::stop_direct_worker_(uint32_t timeout_ms) {
+bool SlideshowController::stop_direct_worker_(uint32_t timeout_ms) {
   if (this->direct_worker_handle_ == nullptr)
     return true;
   this->direct_worker_run_.store(false);
@@ -639,7 +919,7 @@ bool KenBurnsController::stop_direct_worker_(uint32_t timeout_ms) {
   return true;
 }
 
-bool KenBurnsController::ensure_transition_buffers_(const lv_image_dsc_t *incoming_source) {
+bool SlideshowController::ensure_transition_buffers_(const lv_image_dsc_t *incoming_source) {
   int width = 0;
   int height = 0;
   lv_lock();
@@ -725,7 +1005,7 @@ bool KenBurnsController::ensure_transition_buffers_(const lv_image_dsc_t *incomi
   return true;
 }
 
-void KenBurnsController::release_transition_buffers_() {
+void SlideshowController::release_transition_buffers_() {
   if (this->transition_old_frame_ != nullptr && this->transition_old_frame_owned_)
     heap_caps_free(this->transition_old_frame_);
   if (this->transition_new_frame_ != nullptr && this->transition_new_frame_owned_)
@@ -738,7 +1018,7 @@ void KenBurnsController::release_transition_buffers_() {
   this->transition_new_frame_owned_ = false;
 }
 
-bool KenBurnsController::ensure_subpixel_scratch_(size_t required_size) {
+bool SlideshowController::ensure_subpixel_scratch_(size_t required_size) {
   constexpr size_t ALIGNMENT = 64;
   if (required_size == 0 || (required_size & (ALIGNMENT - 1U)) != 0)
     return false;
@@ -764,14 +1044,14 @@ bool KenBurnsController::ensure_subpixel_scratch_(size_t required_size) {
   return true;
 }
 
-void KenBurnsController::release_subpixel_scratch_() {
+void SlideshowController::release_subpixel_scratch_() {
   if (this->subpixel_scratch_ != nullptr)
     heap_caps_free(this->subpixel_scratch_);
   this->subpixel_scratch_ = nullptr;
   this->subpixel_scratch_size_ = 0;
 }
 
-bool KenBurnsController::perform_direct_transition_(const lv_image_dsc_t *source) {
+bool SlideshowController::perform_direct_transition_(const lv_image_dsc_t *source) {
   if (source == nullptr || source->data == nullptr || this->direct_component_ == nullptr ||
       this->direct_srm_client_ == nullptr || this->direct_blend_client_ == nullptr) {
     return false;
@@ -963,14 +1243,23 @@ bool KenBurnsController::perform_direct_transition_(const lv_image_dsc_t *source
   // framebuffer, so release the temporary frame before the caller retires the
   // previous source slot; the adjacent free regions can then coalesce.
   this->release_transition_buffers_();
+  if (this->transition_from_overlay_) {
+    // The LVGL image now references the promoted source. The frozen HUD frame
+    // is no longer visible or referenced and its shared RGB888 workspace can
+    // be returned immediately.
+    this->overlay_frame_active_ = false;
+    this->overlay_frame_dsc_ = {};
+    this->transition_from_overlay_ = false;
+    this->release_subpixel_scratch_();
+  }
   return true;
 }
 
-void KenBurnsController::direct_worker_trampoline_(void *arg) {
-  static_cast<KenBurnsController *>(arg)->direct_worker_();
+void SlideshowController::direct_worker_trampoline_(void *arg) {
+  static_cast<SlideshowController *>(arg)->direct_worker_();
 }
 
-void KenBurnsController::direct_worker_() {
+void SlideshowController::direct_worker_() {
   this->direct_srm_client_ = LvglComponent::register_direct_image_animation_client();
   this->direct_blend_client_ = LvglComponent::register_direct_image_blend_client();
   if (this->direct_srm_client_ == nullptr || this->direct_blend_client_ == nullptr) {
@@ -1061,7 +1350,7 @@ void KenBurnsController::direct_worker_() {
 }
 #endif
 
-bool KenBurnsController::update_transform_(uint32_t elapsed_ms) {
+bool SlideshowController::update_transform_(uint32_t elapsed_ms) {
   if (this->obj_ == nullptr || this->phase_duration_ms_ == 0)
     return false;
 
@@ -1142,11 +1431,11 @@ bool KenBurnsController::update_transform_(uint32_t elapsed_ms) {
   return true;
 }
 
-void KenBurnsController::choose_target_() {
+void SlideshowController::choose_target_() {
   this->select_pan_direction_(this->pan_forward_);
 }
 
-void KenBurnsController::select_pan_direction_(bool forward) {
+void SlideshowController::select_pan_direction_(bool forward) {
   this->pan_forward_ = forward;
   const float direction = forward ? 1.0f : -1.0f;
   this->target_x_ = direction * this->pan_limit_;

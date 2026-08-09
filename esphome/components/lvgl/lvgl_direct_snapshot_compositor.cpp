@@ -42,7 +42,9 @@ bool LvglDirectSnapshotCompositor::prepare_applications(const std::vector<LvglAp
   bool prepared = true;
   for (auto *application : applications) {
     auto *view = application == nullptr ? nullptr : application->get_view();
-    if (view != nullptr)
+    if (application != nullptr && application->uses_black_open_transition_snapshot())
+      prepared = this->ensure_black_application_buffer_() && prepared;
+    else if (view != nullptr)
       prepared = lvgl_esphome_snapshot_cache_compressed_page(view) && prepared;
   }
   return prepared;
@@ -267,8 +269,14 @@ bool LvglDirectSnapshotCompositor::open_application(LvglApplication *application
   }
 
   const int32_t width = this->parent_->get_width();
-  if (!lvgl_esphome_snapshot_app_open(application->get_view(), this->home_views_[home_index], width,
-                                      this->application_open_duration_)) {
+  const bool started = application->uses_black_open_transition_snapshot()
+                           ? this->ensure_black_application_buffer_() &&
+                                 lvgl_esphome_snapshot_app_open_with_buffer(
+                                     application->get_view(), this->home_views_[home_index],
+                                     this->black_application_buffer_, width, this->application_open_duration_)
+                           : lvgl_esphome_snapshot_app_open(application->get_view(), this->home_views_[home_index],
+                                                           width, this->application_open_duration_);
+  if (!started) {
     if (lvgl_esphome_get_swipe_logging_enabled())
       ESP_LOGI(TAG, "application open direct start failed app=%p home=%d", application, home_index);
     this->application_fallback_ = true;
@@ -290,8 +298,18 @@ bool LvglDirectSnapshotCompositor::open_application(LvglApplication *application
 
 bool LvglDirectSnapshotCompositor::begin_application_close(LvglApplication *application, int home_index) {
   this->application_fallback_ = false;
-  if (!this->can_use_direct_application_(application, home_index) ||
-      !lvgl_esphome_snapshot_app_prepare_close(application->get_view())) {
+  if (!this->can_use_direct_application_(application, home_index)) {
+    this->application_fallback_ = true;
+    return LvglSnapshotCompositor::begin_application_close(application, home_index);
+  }
+
+  const bool prepared = application != nullptr && application->uses_black_close_transition_snapshot()
+                            ? this->ensure_black_application_buffer_() &&
+                                  lvgl_esphome_snapshot_app_prepare_close_with_buffer(
+                                      application->get_view(), this->black_application_buffer_)
+                            : application != nullptr &&
+                                  lvgl_esphome_snapshot_app_prepare_close(application->get_view());
+  if (!prepared) {
     this->application_fallback_ = true;
     return LvglSnapshotCompositor::begin_application_close(application, home_index);
   }

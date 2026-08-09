@@ -3,7 +3,7 @@ import esphome.codegen as cg
 from esphome.components.lvgl.defines import CONF_LVGL_ID, CONF_WIDGETS
 from esphome.components.lvgl.lv_validation import lv_color
 from esphome.components.lvgl.lvcode import LvContext, LvglComponent
-from esphome.components.lvgl.types import lv_obj_t
+from esphome.components.lvgl.types import DirectSceneController, lv_obj_t
 from esphome.components.lvgl.widgets import get_widgets, wait_for_widgets
 import esphome.config_validation as cv
 from esphome.const import CONF_COLOR, CONF_COUNT, CONF_ID, CONF_VALUE
@@ -22,6 +22,9 @@ CONF_DIRECT_VOLUME_OVERLAYS = "direct_volume_overlays"
 CONF_ENTER_DURATION = "enter_duration"
 CONF_EXIT_DURATION = "exit_duration"
 CONF_GAP = "gap"
+CONF_FRAME_RATE = "frame_rate"
+CONF_GRADIENT_BOTTOM_COLOR = "gradient_bottom_color"
+CONF_GRADIENT_START = "gradient_start"
 CONF_INACTIVE_COLOR = "inactive_color"
 CONF_INACTIVE_SIZE = "inactive_size"
 CONF_INITIAL_PAGE = "initial_page"
@@ -29,12 +32,22 @@ CONF_KNOB = "knob"
 CONF_PAGE_INDICATORS = "page_indicators"
 CONF_PRESSED_OPACITY = "pressed_opacity"
 CONF_PRESSED_STYLES = "pressed_styles"
+CONF_PRIMARY_COLOR = "primary_color"
 CONF_SCRIM_OPACITY = "scrim_opacity"
+CONF_SECONDARY_COLOR = "secondary_color"
+CONF_SCENE_CONTROLLERS = "scene_controllers"
 CONF_STATE_LAYERS = "state_layers"
 CONF_THICKNESS = "thickness"
 CONF_TRANSITION_DURATION = "transition_duration"
+CONF_TERTIARY_COLOR = "tertiary_color"
 CONF_LABEL = "label"
+CONF_ASSISTANT_LABEL = "assistant_label"
+CONF_ROOT = "root"
+CONF_STATUS_LABEL = "status_label"
+CONF_USER_LABEL = "user_label"
 CONF_VIEWPORT = "viewport"
+CONF_VOICE_ASSISTANTS = "voice_assistants"
+CONF_WAVEFORM = "waveform"
 CONF_WAVY_PROGRESS = "wavy_progress"
 CONF_WIDGET = "widget"
 
@@ -48,6 +61,9 @@ MaterialDirectVolumeOverlay = lvgl_material_ns.class_(
     "MaterialDirectVolumeOverlay", cg.Component
 )
 MaterialWavyProgress = lvgl_material_ns.class_("MaterialWavyProgress", cg.Component)
+MaterialVoiceAssistant = lvgl_material_ns.class_(
+    "MaterialVoiceAssistant", cg.Component
+)
 MaterialPressedStyle = lvgl_material_ns.class_("MaterialPressedStyle", cg.Component)
 MaterialPageIndicator = lvgl_material_ns.class_("MaterialPageIndicator", cg.Component)
 MaterialPageIndicatorSetAction = lvgl_material_ns.class_(
@@ -100,6 +116,10 @@ DIRECT_VOLUME_OVERLAY_SCHEMA = cv.Schema(
         cv.Required(CONF_LABEL): cv.use_id(lv_obj_t),
         cv.Optional(CONF_ACTIVATION_WIDGET): cv.use_id(lv_obj_t),
         cv.Optional(CONF_SCRIM_OPACITY, default="72%"): cv.percentage,
+        cv.Optional(CONF_SCENE_CONTROLLERS, default=list): cv.All(
+            cv.ensure_list(cv.use_id(DirectSceneController)),
+            cv.Length(max=4),
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -107,6 +127,24 @@ WAVY_PROGRESS_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(MaterialWavyProgress),
         cv.Required(CONF_WIDGET): cv.use_id(lv_obj_t),
+    }
+).extend(cv.COMPONENT_SCHEMA)
+
+VOICE_ASSISTANT_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MaterialVoiceAssistant),
+        cv.GenerateID(CONF_LVGL_ID): cv.use_id(LvglComponent),
+        cv.Required(CONF_ROOT): cv.use_id(lv_obj_t),
+        cv.Required(CONF_STATUS_LABEL): cv.use_id(lv_obj_t),
+        cv.Required(CONF_USER_LABEL): cv.use_id(lv_obj_t),
+        cv.Required(CONF_ASSISTANT_LABEL): cv.use_id(lv_obj_t),
+        cv.Required(CONF_WAVEFORM): cv.use_id(lv_obj_t),
+        cv.Optional(CONF_FRAME_RATE, default=30): cv.int_range(min=15, max=60),
+        cv.Optional(CONF_PRIMARY_COLOR, default=0xE4C2FF): lv_color,
+        cv.Optional(CONF_SECONDARY_COLOR, default=0xD9C2FF): lv_color,
+        cv.Optional(CONF_TERTIARY_COLOR, default=0x735E9A): lv_color,
+        cv.Optional(CONF_GRADIENT_BOTTOM_COLOR, default=0x2D2136): lv_color,
+        cv.Optional(CONF_GRADIENT_START, default="62.5%"): cv.percentage,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -146,13 +184,14 @@ def _validate_config(config):
         and not config.get(CONF_DIRECT_MARQUEES)
         and not config.get(CONF_DIRECT_VOLUME_OVERLAYS)
         and not config.get(CONF_WAVY_PROGRESS)
+        and not config.get(CONF_VOICE_ASSISTANTS)
         and not config.get(CONF_PRESSED_STYLES)
         and not config.get(CONF_PAGE_INDICATORS)
     ):
         raise cv.Invalid(
             f"At least one of {CONF_STATE_LAYERS}, {CONF_DIRECT_STATE_LAYERS}, "
             f"{CONF_DIRECT_MARQUEES}, {CONF_DIRECT_VOLUME_OVERLAYS}, "
-            f"{CONF_WAVY_PROGRESS}, "
+            f"{CONF_WAVY_PROGRESS}, {CONF_VOICE_ASSISTANTS}, "
             f"{CONF_PRESSED_STYLES}, "
             f"or {CONF_PAGE_INDICATORS} is required"
         )
@@ -180,6 +219,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_WAVY_PROGRESS, default=list): cv.ensure_list(
                 WAVY_PROGRESS_SCHEMA
             ),
+            cv.Optional(CONF_VOICE_ASSISTANTS, default=list): cv.ensure_list(
+                VOICE_ASSISTANT_SCHEMA
+            ),
             cv.Optional(CONF_PRESSED_STYLES, default=list): cv.ensure_list(
                 PRESSED_STYLE_SCHEMA
             ),
@@ -193,6 +235,34 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
+    voice_assistant_bindings = []
+    for conf in config[CONF_VOICE_ASSISTANTS]:
+        lvgl = await cg.get_variable(conf[CONF_LVGL_ID])
+        var = cg.new_Pvariable(conf[CONF_ID], lvgl)
+        await cg.register_component(var, conf)
+        cg.add(var.set_frame_interval(max(1, 1000 // conf[CONF_FRAME_RATE])))
+        cg.add(
+            var.set_wave_colors(
+                await lv_color.process(conf[CONF_PRIMARY_COLOR]),
+                await lv_color.process(conf[CONF_SECONDARY_COLOR]),
+                await lv_color.process(conf[CONF_TERTIARY_COLOR]),
+            )
+        )
+        cg.add(
+            var.set_gradient(
+                await lv_color.process(conf[CONF_GRADIENT_BOTTOM_COLOR]),
+                conf[CONF_GRADIENT_START],
+            )
+        )
+        root = (await get_widgets(conf, CONF_ROOT))[0]
+        status_label = (await get_widgets(conf, CONF_STATUS_LABEL))[0]
+        user_label = (await get_widgets(conf, CONF_USER_LABEL))[0]
+        assistant_label = (await get_widgets(conf, CONF_ASSISTANT_LABEL))[0]
+        waveform = (await get_widgets(conf, CONF_WAVEFORM))[0]
+        voice_assistant_bindings.append(
+            (var, root, status_label, user_label, assistant_label, waveform)
+        )
+
     wavy_progress_bindings = []
     for conf in config[CONF_WAVY_PROGRESS]:
         var = cg.new_Pvariable(conf[CONF_ID])
@@ -212,6 +282,9 @@ async def to_code(config):
         activation_widget = None
         if CONF_ACTIVATION_WIDGET in conf:
             activation_widget = (await get_widgets(conf, CONF_ACTIVATION_WIDGET))[0]
+        for controller_id in conf[CONF_SCENE_CONTROLLERS]:
+            controller = await cg.get_variable(controller_id)
+            cg.add(var.add_scene_controller(controller))
         direct_volume_overlay_bindings.append(
             (var, arc, knob, label, activation_widget)
         )
@@ -291,6 +364,19 @@ async def to_code(config):
 
     await wait_for_widgets()
     async with LvContext() as ctx:
+        for (
+            var,
+            root,
+            status_label,
+            user_label,
+            assistant_label,
+            waveform,
+        ) in voice_assistant_bindings:
+            ctx.add(var.set_root(root.obj))
+            ctx.add(var.set_status_label(status_label.obj))
+            ctx.add(var.set_user_label(user_label.obj))
+            ctx.add(var.set_assistant_label(assistant_label.obj))
+            ctx.add(var.set_waveform(waveform.obj))
         for var, widget in wavy_progress_bindings:
             ctx.add(var.set_widget(widget.obj))
         for var, arc, knob, label, activation_widget in direct_volume_overlay_bindings:

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "esphome/components/lvgl/ken_burns.h"
+#include "esphome/components/lvgl/slideshow.h"
 #include "esphome/core/defines.h"
 
 #ifdef USE_BINARY_SENSOR
@@ -67,6 +67,14 @@ extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_async(const uint8_t *backg
                                                             int foreground_x, int foreground_y, int x, int y, int width,
                                                             int height, LvglDirectBlitReadyCallback ready_callback,
                                                             void *ready_arg);
+extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_async(
+    const uint8_t *background, int background_stride, const uint8_t *foreground, int foreground_stride,
+    int foreground_width, int foreground_height, int foreground_x, int foreground_y, int x, int y, int width,
+    int height, LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
+extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_stable_async(
+    const uint8_t *background, int background_stride, const uint8_t *foreground, int foreground_stride,
+    int foreground_width, int foreground_height, int foreground_x, int foreground_y, int x, int y, int width,
+    int height, LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
 extern "C" void lvgl_esphome_direct_blit_rgb888_release(int x, int y, int width, int height);
 extern "C" bool lvgl_esphome_direct_regions_pause(bool paused, uint32_t timeout_ms);
 extern "C" uint32_t lvgl_esphome_get_direct_region_base_generation();
@@ -99,11 +107,15 @@ extern "C" bool lvgl_esphome_snapshot_cache_complete_tile_prefetch(uint32_t time
 extern "C" bool lvgl_esphome_snapshot_refresh_tile_page(lv_obj_t *page, int width);
 extern "C" bool lvgl_esphome_snapshot_is_active(void);
 extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *background, int width, uint32_t duration_ms);
+extern "C" bool lvgl_esphome_snapshot_app_open_with_buffer(lv_obj_t *app, lv_obj_t *background,
+                                                            lv_draw_buf_t *app_buffer, int width,
+                                                            uint32_t duration_ms);
 extern "C" void lvgl_esphome_snapshot_app_release_open_hold(void);
 extern "C" bool lvgl_esphome_snapshot_app_cancel(void);
 extern "C" bool lvgl_esphome_snapshot_app_close(lv_obj_t *app, lv_obj_t *background, int width, int target_center_x,
                                                 int target_center_y, uint32_t duration_ms);
 extern "C" bool lvgl_esphome_snapshot_app_prepare_close(lv_obj_t *app);
+extern "C" bool lvgl_esphome_snapshot_app_prepare_close_with_buffer(lv_obj_t *app, lv_draw_buf_t *app_buffer);
 extern "C" void lvgl_esphome_snapshot_app_clear_prepared_close(void);
 extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *next, int width, int next_x);
 extern "C" bool lvgl_esphome_snapshot_swipe_edge_begin(lv_obj_t *current, int width);
@@ -465,7 +477,7 @@ class LvglComponent : public PollingComponent {
   bool direct_present_rgb565_crossfade(const uint8_t *background, const uint8_t *foreground, uint8_t opacity,
                                        ppa_client_handle_t blend_client);
   bool direct_present_rgb888_crossfade(const uint8_t *background, const uint8_t *foreground, uint8_t opacity,
-                                       ppa_client_handle_t blend_client);
+                                       ppa_client_handle_t blend_client, bool preserve_direct_regions = false);
   bool direct_present_rgb888_rgb565_crossfade(const uint8_t *background, const uint8_t *foreground, uint8_t opacity,
                                               ppa_client_handle_t blend_client);
   bool direct_present_rgb888_crossfade_bands(const uint8_t *background, uint8_t *const *foreground_bands,
@@ -482,15 +494,16 @@ class LvglComponent : public PollingComponent {
   const uint8_t *direct_get_stable_presented_frame(uint32_t timeout_ms = 50);
   bool direct_present_rgb565_software(const uint8_t *source, size_t source_size);
 #endif
-  bool begin_direct_image_animation();
-  bool end_direct_image_animation();
+  bool begin_direct_image_animation(bool allow_direct_regions = false);
+  bool end_direct_image_animation(uint32_t timeout_ms = 300);
   bool direct_blit_rgb888(const uint8_t *src, int src_stride, int x, int y, int width, int height);
   uint8_t direct_blit_rgb888_async(const uint8_t *src, int src_stride, int x, int y, int width, int height,
                                    LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
   uint8_t direct_blend_argb8888_async(const uint8_t *background, int background_stride, const uint8_t *foreground,
-                                      int foreground_stride, int foreground_width, int foreground_height,
-                                      int foreground_x, int foreground_y, int x, int y, int width, int height,
-                                      LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
+                                       int foreground_stride, int foreground_width, int foreground_height,
+                                       int foreground_x, int foreground_y, int x, int y, int width, int height,
+                                       LvglDirectBlitReadyCallback ready_callback, void *ready_arg,
+                                       bool background_rgb565 = false, bool stable_carry = false);
   void direct_blit_rgb888_release(int x, int y, int width, int height);
   bool direct_blit_rgb888_region_active(int x, int y, int width, int height);
   bool direct_regions_pause(bool paused, uint32_t timeout_ms);
@@ -499,6 +512,8 @@ class LvglComponent : public PollingComponent {
   bool direct_blit_xrgb8888_coherent(const uint8_t *src, int src_stride, int x, int y, int width, int height);
   bool direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, int y, int width, int height);
   bool render_area_rgb888(lv_obj_t *root, uint8_t *dst, int dst_stride, int x, int y, int width, int height);
+  bool render_display_area_rgb888(lv_display_t *display, uint8_t *dst, int dst_stride, int x, int y, int width,
+                                  int height);
 
  protected:
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
@@ -517,6 +532,19 @@ class LvglComponent : public PollingComponent {
     int width{};
     int height{};
     bool valid{};
+    bool blend{};
+    uint8_t *animation_overlay{};
+    size_t animation_overlay_size{};
+    bool animation_overlay_valid{};
+    bool stable_carry{};
+    const uint8_t *latest_background{};
+    int latest_background_stride{};
+    bool latest_background_rgb565{};
+    uint8_t *transition_background{};
+    size_t transition_background_size{};
+    int transition_background_stride{};
+    bool transition_background_rgb565{};
+    bool transition_background_valid{};
   };
   struct DirectRegionRequest {
     enum class Operation : uint8_t{COPY_RGB888, BLEND_ARGB8888, BARRIER};
@@ -530,10 +558,12 @@ class LvglComponent : public PollingComponent {
     int source_y{};
     const uint8_t *background{};
     int background_stride{};
+    bool background_rgb565{};
     int x{};
     int y{};
     int width{};
     int height{};
+    bool stable_carry{};
     LvglDirectBlitReadyCallback ready_callback{};
     void *ready_arg{};
   };
@@ -542,11 +572,23 @@ class LvglComponent : public PollingComponent {
   bool direct_region_ppa_copy_(const uint8_t *source, int source_width, int source_height, int source_x, int source_y,
                                int copy_width, int copy_height, uint8_t *target, size_t target_size, int target_width,
                                int target_height, int target_x, int target_y, bool sync_source, bool invalidate_target);
-  bool direct_region_ppa_blend_argb8888_(const uint8_t *background, int background_stride, const uint8_t *foreground,
-                                         int foreground_stride, int foreground_width, int foreground_height,
-                                         int foreground_x, int foreground_y, int blend_width, int blend_height,
-                                         uint8_t *target, size_t target_size, int target_width, int target_height,
-                                         int target_x, int target_y);
+  bool direct_region_ppa_blend_argb8888_(const uint8_t *background, int background_stride, bool background_rgb565,
+                                         const uint8_t *foreground, int foreground_stride, int foreground_width,
+                                         int foreground_height, int foreground_x, int foreground_y, int blend_width,
+                                         int blend_height, uint8_t *target, size_t target_size, int target_width,
+                                         int target_height, int target_x, int target_y);
+  bool direct_region_ppa_overlay_argb8888_(const uint8_t *foreground, int foreground_stride, int foreground_width,
+                                           int foreground_height, int foreground_x, int foreground_y, int blend_width,
+                                           int blend_height, uint8_t *target, size_t target_size, int target_width,
+                                           int target_height, int target_x, int target_y);
+  bool direct_region_ppa_crossfade_background_(const uint8_t *background, int background_stride, bool background_rgb565,
+                                               const uint8_t *foreground, int foreground_stride, int foreground_width,
+                                               int foreground_height, int foreground_x, int foreground_y,
+                                               int blend_width, int blend_height, uint8_t opacity, uint8_t *target,
+                                               size_t target_size, int target_width, int target_height, int target_x,
+                                               int target_y);
+  bool direct_region_cache_animation_overlay_(DirectRegionSlot *slot, const DirectRegionRequest &request);
+  bool direct_region_capture_transition_background_(DirectRegionSlot *slot);
   bool start_direct_region_compositor_();
   static void direct_region_task_trampoline_(void *arg);
   void direct_region_task_();
@@ -582,7 +624,8 @@ class LvglComponent : public PollingComponent {
                                  int source_height, ppa_client_handle_t srm_client, uint8_t *target_override,
                                  size_t target_override_size, bool present, bool output_rgb565);
   bool direct_present_crossfade_(const uint8_t *background, const uint8_t *foreground, uint8_t opacity,
-                                 ppa_client_handle_t blend_client, bool background_rgb565, bool foreground_rgb565);
+                                 ppa_client_handle_t blend_client, bool background_rgb565, bool foreground_rgb565,
+                                 bool preserve_direct_regions = false);
 #endif
 #ifdef USE_ESP32
   struct PartialCompositorJob {
@@ -618,7 +661,8 @@ class LvglComponent : public PollingComponent {
   lv_area_t direct_dirty_areas_[DIRECT_DIRTY_AREA_CAPACITY]{};
   size_t direct_dirty_area_count_{};
   bool direct_mode_active_{false};
-  bool direct_image_animation_active_{false};
+  std::atomic<bool> direct_image_animation_active_{false};
+  std::atomic<bool> direct_image_animation_allows_regions_{false};
   bool direct_image_framebuffer_dma_owned_[3]{};
   bool prepare_direct_framebuffer_dma_ownership_(uint8_t *framebuffer, size_t index);
   const uint8_t *direct_image_synced_source_{};

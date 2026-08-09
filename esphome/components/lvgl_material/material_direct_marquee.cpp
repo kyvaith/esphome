@@ -14,6 +14,23 @@ namespace esphome::lvgl_material {
 
 static const char *const TAG = "lvgl_material.marquee";
 
+static void set_hidden_without_invalidation(lv_obj_t *obj, bool hidden) {
+  if (obj == nullptr)
+    return;
+
+  lv_display_t *display = lv_obj_get_display(obj);
+  const bool invalidation_enabled = display != nullptr && lv_display_is_invalidation_enabled(display);
+  if (invalidation_enabled)
+    lv_display_enable_invalidation(display, false);
+  if (hidden) {
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (invalidation_enabled)
+    lv_display_enable_invalidation(display, true);
+}
+
 void MaterialDirectMarquee::setup() {
   if (this->lvgl_component_ == nullptr || this->label_ == nullptr || this->viewport_ == nullptr) {
     ESP_LOGE(TAG, "Direct marquee configuration is incomplete");
@@ -81,7 +98,7 @@ void MaterialDirectMarquee::release_() {
   this->height_ = 0;
   this->source_x_offset_ = 0;
   this->source_y_offset_ = 0;
-  this->last_x_ = INT_MIN;
+  this->last_x_.store(INT_MIN, std::memory_order_release);
   this->pending_x_.store(INT_MIN, std::memory_order_release);
   this->active_.store(false, std::memory_order_release);
   this->cleanup_pending_ = false;
@@ -123,10 +140,10 @@ void MaterialDirectMarquee::service(bool allow_cleanup) {
       worker_idle) {
     if (this->lvgl_component_->direct_blit_rgb888_region_active(this->screen_x_, this->screen_y_, this->width_,
                                                                 this->height_)) {
-      // The direct frame is already visible. Hiding the native label now only
-      // changes the object tree; the registered direct region survives the
-      // next LVGL refresh and there is no blank intermediate frame.
-      lv_obj_add_flag(this->label_, LV_OBJ_FLAG_HIDDEN);
+      // The compositor has accepted the position-zero region. Change only the
+      // future object-tree state: invalidating the native label here can queue
+      // a title-less LVGL frame ahead of the pending DSI region frame.
+      set_hidden_without_invalidation(this->label_, true);
       this->handoff_pending_ = false;
       this->handoff_deadline_us_ = 0;
     } else if (esp_timer_get_time() >= this->handoff_deadline_us_) {
@@ -144,7 +161,7 @@ void MaterialDirectMarquee::service(bool allow_cleanup) {
       // A coalesced or rejected regional frame acknowledges its source but
       // does not create an active region. Retry asynchronously without
       // blocking lv_timer_handler().
-      this->last_x_ = INT_MIN;
+      this->last_x_.store(INT_MIN, std::memory_order_release);
       this->pending_x_.store(0, std::memory_order_release);
       if (this->worker_handle_ != nullptr) {
         xTaskNotifyGive(this->worker_handle_);
@@ -196,6 +213,8 @@ void MaterialDirectMarquee::end(bool restore_native) {
   if (restore_native && this->label_ != nullptr) {
     lv_obj_set_x(this->label_, 0);
     lv_obj_clear_flag(this->label_, LV_OBJ_FLAG_HIDDEN);
+    if (this->viewport_ != nullptr)
+      lv_obj_invalidate(this->viewport_);
   }
   this->cleanup_pending_ = true;
 #ifdef USE_ESP32
@@ -210,7 +229,7 @@ bool MaterialDirectMarquee::render_(int offset_x) {
       this->present_in_flight_.load(std::memory_order_acquire)) {
     return false;
   }
-  if (offset_x == this->last_x_)
+  if (offset_x == this->last_x_.load(std::memory_order_acquire))
     return true;
 
 #ifdef USE_ESP32
@@ -242,7 +261,7 @@ bool MaterialDirectMarquee::render_(int offset_x) {
     if (perf_enabled)
       this->perf_async_count_++;
 #endif
-    this->last_x_ = offset_x;
+    this->last_x_.store(offset_x, std::memory_order_release);
     return true;
   }
   this->present_in_flight_.store(false, std::memory_order_release);
@@ -279,7 +298,7 @@ void MaterialDirectMarquee::worker_(void *arg) {
     while (marquee->active_.load(std::memory_order_acquire) &&
            !marquee->present_in_flight_.load(std::memory_order_acquire)) {
       const int offset_x = marquee->pending_x_.exchange(INT_MIN, std::memory_order_acq_rel);
-      if (offset_x == INT_MIN || offset_x == marquee->last_x_)
+      if (offset_x == INT_MIN || offset_x == marquee->last_x_.load(std::memory_order_acquire))
         break;
       marquee->worker_busy_.store(true, std::memory_order_release);
       const bool rendered = marquee->render_(offset_x);
@@ -332,7 +351,8 @@ bool MaterialDirectMarquee::update(int offset_x) {
   this->service();
   if (!this->active_.load(std::memory_order_acquire) || this->text_ == nullptr || this->background_ == nullptr)
     return false;
-  if (offset_x == this->last_x_ && !this->present_in_flight_.load(std::memory_order_acquire))
+  if (offset_x == this->last_x_.load(std::memory_order_acquire) &&
+      !this->present_in_flight_.load(std::memory_order_acquire))
     return true;
   this->pending_x_.store(offset_x, std::memory_order_release);
 #ifdef USE_ESP32
@@ -393,7 +413,9 @@ bool MaterialDirectMarquee::begin() {
     this->end(true);
     return false;
   }
-  lv_obj_add_flag(this->label_, LV_OBJ_FLAG_HIDDEN);
+  // This visibility change is only an off-screen rendering aid. It must not
+  // dirty the live display or LVGL can publish a transient empty title strip.
+  set_hidden_without_invalidation(this->label_, true);
   auto *display = lv_obj_get_display(this->label_);
   lv_obj_t *screen = display == nullptr ? nullptr : lv_display_get_screen_active(display);
   const bool background_rendered = this->lvgl_component_->render_area_rgb888(
@@ -402,7 +424,7 @@ bool MaterialDirectMarquee::begin() {
   // Hiding the native label is only an off-screen rendering aid. Keep its
   // visible state intact until the first direct marquee frame is confirmed on
   // the display; otherwise LVGL can present a blank title strip in between.
-  lv_obj_clear_flag(this->label_, LV_OBJ_FLAG_HIDDEN);
+  set_hidden_without_invalidation(this->label_, false);
   this->lvgl_component_->direct_regions_pause(false, 0);
   if (!background_rendered) {
     this->end(true);
@@ -410,7 +432,7 @@ bool MaterialDirectMarquee::begin() {
   }
 
   this->active_.store(true, std::memory_order_release);
-  this->last_x_ = INT_MIN;
+  this->last_x_.store(INT_MIN, std::memory_order_release);
   this->pending_x_.store(INT_MIN, std::memory_order_release);
 #ifdef USE_ESP32
   this->handoff_pending_ = true;

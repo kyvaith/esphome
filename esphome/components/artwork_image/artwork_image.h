@@ -102,6 +102,10 @@ class ArtworkImage : public PollingComponent,
    * @param placeholder Pointer to the (@link Image) to show as placeholder.
    */
   void set_placeholder(image::Image *placeholder) { this->placeholder_ = placeholder; }
+  void set_defer_decode(bool defer_decode) {
+    this->defer_decode_ = defer_decode;
+    this->decode_requested_ = !defer_decode;
+  }
 
 #ifdef USE_SENDSPIN_ARTWORK
   void set_sendspin_hub(sendspin_::SendspinHub *hub) { this->sendspin_hub_ = hub; }
@@ -114,6 +118,9 @@ class ArtworkImage : public PollingComponent,
 
   /** Reserve the ESP-IDF HTTP client used for local artwork without starting a request. */
   bool reserve_local_http_client(const std::string &url);
+
+  /** Decode a complete encoded image retained by defer_decode. */
+  void request_decode();
 
   /**
    * Release the buffer storing the image. The image will need to be downloaded again
@@ -144,6 +151,9 @@ class ArtworkImage : public PollingComponent,
 
   template<typename F> void add_on_finished_callback(F &&callback) {
     this->download_finished_callback_.add(std::forward<F>(callback));
+  }
+  template<typename F> void add_on_download_ready_callback(F &&callback) {
+    this->download_ready_callback_.add(std::forward<F>(callback));
   }
   template<typename F> void add_on_decode_start_callback(F &&callback) {
     this->decode_start_callback_.add(std::forward<F>(callback));
@@ -245,6 +255,8 @@ class ArtworkImage : public PollingComponent,
   bool decode_encoded_image_(ImageFormat format, const uint8_t *data, size_t length, bool finish_on_decode = true);
   bool apply_decode_buffer_scrim_();
   bool decode_buffered_data_();
+  void mark_encoded_download_ready_();
+  void close_downloader_();
   void finish_download_();
   void fail_download_();
 #if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
@@ -290,6 +302,7 @@ class ArtworkImage : public PollingComponent,
   CallbackManager<void(bool)> decode_finished_callback_{};
   std::atomic<bool> decode_callbacks_active_{false};
   CallbackManager<void(bool)> download_finished_callback_{};
+  CallbackManager<void()> download_ready_callback_{};
   CallbackManager<void()> download_error_callback_{};
 
   std::shared_ptr<http_request::HttpContainer> downloader_{nullptr};
@@ -314,6 +327,9 @@ class ArtworkImage : public PollingComponent,
   bool spare_buffer_uses_jpeg_allocator_{false};
   bool hardware_jpeg_{true};
   bool reuse_active_buffer_capacity_{false};
+  bool defer_decode_{false};
+  bool decode_requested_{true};
+  bool encoded_download_ready_{false};
   DownloadBuffer download_buffer_;
   /**
    * This is the *initial* size of the download buffer, not the current size.
@@ -474,6 +490,15 @@ template<typename... Ts> class ArtworkImageReleaseAction : public Action<Ts...> 
   ArtworkImageReleaseAction(ArtworkImage *parent) : parent_(parent) {}
   TEMPLATABLE_VALUE(bool, immediate)
   void play(const Ts &...x) override { this->parent_->release(this->immediate_.value(x...)); }
+
+ protected:
+  ArtworkImage *parent_;
+};
+
+template<typename... Ts> class ArtworkImageDecodePendingAction : public Action<Ts...> {
+ public:
+  ArtworkImageDecodePendingAction(ArtworkImage *parent) : parent_(parent) {}
+  void play(const Ts &...x) override { this->parent_->request_decode(); }
 
  protected:
   ArtworkImage *parent_;

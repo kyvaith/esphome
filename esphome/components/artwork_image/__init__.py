@@ -48,6 +48,7 @@ CODEOWNERS = ["@jtenniswood"]
 MULTI_CONF = True
 
 CONF_ON_DOWNLOAD_FINISHED = "on_download_finished"
+CONF_ON_DOWNLOAD_READY = "on_download_ready"
 CONF_ON_DECODE_START = "on_decode_start"
 CONF_ON_DECODE_FINISHED = "on_decode_finished"
 CONF_ALLOW_INSECURE_LOCAL_URLS = "allow_insecure_local_urls"
@@ -60,6 +61,7 @@ CONF_IMMEDIATE = "immediate"
 CONF_DARKEN = "darken"
 CONF_HARDWARE_JPEG = "hardware_jpeg"
 CONF_REUSE_ACTIVE_BUFFER_CAPACITY = "reuse_active_buffer_capacity"
+CONF_DEFER_DECODE = "defer_decode"
 CONF_SCRIM_COLOR = "scrim_color"
 CONF_SCRIM_OPACITY = "scrim_opacity"
 
@@ -169,6 +171,9 @@ SetUrlAction = artwork_image_ns.class_(
 ReleaseImageAction = artwork_image_ns.class_(
     "ArtworkImageReleaseAction", automation.Action, cg.Parented.template(ArtworkImage)
 )
+DecodePendingAction = artwork_image_ns.class_(
+    "ArtworkImageDecodePendingAction", automation.Action, cg.Parented.template(ArtworkImage)
+)
 
 ARTWORK_IMAGE_SCHEMA = (
     cv.Schema(
@@ -194,12 +199,14 @@ ARTWORK_IMAGE_SCHEMA = (
             cv.Optional(CONF_DARKEN, default=0): cv.int_range(0, 99),
             cv.Optional(CONF_HARDWARE_JPEG, default=True): cv.boolean,
             cv.Optional(CONF_REUSE_ACTIVE_BUFFER_CAPACITY, default=False): cv.boolean,
+            cv.Optional(CONF_DEFER_DECODE, default=False): cv.boolean,
             cv.Optional(CONF_SCRIM_COLOR, default=0): cv.hex_uint32_t,
             cv.Optional(CONF_SCRIM_OPACITY, default=0): cv.int_range(0, 100),
             cv.Optional(sendspin.CONF_SENDSPIN_ID): cv.use_id(sendspin.SendspinHub),
             cv.Optional(CONF_SENDSPIN_SLOT, default=0): cv.int_range(0, 3),
             cv.Optional(CONF_SENDSPIN_PAUSED, default=False): cv.boolean,
             cv.Optional(CONF_ON_DOWNLOAD_FINISHED): automation.validate_automation({}),
+            cv.Optional(CONF_ON_DOWNLOAD_READY): automation.validate_automation({}),
             cv.Optional(CONF_ON_DECODE_START): automation.validate_automation({}),
             cv.Optional(CONF_ON_DECODE_FINISHED): automation.validate_automation({}),
             cv.Optional(CONF_ON_ERROR): automation.validate_automation({}),
@@ -274,6 +281,7 @@ RELEASE_IMAGE_SCHEMA = automation.maybe_simple_id(
 
 
 _CALLBACK_AUTOMATIONS = (
+    automation.CallbackAutomation(CONF_ON_DOWNLOAD_READY, "add_on_download_ready_callback"),
     automation.CallbackAutomation(CONF_ON_DECODE_START, "add_on_decode_start_callback"),
     automation.CallbackAutomation(
         CONF_ON_DECODE_FINISHED,
@@ -285,6 +293,20 @@ _CALLBACK_AUTOMATIONS = (
     ),
     automation.CallbackAutomation(CONF_ON_ERROR, "add_on_error_callback"),
 )
+
+DECODE_PENDING_SCHEMA = automation.maybe_simple_id(
+    {
+        cv.GenerateID(): cv.use_id(ArtworkImage),
+    }
+)
+
+
+@automation.register_action(
+    "artwork_image.decode_pending", DecodePendingAction, DECODE_PENDING_SCHEMA, synchronous=True
+)
+async def artwork_image_decode_pending_to_code(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    return cg.new_Pvariable(action_id, template_arg, paren)
 
 
 @automation.register_action(
@@ -357,6 +379,7 @@ async def to_code(config):
     cg.add(var.set_darken_percent(config[CONF_DARKEN]))
     cg.add(var.set_hardware_jpeg(config[CONF_HARDWARE_JPEG]))
     cg.add(var.set_reuse_active_buffer_capacity(config[CONF_REUSE_ACTIVE_BUFFER_CAPACITY]))
+    cg.add(var.set_defer_decode(config[CONF_DEFER_DECODE]))
     cg.add(var.set_scrim_color(config[CONF_SCRIM_COLOR]))
     cg.add(var.set_scrim_opacity(config[CONF_SCRIM_OPACITY]))
 

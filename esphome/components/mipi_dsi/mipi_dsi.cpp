@@ -613,6 +613,34 @@ void MipiDsi::dsi_diagnostics_task_trampoline(void *arg) { static_cast<MipiDsi *
 
 void MipiDsi::dsi_diagnostics_task_() {
   while (true) {
+    if (this->direct_frame_trace_enabled_.load(std::memory_order_acquire)) {
+      uint32_t sample_position = this->direct_frame_trace_sample_position_.load(std::memory_order_relaxed);
+      const uint32_t trace_position = std::min<uint32_t>(
+          this->direct_frame_trace_position_.load(std::memory_order_acquire), DIRECT_FRAME_TRACE_CAPACITY);
+      while (sample_position < trace_position) {
+        const uint16_t event = this->direct_frame_trace_events_[sample_position].load(std::memory_order_acquire);
+        if (event == 0)
+          break;
+        const char event_type = static_cast<char>(event & 0xFFU);
+        const uint8_t frame_index = static_cast<uint8_t>((event >> 8U) & 0x0FU);
+        if (event_type == 'A' && frame_index < MIPI_DSI_FRAME_BUFFER_COUNT &&
+            this->get_bytes_per_pixel_() == 3 && this->width_ > 400 && this->height_ > 460) {
+          auto *frame_buffer = this->frame_buffers_[frame_index];
+          const size_t pixel_offset = (static_cast<size_t>(460) * this->width_ + 400U) * 3U;
+          auto *pixel = frame_buffer + pixel_offset;
+          constexpr size_t cache_line_size = 128;
+          auto *cache_line = reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(pixel) & ~(cache_line_size - 1U));
+          if (esp_cache_msync(cache_line, cache_line_size,
+                              ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_TYPE_DATA) == ESP_OK) {
+            const uint32_t sample = (static_cast<uint32_t>(pixel[0]) << 16U) |
+                                    (static_cast<uint32_t>(pixel[1]) << 8U) | static_cast<uint32_t>(pixel[2]);
+            this->direct_frame_trace_samples_[sample_position].store(sample, std::memory_order_release);
+          }
+        }
+        sample_position++;
+      }
+      this->direct_frame_trace_sample_position_.store(sample_position, std::memory_order_release);
+    }
     uint32_t bridge_status = 0;
     uint32_t bridge_raw = 0;
     uint32_t fifo_depth = UINT32_MAX;
@@ -913,23 +941,44 @@ void MipiDsi::record_direct_frame_trace_(char event, const uint8_t *frame_buffer
       break;
     }
   }
+  if (event == 'A') {
+    const uint8_t previous = this->direct_frame_trace_last_active_index_.exchange(frame_index, std::memory_order_relaxed);
+    if (previous == frame_index)
+      return;
+  }
   const uint32_t position = this->direct_frame_trace_position_.fetch_add(1, std::memory_order_relaxed);
   if (position < DIRECT_FRAME_TRACE_CAPACITY) {
     this->direct_frame_trace_events_[position].store(
         static_cast<uint16_t>(static_cast<uint8_t>(event)) | (static_cast<uint16_t>(frame_index) << 8U),
         std::memory_order_relaxed);
+    // Temporary interaction diagnostic: queueing runs in task context, so it
+    // is safe to sample one pixel from the centre control before the frame is
+    // handed to DSI. ISR-originated staged/active events never touch PSRAM.
+    uint32_t sample = 0;
+    if (event == 'Q' && frame_buffer != nullptr && this->get_bytes_per_pixel_() == 3 && this->width_ > 400 &&
+        this->height_ > 460) {
+      const size_t offset = (static_cast<size_t>(460) * this->width_ + 400U) * 3U;
+      sample = (static_cast<uint32_t>(frame_buffer[offset]) << 16U) |
+               (static_cast<uint32_t>(frame_buffer[offset + 1]) << 8U) |
+               static_cast<uint32_t>(frame_buffer[offset + 2]);
+    }
+    this->direct_frame_trace_samples_[position].store(sample, std::memory_order_relaxed);
   }
 }
 
 void MipiDsi::reset_direct_frame_trace() {
   this->direct_frame_trace_enabled_.store(false, std::memory_order_release);
   this->direct_frame_trace_position_.store(0, std::memory_order_relaxed);
+  this->direct_frame_trace_sample_position_.store(0, std::memory_order_relaxed);
+  this->direct_frame_trace_last_active_index_.store(0xFF, std::memory_order_relaxed);
   this->direct_frame_trace_queued_.store(0, std::memory_order_relaxed);
   this->direct_frame_trace_staged_.store(0, std::memory_order_relaxed);
   this->direct_frame_trace_active_.store(0, std::memory_order_relaxed);
   this->direct_frame_trace_rejected_.store(0, std::memory_order_relaxed);
   for (auto &event : this->direct_frame_trace_events_)
     event.store(0, std::memory_order_relaxed);
+  for (auto &sample : this->direct_frame_trace_samples_)
+    sample.store(0, std::memory_order_relaxed);
   this->direct_frame_trace_enabled_.store(true, std::memory_order_release);
 }
 
@@ -945,11 +994,44 @@ void MipiDsi::log_direct_frame_trace(const char *label) {
     sequence[offset++] = static_cast<char>('0' + ((event >> 8U) & 0x0FU));
   }
   sequence[offset] = '\0';
-  ESP_LOGI(TAG, "frame trace %s: queued=%u staged=%u active=%u rejected=%u events=%s", label == nullptr ? "" : label,
+  char queued_samples[DIRECT_FRAME_TRACE_CAPACITY * 11 + 1]{};
+  size_t sample_offset = 0;
+  for (uint32_t index = 0; index < event_count; index++) {
+    const uint16_t event = this->direct_frame_trace_events_[index].load(std::memory_order_relaxed);
+    if (static_cast<char>(event & 0xFFU) != 'Q')
+      continue;
+    const uint32_t sample = this->direct_frame_trace_samples_[index].load(std::memory_order_relaxed);
+    const int written = snprintf(queued_samples + sample_offset, sizeof(queued_samples) - sample_offset, "%s%u:%06x",
+                                 sample_offset == 0 ? "" : ",", static_cast<unsigned>((event >> 8U) & 0x0FU),
+                                 static_cast<unsigned>(sample));
+    if (written <= 0 || static_cast<size_t>(written) >= sizeof(queued_samples) - sample_offset)
+      break;
+    sample_offset += static_cast<size_t>(written);
+  }
+  char active_samples[DIRECT_FRAME_TRACE_CAPACITY * 11 + 1]{};
+  sample_offset = 0;
+  for (uint32_t index = 0; index < event_count; index++) {
+    const uint16_t event = this->direct_frame_trace_events_[index].load(std::memory_order_relaxed);
+    if (static_cast<char>(event & 0xFFU) != 'A')
+      continue;
+    const uint32_t sample = this->direct_frame_trace_samples_[index].load(std::memory_order_relaxed);
+    const int written = snprintf(active_samples + sample_offset, sizeof(active_samples) - sample_offset, "%s%u:%06x",
+                                 sample_offset == 0 ? "" : ",", static_cast<unsigned>((event >> 8U) & 0x0FU),
+                                 static_cast<unsigned>(sample));
+    if (written <= 0 || static_cast<size_t>(written) >= sizeof(active_samples) - sample_offset)
+      break;
+    sample_offset += static_cast<size_t>(written);
+  }
+  // Temporary bounded interaction trace. The project normally runs with the
+  // logger at WARN, so keep this visible while diagnosing physical triple-
+  // framebuffer ordering around the player control.
+  ESP_LOGW(TAG, "frame trace %s: queued=%u staged=%u active=%u rejected=%u events=%s", label == nullptr ? "" : label,
            static_cast<unsigned>(this->direct_frame_trace_queued_.load(std::memory_order_relaxed)),
            static_cast<unsigned>(this->direct_frame_trace_staged_.load(std::memory_order_relaxed)),
            static_cast<unsigned>(this->direct_frame_trace_active_.load(std::memory_order_relaxed)),
            static_cast<unsigned>(this->direct_frame_trace_rejected_.load(std::memory_order_relaxed)), sequence);
+  ESP_LOGW(TAG, "frame trace %s queued samples @400,460: %s", label == nullptr ? "" : label, queued_samples);
+  ESP_LOGW(TAG, "frame trace %s active samples @400,460: %s", label == nullptr ? "" : label, active_samples);
 }
 
 uint8_t *MipiDsi::get_direct_render_frame_buffer(const uint8_t *exclude_a, const uint8_t *exclude_b) const {

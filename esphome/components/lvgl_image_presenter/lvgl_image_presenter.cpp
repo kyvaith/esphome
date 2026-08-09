@@ -10,7 +10,6 @@
 
 #ifdef USE_ESP32_JPEG
 #include "esphome/components/esp32_jpeg/esp32_jpeg.h"
-#include "esp_timer.h"
 #endif
 
 #ifdef USE_ESP32_VARIANT_ESP32P4
@@ -18,6 +17,7 @@
 #include "esp_heap_caps.h"
 #include "esp_memory_utils.h"
 #include "esp_private/esp_cache_private.h"
+#include "esp_timer.h"
 #endif
 
 namespace esphome::lvgl_image_presenter {
@@ -26,6 +26,7 @@ static const char *const TAG = "lvgl_image_presenter";
 
 void LvglImagePresenter::setup() {
   this->select_pan_direction_(this->pan_forward_);
+  this->phase_complete_.store(!this->motion_enabled_, std::memory_order_release);
   this->last_loop_ms_ = millis();
   this->present_fps_window_started_ms_ = this->last_loop_ms_;
 
@@ -33,6 +34,11 @@ void LvglImagePresenter::setup() {
   if (this->obj_ != nullptr && lv_obj_is_valid(this->obj_))
     this->base_opacity_ = lv_obj_get_style_opa(this->obj_, LV_PART_MAIN);
   lv_unlock();
+
+#if defined(USE_ESP32_VARIANT_ESP32P4) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  if (this->crossfade_ && !this->create_crossfade_worker_())
+    ESP_LOGW(TAG, "Direct scene crossfade worker unavailable; transitions will use the LVGL fallback");
+#endif
 
   if (!this->use_direct_)
     return;
@@ -68,7 +74,10 @@ void LvglImagePresenter::setup() {
 
 void LvglImagePresenter::on_shutdown() {
   this->paused_ = true;
+  this->cleanup_crossfade_(false);
   this->accept_direct_jpeg_.store(false, std::memory_order_release);
+  this->direct_session_deferred_.store(false, std::memory_order_release);
+  this->direct_jpeg_frame_ready_.store(false, std::memory_order_release);
   this->stop_direct_session_(500);
   if (this->direct_jpeg_registered_ && this->source_ != nullptr) {
     this->source_->set_jpeg_frame_consumer(nullptr);
@@ -92,12 +101,22 @@ void LvglImagePresenter::dump_config() {
   ESP_LOGCONFIG(TAG, "  Direct backend: %s",
                 !this->use_direct_ ? "disabled" : (this->direct_backend_ready_ ? "ready" : "unavailable"));
   ESP_LOGCONFIG(TAG, "  Continuous source: %s", YESNO(this->continuous_));
+  ESP_LOGCONFIG(TAG, "  Motion: %s", this->motion_enabled_ ? "enabled" : "disabled");
+  ESP_LOGCONFIG(TAG, "  Crossfade: %s", YESNO(this->crossfade_));
   ESP_LOGCONFIG(TAG, "  Direct JPEG to framebuffer: %s", YESNO(this->use_direct_jpeg_));
+  ESP_LOGCONFIG(TAG, "  Defer direct session until JPEG frame: %s",
+                YESNO(this->defer_direct_session_until_frame_));
   ESP_LOGCONFIG(TAG, "  Presented frames: %u (%.1f fps)", static_cast<unsigned>(this->presented_frames()),
                 static_cast<double>(this->measured_present_fps()));
 }
 
 void LvglImagePresenter::loop() {
+#if defined(USE_ESP32_VARIANT_ESP32P4) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  this->service_crossfade_completion_();
+  if (this->transition_state_ == TransitionState::CROSS_FADING)
+    return;
+#endif
+
   const uint32_t now = millis();
   const uint32_t delta = now - this->last_loop_ms_;
   if (delta < this->frame_interval_ms_)
@@ -120,8 +139,26 @@ void LvglImagePresenter::loop() {
     if (this->direct_target_lease_ && !this->present_pending_direct_frame_(50))
       return;
     if (this->use_direct_jpeg_) {
+      if (this->direct_session_deferred_.load(std::memory_order_acquire)) {
+        // Keep LVGL in control so native loading UI remains animated. The
+        // first encoded frame is only a readiness signal: this LVGL task owns
+        // both ends of the display-session mutex, and the following frame
+        // replaces the loader with a complete framebuffer.
+        this->accept_direct_jpeg_.store(true, std::memory_order_release);
+        if (this->direct_jpeg_frame_ready_.exchange(false, std::memory_order_acq_rel) &&
+            this->ensure_direct_session_()) {
+          this->direct_session_deferred_.store(false, std::memory_order_release);
+          this->refresh_continuous_source_();
+        }
+        return;
+      }
       if (this->ensure_direct_session_()) {
         this->accept_direct_jpeg_.store(true, std::memory_order_release);
+        // Frames matching the DSI geometry are decoded straight into the
+        // presentation lease. Other camera sizes are hardware-decoded by the
+        // source and must still be cropped/scaled through PPA in this same
+        // direct session.
+        this->refresh_continuous_source_();
         return;
       }
       if (this->direct_backend_ready_)
@@ -159,27 +196,43 @@ void LvglImagePresenter::loop() {
 }
 
 void LvglImagePresenter::restart() {
+  this->cleanup_crossfade_(true);
   this->transition_state_ = TransitionState::NONE;
   this->transition_source_ = nullptr;
   this->transition_elapsed_ms_ = 0;
   this->transition_failed_ = false;
   this->phase_elapsed_ms_ = 0;
   this->zooming_in_ = true;
-  this->phase_complete_ = false;
+  this->phase_complete_ = !this->motion_enabled_;
   this->paused_ = false;
   this->direct_frozen_ = false;
   this->select_pan_direction_(!this->pan_forward_);
   this->last_loop_ms_ = millis();
   this->reset_direct_frame_cache_();
+  if (!this->direct_session_active_)
+    this->direct_jpeg_frame_presented_.store(false, std::memory_order_release);
+  if (this->use_direct_jpeg_ && this->defer_direct_session_until_frame_ && this->direct_backend_ready_ &&
+      !this->direct_session_active_) {
+    this->direct_session_deferred_.store(true, std::memory_order_release);
+    this->direct_jpeg_frame_ready_.store(false, std::memory_order_release);
+    this->accept_direct_jpeg_.store(true, std::memory_order_release);
+  }
   if (!this->use_direct_ || !this->direct_backend_ready_) {
     this->set_opacity_(this->base_opacity_);
-    this->update_transform_(0);
+    if (this->motion_enabled_)
+      this->update_transform_(0);
   }
 }
 
 bool LvglImagePresenter::pause() {
   this->paused_ = true;
+  this->direct_session_deferred_.store(false, std::memory_order_release);
+  this->direct_jpeg_frame_ready_.store(false, std::memory_order_release);
   this->last_loop_ms_ = millis();
+#if defined(USE_ESP32_VARIANT_ESP32P4) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  if (this->transition_state_ == TransitionState::CROSS_FADING)
+    this->cancel_transition();
+#endif
   return this->stop_direct_session_(600);
 }
 
@@ -193,17 +246,58 @@ void LvglImagePresenter::resume() {
   this->paused_ = false;
   this->direct_frozen_ = false;
   this->last_loop_ms_ = millis();
+  if (this->use_direct_jpeg_ && this->defer_direct_session_until_frame_ && this->direct_backend_ready_ &&
+      !this->direct_session_active_ && !this->direct_jpeg_frame_presented_.load(std::memory_order_acquire)) {
+    this->direct_session_deferred_.store(true, std::memory_order_release);
+    this->direct_jpeg_frame_ready_.store(false, std::memory_order_release);
+    this->accept_direct_jpeg_.store(true, std::memory_order_release);
+  }
 }
 
 bool LvglImagePresenter::freeze_direct() {
   this->direct_frozen_ = true;
   this->last_loop_ms_ = millis();
+#if defined(USE_ESP32_VARIANT_ESP32P4) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  if (this->transition_state_ == TransitionState::CROSS_FADING)
+    this->cancel_transition();
+#endif
   return this->stop_direct_session_(600);
 }
 
 void LvglImagePresenter::resume_direct() {
   this->direct_frozen_ = false;
   this->last_loop_ms_ = millis();
+}
+
+bool LvglImagePresenter::suspend_for_direct_overlay() {
+  if (this->direct_overlay_suspended_)
+    return true;
+  if (this->paused_ || this->direct_frozen_ || !this->use_direct_ || !this->is_widget_visible_())
+    return true;
+  if (!this->pause()) {
+    this->resume();
+    return false;
+  }
+  this->direct_overlay_suspended_ = true;
+  return true;
+}
+
+void LvglImagePresenter::resume_after_direct_overlay() {
+  if (!this->direct_overlay_suspended_)
+    return;
+  this->direct_overlay_suspended_ = false;
+  this->resume();
+  // Reacquire the framebuffer session synchronously while the overlay still
+  // has LVGL invalidation disabled. The restored camera frame then remains
+  // pinned until a fresh JPEG arrives instead of briefly exposing the black
+  // LVGL page behind the presenter.
+  if (!this->direct_session_deferred_.load(std::memory_order_acquire) && this->use_direct_ &&
+      this->direct_backend_ready_ && this->is_widget_visible_() &&
+      this->ensure_direct_session_()) {
+    if (this->use_direct_jpeg_)
+      this->accept_direct_jpeg_.store(true, std::memory_order_release);
+    this->refresh_continuous_source_();
+  }
 }
 
 void LvglImagePresenter::reset_transform() {
@@ -232,6 +326,67 @@ void LvglImagePresenter::reset_transform() {
   lv_unlock();
 }
 
+bool LvglImagePresenter::prepare_transition() {
+  if (!this->crossfade_ || this->use_direct_ || this->obj_ == nullptr || this->source_ == nullptr) {
+    return false;
+  }
+
+  // A newer image may arrive while the previous scene is still fading. Stop
+  // that worker first and use the frame currently scanned out by DSI as the
+  // next transition's old scene. Letting both generations continue would
+  // allow a late completion to publish stale artwork.
+  if (this->transition_prepared_ || this->transition_state_ != TransitionState::NONE) {
+    this->cancel_transition();
+  } else {
+    this->cleanup_crossfade_(true);
+  }
+  lv_lock();
+  if (!lv_obj_is_valid(this->obj_) ||
+      lv_obj_get_screen(this->obj_) != lv_display_get_screen_active(lv_obj_get_display(this->obj_))) {
+    lv_unlock();
+    return false;
+  }
+  const lv_image_dsc_t *current = this->source_->get_lv_image_dsc();
+  if (current != nullptr && current->data != nullptr && current->header.w >= 2 && current->header.h >= 2) {
+    this->previous_dsc_ = *current;
+    lv_image_set_src(this->obj_, &this->previous_dsc_);
+  } else {
+    // The first decoded image can replace a separate placeholder while this
+    // target widget is still hidden. The pinned DSI frame is the old scene in
+    // that case, so no previous source descriptor is required.
+    this->previous_dsc_ = {};
+  }
+  this->transition_prepared_ = true;
+  lv_unlock();
+
+#if defined(USE_ESP32_VARIANT_ESP32P4) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  // Take ownership before the decoder starts overwriting its reusable image
+  // buffer. The displayed frame remains immutable, while dynamic regions can
+  // continue producing background-independent overlays for the upcoming
+  // crossfade. Acquiring this only in the worker left a short window in which
+  // a wave/marquee update could publish a rectangle from another artwork
+  // generation.
+  if (this->lvgl_component_ != nullptr) {
+    if (!this->lvgl_component_->begin_direct_image_animation(true)) {
+      this->cleanup_crossfade_(true);
+      return false;
+    }
+    this->crossfade_direct_active_.store(true, std::memory_order_release);
+  }
+#endif
+  return true;
+}
+
+void LvglImagePresenter::cancel_transition() {
+#if defined(USE_ESP32_VARIANT_ESP32P4) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  this->stop_crossfade_worker_();
+#endif
+  this->transition_state_ = TransitionState::NONE;
+  this->transition_source_ = nullptr;
+  this->transition_elapsed_ms_ = 0;
+  this->cleanup_crossfade_(true);
+}
+
 bool LvglImagePresenter::transition_to(image::Image *source, uint32_t duration_ms) {
   if (this->paused_ || this->direct_frozen_ || this->obj_ == nullptr || source == nullptr ||
       this->transition_state_ != TransitionState::NONE) {
@@ -245,6 +400,30 @@ bool LvglImagePresenter::transition_to(image::Image *source, uint32_t duration_m
   source->release_buffer(&lease);
   if (!valid_source)
     return false;
+
+  if (this->crossfade_ && !this->use_direct_) {
+    if (this->start_crossfade_(source, duration_ms))
+      return true;
+
+    this->cleanup_crossfade_(false);
+    this->source_ = source;
+    lv_lock();
+    if (lv_obj_is_valid(this->obj_)) {
+      lv_image_set_src(this->obj_, this->source_->get_lv_image_dsc());
+      lv_display_t *display = lv_obj_get_display(this->obj_);
+      if (display != nullptr && !lv_display_is_invalidation_enabled(display))
+        lv_display_enable_invalidation(display, true);
+      lv_obj_invalidate(lv_obj_get_screen(this->obj_));
+    }
+    lv_unlock();
+    this->transition_source_ = nullptr;
+    this->transition_elapsed_ms_ = 0;
+    this->transition_state_ = TransitionState::NONE;
+    this->phase_elapsed_ms_ = 0;
+    this->phase_complete_ = !this->motion_enabled_;
+    this->last_loop_ms_ = millis();
+    return true;
+  }
 
   if (this->use_direct_ && this->direct_backend_ready_) {
     this->source_ = source;
@@ -274,7 +453,7 @@ bool LvglImagePresenter::transition_to(image::Image *source, uint32_t duration_m
 }
 
 bool LvglImagePresenter::is_transition_pending_or_active() const {
-  return this->transition_state_ != TransitionState::NONE;
+  return this->transition_prepared_ || this->transition_state_ != TransitionState::NONE;
 }
 
 bool LvglImagePresenter::transition_failed() const { return this->transition_failed_.load(std::memory_order_acquire); }
@@ -285,6 +464,9 @@ void LvglImagePresenter::log_memory_usage(const char *phase) const {
 }
 
 void LvglImagePresenter::update_transition_(uint32_t delta_ms) {
+  if (this->transition_state_ == TransitionState::CROSS_FADING)
+    return;
+
   const uint32_t half_duration = std::max<uint32_t>(1, this->transition_duration_ms_ / 2);
   this->transition_elapsed_ms_ = std::min(half_duration, this->transition_elapsed_ms_ + delta_ms);
   const float linear = static_cast<float>(this->transition_elapsed_ms_) / static_cast<float>(half_duration);
@@ -329,10 +511,70 @@ void LvglImagePresenter::switch_transition_source_() {
   lv_unlock();
 
   this->phase_elapsed_ms_ = 0;
-  this->phase_complete_ = false;
+  this->phase_complete_ = !this->motion_enabled_;
   this->zooming_in_ = true;
   this->select_pan_direction_(!this->pan_forward_);
-  this->update_transform_(0);
+  if (this->motion_enabled_)
+    this->update_transform_(0);
+}
+
+bool LvglImagePresenter::start_crossfade_(image::Image *source, uint32_t duration_ms) {
+  if (!this->transition_prepared_ || source == nullptr || !this->is_widget_visible_())
+    return false;
+
+  const lv_image_dsc_t *next = source->get_lv_image_dsc();
+  if (next == nullptr || next->data == nullptr || next->header.w < 2 || next->header.h < 2) {
+    return false;
+  }
+#if defined(USE_ESP32_VARIANT_ESP32P4) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  if (!this->crossfade_worker_ready_.load(std::memory_order_acquire) || this->crossfade_worker_handle_ == nullptr ||
+      this->crossfade_worker_active_.load(std::memory_order_acquire) ||
+      this->crossfade_worker_run_.load(std::memory_order_acquire)) {
+    return false;
+  }
+
+  this->transition_source_ = source;
+  this->transition_duration_ms_ = std::clamp<uint32_t>(duration_ms, 200, 3000);
+  this->transition_elapsed_ms_ = 0;
+  this->transition_failed_ = false;
+  this->crossfade_worker_complete_.store(false, std::memory_order_release);
+  this->crossfade_worker_success_.store(false, std::memory_order_release);
+  this->crossfade_source_.store(source, std::memory_order_release);
+  this->crossfade_worker_run_.store(true, std::memory_order_release);
+  this->transition_state_ = TransitionState::CROSS_FADING;
+  this->last_loop_ms_ = millis();
+  xTaskNotifyGive(this->crossfade_worker_handle_);
+  return true;
+#else
+  (void) duration_ms;
+  return false;
+#endif
+}
+
+void LvglImagePresenter::finish_crossfade_() {
+  this->source_ = this->transition_source_;
+  this->phase_elapsed_ms_ = 0;
+  this->phase_complete_ = !this->motion_enabled_;
+  this->zooming_in_ = true;
+  this->select_pan_direction_(!this->pan_forward_);
+  this->cleanup_crossfade_(true);
+  this->transition_state_ = TransitionState::NONE;
+  this->transition_source_ = nullptr;
+  this->transition_elapsed_ms_ = 0;
+  if (this->motion_enabled_)
+    this->update_transform_(0);
+}
+
+void LvglImagePresenter::cleanup_crossfade_(bool show_current_source) {
+#if defined(USE_ESP32_VARIANT_ESP32P4) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  this->stop_crossfade_worker_();
+#endif
+  lv_lock();
+  if (show_current_source && this->obj_ != nullptr && lv_obj_is_valid(this->obj_) && this->source_ != nullptr)
+    lv_image_set_src(this->obj_, this->source_->get_lv_image_dsc());
+  lv_unlock();
+  this->transition_prepared_ = false;
+  this->previous_dsc_ = {};
 }
 
 bool LvglImagePresenter::is_widget_visible_() const {
@@ -427,6 +669,14 @@ void LvglImagePresenter::refresh_continuous_source_() {
   this->source_->release_buffer(&source);
   if (generation == 0 || generation == this->last_fallback_source_generation_)
     return;
+
+  if (this->use_direct_ && this->direct_backend_ready_ && this->direct_session_active_) {
+    const bool rendered = this->render_direct_frame_(0);
+    if (rendered && this->last_direct_source_generation_ == generation)
+      this->last_fallback_source_generation_ = generation;
+    return;
+  }
+
   this->last_fallback_source_generation_ = generation;
   lv_lock();
   if (lv_obj_is_valid(this->obj_))
@@ -465,9 +715,19 @@ bool LvglImagePresenter::stop_direct_session_(uint32_t timeout_ms) {
 
 image::JpegFrameResult LvglImagePresenter::consume_jpeg_frame(const uint8_t *data, size_t size) {
 #if defined(USE_ESP32_JPEG) && defined(USE_ESP32_VARIANT_ESP32P4)
-  if (!this->use_direct_jpeg_ || !this->accept_direct_jpeg_.load(std::memory_order_acquire) || data == nullptr ||
-      size == 0 || this->lvgl_component_ == nullptr) {
+  if (!this->use_direct_jpeg_ || data == nullptr || size == 0 || this->lvgl_component_ == nullptr ||
+      !this->direct_backend_ready_) {
     return image::JpegFrameResult::UNSUPPORTED;
+  }
+  // A direct scene pause is intentional: the overlay owns the presented
+  // frame. Drop camera frames during that short handoff instead of asking the
+  // source to allocate and fill a full-screen RGB fallback buffer.
+  if (!this->accept_direct_jpeg_.load(std::memory_order_acquire))
+    return image::JpegFrameResult::DROPPED;
+
+  if (this->direct_session_deferred_.load(std::memory_order_acquire)) {
+    this->direct_jpeg_frame_ready_.store(true, std::memory_order_release);
+    return image::JpegFrameResult::DROPPED;
   }
 
   bool expected = false;
@@ -526,6 +786,7 @@ image::JpegFrameResult LvglImagePresenter::consume_jpeg_frame(const uint8_t *dat
     return image::JpegFrameResult::DROPPED;
   }
   this->direct_jpeg_frames_.fetch_add(1, std::memory_order_relaxed);
+  this->direct_jpeg_frame_presented_.store(true, std::memory_order_release);
   this->record_presented_frame_(micros() - present_started_us);
   return image::JpegFrameResult::CONSUMED;
 #else
@@ -614,6 +875,244 @@ bool LvglImagePresenter::calculate_direct_crop_(const image::ImageBufferLease &s
   *scale_q4 = static_cast<uint16_t>(best_q4);
   return true;
 }
+
+#if defined(USE_ESP32_VARIANT_ESP32P4) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+bool LvglImagePresenter::create_crossfade_worker_() {
+  if (this->crossfade_worker_handle_ != nullptr)
+    return true;
+
+#if CONFIG_FREERTOS_UNICORE
+  constexpr BaseType_t worker_core = tskNO_AFFINITY;
+#elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0) && CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0
+  constexpr BaseType_t worker_core = 1;
+#elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1) && CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1
+  constexpr BaseType_t worker_core = 0;
+#else
+  constexpr BaseType_t worker_core = 1;
+#endif
+  constexpr uint32_t worker_stack_size = 8192;
+  this->crossfade_worker_stack_ =
+      static_cast<StackType_t *>(heap_caps_aligned_alloc(16, worker_stack_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  if (this->crossfade_worker_stack_ == nullptr) {
+    this->crossfade_worker_stack_ =
+        static_cast<StackType_t *>(heap_caps_aligned_alloc(16, worker_stack_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  }
+  if (this->crossfade_worker_stack_ == nullptr)
+    return false;
+
+  this->crossfade_worker_handle_ = xTaskCreateStaticPinnedToCore(
+      &LvglImagePresenter::crossfade_worker_trampoline_, "lvgl_img_fade", worker_stack_size, this, 1,
+      this->crossfade_worker_stack_, &this->crossfade_worker_storage_, worker_core);
+  if (this->crossfade_worker_handle_ == nullptr) {
+    heap_caps_free(this->crossfade_worker_stack_);
+    this->crossfade_worker_stack_ = nullptr;
+    return false;
+  }
+  ESP_LOGI(TAG, "Direct scene crossfade worker uses %s stack",
+           esp_ptr_external_ram(this->crossfade_worker_stack_) ? "PSRAM" : "internal");
+  return true;
+}
+
+void LvglImagePresenter::release_crossfade_frame_() {
+  if (this->crossfade_frame_ != nullptr)
+    heap_caps_free(this->crossfade_frame_);
+  this->crossfade_frame_ = nullptr;
+  this->crossfade_frame_size_ = 0;
+  this->crossfade_frame_allocation_size_ = 0;
+}
+
+bool LvglImagePresenter::stop_crossfade_worker_(uint32_t timeout_ms) {
+  if (this->crossfade_worker_handle_ != nullptr) {
+    this->crossfade_worker_run_.store(false, std::memory_order_release);
+    xTaskNotifyGive(this->crossfade_worker_handle_);
+    const uint32_t started_ms = millis();
+    while (this->crossfade_worker_active_.load(std::memory_order_acquire) && millis() - started_ms < timeout_ms)
+      vTaskDelay(1);
+    if (this->crossfade_worker_active_.load(std::memory_order_acquire)) {
+      ESP_LOGW(TAG, "Direct scene crossfade worker did not stop within %ums", static_cast<unsigned>(timeout_ms));
+      return false;
+    }
+  }
+
+  if (this->crossfade_direct_active_.exchange(false, std::memory_order_acq_rel) && this->lvgl_component_ != nullptr) {
+    if (!this->lvgl_component_->end_direct_image_animation(timeout_ms)) {
+      if (timeout_ms > 0)
+        ESP_LOGW(TAG, "Direct scene crossfade framebuffer handoff is still pending");
+      this->crossfade_direct_active_.store(true, std::memory_order_release);
+      return false;
+    }
+  }
+  this->release_crossfade_frame_();
+  return true;
+}
+
+bool LvglImagePresenter::perform_scene_crossfade_(image::Image *source) {
+  if (source == nullptr || this->lvgl_component_ == nullptr || this->crossfade_blend_client_ == nullptr ||
+      this->obj_ == nullptr || !this->crossfade_worker_run_.load(std::memory_order_acquire)) {
+    return false;
+  }
+
+  const int width = this->lvgl_component_->get_width();
+  const int height = this->lvgl_component_->get_height();
+  if (width < 2 || height < 2)
+    return false;
+  const size_t frame_bytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 3U;
+  size_t cache_alignment = 64;
+  if (esp_cache_get_alignment(MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA, &cache_alignment) != ESP_OK || cache_alignment == 0 ||
+      (cache_alignment & (cache_alignment - 1U)) != 0) {
+    cache_alignment = 64;
+  }
+  const size_t allocation_bytes = (frame_bytes + cache_alignment - 1U) & ~(cache_alignment - 1U);
+  this->release_crossfade_frame_();
+  this->crossfade_frame_ = static_cast<uint8_t *>(
+      heap_caps_aligned_alloc(cache_alignment, allocation_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (this->crossfade_frame_ == nullptr) {
+    ESP_LOGW(TAG, "Unable to allocate %u-byte direct scene crossfade frame", static_cast<unsigned>(allocation_bytes));
+    return false;
+  }
+  this->crossfade_frame_size_ = frame_bytes;
+  this->crossfade_frame_allocation_size_ = allocation_bytes;
+
+  if (!this->crossfade_direct_active_.load(std::memory_order_acquire)) {
+    if (!this->lvgl_component_->begin_direct_image_animation(true)) {
+      ESP_LOGW(TAG, "Direct scene crossfade could not take display ownership");
+      return false;
+    }
+    this->crossfade_direct_active_.store(true, std::memory_order_release);
+  }
+
+  const int64_t prepare_started_us = esp_timer_get_time();
+  const uint8_t *visible_old_frame = this->lvgl_component_->direct_get_stable_presented_frame(100);
+  if (visible_old_frame == nullptr)
+    return false;
+
+  const lv_image_dsc_t *next = source->get_lv_image_dsc();
+  bool rendered = false;
+  lv_lock();
+  if (next != nullptr && next->data != nullptr && lv_obj_is_valid(this->obj_) && lv_obj_is_visible(this->obj_)) {
+    auto *display = lv_obj_get_display(this->obj_);
+    lv_obj_t *screen = lv_obj_get_screen(this->obj_);
+    if (display != nullptr && screen != nullptr && lv_obj_is_valid(screen) &&
+        screen == lv_display_get_screen_active(display)) {
+      lv_image_set_src(this->obj_, next);
+      std::array<bool, MAX_CAPTURE_EXCLUDED_OBJECTS> excluded_was_hidden{};
+      for (size_t index = 0; index < this->capture_excluded_obj_count_; index++) {
+        auto *excluded = this->capture_excluded_objs_[index];
+        if (excluded == nullptr || !lv_obj_is_valid(excluded))
+          continue;
+        excluded_was_hidden[index] = lv_obj_has_flag(excluded, LV_OBJ_FLAG_HIDDEN);
+        if (!excluded_was_hidden[index])
+          lv_obj_add_flag(excluded, LV_OBJ_FLAG_HIDDEN);
+      }
+      rendered = this->lvgl_component_->render_display_area_rgb888(display, this->crossfade_frame_, width * 3, 0, 0,
+                                                                   width, height);
+      for (size_t index = 0; index < this->capture_excluded_obj_count_; index++) {
+        auto *excluded = this->capture_excluded_objs_[index];
+        if (excluded != nullptr && lv_obj_is_valid(excluded) && !excluded_was_hidden[index])
+          lv_obj_clear_flag(excluded, LV_OBJ_FLAG_HIDDEN);
+      }
+    }
+  }
+  lv_unlock();
+  if (!rendered) {
+    ESP_LOGW(TAG, "Unable to render the incoming LVGL scene for crossfade");
+    return false;
+  }
+
+  if (esp_cache_msync(this->crossfade_frame_, this->crossfade_frame_allocation_size_, ESP_CACHE_MSYNC_FLAG_DIR_C2M) !=
+      ESP_OK) {
+    ESP_LOGW(TAG, "Unable to synchronize the incoming crossfade scene");
+    return false;
+  }
+  const uint32_t prepare_us = static_cast<uint32_t>(esp_timer_get_time() - prepare_started_us);
+
+  const uint32_t duration_ms = this->transition_duration_ms_;
+  const uint32_t started_ms = millis();
+  uint32_t frames = 0;
+  uint64_t blend_total_us = 0;
+  uint32_t blend_max_us = 0;
+  bool presented = true;
+  while (this->crossfade_worker_run_.load(std::memory_order_acquire)) {
+    const uint32_t frame_started_ms = millis();
+    const uint32_t elapsed_ms = frame_started_ms - started_ms;
+    const float linear = std::min(1.0f, static_cast<float>(elapsed_ms) / static_cast<float>(duration_ms));
+    const float eased = linear * linear * (3.0f - 2.0f * linear);
+    const uint8_t opacity = static_cast<uint8_t>(std::lround(eased * 255.0f));
+    const int64_t blend_started_us = esp_timer_get_time();
+    presented = this->lvgl_component_->direct_present_rgb888_crossfade(visible_old_frame, this->crossfade_frame_,
+                                                                       opacity, this->crossfade_blend_client_, true);
+    const uint32_t blend_us = static_cast<uint32_t>(esp_timer_get_time() - blend_started_us);
+    if (!presented)
+      break;
+    frames++;
+    blend_total_us += blend_us;
+    blend_max_us = std::max(blend_max_us, blend_us);
+    if (linear >= 1.0f)
+      break;
+    const uint32_t frame_elapsed_ms = millis() - frame_started_ms;
+    const uint32_t wait_ms =
+        frame_elapsed_ms < this->frame_interval_ms_ ? this->frame_interval_ms_ - frame_elapsed_ms : 1U;
+    vTaskDelay(std::max<TickType_t>(1, pdMS_TO_TICKS(wait_ms)));
+  }
+
+  const bool completed =
+      presented && this->crossfade_worker_run_.load(std::memory_order_acquire) && millis() - started_ms >= duration_ms;
+  ESP_LOGI(TAG, "scene crossfade: prepare=%uus frames=%u blend_avg=%uus blend_max=%uus wall=%ums success=%s",
+           static_cast<unsigned>(prepare_us), static_cast<unsigned>(frames),
+           static_cast<unsigned>(blend_total_us / std::max<uint32_t>(1, frames)), static_cast<unsigned>(blend_max_us),
+           static_cast<unsigned>(millis() - started_ms), YESNO(completed));
+  return completed;
+}
+
+void LvglImagePresenter::service_crossfade_completion_() {
+  if (!this->crossfade_worker_complete_.exchange(false, std::memory_order_acq_rel))
+    return;
+
+  const bool success = this->crossfade_worker_success_.load(std::memory_order_acquire);
+  if (!this->stop_crossfade_worker_(0)) {
+    this->crossfade_worker_complete_.store(true, std::memory_order_release);
+    return;
+  }
+  if (success) {
+    this->finish_crossfade_();
+  } else {
+    this->transition_failed_.store(true, std::memory_order_release);
+    this->source_ = this->transition_source_;
+    this->transition_state_ = TransitionState::NONE;
+    this->transition_elapsed_ms_ = 0;
+    this->cleanup_crossfade_(true);
+    lv_lock();
+    if (this->obj_ != nullptr && lv_obj_is_valid(this->obj_))
+      lv_obj_invalidate(lv_obj_get_screen(this->obj_));
+    lv_unlock();
+  }
+  this->crossfade_source_.store(nullptr, std::memory_order_release);
+}
+
+void LvglImagePresenter::crossfade_worker_trampoline_(void *arg) {
+  static_cast<LvglImagePresenter *>(arg)->crossfade_worker_();
+}
+
+void LvglImagePresenter::crossfade_worker_() {
+  this->crossfade_blend_client_ = lvgl::LvglComponent::register_direct_image_blend_client();
+  this->crossfade_worker_ready_.store(this->crossfade_blend_client_ != nullptr, std::memory_order_release);
+  if (this->crossfade_blend_client_ == nullptr)
+    ESP_LOGE(TAG, "Unable to register task-owned PPA blend client for scene crossfade");
+
+  while (true) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (!this->crossfade_worker_run_.load(std::memory_order_acquire))
+      continue;
+    this->crossfade_worker_active_.store(true, std::memory_order_release);
+    image::Image *source = this->crossfade_source_.load(std::memory_order_acquire);
+    const bool success = this->perform_scene_crossfade_(source);
+    this->crossfade_worker_success_.store(success, std::memory_order_release);
+    this->crossfade_worker_run_.store(false, std::memory_order_release);
+    this->crossfade_worker_active_.store(false, std::memory_order_release);
+    this->crossfade_worker_complete_.store(true, std::memory_order_release);
+  }
+}
+#endif
 
 #ifdef USE_ESP32_VARIANT_ESP32P4
 bool LvglImagePresenter::sync_dma_source_for_ppa_(const image::ImageBufferLease &source) const {

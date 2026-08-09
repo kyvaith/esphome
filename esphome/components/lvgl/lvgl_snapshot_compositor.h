@@ -67,7 +67,8 @@ class LvglSnapshotCompositor {
   uint32_t home_settle_duration_(int32_t target_offset, int32_t release_velocity_px_s) const;
   void complete_home_();
   void release_home_();
-  bool bind_application_(LvglApplication *application, bool force_capture);
+  bool bind_application_(LvglApplication *application, bool force_capture, bool opening);
+  bool ensure_black_application_buffer_();
   void set_application_progress_(int32_t progress);
   bool animate_application_to_(int32_t progress, uint32_t duration);
   void complete_application_();
@@ -91,6 +92,8 @@ class LvglSnapshotCompositor {
   lv_obj_t *application_image_{};
   LvglApplication *application_{};
   lv_draw_buf_t *application_buffer_{};
+  lv_draw_buf_t *black_application_buffer_{};
+  bool application_buffer_from_store_{};
   int application_home_index_{-1};
   int32_t application_progress_{};
   uint32_t application_open_duration_{500};

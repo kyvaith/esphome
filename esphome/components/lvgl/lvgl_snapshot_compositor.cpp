@@ -24,7 +24,9 @@ bool LvglSnapshotCompositor::prepare_applications(const std::vector<LvglApplicat
   bool prepared = true;
   for (auto *application : applications) {
     auto *view = application == nullptr ? nullptr : application->get_view();
-    if (view != nullptr)
+    if (application != nullptr && application->uses_black_open_transition_snapshot())
+      prepared = this->ensure_black_application_buffer_() && prepared;
+    else if (view != nullptr)
       prepared = this->store_->capture_object(view) && prepared;
   }
   return prepared;
@@ -157,7 +159,7 @@ bool LvglSnapshotCompositor::open_application(LvglApplication *application, int 
       application == nullptr || application->get_view() == nullptr || home_index < 0 ||
       home_index >= static_cast<int>(this->home_views_.size()))
     return false;
-  if (!this->ensure_overlay_(application->get_view()) || !this->bind_application_(application, false))
+  if (!this->ensure_overlay_(application->get_view()) || !this->bind_application_(application, false, true))
     return false;
 
   this->application_home_index_ = home_index;
@@ -178,7 +180,7 @@ bool LvglSnapshotCompositor::begin_application_close(LvglApplication *applicatio
       application == nullptr || application->get_view() == nullptr || home_index < 0 ||
       home_index >= static_cast<int>(this->home_views_.size()))
     return false;
-  if (!this->ensure_overlay_(application->get_view()) || !this->bind_application_(application, true))
+  if (!this->ensure_overlay_(application->get_view()) || !this->bind_application_(application, true, false))
     return false;
 
   this->application_home_index_ = home_index;
@@ -356,10 +358,21 @@ void LvglSnapshotCompositor::release_home_() {
   this->home_active_ = false;
 }
 
-bool LvglSnapshotCompositor::bind_application_(LvglApplication *application, bool force_capture) {
+bool LvglSnapshotCompositor::bind_application_(LvglApplication *application, bool force_capture, bool opening) {
   if (application == nullptr || application->get_view() == nullptr || this->application_image_ == nullptr)
     return false;
+  this->application_buffer_from_store_ = false;
   auto *view = application->get_view();
+  const bool use_black = opening ? application->uses_black_open_transition_snapshot()
+                                 : application->uses_black_close_transition_snapshot();
+  if (use_black) {
+    if (!this->ensure_black_application_buffer_())
+      return false;
+    this->application_ = application;
+    this->application_buffer_ = this->black_application_buffer_;
+    lv_image_set_src(this->application_image_, this->black_application_buffer_);
+    return true;
+  }
   if (force_capture && !this->store_->capture_object(view))
     return false;
 
@@ -371,7 +384,47 @@ bool LvglSnapshotCompositor::bind_application_(LvglApplication *application, boo
 
   this->application_ = application;
   this->application_buffer_ = buffer;
+  this->application_buffer_from_store_ = true;
   lv_image_set_src(this->application_image_, buffer);
+  return true;
+}
+
+bool LvglSnapshotCompositor::ensure_black_application_buffer_() {
+  const int32_t width = this->parent_ == nullptr ? 0 : this->parent_->get_width();
+  const int32_t height = this->parent_ == nullptr ? 0 : this->parent_->get_height();
+  if (width <= 0 || height <= 0)
+    return false;
+
+#if LV_COLOR_DEPTH == 16
+  constexpr lv_color_format_t COLOR_FORMAT = LV_COLOR_FORMAT_RGB565;
+  constexpr uint32_t BYTES_PER_PIXEL = 2;
+#else
+  constexpr lv_color_format_t COLOR_FORMAT = LV_COLOR_FORMAT_RGB888;
+  constexpr uint32_t BYTES_PER_PIXEL = 3;
+#endif
+  const uint32_t stride = static_cast<uint32_t>(width) * BYTES_PER_PIXEL;
+  if (this->black_application_buffer_ != nullptr &&
+      this->black_application_buffer_->header.cf == COLOR_FORMAT &&
+      this->black_application_buffer_->header.w == static_cast<uint32_t>(width) &&
+      this->black_application_buffer_->header.h == static_cast<uint32_t>(height) &&
+      this->black_application_buffer_->header.stride == stride) {
+    return true;
+  }
+
+  if (this->black_application_buffer_ != nullptr)
+    lv_draw_buf_destroy(this->black_application_buffer_);
+  this->black_application_buffer_ = lv_draw_buf_create(width, height, COLOR_FORMAT, stride);
+  if (this->black_application_buffer_ == nullptr || this->black_application_buffer_->data == nullptr) {
+    if (this->black_application_buffer_ != nullptr)
+      lv_draw_buf_destroy(this->black_application_buffer_);
+    this->black_application_buffer_ = nullptr;
+    ESP_LOGW("lvgl.snapshot", "Unable to allocate shared %dx%d black application transition frame",
+             static_cast<int>(width), static_cast<int>(height));
+    return false;
+  }
+  lv_draw_buf_clear(this->black_application_buffer_, nullptr);
+  ESP_LOGI("lvgl.snapshot", "Allocated shared black application transition frame: %u KB",
+           static_cast<unsigned>(this->black_application_buffer_->data_size / 1024U));
   return true;
 }
 
@@ -455,10 +508,11 @@ void LvglSnapshotCompositor::release_application_() {
     lv_obj_add_flag(this->application_mask_, LV_OBJ_FLAG_HIDDEN);
   if (this->application_image_ != nullptr)
     ::lv_image_set_src(this->application_image_, nullptr);
-  if (this->application_ != nullptr && this->application_buffer_ != nullptr)
+  if (this->application_ != nullptr && this->application_buffer_ != nullptr && this->application_buffer_from_store_)
     this->store_->release_object(this->application_->get_view());
   this->application_ = nullptr;
   this->application_buffer_ = nullptr;
+  this->application_buffer_from_store_ = false;
   this->application_home_index_ = -1;
   this->application_progress_ = 0;
   this->application_active_ = false;

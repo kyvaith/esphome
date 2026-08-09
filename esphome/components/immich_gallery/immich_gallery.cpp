@@ -53,6 +53,24 @@ std::string ImmichGallery::pick_csv_(const std::string &csv) {
   return values[random_uint32() % values.size()];
 }
 
+std::string ImmichGallery::first_csv_value(const std::string &csv) const {
+  auto values = split_csv_(csv);
+  return values.empty() ? "" : values.front();
+}
+
+bool ImmichGallery::parse_album_response(const std::string &body, std::string *name) const {
+  if (name == nullptr)
+    return false;
+  auto doc = json::parse_json(body);
+  if (doc.isNull() || !doc.is<JsonObject>())
+    return false;
+  JsonObject root = doc.as<JsonObject>();
+  if (!root["albumName"].is<const char *>())
+    return false;
+  *name = root["albumName"].as<std::string>();
+  return !name->empty();
+}
+
 std::string ImmichGallery::json_array_from_csv_(const std::string &csv) {
   auto values = split_csv_(csv);
   std::string body = "[";
@@ -123,6 +141,15 @@ std::string ImmichGallery::parse_asset_object_(JsonObject asset, const std::stri
     return "";
   out->asset_id = asset["id"].as<std::string>();
   out->image_url = base_url + "/api/assets/" + out->asset_id + "/original";
+  if (asset["originalFileName"].is<const char *>()) {
+    out->title = asset["originalFileName"].as<std::string>();
+    const size_t slash = out->title.find_last_of("/\\");
+    if (slash != std::string::npos)
+      out->title.erase(0, slash + 1);
+    const size_t dot = out->title.find_last_of('.');
+    if (dot != std::string::npos && dot != 0)
+      out->title.erase(dot);
+  }
   out->date = asset["localDateTime"].is<const char *>() ? parse_date_(asset["localDateTime"].as<std::string>()) : "";
 
   JsonObject exif = asset["exifInfo"].as<JsonObject>();

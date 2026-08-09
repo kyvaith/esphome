@@ -352,11 +352,14 @@ class MipiDsi : public display::Display {
   static constexpr size_t DIRECT_FRAME_TRACE_CAPACITY = 96;
   std::atomic<bool> direct_frame_trace_enabled_{false};
   std::atomic<uint32_t> direct_frame_trace_position_{0};
+  std::atomic<uint32_t> direct_frame_trace_sample_position_{0};
+  std::atomic<uint8_t> direct_frame_trace_last_active_index_{0xFF};
   std::atomic<uint32_t> direct_frame_trace_queued_{0};
   std::atomic<uint32_t> direct_frame_trace_staged_{0};
   std::atomic<uint32_t> direct_frame_trace_active_{0};
   std::atomic<uint32_t> direct_frame_trace_rejected_{0};
   std::atomic<uint16_t> direct_frame_trace_events_[DIRECT_FRAME_TRACE_CAPACITY]{};
+  std::atomic<uint32_t> direct_frame_trace_samples_[DIRECT_FRAME_TRACE_CAPACITY]{};
   uint8_t *buffer_{nullptr};
   uint16_t x_low_{1};
   uint16_t y_low_{1};

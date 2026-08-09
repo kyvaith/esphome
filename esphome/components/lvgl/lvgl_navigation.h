@@ -24,6 +24,12 @@ class LvglApplication {
   void set_widget(lv_obj_t *widget) { this->widget_ = widget; }
   void set_close_gesture_enabled(bool enabled) { this->close_gesture_enabled_ = enabled; }
   void set_close_on_threshold(bool enabled) { this->close_on_threshold_ = enabled; }
+  void set_black_transition_snapshot(bool enabled) {
+    this->open_black_transition_snapshot_ = enabled;
+    this->close_black_transition_snapshot_ = enabled;
+  }
+  void set_open_black_transition_snapshot(bool enabled) { this->open_black_transition_snapshot_ = enabled; }
+  void set_close_black_transition_snapshot(bool enabled) { this->close_black_transition_snapshot_ = enabled; }
   void set_scroll_snapshot(LvglScrollSnapshotController *controller) { this->scroll_snapshot_ = controller; }
   template<typename F> void add_on_prepare_open_callback(F &&callback) {
     this->prepare_open_callbacks_.add(std::forward<F>(callback));
@@ -58,6 +64,8 @@ class LvglApplication {
   bool is_widget_application() const { return this->widget_ != nullptr; }
   bool is_close_gesture_enabled() const { return this->close_gesture_enabled_; }
   bool is_close_on_threshold() const { return this->close_on_threshold_; }
+  bool uses_black_open_transition_snapshot() const { return this->open_black_transition_snapshot_; }
+  bool uses_black_close_transition_snapshot() const { return this->close_black_transition_snapshot_; }
   bool is_close_prepared() const { return this->close_prepared_; }
   void call_on_prepare_open_callbacks() { this->prepare_open_callbacks_.call(); }
   void call_on_open_callbacks() { this->open_callbacks_.call(); }
@@ -99,6 +107,8 @@ class LvglApplication {
   LazyCallbackManager<void()> closed_callbacks_{};
   bool close_gesture_enabled_{true};
   bool close_on_threshold_{};
+  bool open_black_transition_snapshot_{};
+  bool close_black_transition_snapshot_{};
   bool close_prepared_{};
 };
 

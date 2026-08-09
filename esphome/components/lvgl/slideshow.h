@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "esphome/components/lvgl/direct_scene_controller.h"
 #include "esphome/core/component.h"
 
 #include "lvgl.h"
@@ -24,7 +25,7 @@ class LvglComponent;
  * draw pipeline, allowing hardware image draw units such as ESP32-P4 PPA SRM to
  * handle the transformed pixels.
  */
-class KenBurnsController : public Component {
+class SlideshowController : public Component, public DirectSceneController {
  public:
   void set_obj(lv_obj_t *obj) { this->obj_ = obj; }
   void set_phase_duration(uint32_t duration_ms) { this->phase_duration_ms_ = duration_ms; }
@@ -43,8 +44,10 @@ class KenBurnsController : public Component {
 
   void restart();
   bool pause();
+  bool pause_for_overlay();
   bool pause_for_snapshot();
   bool complete_snapshot_handoff(uint32_t timeout_ms = 600);
+  void clear();
   void resume();
   void reset_transform();
   bool transition_to(const lv_image_dsc_t *source, uint32_t duration_ms = 800);
@@ -53,6 +56,11 @@ class KenBurnsController : public Component {
   bool is_phase_complete() const { return this->phase_complete_.load(std::memory_order_acquire); }
   bool freeze_direct();
   void resume_direct();
+  bool suspend_for_direct_overlay() override;
+  void resume_after_direct_overlay() override;
+  bool get_direct_overlay_frame(DirectSceneFrame &frame) const override;
+  bool begin_direct_overlay_background_render() override;
+  void end_direct_overlay_background_render() override;
   size_t memory_usage_bytes() const;
   void log_memory_usage(const char *phase) const;
 
@@ -103,6 +111,9 @@ class KenBurnsController : public Component {
   uint8_t *subpixel_scratch_{nullptr};
   size_t subpixel_scratch_size_{0};
   lv_image_dsc_t direct_source_{};
+  lv_image_dsc_t overlay_frame_dsc_{};
+  bool overlay_frame_active_{false};
+  bool transition_from_overlay_{false};
   LvglComponent *direct_component_{nullptr};
   const uint8_t *last_direct_source_data_{nullptr};
   int last_direct_crop_x_{-1};
@@ -134,6 +145,8 @@ class KenBurnsController : public Component {
   bool paused_{false};
   bool use_direct_{false};
   bool direct_active_{false};
+  bool direct_overlay_suspended_{false};
+  bool direct_overlay_resume_pending_{false};
 };
 
 }  // namespace esphome::lvgl

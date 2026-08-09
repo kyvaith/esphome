@@ -391,7 +391,7 @@ static int32_t ppa_evaluate(lv_draw_unit_t * draw_unit, lv_draw_task_t * t)
             if(dsc->skew_x != 0 || dsc->skew_y != 0) return 0;
 
 #ifdef LV_USE_PPA_IMG
-            /* PPA SRM handles scale+translate (Ken Burns) with rotation=0 */
+            /* PPA SRM handles slideshow scale and translation with rotation=0. */
             if(!ppa_image_scale_is_identity(dsc)) {
                 if(dsc->opa < (lv_opa_t)LV_OPA_MAX) {
                     ppa_log_image_reject(draw_unit, t, dsc, "scale-opa");

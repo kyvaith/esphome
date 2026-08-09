@@ -4,10 +4,16 @@ from esphome.components.esp32 import VARIANT_ESP32P4, get_esp32_variant
 from esphome.components.image import Image_
 from esphome.components.lvgl.defines import CONF_LVGL_ID
 from esphome.components.lvgl.lvcode import LvContext, LvglComponent
-from esphome.components.lvgl.types import lv_image_t
+from esphome.components.lvgl.types import DirectSceneController, lv_image_t, lv_obj_t
 from esphome.components.lvgl.widgets import get_widgets, wait_for_widgets
 import esphome.config_validation as cv
-from esphome.const import CONF_DURATION, CONF_ID, CONF_SOURCE
+from esphome.const import (
+    CONF_CONTINUOUS,
+    CONF_DURATION,
+    CONF_ID,
+    CONF_MOTION,
+    CONF_SOURCE,
+)
 from esphome.core import CORE
 
 CODEOWNERS = ["@kyvaith"]
@@ -16,7 +22,9 @@ MULTI_CONF = True
 
 CONF_DIRECT = "direct"
 CONF_DIRECT_JPEG = "direct_jpeg"
-CONF_CONTINUOUS = "continuous"
+CONF_DEFER_DIRECT_SESSION_UNTIL_FRAME = "defer_direct_session_until_frame"
+CONF_CAPTURE_EXCLUDE = "capture_exclude"
+CONF_CROSSFADE = "crossfade"
 CONF_FADE_THROUGH_BLACK = "fade_through_black"
 CONF_FRAME_INTERVAL = "frame_interval"
 CONF_PAN_LIMIT = "pan_limit"
@@ -26,7 +34,9 @@ CONF_ZOOM_END = "zoom_end"
 CONF_ZOOM_START = "zoom_start"
 
 lvgl_image_presenter_ns = cg.esphome_ns.namespace("lvgl_image_presenter")
-LvglImagePresenter = lvgl_image_presenter_ns.class_("LvglImagePresenter", cg.Component)
+LvglImagePresenter = lvgl_image_presenter_ns.class_(
+    "LvglImagePresenter", cg.Component, DirectSceneController
+)
 LvglImagePresenterRestartAction = lvgl_image_presenter_ns.class_(
     "LvglImagePresenterRestartAction",
     automation.Action,
@@ -62,6 +72,16 @@ LvglImagePresenterTransitionAction = lvgl_image_presenter_ns.class_(
     automation.Action,
     cg.Parented.template(LvglImagePresenter),
 )
+LvglImagePresenterPrepareTransitionAction = lvgl_image_presenter_ns.class_(
+    "LvglImagePresenterPrepareTransitionAction",
+    automation.Action,
+    cg.Parented.template(LvglImagePresenter),
+)
+LvglImagePresenterCancelTransitionAction = lvgl_image_presenter_ns.class_(
+    "LvglImagePresenterCancelTransitionAction",
+    automation.Action,
+    cg.Parented.template(LvglImagePresenter),
+)
 
 
 def _validate_zoom(config):
@@ -73,6 +93,14 @@ def _validate_zoom(config):
         if not config[CONF_DIRECT]:
             raise cv.Invalid(f"{CONF_DIRECT_JPEG} requires {CONF_DIRECT}: true")
         cv.requires_component("esp32_jpeg")(config)
+    if config[CONF_DEFER_DIRECT_SESSION_UNTIL_FRAME] and not config[CONF_DIRECT_JPEG]:
+        raise cv.Invalid(
+            f"{CONF_DEFER_DIRECT_SESSION_UNTIL_FRAME} requires {CONF_DIRECT_JPEG}: true"
+        )
+    if config[CONF_DEFER_DIRECT_SESSION_UNTIL_FRAME] and not config[CONF_CONTINUOUS]:
+        raise cv.Invalid(
+            f"{CONF_DEFER_DIRECT_SESSION_UNTIL_FRAME} requires {CONF_CONTINUOUS}: true"
+        )
     if config[CONF_DIRECT] and config[CONF_ZOOM_END] != config[CONF_ZOOM_START]:
         raise cv.Invalid(
             "Direct image presentation currently supports panning at a fixed zoom only"
@@ -89,7 +117,15 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_SOURCE): cv.use_id(Image_),
             cv.Optional(CONF_DIRECT, default=False): cv.boolean,
             cv.Optional(CONF_DIRECT_JPEG, default=False): cv.boolean,
+            cv.Optional(CONF_DEFER_DIRECT_SESSION_UNTIL_FRAME, default=False): cv.boolean,
             cv.Optional(CONF_CONTINUOUS, default=False): cv.boolean,
+            cv.Optional(CONF_CAPTURE_EXCLUDE, default=[]): cv.ensure_list(
+                cv.use_id(lv_obj_t)
+            ),
+            cv.Optional(CONF_CROSSFADE, default=False): cv.boolean,
+            cv.Optional(CONF_MOTION, default="slideshow"): cv.one_of(
+                "none", "pan", "slideshow", lower=True
+            ),
             cv.Optional(
                 CONF_PHASE_DURATION, default="18s"
             ): cv.positive_time_period_milliseconds,
@@ -127,7 +163,14 @@ async def to_code(config):
     cg.add(var.set_frame_interval(config[CONF_FRAME_INTERVAL].total_milliseconds))
     cg.add(var.set_direct(config[CONF_DIRECT]))
     cg.add(var.set_direct_jpeg(config[CONF_DIRECT_JPEG]))
+    cg.add(
+        var.set_defer_direct_session_until_frame(
+            config[CONF_DEFER_DIRECT_SESSION_UNTIL_FRAME]
+        )
+    )
     cg.add(var.set_continuous(config[CONF_CONTINUOUS]))
+    cg.add(var.set_crossfade(config[CONF_CROSSFADE]))
+    cg.add(var.set_motion_enabled(config[CONF_MOTION] != "none"))
     cg.add(
         var.set_zoom(
             round(config[CONF_ZOOM_START] * 256),
@@ -138,9 +181,14 @@ async def to_code(config):
     cg.add(var.set_fade_through_black(config[CONF_FADE_THROUGH_BLACK]))
 
     widget = (await get_widgets(config, CONF_WIDGET))[0]
+    excluded_widgets = await get_widgets(
+        [{CONF_ID: widget_id} for widget_id in config[CONF_CAPTURE_EXCLUDE]]
+    )
     await wait_for_widgets()
     async with LvContext() as ctx:
         ctx.add(var.set_obj(widget.obj))
+        for excluded_widget in excluded_widgets:
+            ctx.add(var.add_capture_excluded_obj(excluded_widget.obj))
 
 
 PRESENTER_ACTION_SCHEMA = automation.maybe_simple_id(
@@ -216,4 +264,22 @@ async def presenter_transition_to_code(config, action_id, template_arg, args):
     cg.add(var.set_source(source))
     duration = await cg.templatable(config[CONF_DURATION], args, cg.uint32)
     cg.add(var.set_duration(duration))
+    return var
+
+
+@automation.register_action(
+    "lvgl_image_presenter.prepare_transition",
+    LvglImagePresenterPrepareTransitionAction,
+    PRESENTER_ACTION_SCHEMA,
+    synchronous=True,
+)
+@automation.register_action(
+    "lvgl_image_presenter.cancel_transition",
+    LvglImagePresenterCancelTransitionAction,
+    PRESENTER_ACTION_SCHEMA,
+    synchronous=True,
+)
+async def presenter_transition_control_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
     return var

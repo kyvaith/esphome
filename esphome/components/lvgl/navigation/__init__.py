@@ -39,6 +39,29 @@ CONF_ON_PREPARE_CLOSE = "on_prepare_close"
 CONF_ON_PREPARE_OPEN = "on_prepare_open"
 CONF_PAGE = "page"
 CONF_SWIPE_START_DISTANCE = "swipe_start_distance"
+CONF_TRANSITION_SNAPSHOT = "transition_snapshot"
+CONF_TRANSITION_SNAPSHOT_OPEN = "open"
+CONF_TRANSITION_SNAPSHOT_CLOSE = "close"
+
+TRANSITION_SNAPSHOT_LIVE = "live"
+TRANSITION_SNAPSHOT_BLACK = "black"
+
+TRANSITION_SNAPSHOT_MODE = cv.one_of(
+    TRANSITION_SNAPSHOT_LIVE, TRANSITION_SNAPSHOT_BLACK, lower=True
+)
+TRANSITION_SNAPSHOT_SCHEMA = cv.Any(
+    TRANSITION_SNAPSHOT_MODE,
+    cv.Schema(
+        {
+            cv.Optional(
+                CONF_TRANSITION_SNAPSHOT_OPEN, default=TRANSITION_SNAPSHOT_LIVE
+            ): TRANSITION_SNAPSHOT_MODE,
+            cv.Optional(
+                CONF_TRANSITION_SNAPSHOT_CLOSE, default=TRANSITION_SNAPSHOT_LIVE
+            ): TRANSITION_SNAPSHOT_MODE,
+        }
+    ),
+)
 
 DISTANCE_OR_PERCENTAGE = cv.Any(
     cv.percentage,
@@ -61,6 +84,9 @@ APPLICATION_SCHEMA = cv.Schema(
         cv.Optional(CONF_WIDGET): cv.use_id(lv_pseudo_button_t),
         cv.Optional(CONF_CLOSE_GESTURE, default=True): cv.boolean,
         cv.Optional(CONF_CLOSE_ON_THRESHOLD, default=False): cv.boolean,
+        cv.Optional(
+            CONF_TRANSITION_SNAPSHOT, default=TRANSITION_SNAPSHOT_LIVE
+        ): TRANSITION_SNAPSHOT_SCHEMA,
         cv.Optional(CONF_ON_PREPARE_OPEN): automation.validate_automation({}),
         cv.Optional(CONF_ON_OPEN): automation.validate_automation({}),
         cv.Optional(CONF_ON_BEFORE_REVEAL): automation.validate_automation({}),
@@ -251,6 +277,23 @@ async def navigation_to_code(lv_component, config):
         lv_add(
             application.set_close_on_threshold(
                 application_config[CONF_CLOSE_ON_THRESHOLD]
+            )
+        )
+        transition_snapshot = application_config[CONF_TRANSITION_SNAPSHOT]
+        if isinstance(transition_snapshot, str):
+            open_snapshot = transition_snapshot
+            close_snapshot = transition_snapshot
+        else:
+            open_snapshot = transition_snapshot[CONF_TRANSITION_SNAPSHOT_OPEN]
+            close_snapshot = transition_snapshot[CONF_TRANSITION_SNAPSHOT_CLOSE]
+        lv_add(
+            application.set_open_black_transition_snapshot(
+                open_snapshot == TRANSITION_SNAPSHOT_BLACK
+            )
+        )
+        lv_add(
+            application.set_close_black_transition_snapshot(
+                close_snapshot == TRANSITION_SNAPSHOT_BLACK
             )
         )
         lv_add(navigation.add_application(application))

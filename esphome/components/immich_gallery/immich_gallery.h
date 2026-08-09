@@ -11,6 +11,7 @@ namespace esphome::immich_gallery {
 struct ImmichPhoto {
   std::string asset_id;
   std::string image_url;
+  std::string title;
   std::string date;
   std::string location;
   std::string person;
@@ -33,6 +34,8 @@ class ImmichGallery : public Component {
                             ImmichPhoto *out, const std::string &avoid_asset_ids = "") const;
   std::string push_recent_asset(const std::string &recent, const std::string &asset_id, size_t max_entries = 3) const;
   bool parse_memory_response(const std::string &body, const std::string &base_url, ImmichPhoto *out) const;
+  std::string first_csv_value(const std::string &csv) const;
+  bool parse_album_response(const std::string &body, std::string *name) const;
 
  protected:
   static std::vector<std::string> split_csv_(const std::string &csv);

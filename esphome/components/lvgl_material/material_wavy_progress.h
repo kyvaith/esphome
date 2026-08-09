@@ -18,10 +18,14 @@ class MaterialWavyProgress : public Component {
   void initialize();
   void set_background(const lv_image_dsc_t *source, bool apply_scrim);
   void log_state(const char *reason);
+  void reset_trace();
+  void log_trace(const char *reason);
+  int get_value_basis_points();
   void set_value_basis_points(int progress);
   void set_value_permille(int progress);
   void set_value(int progress);
   void set_playing(bool playing);
+  void set_playback_state(bool playing, bool pending);
   void set_pressed(bool pressed);
   void set_direct_present(bool enabled);
   bool is_background_ready();

@@ -1500,8 +1500,7 @@ bool LvglComponent::begin_frame_buffer_presentation(uint32_t timeout_ms) {
   lv_timer_reset(this->frame_buffer_presentation_refr_timer_);
   lv_unlock();
 
-  this->frame_buffer_presentation_paused_regions_ =
-      !this->direct_region_paused_.load(std::memory_order_acquire);
+  this->frame_buffer_presentation_paused_regions_ = !this->direct_region_paused_.load(std::memory_order_acquire);
   if (this->frame_buffer_presentation_paused_regions_ && !this->direct_regions_pause(true, timeout_ms)) {
     this->direct_regions_pause(false, 0);
     this->frame_buffer_presentation_paused_regions_ = false;
@@ -1550,8 +1549,7 @@ bool LvglComponent::end_frame_buffer_presentation(uint32_t timeout_ms) {
 
   display::FrameBufferView final_frame;
   const bool have_final_frame =
-      this->direct_mode_active_ &&
-      this->displays_[0]->get_active_frame_buffer(&final_frame, BufferReader::CPU);
+      this->direct_mode_active_ && this->displays_[0]->get_active_frame_buffer(&final_frame, BufferReader::CPU);
   lv_lock();
   if (!this->displays_[0]->end_frame_buffer_session(timeout_ms)) {
     lv_unlock();
@@ -2724,20 +2722,21 @@ bool LvglComponent::direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, i
 #endif
 }
 
-bool LvglComponent::render_area_rgb888(lv_obj_t *root, uint8_t *dst, int dst_stride, int x, int y, int width,
-                                       int height) {
-  if (root == nullptr || dst == nullptr || width <= 0 || height <= 0 || dst_stride < width * 3)
+static bool render_objects_rgb888(lv_display_t *display, lv_obj_t *const *roots, size_t root_count, uint8_t *dst,
+                                  int dst_stride, int x, int y, int width, int height) {
+  if (display == nullptr || roots == nullptr || root_count == 0 || dst == nullptr || width <= 0 || height <= 0 ||
+      dst_stride < width * 3)
     return false;
 
-  auto *display = lv_obj_get_display(root);
-  if (display == nullptr)
-    return false;
   const int display_width = lv_display_get_horizontal_resolution(display);
   const int display_height = lv_display_get_vertical_resolution(display);
   if (x < 0 || y < 0 || x + width > display_width || y + height > display_height)
     return false;
 
-  lv_obj_update_layout(root);
+  for (size_t index = 0; index < root_count; index++) {
+    if (roots[index] != nullptr && lv_obj_is_valid(roots[index]))
+      lv_obj_update_layout(roots[index]);
+  }
   lv_draw_buf_t draw_buf{};
   const size_t data_size = static_cast<size_t>(dst_stride) * height;
   if (lv_draw_buf_init(&draw_buf, width, height, LV_COLOR_FORMAT_RGB888, dst_stride, dst, data_size) != LV_RESULT_OK)
@@ -2759,7 +2758,10 @@ bool LvglComponent::render_area_rgb888(lv_obj_t *root, uint8_t *dst, int dst_str
   display->layer_head = &layer;
   lv_refr_set_disp_refreshing(display);
 
-  lv_obj_redraw(&layer, root);
+  for (size_t index = 0; index < root_count; index++) {
+    if (roots[index] != nullptr && lv_obj_is_valid(roots[index]))
+      lv_obj_redraw(&layer, roots[index]);
+  }
   layer.all_tasks_added = true;
   while (layer.draw_task_head != nullptr) {
     lv_draw_dispatch_wait_for_request();
@@ -2771,6 +2773,23 @@ bool LvglComponent::render_area_rgb888(lv_obj_t *root, uint8_t *dst, int dst_str
   lv_draw_unit_send_event(nullptr, LV_EVENT_SCREEN_LOAD_START, &layer);
   lv_draw_unit_send_event(nullptr, LV_EVENT_CHILD_DELETED, &layer);
   return true;
+}
+
+bool LvglComponent::render_area_rgb888(lv_obj_t *root, uint8_t *dst, int dst_stride, int x, int y, int width,
+                                       int height) {
+  if (root == nullptr)
+    return false;
+  lv_obj_t *roots[]{root};
+  return render_objects_rgb888(lv_obj_get_display(root), roots, std::size(roots), dst, dst_stride, x, y, width, height);
+}
+
+bool LvglComponent::render_display_area_rgb888(lv_display_t *display, uint8_t *dst, int dst_stride, int x, int y,
+                                               int width, int height) {
+  if (display == nullptr)
+    return false;
+  lv_obj_t *roots[]{lv_display_get_layer_bottom(display), lv_display_get_screen_active(display),
+                    lv_display_get_layer_top(display), lv_display_get_layer_sys(display)};
+  return render_objects_rgb888(display, roots, std::size(roots), dst, dst_stride, x, y, width, height);
 }
 
 extern "C" bool lvgl_esphome_direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, int y, int width, int height) {
@@ -2879,7 +2898,15 @@ LvglComponent::DirectRegionSlot *LvglComponent::direct_region_find_slot_(int x, 
     if (!slot.valid && free_slot == nullptr)
       free_slot = &slot;
   }
-  return create ? free_slot : nullptr;
+  if (!create || free_slot == nullptr)
+    return nullptr;
+  free_slot->blend = false;
+  free_slot->animation_overlay_valid = false;
+  free_slot->stable_carry = false;
+  free_slot->latest_background = nullptr;
+  free_slot->latest_background_stride = 0;
+  free_slot->transition_background_valid = false;
+  return free_slot;
 }
 
 bool LvglComponent::direct_region_ppa_copy_(const uint8_t *source, int source_width, int source_height, int source_x,
@@ -2943,13 +2970,15 @@ bool LvglComponent::direct_region_ppa_copy_(const uint8_t *source, int source_wi
 }
 
 bool LvglComponent::direct_region_ppa_blend_argb8888_(const uint8_t *background, int background_stride,
-                                                      const uint8_t *foreground, int foreground_stride,
-                                                      int foreground_width, int foreground_height, int foreground_x,
-                                                      int foreground_y, int blend_width, int blend_height,
-                                                      uint8_t *target, size_t target_size, int target_width,
-                                                      int target_height, int target_x, int target_y) {
+                                                      bool background_rgb565, const uint8_t *foreground,
+                                                      int foreground_stride, int foreground_width,
+                                                      int foreground_height, int foreground_x, int foreground_y,
+                                                      int blend_width, int blend_height, uint8_t *target,
+                                                      size_t target_size, int target_width, int target_height,
+                                                      int target_x, int target_y) {
+  const int background_pixel_size = background_rgb565 ? 2 : 3;
   if (background == nullptr || foreground == nullptr || target == nullptr || blend_width <= 0 || blend_height <= 0 ||
-      background_stride != blend_width * 3 || foreground_width <= 0 || foreground_height <= 0 ||
+      background_stride != blend_width * background_pixel_size || foreground_width <= 0 || foreground_height <= 0 ||
       foreground_stride != foreground_width * 4 || foreground_x < 0 || foreground_y < 0 ||
       foreground_x + blend_width > foreground_width || foreground_y + blend_height > foreground_height ||
       target_width <= 0 || target_height <= 0 || target_x < 0 || target_y < 0 ||
@@ -2971,7 +3000,7 @@ bool LvglComponent::direct_region_ppa_blend_argb8888_(const uint8_t *background,
   cfg.in_bg.pic_h = blend_height;
   cfg.in_bg.block_w = blend_width;
   cfg.in_bg.block_h = blend_height;
-  cfg.in_bg.blend_cm = PPA_BLEND_COLOR_MODE_RGB888;
+  cfg.in_bg.blend_cm = background_rgb565 ? PPA_BLEND_COLOR_MODE_RGB565 : PPA_BLEND_COLOR_MODE_RGB888;
   cfg.in_fg.buffer = foreground;
   cfg.in_fg.pic_w = foreground_width;
   cfg.in_fg.pic_h = foreground_height;
@@ -3015,6 +3044,234 @@ bool LvglComponent::direct_region_ppa_blend_argb8888_(const uint8_t *background,
   return result == ESP_OK;
 }
 
+bool LvglComponent::direct_region_ppa_overlay_argb8888_(const uint8_t *foreground, int foreground_stride,
+                                                        int foreground_width, int foreground_height, int foreground_x,
+                                                        int foreground_y, int blend_width, int blend_height,
+                                                        uint8_t *target, size_t target_size, int target_width,
+                                                        int target_height, int target_x, int target_y) {
+  if (foreground == nullptr || target == nullptr || foreground_width <= 0 || foreground_height <= 0 ||
+      foreground_stride != foreground_width * 4 || foreground_x < 0 || foreground_y < 0 || blend_width <= 0 ||
+      blend_height <= 0 || foreground_x + blend_width > foreground_width ||
+      foreground_y + blend_height > foreground_height || target_width <= 0 || target_height <= 0 || target_x < 0 ||
+      target_y < 0 || target_x + blend_width > target_width || target_y + blend_height > target_height ||
+      s_region_blend_client == nullptr)
+    return false;
+
+  const size_t foreground_size = static_cast<size_t>(foreground_stride) * foreground_height;
+  const size_t required_target_size = static_cast<size_t>(target_width) * target_height * 3U;
+  if (target_size < required_target_size ||
+      lvgl_cache_msync_external_result(foreground, foreground_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M) != ESP_OK)
+    return false;
+
+  // The target already contains the current full scene. PPA reads the selected
+  // rectangle as its RGB background and writes the ARGB-composited result back
+  // to the same coordinates. ESP-IDF's PPA blend path explicitly supports an
+  // input and output sharing one buffer; the ownership markers below suppress
+  // redundant cache maintenance for this DMA-owned framebuffer.
+  ppa_blend_oper_config_t cfg{};
+  cfg.in_bg.buffer = target;
+  cfg.in_bg.pic_w = target_width;
+  cfg.in_bg.pic_h = target_height;
+  cfg.in_bg.block_w = blend_width;
+  cfg.in_bg.block_h = blend_height;
+  cfg.in_bg.block_offset_x = target_x;
+  cfg.in_bg.block_offset_y = target_y;
+  cfg.in_bg.blend_cm = PPA_BLEND_COLOR_MODE_RGB888;
+  cfg.in_fg.buffer = foreground;
+  cfg.in_fg.pic_w = foreground_width;
+  cfg.in_fg.pic_h = foreground_height;
+  cfg.in_fg.block_w = blend_width;
+  cfg.in_fg.block_h = blend_height;
+  cfg.in_fg.block_offset_x = foreground_x;
+  cfg.in_fg.block_offset_y = foreground_y;
+  cfg.in_fg.blend_cm = PPA_BLEND_COLOR_MODE_ARGB8888;
+  cfg.out.buffer = target;
+  cfg.out.buffer_size = target_size;
+  cfg.out.pic_w = target_width;
+  cfg.out.pic_h = target_height;
+  cfg.out.block_offset_x = target_x;
+  cfg.out.block_offset_y = target_y;
+  cfg.out.blend_cm = PPA_BLEND_COLOR_MODE_RGB888;
+  cfg.bg_alpha_update_mode = PPA_ALPHA_FIX_VALUE;
+  cfg.bg_alpha_fix_val = 0xFF;
+  cfg.fg_alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+  cfg.mode = PPA_TRANS_MODE_BLOCKING;
+
+  const uintptr_t foreground_begin = reinterpret_cast<uintptr_t>(foreground);
+  const uintptr_t target_begin = reinterpret_cast<uintptr_t>(target);
+  s_direct_ppa_source_begin.store(target_begin, std::memory_order_release);
+  s_direct_ppa_source_end.store(target_begin + target_size, std::memory_order_release);
+  s_direct_ppa_source2_begin.store(foreground_begin, std::memory_order_release);
+  s_direct_ppa_source2_end.store(foreground_begin + foreground_size, std::memory_order_release);
+  s_direct_ppa_target_begin.store(target_begin, std::memory_order_release);
+  s_direct_ppa_target_end.store(target_begin + target_size, std::memory_order_release);
+  lvgl_esphome_wait_direct_region_dsi_fifo();
+  const esp_err_t result = ppa_do_blend(s_region_blend_client, &cfg);
+  s_direct_ppa_source_begin.store(0, std::memory_order_release);
+  s_direct_ppa_source2_begin.store(0, std::memory_order_release);
+  s_direct_ppa_target_begin.store(0, std::memory_order_release);
+  s_direct_ppa_source_end.store(0, std::memory_order_relaxed);
+  s_direct_ppa_source2_end.store(0, std::memory_order_relaxed);
+  s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
+  return result == ESP_OK;
+}
+
+bool LvglComponent::direct_region_ppa_crossfade_background_(const uint8_t *background, int background_stride,
+                                                            bool background_rgb565, const uint8_t *foreground,
+                                                            int foreground_stride, int foreground_width,
+                                                            int foreground_height, int foreground_x, int foreground_y,
+                                                            int blend_width, int blend_height, uint8_t opacity,
+                                                            uint8_t *target, size_t target_size, int target_width,
+                                                            int target_height, int target_x, int target_y) {
+  const int background_pixel_size = background_rgb565 ? 2 : 3;
+  if (background == nullptr || foreground == nullptr || target == nullptr || blend_width <= 0 || blend_height <= 0 ||
+      background_stride != blend_width * background_pixel_size || foreground_width <= 0 || foreground_height <= 0 ||
+      foreground_stride != foreground_width * 3 || foreground_x < 0 || foreground_y < 0 ||
+      foreground_x + blend_width > foreground_width || foreground_y + blend_height > foreground_height ||
+      target_width <= 0 || target_height <= 0 || target_x < 0 || target_y < 0 ||
+      target_x + blend_width > target_width || target_y + blend_height > target_height ||
+      s_region_blend_client == nullptr) {
+    return false;
+  }
+
+  const size_t background_size = static_cast<size_t>(background_stride) * blend_height;
+  const size_t foreground_size = static_cast<size_t>(foreground_stride) * foreground_height;
+  const size_t required_target_size = static_cast<size_t>(target_width) * target_height * 3U;
+  if (target_size < required_target_size)
+    return false;
+
+  ppa_blend_oper_config_t cfg{};
+  cfg.in_bg.buffer = background;
+  cfg.in_bg.pic_w = blend_width;
+  cfg.in_bg.pic_h = blend_height;
+  cfg.in_bg.block_w = blend_width;
+  cfg.in_bg.block_h = blend_height;
+  cfg.in_bg.blend_cm = background_rgb565 ? PPA_BLEND_COLOR_MODE_RGB565 : PPA_BLEND_COLOR_MODE_RGB888;
+  cfg.in_fg.buffer = foreground;
+  cfg.in_fg.pic_w = foreground_width;
+  cfg.in_fg.pic_h = foreground_height;
+  cfg.in_fg.block_w = blend_width;
+  cfg.in_fg.block_h = blend_height;
+  cfg.in_fg.block_offset_x = foreground_x;
+  cfg.in_fg.block_offset_y = foreground_y;
+  cfg.in_fg.blend_cm = PPA_BLEND_COLOR_MODE_RGB888;
+  cfg.out.buffer = target;
+  cfg.out.buffer_size = target_size;
+  cfg.out.pic_w = target_width;
+  cfg.out.pic_h = target_height;
+  cfg.out.block_offset_x = target_x;
+  cfg.out.block_offset_y = target_y;
+  cfg.out.blend_cm = PPA_BLEND_COLOR_MODE_RGB888;
+  cfg.bg_alpha_update_mode = PPA_ALPHA_FIX_VALUE;
+  cfg.bg_alpha_fix_val = 0xFF;
+  cfg.fg_alpha_update_mode = PPA_ALPHA_FIX_VALUE;
+  cfg.fg_alpha_fix_val = opacity;
+  cfg.mode = PPA_TRANS_MODE_BLOCKING;
+
+  const uintptr_t background_begin = reinterpret_cast<uintptr_t>(background);
+  const uintptr_t foreground_begin = reinterpret_cast<uintptr_t>(foreground);
+  const uintptr_t target_begin = reinterpret_cast<uintptr_t>(target);
+  s_direct_ppa_source_begin.store(background_begin, std::memory_order_release);
+  s_direct_ppa_source_end.store(background_begin + background_size, std::memory_order_release);
+  s_direct_ppa_source2_begin.store(foreground_begin, std::memory_order_release);
+  s_direct_ppa_source2_end.store(foreground_begin + foreground_size, std::memory_order_release);
+  s_direct_ppa_target_begin.store(target_begin, std::memory_order_release);
+  s_direct_ppa_target_end.store(target_begin + target_size, std::memory_order_release);
+  lvgl_esphome_wait_direct_region_dsi_fifo();
+  const esp_err_t result = ppa_do_blend(s_region_blend_client, &cfg);
+  s_direct_ppa_source_begin.store(0, std::memory_order_release);
+  s_direct_ppa_source2_begin.store(0, std::memory_order_release);
+  s_direct_ppa_target_begin.store(0, std::memory_order_release);
+  s_direct_ppa_source_end.store(0, std::memory_order_relaxed);
+  s_direct_ppa_source2_end.store(0, std::memory_order_relaxed);
+  s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
+  return result == ESP_OK;
+}
+
+bool LvglComponent::direct_region_cache_animation_overlay_(DirectRegionSlot *slot, const DirectRegionRequest &request) {
+  if (slot == nullptr || request.operation != DirectRegionRequest::Operation::BLEND_ARGB8888 ||
+      request.source == nullptr || request.width <= 0 || request.height <= 0 || request.source_stride <= 0)
+    return false;
+
+  constexpr size_t PIXEL_SIZE = 4;
+  constexpr size_t CACHE_ALIGNMENT = 128;
+  const size_t row_bytes = static_cast<size_t>(request.width) * PIXEL_SIZE;
+  const size_t data_size = row_bytes * request.height;
+  const size_t allocation_size = (data_size + CACHE_ALIGNMENT - 1U) & ~(CACHE_ALIGNMENT - 1U);
+  if (slot->animation_overlay == nullptr || slot->animation_overlay_size < allocation_size) {
+    auto *replacement = static_cast<uint8_t *>(
+        heap_caps_aligned_alloc(CACHE_ALIGNMENT, allocation_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (replacement == nullptr) {
+      slot->animation_overlay_valid = false;
+      return false;
+    }
+    if (slot->animation_overlay != nullptr)
+      heap_caps_free(slot->animation_overlay);
+    slot->animation_overlay = replacement;
+    slot->animation_overlay_size = allocation_size;
+  }
+
+  const auto *source = request.source + static_cast<size_t>(request.source_y) * request.source_stride +
+                       static_cast<size_t>(request.source_x) * PIXEL_SIZE;
+  for (int row = 0; row < request.height; row++) {
+    memcpy(slot->animation_overlay + static_cast<size_t>(row) * row_bytes,
+           source + static_cast<size_t>(row) * request.source_stride, row_bytes);
+  }
+  if (lvgl_cache_msync_external_result(slot->animation_overlay, allocation_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M) !=
+      ESP_OK) {
+    slot->animation_overlay_valid = false;
+    return false;
+  }
+  slot->animation_overlay_valid = true;
+  return true;
+}
+
+bool LvglComponent::direct_region_capture_transition_background_(DirectRegionSlot *slot) {
+  if (slot == nullptr || !slot->valid || !slot->blend || slot->latest_background == nullptr || slot->width <= 0 ||
+      slot->height <= 0) {
+    return false;
+  }
+
+  constexpr size_t CACHE_ALIGNMENT = 128;
+  const int pixel_size = slot->latest_background_rgb565 ? 2 : 3;
+  const int row_bytes = slot->width * pixel_size;
+  if (slot->latest_background_stride != row_bytes)
+    return false;
+  const size_t data_size = static_cast<size_t>(row_bytes) * slot->height;
+  const size_t allocation_size = (data_size + CACHE_ALIGNMENT - 1U) & ~(CACHE_ALIGNMENT - 1U);
+  if (slot->transition_background == nullptr || slot->transition_background_size < allocation_size) {
+    auto *replacement = static_cast<uint8_t *>(
+        heap_caps_aligned_alloc(CACHE_ALIGNMENT, allocation_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (replacement == nullptr) {
+      slot->transition_background_valid = false;
+      return false;
+    }
+    if (slot->transition_background != nullptr)
+      heap_caps_free(slot->transition_background);
+    slot->transition_background = replacement;
+    slot->transition_background_size = allocation_size;
+  }
+
+  // Region backgrounds are CPU-produced and DMA-read-only. Write back any
+  // still-dirty producer lines before taking the immutable transition copy;
+  // invalidating them here could discard a backdrop built while presentation
+  // was already in cache-only mode.
+  if (lvgl_cache_msync_external_result(slot->latest_background, data_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M) != ESP_OK) {
+    slot->transition_background_valid = false;
+    return false;
+  }
+  memcpy(slot->transition_background, slot->latest_background, data_size);
+  if (lvgl_cache_msync_external_result(slot->transition_background, allocation_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M) !=
+      ESP_OK) {
+    slot->transition_background_valid = false;
+    return false;
+  }
+  slot->transition_background_stride = row_bytes;
+  slot->transition_background_rgb565 = slot->latest_background_rgb565;
+  slot->transition_background_valid = true;
+  return true;
+}
+
 bool LvglComponent::start_direct_region_compositor_() {
   if (this->direct_region_queue_ != nullptr && this->direct_region_task_handle_ != nullptr)
     return true;
@@ -3037,10 +3294,9 @@ bool LvglComponent::start_direct_region_compositor_() {
     // Keep display-cadence composition ahead of best-effort image decoders.
     // Audio tasks run at higher priorities and remain able to pre-empt it.
     constexpr UBaseType_t task_priority = 2;
-    this->direct_region_task_handle_ =
-        xTaskCreateStaticPinnedToCore(direct_region_task_trampoline_, "lvgl_region", task_stack_size, this,
-                                      task_priority,
-                                      this->direct_region_task_stack_, &this->direct_region_task_storage_, task_core);
+    this->direct_region_task_handle_ = xTaskCreateStaticPinnedToCore(
+        direct_region_task_trampoline_, "lvgl_region", task_stack_size, this, task_priority,
+        this->direct_region_task_stack_, &this->direct_region_task_storage_, task_core);
   }
   if (this->direct_region_task_handle_ == nullptr) {
     if (this->direct_region_task_stack_ != nullptr)
@@ -3139,23 +3395,36 @@ bool LvglComponent::direct_region_compose_to_(const DirectRegionRequest *request
     }
     if (replaced)
       continue;
-    if (!this->direct_region_ppa_copy_(active, this->width_, this->height_, slot.x, slot.y, slot.width, slot.height,
-                                       target, frame_size, this->width_, this->height_, slot.x, slot.y, false, false))
+    if (slot.stable_carry && slot.blend && slot.animation_overlay_valid && slot.animation_overlay != nullptr &&
+        slot.latest_background != nullptr) {
+      if (!this->direct_region_ppa_blend_argb8888_(
+              slot.latest_background, slot.latest_background_stride, slot.latest_background_rgb565,
+              slot.animation_overlay, slot.width * 4, slot.width, slot.height, 0, 0, slot.width, slot.height, target,
+              frame_size, this->width_, this->height_, slot.x, slot.y)) {
+        return false;
+      }
+    } else if (!this->direct_region_ppa_copy_(active, this->width_, this->height_, slot.x, slot.y, slot.width,
+                                              slot.height, target, frame_size, this->width_, this->height_, slot.x,
+                                              slot.y, false, false)) {
       return false;
+    }
   }
   for (size_t i = 0; i < request_count; i++) {
     const auto &request = requests[i];
     if (request.operation == DirectRegionRequest::Operation::BARRIER)
       continue;
-    const bool composed =
-        request.operation == DirectRegionRequest::Operation::BLEND_ARGB8888
-            ? this->direct_region_ppa_blend_argb8888_(
-                  request.background, request.background_stride, request.source, request.source_stride,
-                  request.source_width, request.source_height, request.source_x, request.source_y, request.width,
-                  request.height, target, frame_size, this->width_, this->height_, request.x, request.y)
-            : this->direct_region_ppa_copy_(request.source, request.source_width, request.source_height,
-                                            request.source_x, request.source_y, request.width, request.height, target,
-                                            frame_size, this->width_, this->height_, request.x, request.y, true, false);
+    bool composed;
+    if (request.operation == DirectRegionRequest::Operation::BLEND_ARGB8888) {
+      composed = this->direct_region_ppa_blend_argb8888_(
+          request.background, request.background_stride, request.background_rgb565, request.source,
+          request.source_stride, request.source_width, request.source_height, request.source_x, request.source_y,
+          request.width, request.height, target, frame_size, this->width_, this->height_, request.x, request.y);
+    } else {
+      composed =
+          this->direct_region_ppa_copy_(request.source, request.source_width, request.source_height, request.source_x,
+                                        request.source_y, request.width, request.height, target, frame_size,
+                                        this->width_, this->height_, request.x, request.y, true, false);
+    }
     if (!composed)
       return false;
   }
@@ -3223,9 +3492,8 @@ void LvglComponent::direct_region_refresh_relock_() {
     const uint32_t elapsed_us = micros() - started_us;
     this->direct_region_refresh_relock_us_.fetch_add(elapsed_us, std::memory_order_relaxed);
     uint32_t previous_max = this->direct_region_refresh_relock_max_us_.load(std::memory_order_relaxed);
-    while (elapsed_us > previous_max &&
-           !this->direct_region_refresh_relock_max_us_.compare_exchange_weak(previous_max, elapsed_us,
-                                                                             std::memory_order_relaxed)) {
+    while (elapsed_us > previous_max && !this->direct_region_refresh_relock_max_us_.compare_exchange_weak(
+                                            previous_max, elapsed_us, std::memory_order_relaxed)) {
     }
     this->direct_region_refresh_locked_ = true;
   }
@@ -3261,19 +3529,37 @@ void LvglComponent::direct_region_sync_to_lvgl_target_() {
     if (!slot.valid)
       continue;
 
-    auto *target_region = target + static_cast<size_t>(slot.y) * frame_stride +
-                          static_cast<size_t>(slot.x) * bytes_per_pixel;
-    const size_t target_span = static_cast<size_t>(slot.height - 1) * frame_stride +
-                               static_cast<size_t>(slot.width) * bytes_per_pixel;
+    auto *target_region =
+        target + static_cast<size_t>(slot.y) * frame_stride + static_cast<size_t>(slot.x) * bytes_per_pixel;
+    const size_t target_span =
+        static_cast<size_t>(slot.height - 1) * frame_stride + static_cast<size_t>(slot.width) * bytes_per_pixel;
     // refr_sync_areas() has already been written back by
     // direct_dirty_sync_after_lvgl_copy_(). Invalidate the old cached view of
     // this rectangle before PPA replaces it, so a later CPU access cannot
     // write an obsolete animation phase back over the DMA result.
-    if (lvgl_cache_msync_external_result(target_region, target_span, ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK ||
-        !this->direct_region_ppa_copy_(source, this->width_, this->height_, slot.x, slot.y, slot.width, slot.height,
-                                       target, frame_size, this->width_, this->height_, slot.x, slot.y, false, false)) {
-      ESP_LOGW(TAG, "direct regions: failed to rebase %dx%d region at %d,%d", slot.width, slot.height, slot.x,
+    if (lvgl_cache_msync_external_result(target_region, target_span, ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK) {
+      ESP_LOGW(TAG, "direct regions: failed to invalidate %dx%d target at %d,%d", slot.width, slot.height, slot.x,
                slot.y);
+      return;
+    }
+
+    // A stopped animation is authoritative in its cached overlay, not in an
+    // arbitrary member of the DSI triple-buffer pool. Reconstruct it over its
+    // compact clean background when LVGL rebases a native frame. Copying the
+    // presented rectangle can otherwise reintroduce an older wave phase, and
+    // the following regional frame appears to move it back again.
+    const bool synchronized =
+        slot.stable_carry && slot.blend && slot.animation_overlay_valid && slot.animation_overlay != nullptr &&
+                slot.latest_background != nullptr
+            ? this->direct_region_ppa_blend_argb8888_(
+                  slot.latest_background, slot.latest_background_stride, slot.latest_background_rgb565,
+                  slot.animation_overlay, slot.width * 4, slot.width, slot.height, 0, 0, slot.width, slot.height,
+                  target, frame_size, this->width_, this->height_, slot.x, slot.y)
+            : this->direct_region_ppa_copy_(source, this->width_, this->height_, slot.x, slot.y, slot.width,
+                                            slot.height, target, frame_size, this->width_, this->height_, slot.x,
+                                            slot.y, false, false);
+    if (!synchronized) {
+      ESP_LOGW(TAG, "direct regions: failed to rebase %dx%d region at %d,%d", slot.width, slot.height, slot.x, slot.y);
       return;
     }
   }
@@ -3317,6 +3603,7 @@ void LvglComponent::direct_region_task_() {
     size_t request_count = 0;
     uint32_t raw_request_count = 0;
     uint32_t coalesced_request_count = 0;
+    bool stable_boundary = false;
     auto defer_completion = [&](LvglDirectBlitReadyCallback callback, void *arg) {
       if (callback == nullptr)
         return;
@@ -3330,6 +3617,7 @@ void LvglComponent::direct_region_task_() {
     };
     auto add_latest_request = [&](const DirectRegionRequest &request) {
       raw_request_count++;
+      stable_boundary |= request.stable_carry;
       if (request.operation == DirectRegionRequest::Operation::BARRIER) {
         if (request_count < DIRECT_REGION_BATCH_SIZE) {
           requests[request_count++] = request;
@@ -3364,7 +3652,7 @@ void LvglComponent::direct_region_task_() {
     add_latest_request(incoming);
     // Frame-pace independent animated regions so their newest states share one
     // DSI presentation instead of competing for PSRAM bandwidth.
-    if (next_present_us != 0) {
+    if (next_present_us != 0 && !stable_boundary) {
       while (true) {
         const int64_t remaining_us = next_present_us - esp_timer_get_time();
         if (remaining_us <= 0)
@@ -3373,6 +3661,8 @@ void LvglComponent::direct_region_task_() {
         if (xQueueReceive(this->direct_region_queue_, &incoming, wait_ticks) != pdTRUE)
           break;
         add_latest_request(incoming);
+        if (stable_boundary)
+          break;
       }
     }
     while (xQueueReceive(this->direct_region_queue_, &incoming, 0) == pdTRUE) {
@@ -3387,46 +3677,157 @@ void LvglComponent::direct_region_task_() {
     if (!has_render_request) {
       presented = true;
     } else if (s_region_srm_mutex != nullptr && xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(60)) == pdTRUE) {
-      const uint32_t generation = this->direct_region_base_generation_.load(std::memory_order_acquire);
-      uint8_t *active = nullptr;
-      uint8_t *target = nullptr;
-      if (this->direct_region_prepare_target_(generation, &active, &target) &&
-          this->direct_region_compose_to_(requests, request_count, active, target) &&
-          generation == this->direct_region_base_generation_.load(std::memory_order_acquire)) {
+      const bool cache_only = this->direct_image_animation_active_ && this->direct_image_animation_allows_regions_;
+      if (cache_only) {
+        // The full-scene transition owns DSI presentation. Producers may keep
+        // animating, but publishing an independent region frame here could
+        // resurrect a framebuffer containing an earlier crossfade step. Keep
+        // only each latest background-independent overlay; the crossfade task
+        // applies it to the next complete scene frame.
+        presented = true;
+        for (size_t i = 0; i < request_count; i++) {
+          const auto &request = requests[i];
+          if (request.operation == DirectRegionRequest::Operation::BARRIER)
+            continue;
+          if (request.operation != DirectRegionRequest::Operation::BLEND_ARGB8888) {
+            presented = false;
+            continue;
+          }
+          auto *slot = this->direct_region_find_slot_(request.x, request.y, request.width, request.height, true);
+          if (slot == nullptr || !this->direct_region_cache_animation_overlay_(slot, request)) {
+            presented = false;
+            continue;
+          }
+          slot->x = request.x;
+          slot->y = request.y;
+          slot->width = request.width;
+          slot->height = request.height;
+          slot->blend = true;
+          slot->valid = true;
+          slot->latest_background = request.background;
+          slot->latest_background_stride = request.background_stride;
+          slot->latest_background_rgb565 = request.background_rgb565;
+          slot->stable_carry = request.stable_carry;
+        }
+      } else {
         auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
-        // Composition has finished, so producers may reuse their source
-        // buffers as soon as this frame is accepted by the DSI queue. The
-        // driver performs the visible switch on VSYNC and safely replaces an
-        // older not-yet-active animation frame. Waiting for scanout here costs
-        // another display period and effectively halves animated-region FPS.
-        auto *expected_active = mipi_display->get_presented_frame_buffer();
-        presented = expected_active != nullptr &&
-                    mipi_display->queue_direct_frame_buffer(target, 40, false, false, expected_active);
-        if (presented) {
-          for (size_t i = 0; i < request_count; i++) {
-            const auto &request = requests[i];
-            if (request.operation == DirectRegionRequest::Operation::BARRIER)
-              continue;
-            if (auto *slot = this->direct_region_find_slot_(request.x, request.y, request.width, request.height, true);
-                slot != nullptr) {
-              slot->x = request.x;
-              slot->y = request.y;
-              slot->width = request.width;
-              slot->height = request.height;
-              slot->valid = true;
+        // Animated regional frames are intentionally replaceable while they
+        // are in flight. A pressed/released state is different: it is a visual
+        // boundary and must not be followed by an older rotating frame that
+        // was already staged in the DPI triple-buffer pipeline. Drain that
+        // disposable work before choosing the source/target pair.
+        const bool boundary_ready = !stable_boundary ||
+                                    (mipi_display != nullptr &&
+                                     mipi_display->wait_for_direct_frame_queue_idle(60));
+        const uint32_t generation = this->direct_region_base_generation_.load(std::memory_order_acquire);
+        uint8_t *active = nullptr;
+        uint8_t *target = nullptr;
+        if (boundary_ready && this->direct_region_prepare_target_(generation, &active, &target) &&
+            this->direct_region_compose_to_(requests, request_count, active, target) &&
+            generation == this->direct_region_base_generation_.load(std::memory_order_acquire)) {
+          // Composition has finished, so producers may reuse their source
+          // buffers as soon as this frame is accepted by the DSI queue. The
+          // driver performs the visible switch on VSYNC and safely replaces an
+          // older not-yet-active animation frame. Waiting for scanout here costs
+          // another display period and effectively halves animated-region FPS.
+          auto *expected_active = mipi_display->get_presented_frame_buffer();
+          presented = expected_active != nullptr &&
+                      mipi_display->queue_direct_frame_buffer(target, 40, false, false, expected_active);
+          if (presented) {
+            for (size_t i = 0; i < request_count; i++) {
+              const auto &request = requests[i];
+              if (request.operation == DirectRegionRequest::Operation::BARRIER)
+                continue;
+              if (auto *slot =
+                      this->direct_region_find_slot_(request.x, request.y, request.width, request.height, true);
+                  slot != nullptr) {
+                slot->x = request.x;
+                slot->y = request.y;
+                slot->width = request.width;
+                slot->height = request.height;
+                slot->blend = request.operation == DirectRegionRequest::Operation::BLEND_ARGB8888;
+                slot->valid = true;
+                if (slot->blend) {
+                  slot->latest_background = request.background;
+                  slot->latest_background_stride = request.background_stride;
+                  slot->latest_background_rgb565 = request.background_rgb565;
+                  const bool cache_overlay = request.stable_carry || !slot->animation_overlay_valid;
+                  if (cache_overlay && !this->direct_region_cache_animation_overlay_(slot, request)) {
+                    ESP_LOGW(TAG, "Unable to cache direct ARGB overlay %dx%d at %d,%d", request.width, request.height,
+                             request.x, request.y);
+                  }
+                  slot->stable_carry = request.stable_carry && slot->animation_overlay_valid;
+                } else {
+                  slot->animation_overlay_valid = false;
+                  slot->stable_carry = false;
+                  slot->latest_background = nullptr;
+                  slot->latest_background_stride = 0;
+                  slot->transition_background_valid = false;
+                }
+              }
             }
+            // For ordinary motion, acceptance by the DSI queue is enough and
+            // keeps the compositor at display cadence. For an interaction
+            // boundary, acknowledge the producer only after VSYNC has made
+            // this exact frame active. That gives the following native LVGL
+            // refresh a single authoritative pressed/released state to carry.
+            if (stable_boundary && !mipi_display->wait_for_direct_frame_queue_idle(60)) {
+              ESP_LOGW(TAG, "Direct region stable boundary did not reach the active framebuffer");
+            } else if (stable_boundary) {
+              // The DPI panel keeps scanning a three-framebuffer pool. Making
+              // the interaction frame active is not sufficient on its own:
+              // a later native LVGL refresh can select another framebuffer
+              // which still contains the previous pressed state. Seed only
+              // the stable live regions into every currently idle buffer now,
+              // while the compositor lock excludes other regional writers.
+              // A framebuffer reserved by an in-progress LVGL refresh is left
+              // alone; direct_region_sync_to_lvgl_target_() reconstructs the
+              // same cached stable overlay when that refresh relocks.
+              auto *stable_source = mipi_display->get_presented_frame_buffer();
+              const size_t frame_size = mipi_display->get_frame_buffer_size();
+              const size_t frame_stride = mipi_display->get_frame_buffer_stride();
+              bool stable_pool_synchronized = stable_source != nullptr && frame_size != 0 && frame_stride != 0;
+              for (size_t buffer_index = 0; stable_pool_synchronized && buffer_index < 3; buffer_index++) {
+                auto *idle_target = mipi_display->get_frame_buffer(buffer_index);
+                if (idle_target == nullptr || idle_target == stable_source ||
+                    idle_target == mipi_display->get_queued_frame_buffer() ||
+                    idle_target == mipi_display->get_staged_frame_buffer() ||
+                    idle_target == this->direct_region_refresh_reserved_buffer_) {
+                  continue;
+                }
+                for (const auto &slot : this->direct_region_slots_) {
+                  if (!slot.valid || !slot.stable_carry)
+                    continue;
+                  constexpr size_t bytes_per_pixel = 3;
+                  auto *target_region = idle_target + static_cast<size_t>(slot.y) * frame_stride +
+                                        static_cast<size_t>(slot.x) * bytes_per_pixel;
+                  const size_t target_span = static_cast<size_t>(slot.height - 1) * frame_stride +
+                                             static_cast<size_t>(slot.width) * bytes_per_pixel;
+                  if (lvgl_cache_msync_external_result(target_region, target_span,
+                                                       ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK ||
+                      !this->direct_region_ppa_copy_(stable_source, this->width_, this->height_, slot.x, slot.y,
+                                                     slot.width, slot.height, idle_target, frame_size, this->width_,
+                                                     this->height_, slot.x, slot.y, false, false)) {
+                    stable_pool_synchronized = false;
+                    break;
+                  }
+                }
+              }
+              if (!stable_pool_synchronized)
+                ESP_LOGW(TAG, "Direct region stable boundary did not synchronize the idle framebuffer pool");
+            }
+          } else {
+            // The target has already been modified. If the active base changed
+            // before submission, this frame must never be reused as though it
+            // still represented the current generation; doing so leaks stale
+            // horizontal regions into a later native LVGL update.
+            for (auto &buffer_generation : this->direct_region_buffer_generation_)
+              buffer_generation = 0;
           }
         } else {
-          // The target has already been modified. If the active base changed
-          // before submission, this frame must never be reused as though it
-          // still represented the current generation; doing so leaks stale
-          // horizontal regions into a later native LVGL update.
           for (auto &buffer_generation : this->direct_region_buffer_generation_)
             buffer_generation = 0;
         }
-      } else {
-        for (auto &buffer_generation : this->direct_region_buffer_generation_)
-          buffer_generation = 0;
       }
       xSemaphoreGive(s_region_srm_mutex);
     }
@@ -3541,16 +3942,19 @@ uint8_t LvglComponent::direct_blend_argb8888_async(const uint8_t *background, in
                                                    const uint8_t *foreground, int foreground_stride,
                                                    int foreground_width, int foreground_height, int foreground_x,
                                                    int foreground_y, int x, int y, int width, int height,
-                                                   LvglDirectBlitReadyCallback ready_callback, void *ready_arg) {
+                                                   LvglDirectBlitReadyCallback ready_callback, void *ready_arg,
+                                                   bool background_rgb565, bool stable_carry) {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  const int background_pixel_size = background_rgb565 ? 2 : 3;
   if (!this->direct_mode_active_ || this->rotation != display::DISPLAY_ROTATION_0_DEGREES ||
       this->displays_.size() != 1 || background == nullptr || foreground == nullptr || ready_callback == nullptr ||
-      s_snapshot_direct_active || s_snapshot_swipe_active || this->direct_image_animation_active_ || width <= 0 ||
-      this->direct_region_paused_.load(std::memory_order_acquire) || height <= 0 || background_stride != width * 3 ||
-      foreground_width <= 0 || foreground_height <= 0 || foreground_stride != foreground_width * 4 ||
-      foreground_x < 0 || foreground_y < 0 || foreground_x + width > foreground_width ||
-      foreground_y + height > foreground_height || x < 0 || y < 0 || x + width > this->width_ ||
-      y + height > this->height_) {
+      s_snapshot_direct_active || s_snapshot_swipe_active ||
+      (this->direct_image_animation_active_ && !this->direct_image_animation_allows_regions_) || width <= 0 ||
+      this->direct_region_paused_.load(std::memory_order_acquire) || height <= 0 ||
+      background_stride != width * background_pixel_size || foreground_width <= 0 || foreground_height <= 0 ||
+      foreground_stride != foreground_width * 4 || foreground_x < 0 || foreground_y < 0 ||
+      foreground_x + width > foreground_width || foreground_y + height > foreground_height || x < 0 || y < 0 ||
+      x + width > this->width_ || y + height > this->height_) {
     return LVGL_DIRECT_BLIT_REJECTED;
   }
   auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
@@ -3568,10 +3972,12 @@ uint8_t LvglComponent::direct_blend_argb8888_async(const uint8_t *background, in
   request.source_y = foreground_y;
   request.background = background;
   request.background_stride = background_stride;
+  request.background_rgb565 = background_rgb565;
   request.x = x;
   request.y = y;
   request.width = width;
   request.height = height;
+  request.stable_carry = stable_carry;
   request.ready_callback = ready_callback;
   request.ready_arg = ready_arg;
   if (xQueueSend(this->direct_region_queue_, &request, 0) == pdTRUE) {
@@ -3595,6 +4001,8 @@ uint8_t LvglComponent::direct_blend_argb8888_async(const uint8_t *background, in
   (void) height;
   (void) ready_callback;
   (void) ready_arg;
+  (void) background_rgb565;
+  (void) stable_carry;
   return LVGL_DIRECT_BLIT_REJECTED;
 #endif
 }
@@ -3603,8 +4011,15 @@ void LvglComponent::direct_blit_rgb888_release(int x, int y, int width, int heig
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
   if (s_region_srm_mutex == nullptr || xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(25)) != pdTRUE)
     return;
-  if (auto *slot = this->direct_region_find_slot_(x, y, width, height, false); slot != nullptr)
+  if (auto *slot = this->direct_region_find_slot_(x, y, width, height, false); slot != nullptr) {
     slot->valid = false;
+    slot->blend = false;
+    slot->animation_overlay_valid = false;
+    slot->stable_carry = false;
+    slot->latest_background = nullptr;
+    slot->latest_background_stride = 0;
+    slot->transition_background_valid = false;
+  }
   bool any_valid = false;
   for (const auto &slot : this->direct_region_slots_)
     any_valid |= slot.valid;
@@ -3893,6 +4308,32 @@ extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_async(const uint8_t *backg
                                                       x, y, width, height, ready_callback, ready_arg);
 }
 
+extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_async(
+    const uint8_t *background, int background_stride, const uint8_t *foreground, int foreground_stride,
+    int foreground_width, int foreground_height, int foreground_x, int foreground_y, int x, int y, int width,
+    int height, LvglDirectBlitReadyCallback ready_callback, void *ready_arg) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component == nullptr
+             ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
+             : component->direct_blend_argb8888_async(background, background_stride, foreground, foreground_stride,
+                                                       foreground_width, foreground_height, foreground_x, foreground_y,
+                                                       x, y, width, height, ready_callback, ready_arg, true);
+}
+
+extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_stable_async(
+    const uint8_t *background, int background_stride, const uint8_t *foreground, int foreground_stride,
+    int foreground_width, int foreground_height, int foreground_x, int foreground_y, int x, int y, int width,
+    int height, LvglDirectBlitReadyCallback ready_callback, void *ready_arg) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component == nullptr
+             ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
+             : component->direct_blend_argb8888_async(background, background_stride, foreground, foreground_stride,
+                                                       foreground_width, foreground_height, foreground_x, foreground_y,
+                                                       x, y, width, height, ready_callback, ready_arg, true, true);
+}
+
 extern "C" void lvgl_esphome_direct_blit_rgb888_release(int x, int y, int width, int height) {
   auto *disp = lv_display_get_default();
   auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
@@ -4135,7 +4576,7 @@ ppa_client_handle_t LvglComponent::register_direct_image_blend_client() {
 }
 #endif
 
-bool LvglComponent::begin_direct_image_animation() {
+bool LvglComponent::begin_direct_image_animation(bool allow_direct_regions) {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
   if (!this->direct_mode_active_ || !this->full_refresh_ || this->disp_ == nullptr ||
       this->rotation != display::DISPLAY_ROTATION_0_DEGREES || this->displays_.size() != 1 ||
@@ -4170,8 +4611,23 @@ bool LvglComponent::begin_direct_image_animation() {
     }
     this->direct_image_synced_source_ = nullptr;
     this->direct_image_synced_source_size_ = 0;
+    this->direct_image_animation_allows_regions_ = allow_direct_regions;
     this->direct_image_animation_active_ = true;
+    if (allow_direct_regions && s_region_srm_mutex != nullptr &&
+        xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(60)) == pdTRUE) {
+      for (auto &slot : this->direct_region_slots_) {
+        slot.transition_background_valid = false;
+        if (slot.valid && slot.blend && slot.latest_background != nullptr &&
+            !this->direct_region_capture_transition_background_(&slot)) {
+          ESP_LOGW(TAG, "Unable to preserve clean direct-region background %dx%d at %d,%d", slot.width, slot.height,
+                   slot.x, slot.y);
+        }
+      }
+      xSemaphoreGive(s_region_srm_mutex);
+    }
     lv_draw_ppa_direct_animation_qos_apply();
+  } else if (allow_direct_regions) {
+    this->direct_image_animation_allows_regions_ = true;
   }
   return true;
 #else
@@ -4350,7 +4806,7 @@ bool LvglComponent::direct_present_rgb888_crop_dma2d(const lv_image_dsc_t *sourc
     if (window_started_us == 0)
       window_started_us = now_us;
     if (now_us - window_started_us >= 2000000LL) {
-      ESP_LOGI("lvgl.ken_burns.dma2d",
+      ESP_LOGI("lvgl.slideshow.dma2d",
                "perf2s: frames=%u avg=%uus max=%uus fifo=%uus copy=%uus present=%uus crop=%dx%d",
                static_cast<unsigned>(frames), static_cast<unsigned>(total_us / std::max<uint32_t>(1, frames)),
                static_cast<unsigned>(max_us), static_cast<unsigned>(total_fifo_us / std::max<uint32_t>(1, frames)),
@@ -4489,7 +4945,7 @@ bool LvglComponent::direct_present_rgb888_crop_subpixel(const lv_image_dsc_t *so
   s_direct_ppa_source2_end.store(0, std::memory_order_relaxed);
   s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
   if (result != ESP_OK) {
-    ESP_LOGW("lvgl.ken_burns.subpixel", "PPA interpolation failed: %s", esp_err_to_name(result));
+    ESP_LOGW("lvgl.slideshow.subpixel", "PPA interpolation failed: %s", esp_err_to_name(result));
     return false;
   }
 
@@ -4519,7 +4975,7 @@ bool LvglComponent::direct_present_rgb888_crop_subpixel(const lv_image_dsc_t *so
     if (window_started_us == 0)
       window_started_us = now_us;
     if (now_us - window_started_us >= 2000000LL) {
-      ESP_LOGI("lvgl.ken_burns.subpixel",
+      ESP_LOGI("lvgl.slideshow.subpixel",
                "perf2s: frames=%u avg=%uus max=%uus fifo=%uus blend=%uus present=%uus axis=%c alpha=%u",
                static_cast<unsigned>(frames), static_cast<unsigned>(total_us / std::max<uint32_t>(1, frames)),
                static_cast<unsigned>(max_us), static_cast<unsigned>(total_fifo_us / std::max<uint32_t>(1, frames)),
@@ -4641,7 +5097,7 @@ bool LvglComponent::direct_present_scaled_rgb888_crop_subpixel(const lv_image_ds
   s_direct_ppa_source2_end.store(0, std::memory_order_relaxed);
   s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
   if (blend_result != ESP_OK) {
-    ESP_LOGW("lvgl.ken_burns.subpixel", "PPA scaled interpolation failed: %s", esp_err_to_name(blend_result));
+    ESP_LOGW("lvgl.slideshow.subpixel", "PPA scaled interpolation failed: %s", esp_err_to_name(blend_result));
     return false;
   }
 
@@ -4682,7 +5138,7 @@ bool LvglComponent::direct_present_scaled_rgb888_crop_subpixel(const lv_image_ds
     if (window_started_us == 0)
       window_started_us = now_us;
     if (now_us - window_started_us >= 2000000LL) {
-      ESP_LOGI("lvgl.ken_burns.scaled_subpixel",
+      ESP_LOGI("lvgl.slideshow.scaled_subpixel",
                "perf2s: frames=%u avg=%uus max=%uus blend=%uus scale_present=%uus crop=%dx%d axis=%c alpha=%u",
                static_cast<unsigned>(frames), static_cast<unsigned>(total_us / std::max<uint32_t>(1, frames)),
                static_cast<unsigned>(max_us), static_cast<unsigned>(total_blend_us / std::max<uint32_t>(1, frames)),
@@ -5254,7 +5710,7 @@ bool LvglComponent::direct_render_image_crop_(const lv_image_dsc_t *source, int 
     if (window_us == 0)
       window_us = now_us;
     if (now_us - window_us >= 2000000) {
-      ESP_LOGI("lvgl.ken_burns",
+      ESP_LOGI("lvgl.slideshow",
                "perf2s: frames=%u slow=%u avg=%uus max=%uus fifo=%uus queue=%uus ppa=%uus present=%uus "
                "max_submit=%uus ops=%u crop=%dx%d q16=%u",
                static_cast<unsigned>(frames), static_cast<unsigned>(slow_frames),
@@ -5285,17 +5741,19 @@ bool LvglComponent::direct_render_image_crop_(const lv_image_dsc_t *source, int 
 
 bool LvglComponent::direct_present_rgb565_crossfade(const uint8_t *background, const uint8_t *foreground,
                                                     uint8_t opacity, ppa_client_handle_t blend_client) {
-  return this->direct_present_crossfade_(background, foreground, opacity, blend_client, true, true);
+  return this->direct_present_crossfade_(background, foreground, opacity, blend_client, true, true, false);
 }
 
 bool LvglComponent::direct_present_rgb888_crossfade(const uint8_t *background, const uint8_t *foreground,
-                                                    uint8_t opacity, ppa_client_handle_t blend_client) {
-  return this->direct_present_crossfade_(background, foreground, opacity, blend_client, false, false);
+                                                    uint8_t opacity, ppa_client_handle_t blend_client,
+                                                    bool preserve_direct_regions) {
+  return this->direct_present_crossfade_(background, foreground, opacity, blend_client, false, false,
+                                         preserve_direct_regions);
 }
 
 bool LvglComponent::direct_present_rgb888_rgb565_crossfade(const uint8_t *background, const uint8_t *foreground,
                                                            uint8_t opacity, ppa_client_handle_t blend_client) {
-  return this->direct_present_crossfade_(background, foreground, opacity, blend_client, false, true);
+  return this->direct_present_crossfade_(background, foreground, opacity, blend_client, false, true, false);
 }
 
 bool LvglComponent::direct_present_rgb888_crossfade_bands(const uint8_t *background, uint8_t *const *foreground_bands,
@@ -5700,10 +6158,25 @@ const uint8_t *LvglComponent::direct_get_stable_presented_frame(uint32_t timeout
 
 bool LvglComponent::direct_present_crossfade_(const uint8_t *background, const uint8_t *foreground, uint8_t opacity,
                                               ppa_client_handle_t blend_client, bool background_rgb565,
-                                              bool foreground_rgb565) {
+                                              bool foreground_rgb565, bool preserve_direct_regions) {
   if (!this->direct_image_animation_active_ || background == nullptr || foreground == nullptr ||
       blend_client == nullptr || this->displays_.size() != 1 || this->width_ <= 0 || this->height_ <= 0)
     return false;
+
+  const bool preserve_regions = preserve_direct_regions && this->direct_image_animation_allows_regions_;
+  bool region_lock_taken = false;
+  if (preserve_regions) {
+    if (s_region_srm_mutex == nullptr || xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(60)) != pdTRUE)
+      return false;
+    region_lock_taken = true;
+  }
+  struct RegionUnlock {
+    bool &locked;
+    ~RegionUnlock() {
+      if (this->locked)
+        xSemaphoreGive(s_region_srm_mutex);
+    }
+  } region_unlock{region_lock_taken};
 
   auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
   // A full-frame blend pins its background framebuffer until the transition
@@ -5813,12 +6286,41 @@ bool LvglComponent::direct_present_crossfade_(const uint8_t *background, const u
     return false;
   }
 
+  if (preserve_regions) {
+    for (const auto &slot : this->direct_region_slots_) {
+      if (!slot.valid || !slot.blend || !slot.animation_overlay_valid || slot.animation_overlay == nullptr)
+        continue;
+      if (slot.transition_background_valid && slot.transition_background != nullptr &&
+          !this->direct_region_ppa_crossfade_background_(
+              slot.transition_background, slot.transition_background_stride, slot.transition_background_rgb565,
+              foreground, this->width_ * 3, this->width_, this->height_, slot.x, slot.y, slot.width, slot.height,
+              opacity, target, output_frame_bytes, this->width_, this->height_, slot.x, slot.y)) {
+        ESP_LOGW(TAG, "Unable to restore clean direct-region background %dx%d at %d,%d during crossfade", slot.width,
+                 slot.height, slot.x, slot.y);
+        return false;
+      }
+      if (!this->direct_region_ppa_overlay_argb8888_(slot.animation_overlay, slot.width * 4, slot.width, slot.height, 0,
+                                                     0, slot.width, slot.height, target, output_frame_bytes,
+                                                     this->width_, this->height_, slot.x, slot.y)) {
+        ESP_LOGW(TAG, "Unable to compose direct ARGB overlay %dx%d at %d,%d during crossfade", slot.width, slot.height,
+                 slot.x, slot.y);
+        return false;
+      }
+    }
+  }
+
   this->direct_image_framebuffer_dma_owned_[target_index] = true;
   if (!mipi_display->queue_direct_frame_buffer(target, 50)) {
     ESP_LOGW(TAG, "Direct crossfade framebuffer queue timed out");
     return false;
   }
   this->direct_last_flushed_buf_ = target;
+  if (preserve_regions) {
+    const uint32_t generation = this->direct_region_base_generation_.fetch_add(1, std::memory_order_acq_rel) + 1U;
+    for (auto &buffer_generation : this->direct_region_buffer_generation_)
+      buffer_generation = 0;
+    this->direct_region_buffer_generation_[target_index] = generation;
+  }
 
   if (s_perf_logging_enabled) {
     static uint32_t frames = 0;
@@ -5832,7 +6334,7 @@ bool LvglComponent::direct_present_crossfade_(const uint8_t *background, const u
     if (window_us == 0)
       window_us = now_us;
     if (now_us - window_us >= 1000000) {
-      ESP_LOGD("lvgl.ken_burns", "crossfade: frames=%u avg=%uus max=%uus queue=%uus opacity=%u",
+      ESP_LOGD("lvgl.slideshow", "crossfade: frames=%u avg=%uus max=%uus queue=%uus opacity=%u",
                static_cast<unsigned>(frames), static_cast<unsigned>(total_us / std::max<uint32_t>(1, frames)),
                static_cast<unsigned>(max_us), static_cast<unsigned>(queue_us), static_cast<unsigned>(opacity));
       frames = 0;
@@ -5899,7 +6401,7 @@ bool LvglComponent::direct_present_rgb565_software(const uint8_t *source, size_t
 }
 #endif
 
-bool LvglComponent::end_direct_image_animation() {
+bool LvglComponent::end_direct_image_animation(uint32_t timeout_ms) {
   if (!this->direct_image_animation_active_)
     return true;
 
@@ -5910,18 +6412,29 @@ bool LvglComponent::end_direct_image_animation() {
   if (!this->displays_.empty()) {
     auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
     bool queue_idle = mipi_display == nullptr;
-    for (uint8_t attempt = 0; mipi_display != nullptr && attempt < 3 && !queue_idle; attempt++) {
-      queue_idle = mipi_display->wait_for_direct_frame_queue_idle(100);
-      if (!queue_idle)
+    const uint32_t started_ms = millis();
+    do {
+      const uint32_t elapsed_ms = millis() - started_ms;
+      const uint32_t remaining_ms = elapsed_ms < timeout_ms ? timeout_ms - elapsed_ms : 0;
+      queue_idle = mipi_display == nullptr ||
+                   mipi_display->wait_for_direct_frame_queue_idle(std::min<uint32_t>(100, remaining_ms));
+      if (!queue_idle && remaining_ms > 0)
         vTaskDelay(1);
-    }
+    } while (!queue_idle && millis() - started_ms < timeout_ms);
     if (!queue_idle) {
-      ESP_LOGW(TAG, "Direct image handoff deferred: final DSI framebuffer is still queued");
+      if (timeout_ms > 0)
+        ESP_LOGW(TAG, "Direct image handoff deferred: final DSI framebuffer is still queued");
       return false;
     }
   }
   this->direct_image_animation_active_ = false;
+  this->direct_image_animation_allows_regions_ = false;
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  if (s_region_srm_mutex != nullptr && xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(60)) == pdTRUE) {
+    for (auto &slot : this->direct_region_slots_)
+      slot.transition_background_valid = false;
+    xSemaphoreGive(s_region_srm_mutex);
+  }
   lv_draw_ppa_direct_animation_qos_restore();
 #endif
   this->direct_image_framebuffer_dma_owned_[0] = false;
@@ -5932,8 +6445,12 @@ bool LvglComponent::end_direct_image_animation() {
   // FULL mode redraws every pixel into the idle framebuffer, so copying the
   // 1.92 MB presented frame first only wastes PSRAM bandwidth.
   this->realign_direct_buffer_after_manual_present(false);
-  if (this->disp_ != nullptr)
+  if (this->disp_ != nullptr) {
     lv_display_enable_invalidation(this->disp_, true);
+    auto *screen = lv_display_get_screen_active(this->disp_);
+    if (screen != nullptr && lv_obj_is_valid(screen))
+      lv_obj_invalidate(screen);
+  }
   return true;
 }
 
@@ -8274,8 +8791,7 @@ void LVTouchListener::release() {
   const bool navigation_handled = this->raw_touch_active_ && this->parent_->navigation_touch_end();
   if (navigation_handled || this->navigation_touch_captured_)
     lv_indev_reset(this->drv_, nullptr);
-  const bool replay_tap =
-      this->navigation_press_deferred_ && !navigation_handled && !this->navigation_touch_captured_;
+  const bool replay_tap = this->navigation_press_deferred_ && !navigation_handled && !this->navigation_touch_captured_;
   this->touch_pressed_ = false;
   this->raw_touch_active_ = false;
   this->navigation_touch_captured_ = false;
@@ -11335,8 +11851,7 @@ void snapshot_app_worker_task(void *) {
     if (s_perf_logging_enabled && frame_trace_count != 0) {
       const size_t middle = frame_trace_count / 2U;
       const size_t last = frame_trace_count - 1U;
-      ESP_LOGI("lvgl.app",
-               "frame content %s root=%p src=%p bg=%p frames=%u first=%u:%08x middle=%u:%08x final=%u:%08x",
+      ESP_LOGI("lvgl.app", "frame content %s root=%p src=%p bg=%p frames=%u first=%u:%08x middle=%u:%08x final=%u:%08x",
                opening ? "open" : "close", state.app_root, app->data, background->data,
                static_cast<unsigned>(frame_trace_count), static_cast<unsigned>(frame_sizes[0]),
                static_cast<unsigned>(frame_signatures[0]), static_cast<unsigned>(frame_sizes[middle]),
@@ -11524,15 +12039,15 @@ lv_draw_buf_t *snapshot_app_cached_or_take(lv_obj_t *obj, bool force_fresh, bool
     auto *entry = snapshot_cache_find_entry(obj);
     if (entry != nullptr && snapshot_cache_raw_is_valid(*entry)) {
       if (s_perf_logging_enabled)
-        ESP_LOGI("lvgl.app", "snapshot source app=%p path=raw raw=%p work=%p owner=%p signature=%08x", obj,
-                 entry->buf, snapshot_app_work_buf, snapshot_app_work_obj,
+        ESP_LOGI("lvgl.app", "snapshot source app=%p path=raw raw=%p work=%p owner=%p signature=%08x", obj, entry->buf,
+                 snapshot_app_work_buf, snapshot_app_work_obj,
                  static_cast<unsigned>(snapshot_draw_buf_signature(entry->buf)));
       return entry->buf;
     }
     if (entry != nullptr && entry->buf != nullptr && entry->buf == snapshot_app_work_buf) {
       if (s_perf_logging_enabled)
-        ESP_LOGW("lvgl.app", "detached stale shared snapshot app=%p work=%p owner=%p", obj,
-                 snapshot_app_work_buf, snapshot_app_work_obj);
+        ESP_LOGW("lvgl.app", "detached stale shared snapshot app=%p work=%p owner=%p", obj, snapshot_app_work_buf,
+                 snapshot_app_work_obj);
       entry->buf = nullptr;
       entry->decoded_from_jpeg = false;
     }
@@ -11615,7 +12130,7 @@ void snapshot_app_resume_direct_regions() {
 }
 
 bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_center_x, int end_center_y,
-                        uint32_t duration_ms, bool opening) {
+                        uint32_t duration_ms, bool opening, lv_draw_buf_t *app_buffer_override = nullptr) {
 #if LV_USE_SNAPSHOT
   s_snapshot_app_open_frame_held = false;
   snapshot_swipe_cleanup();
@@ -11639,7 +12154,21 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
 
   bool owns_app = false;
   lv_draw_buf_t *app_buf = nullptr;
-  if (!opening && snapshot_app_prepared_close_obj == app && snapshot_app_prepared_close_buf != nullptr) {
+  if (app_buffer_override != nullptr) {
+    auto *disp = lv_obj_get_display(app);
+    const int expected_width = disp == nullptr ? 0 : lv_display_get_horizontal_resolution(disp);
+    const int expected_height = disp == nullptr ? 0 : lv_display_get_vertical_resolution(disp);
+    if (app_buffer_override->data == nullptr || app_buffer_override->header.cf != SNAPSHOT_CF ||
+        app_buffer_override->header.w != static_cast<uint32_t>(expected_width) ||
+        app_buffer_override->header.h != static_cast<uint32_t>(expected_height)) {
+      snapshot_app_resume_direct_regions();
+      s_snapshot_direct_active = previous_direct_active;
+      return false;
+    }
+    if (opening)
+      snapshot_app_clear_prepared_close();
+    app_buf = app_buffer_override;
+  } else if (!opening && snapshot_app_prepared_close_obj == app && snapshot_app_prepared_close_buf != nullptr) {
     app_buf = snapshot_app_prepared_close_buf;
     snapshot_app_prepared_close_obj = nullptr;
     snapshot_app_prepared_close_buf = nullptr;
@@ -12906,6 +13435,12 @@ extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *backgrou
   return snapshot_app_begin(app, background, width, width / 2, width / 2, duration_ms, true);
 }
 
+extern "C" bool lvgl_esphome_snapshot_app_open_with_buffer(lv_obj_t *app, lv_obj_t *background,
+                                                            lv_draw_buf_t *app_buffer, int width,
+                                                            uint32_t duration_ms) {
+  return snapshot_app_begin(app, background, width, width / 2, width / 2, duration_ms, true, app_buffer);
+}
+
 extern "C" void lvgl_esphome_snapshot_app_release_open_hold(void) {
 #if LV_USE_SNAPSHOT
   if (!s_snapshot_app_open_frame_held)
@@ -13003,6 +13538,28 @@ extern "C" bool lvgl_esphome_snapshot_app_prepare_close(lv_obj_t *app) {
     snapshot_app_work_obj = app;
   snapshot_app_prepared_close_obj = app;
   snapshot_app_prepared_close_buf = buf;
+  snapshot_app_prepared_close_owns_buf = false;
+  return true;
+#else
+  return false;
+#endif
+}
+
+extern "C" bool lvgl_esphome_snapshot_app_prepare_close_with_buffer(lv_obj_t *app, lv_draw_buf_t *app_buffer) {
+#if LV_USE_SNAPSHOT
+  snapshot_app_clear_prepared_close();
+  if (app == nullptr || app_buffer == nullptr || app_buffer->data == nullptr)
+    return false;
+  auto *disp = lv_obj_get_display(app);
+  const int width = disp == nullptr ? 0 : lv_display_get_horizontal_resolution(disp);
+  const int height = disp == nullptr ? 0 : lv_display_get_vertical_resolution(disp);
+  if (width <= 0 || height <= 0 || app_buffer->header.cf != SNAPSHOT_CF ||
+      app_buffer->header.w != static_cast<uint32_t>(width) ||
+      app_buffer->header.h != static_cast<uint32_t>(height)) {
+    return false;
+  }
+  snapshot_app_prepared_close_obj = app;
+  snapshot_app_prepared_close_buf = app_buffer;
   snapshot_app_prepared_close_owns_buf = false;
   return true;
 #else
