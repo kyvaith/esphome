@@ -24,12 +24,20 @@ namespace {
 
 static const char *const TAG = "lvgl.dma2d_m2m";
 static constexpr size_t DMA2D_MAX_BATCH_SPANS = 192;
+static constexpr size_t DMA2D_DESCRIPTOR_CACHE_LINE_SIZE = 64;
 using Dma2dBurstLength = decltype(dma2d_transfer_ability_t{}.data_burst_length);
 static constexpr Dma2dBurstLength DMA2D_DATA_BURST_LENGTH = static_cast<Dma2dBurstLength>(128);
 
+struct alignas(DMA2D_DESCRIPTOR_CACHE_LINE_SIZE) Dma2dDescriptorSlot {
+  dma2d_descriptor_t descriptor{};
+  uint8_t padding[DMA2D_DESCRIPTOR_CACHE_LINE_SIZE - sizeof(dma2d_descriptor_t)]{};
+};
+static_assert(sizeof(Dma2dDescriptorSlot) == DMA2D_DESCRIPTOR_CACHE_LINE_SIZE,
+              "Each CPU-managed DMA2D descriptor must occupy one cache line");
+
 struct alignas(64) Dma2dM2mContext {
-  alignas(64) dma2d_descriptor_t tx_descriptors[DMA2D_MAX_BATCH_SPANS]{};
-  alignas(64) dma2d_descriptor_t rx_descriptors[DMA2D_MAX_BATCH_SPANS]{};
+  Dma2dDescriptorSlot tx_descriptors[DMA2D_MAX_BATCH_SPANS]{};
+  Dma2dDescriptorSlot rx_descriptors[DMA2D_MAX_BATCH_SPANS]{};
   dma2d_pool_handle_t pool{nullptr};
   dma2d_trans_config_t transaction_config{};
   dma2d_transfer_ability_t transfer_ability{};
@@ -44,8 +52,8 @@ struct alignas(64) Dma2dM2mContext {
 
 Dma2dM2mContext context;
 
-void init_descriptor(dma2d_descriptor_t *descriptor, void *buffer, int picture_width, int picture_height,
-                     int block_x, int block_y, int block_width, int block_height) {
+void init_descriptor(dma2d_descriptor_t *descriptor, void *buffer, int picture_width, int picture_height, int block_x,
+                     int block_y, int block_width, int block_height) {
   *descriptor = {};
   descriptor->owner = DMA2D_DESCRIPTOR_BUFFER_OWNER_DMA;
   descriptor->dma2d_en = 1;
@@ -68,8 +76,7 @@ bool IRAM_ATTR transaction_done(dma2d_channel_handle_t, dma2d_event_data_t *, vo
   return task_woken == pdTRUE;
 }
 
-bool IRAM_ATTR transaction_picked(uint32_t channel_count, const dma2d_trans_channel_info_t *channels,
-                                  void *user_data) {
+bool IRAM_ATTR transaction_picked(uint32_t channel_count, const dma2d_trans_channel_info_t *channels, void *user_data) {
   auto *ctx = static_cast<Dma2dM2mContext *>(user_data);
   if (ctx == nullptr || channels == nullptr || channel_count != 2)
     return false;
@@ -99,8 +106,8 @@ bool IRAM_ATTR transaction_picked(uint32_t channel_count, const dma2d_trans_chan
       .on_recv_eof = transaction_done,
   };
   dma2d_register_rx_event_callbacks(rx_channel, &callbacks, ctx);
-  dma2d_set_desc_addr(tx_channel, reinterpret_cast<intptr_t>(&ctx->tx_descriptors[0]));
-  dma2d_set_desc_addr(rx_channel, reinterpret_cast<intptr_t>(&ctx->rx_descriptors[0]));
+  dma2d_set_desc_addr(tx_channel, reinterpret_cast<intptr_t>(&ctx->tx_descriptors[0].descriptor));
+  dma2d_set_desc_addr(rx_channel, reinterpret_cast<intptr_t>(&ctx->rx_descriptors[0].descriptor));
   dma2d_start(tx_channel);
   dma2d_start(rx_channel);
   return false;
@@ -126,7 +133,10 @@ bool initialize_context() {
   }
 
   context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH;
-  context.transfer_ability.desc_burst_en = true;
+  // Keep descriptors in isolated cache-line slots, but use scalar descriptor
+  // fetches like ESP-IDF's async framebuffer-copy implementation. The 128-byte
+  // data burst remains enabled for framebuffer throughput.
+  context.transfer_ability.desc_burst_en = false;
   context.transfer_ability.mb_size = DMA2D_MACRO_BLOCK_SIZE_NONE;
   context.transaction_config.tx_channel_num = 1;
   context.transaction_config.rx_channel_num = 1;
@@ -143,18 +153,20 @@ bool run_transaction_locked(size_t descriptor_count, TickType_t timeout) {
 
   for (size_t index = 0; index < descriptor_count; index++) {
     const bool last = index + 1 == descriptor_count;
-    context.tx_descriptors[index].suc_eof = last ? 1 : 0;
-    context.tx_descriptors[index].next = last ? nullptr : &context.tx_descriptors[index + 1];
-    context.rx_descriptors[index].suc_eof = 0;
-    context.rx_descriptors[index].next = last ? nullptr : &context.rx_descriptors[index + 1];
+    auto &tx = context.tx_descriptors[index].descriptor;
+    auto &rx = context.rx_descriptors[index].descriptor;
+    tx.suc_eof = last ? 1 : 0;
+    tx.next = last ? nullptr : &context.tx_descriptors[index + 1].descriptor;
+    rx.suc_eof = last ? 1 : 0;
+    rx.next = last ? nullptr : &context.rx_descriptors[index + 1].descriptor;
   }
 
   while (xSemaphoreTake(context.done, 0) == pdTRUE) {
   }
-  const size_t descriptor_bytes =
-      (descriptor_count * sizeof(dma2d_descriptor_t) + 63U) & ~static_cast<size_t>(63U);
-  esp_cache_msync(context.tx_descriptors, descriptor_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-  esp_cache_msync(context.rx_descriptors, descriptor_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  const size_t descriptor_bytes = descriptor_count * sizeof(Dma2dDescriptorSlot);
+  constexpr int descriptor_sync_flags = ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE;
+  esp_cache_msync(context.tx_descriptors, descriptor_bytes, descriptor_sync_flags);
+  esp_cache_msync(context.rx_descriptors, descriptor_bytes, descriptor_sync_flags);
   std::memset(context.transaction, 0, SIZEOF_DMA2D_TRANS_T);
 
   const esp_err_t result = dma2d_enqueue(context.pool, &context.transaction_config, context.transaction);
@@ -170,10 +182,11 @@ bool run_transaction_locked(size_t descriptor_count, TickType_t timeout) {
   // regional PPA frame is still retiring. End only that transaction and leave
   // the reusable M2M context healthy so the following animation frame can use
   // hardware again instead of permanently dropping to the CPU path.
+  const esp_err_t dequeue_result = dma2d_dequeue(context.pool, context.transaction);
   bool need_yield = false;
-  const esp_err_t force_result = dma2d_force_end(context.transaction, &need_yield);
-  ESP_LOGW(TAG, "DMA2D transaction timed out (%u descriptors), force_end=%s", static_cast<unsigned>(descriptor_count),
-           esp_err_to_name(force_result));
+  const esp_err_t force_result = dequeue_result == ESP_OK ? ESP_OK : dma2d_force_end(context.transaction, &need_yield);
+  ESP_LOGW(TAG, "DMA2D transaction timed out (%u descriptors), dequeue=%s force_end=%s",
+           static_cast<unsigned>(descriptor_count), esp_err_to_name(dequeue_result), esp_err_to_name(force_result));
   while (xSemaphoreTake(context.done, 0) == pdTRUE) {
   }
   return false;
@@ -199,8 +212,8 @@ uint32_t integer_sqrt(uint32_t value) {
 }  // namespace
 #endif
 
-bool dma2d_m2m_copy_rgb888_spans(const Dma2dM2mCopySpan *spans, size_t span_count, uint8_t *target,
-                                 int target_width, int target_height) {
+bool dma2d_m2m_copy_rgb888_spans(const Dma2dM2mCopySpan *spans, size_t span_count, uint8_t *target, int target_width,
+                                 int target_height) {
 #if defined(USE_ESP32) && defined(CONFIG_IDF_TARGET_ESP32P4)
   if (spans == nullptr || target == nullptr || span_count == 0 || span_count > DMA2D_MAX_BATCH_SPANS ||
       target_width <= 0 || target_height <= 0 || !initialize_context()) {
@@ -220,9 +233,9 @@ bool dma2d_m2m_copy_rgb888_spans(const Dma2dM2mCopySpan *spans, size_t span_coun
 
   for (size_t index = 0; index < span_count; index++) {
     const auto &span = spans[index];
-    init_descriptor(&context.tx_descriptors[index], const_cast<uint8_t *>(span.source), span.source_width,
+    init_descriptor(&context.tx_descriptors[index].descriptor, const_cast<uint8_t *>(span.source), span.source_width,
                     span.source_height, span.source_x, span.source_y, span.width, span.height);
-    init_descriptor(&context.rx_descriptors[index], target, target_width, target_height, span.target_x,
+    init_descriptor(&context.rx_descriptors[index].descriptor, target, target_width, target_height, span.target_x,
                     span.target_y, span.width, span.height);
   }
   const bool complete = run_transaction_locked(span_count, pdMS_TO_TICKS(100));
@@ -233,22 +246,22 @@ bool dma2d_m2m_copy_rgb888_spans(const Dma2dM2mCopySpan *spans, size_t span_coun
 #endif
 }
 
-bool dma2d_m2m_copy_rgb888_2d(const uint8_t *source, int source_width, int source_height, int source_x,
-                              int source_y, uint8_t *target, int target_width, int target_height, int target_x,
-                              int target_y, int block_width, int block_height) {
+bool dma2d_m2m_copy_rgb888_2d(const uint8_t *source, int source_width, int source_height, int source_x, int source_y,
+                              uint8_t *target, int target_width, int target_height, int target_x, int target_y,
+                              int block_width, int block_height) {
 #if defined(USE_ESP32) && defined(CONFIG_IDF_TARGET_ESP32P4)
-  const Dma2dM2mCopySpan span{source, source_width, source_height, source_x, source_y,
-                              target_x, target_y, block_width, block_height};
+  const Dma2dM2mCopySpan span{source,   source_width, source_height, source_x,    source_y,
+                              target_x, target_y,     block_width,   block_height};
   return dma2d_m2m_copy_rgb888_spans(&span, 1, target, target_width, target_height);
 #else
   return false;
 #endif
 }
 
-bool dma2d_m2m_compose_rgb888_circle(const uint8_t *background, int background_stride_pixels,
-                                     int background_height, const uint8_t *foreground,
-                                     int foreground_stride_pixels, int foreground_height, uint8_t *target,
-                                     int target_width, int target_height, int center_x, int center_y, int radius) {
+bool dma2d_m2m_compose_rgb888_circle(const uint8_t *background, int background_stride_pixels, int background_height,
+                                     const uint8_t *foreground, int foreground_stride_pixels, int foreground_height,
+                                     uint8_t *target, int target_width, int target_height, int center_x, int center_y,
+                                     int radius) {
 #if defined(USE_ESP32) && defined(CONFIG_IDF_TARGET_ESP32P4)
   if (background == nullptr || foreground == nullptr || target == nullptr || background_stride_pixels < target_width ||
       foreground_stride_pixels < target_width || background_height < target_height ||
@@ -281,9 +294,10 @@ bool dma2d_m2m_compose_rgb888_circle(const uint8_t *background, int background_s
       flush_batch();
     if (!complete)
       return;
-    init_descriptor(&context.tx_descriptors[descriptor_count], const_cast<uint8_t *>(source), source_stride_pixels,
-                    target_height, x, y, width, 1);
-    init_descriptor(&context.rx_descriptors[descriptor_count], target, target_width, target_height, x, y, width, 1);
+    init_descriptor(&context.tx_descriptors[descriptor_count].descriptor, const_cast<uint8_t *>(source),
+                    source_stride_pixels, target_height, x, y, width, 1);
+    init_descriptor(&context.rx_descriptors[descriptor_count].descriptor, target, target_width, target_height, x, y,
+                    width, 1);
     descriptor_count++;
   };
 
@@ -317,10 +331,11 @@ bool dma2d_m2m_compose_rgb888_circle(const uint8_t *background, int background_s
 #endif
 }
 
-bool dma2d_m2m_compose_rgb888_circle_region(
-    const uint8_t *background, int background_stride_pixels, int background_height, const uint8_t *foreground,
-    int foreground_stride_pixels, int foreground_height, uint8_t *target, int target_width, int target_height,
-    int center_x, int center_y, int radius, int region_x, int region_y, int region_width, int region_height) {
+bool dma2d_m2m_compose_rgb888_circle_region(const uint8_t *background, int background_stride_pixels,
+                                            int background_height, const uint8_t *foreground,
+                                            int foreground_stride_pixels, int foreground_height, uint8_t *target,
+                                            int target_width, int target_height, int center_x, int center_y, int radius,
+                                            int region_x, int region_y, int region_width, int region_height) {
 #if defined(USE_ESP32) && defined(CONFIG_IDF_TARGET_ESP32P4)
   if (background == nullptr || foreground == nullptr || target == nullptr || background_stride_pixels < target_width ||
       foreground_stride_pixels < target_width || background_height < target_height ||
@@ -349,9 +364,10 @@ bool dma2d_m2m_compose_rgb888_circle_region(
       flush_batch();
     if (!complete)
       return;
-    init_descriptor(&context.tx_descriptors[descriptor_count], const_cast<uint8_t *>(source), source_stride_pixels,
-                    source_height, x, y, width, 1);
-    init_descriptor(&context.rx_descriptors[descriptor_count], target, target_width, target_height, x, y, width, 1);
+    init_descriptor(&context.tx_descriptors[descriptor_count].descriptor, const_cast<uint8_t *>(source),
+                    source_stride_pixels, source_height, x, y, width, 1);
+    init_descriptor(&context.rx_descriptors[descriptor_count].descriptor, target, target_width, target_height, x, y,
+                    width, 1);
     descriptor_count++;
   };
 
@@ -377,8 +393,7 @@ bool dma2d_m2m_compose_rgb888_circle_region(
     add_span(background, background_stride_pixels, background_height, y, region_x, foreground_x1 - region_x);
     add_span(foreground, foreground_stride_pixels, foreground_height, y, foreground_x1,
              foreground_x2 - foreground_x1 + 1);
-    add_span(background, background_stride_pixels, background_height, y, foreground_x2 + 1,
-             region_x2 - foreground_x2);
+    add_span(background, background_stride_pixels, background_height, y, foreground_x2 + 1, region_x2 - foreground_x2);
   }
   flush_batch();
   context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH;
@@ -389,11 +404,11 @@ bool dma2d_m2m_compose_rgb888_circle_region(
 #endif
 }
 
-bool dma2d_m2m_update_rgb888_circle(const uint8_t *background, int background_stride_pixels,
-                                    int background_height, const uint8_t *foreground,
-                                    int foreground_stride_pixels, int foreground_height, uint8_t *target,
-                                    int target_width, int target_height, int old_center_x, int old_center_y,
-                                    int old_radius, int new_center_x, int new_center_y, int new_radius) {
+bool dma2d_m2m_update_rgb888_circle(const uint8_t *background, int background_stride_pixels, int background_height,
+                                    const uint8_t *foreground, int foreground_stride_pixels, int foreground_height,
+                                    uint8_t *target, int target_width, int target_height, int old_center_x,
+                                    int old_center_y, int old_radius, int new_center_x, int new_center_y,
+                                    int new_radius) {
 #if defined(USE_ESP32) && defined(CONFIG_IDF_TARGET_ESP32P4)
   if (background == nullptr || foreground == nullptr || target == nullptr || background_stride_pixels < target_width ||
       foreground_stride_pixels < target_width || background_height < target_height ||
@@ -421,9 +436,10 @@ bool dma2d_m2m_update_rgb888_circle(const uint8_t *background, int background_st
       flush_batch();
     if (!complete)
       return;
-    init_descriptor(&context.tx_descriptors[descriptor_count], const_cast<uint8_t *>(source), source_stride_pixels,
-                    target_height, x, y, width, 1);
-    init_descriptor(&context.rx_descriptors[descriptor_count], target, target_width, target_height, x, y, width, 1);
+    init_descriptor(&context.tx_descriptors[descriptor_count].descriptor, const_cast<uint8_t *>(source),
+                    source_stride_pixels, target_height, x, y, width, 1);
+    init_descriptor(&context.rx_descriptors[descriptor_count].descriptor, target, target_width, target_height, x, y,
+                    width, 1);
     descriptor_count++;
   };
   auto circle_span = [&](int y, int center_x, int center_y, int radius, int *x1, int *x2) {
@@ -439,8 +455,8 @@ bool dma2d_m2m_update_rgb888_circle(const uint8_t *background, int background_st
     *x2 = std::clamp(center_x + span, 0, target_width - 1);
     return *x2 >= *x1;
   };
-  auto add_interval_difference = [&](const uint8_t *source, int source_stride_pixels, int y, bool has_a, int a1,
-                                     int a2, bool has_b, int b1, int b2) {
+  auto add_interval_difference = [&](const uint8_t *source, int source_stride_pixels, int y, bool has_a, int a1, int a2,
+                                     bool has_b, int b1, int b2) {
     if (!has_a)
       return;
     if (!has_b || a2 < b1 || a1 > b2) {
@@ -465,10 +481,8 @@ bool dma2d_m2m_update_rgb888_circle(const uint8_t *background, int background_st
 
     // Pixels leaving the old circle become background; pixels entering the
     // new circle become foreground. The overlap and the outside stay intact.
-    add_interval_difference(background, background_stride_pixels, y, has_old, old_x1, old_x2, has_new, new_x1,
-                            new_x2);
-    add_interval_difference(foreground, foreground_stride_pixels, y, has_new, new_x1, new_x2, has_old, old_x1,
-                            old_x2);
+    add_interval_difference(background, background_stride_pixels, y, has_old, old_x1, old_x2, has_new, new_x1, new_x2);
+    add_interval_difference(foreground, foreground_stride_pixels, y, has_new, new_x1, new_x2, has_old, old_x1, old_x2);
   }
   flush_batch();
   context.transfer_ability.data_burst_length = DMA2D_DATA_BURST_LENGTH;
@@ -480,3 +494,11 @@ bool dma2d_m2m_update_rgb888_circle(const uint8_t *background, int background_st
 }
 
 }  // namespace esphome::lvgl
+
+extern "C" bool lvgl_dma2d_m2m_copy_rgb888_2d(const uint8_t *source, int source_width, int source_height, int source_x,
+                                              int source_y, uint8_t *target, int target_width, int target_height,
+                                              int target_x, int target_y, int block_width, int block_height) {
+  return esphome::lvgl::dma2d_m2m_copy_rgb888_2d(source, source_width, source_height, source_x, source_y, target,
+                                                 target_width, target_height, target_x, target_y, block_width,
+                                                 block_height);
+}

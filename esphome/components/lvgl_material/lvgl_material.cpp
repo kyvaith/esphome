@@ -135,7 +135,7 @@ bool MaterialDirectStateLayer::press(lv_obj_t *target) {
   this->height_ = height;
   this->press_in_flight_.store(true, std::memory_order_release);
   const uint8_t result = this->lvgl_component_->direct_blit_rgb888_async(
-      this->pressed_buffer_, stride, this->x_, this->y_, width, height, press_ready_cb_, this);
+      this->pressed_buffer_, stride, this->x_, this->y_, width, height, press_ready_cb_, this, true);
   if (result != LVGL_DIRECT_BLIT_SUBMITTED) {
     this->press_in_flight_.store(false, std::memory_order_release);
     return false;
@@ -147,6 +147,11 @@ bool MaterialDirectStateLayer::press(lv_obj_t *target) {
 bool MaterialDirectStateLayer::release() {
   if (!this->active_)
     return true;
+  // The pressed and restored frames reuse the same direct region. Submitting
+  // the restore while the pressed blit is still owned by the compositor can
+  // expose partially updated scanlines on fast taps.
+  if (this->press_in_flight_.load(std::memory_order_acquire))
+    return false;
   if (this->restore_in_flight_.load(std::memory_order_acquire))
     return true;
   if (this->normal_buffer_ == nullptr || this->width_ <= 0 || this->height_ <= 0) {
@@ -156,7 +161,8 @@ bool MaterialDirectStateLayer::release() {
 
   this->restore_in_flight_.store(true, std::memory_order_release);
   const uint8_t result = this->lvgl_component_->direct_blit_rgb888_async(
-      this->normal_buffer_, this->width_ * 3, this->x_, this->y_, this->width_, this->height_, restore_ready_cb_, this);
+      this->normal_buffer_, this->width_ * 3, this->x_, this->y_, this->width_, this->height_, restore_ready_cb_, this,
+      true);
   if (result != LVGL_DIRECT_BLIT_SUBMITTED) {
     this->restore_in_flight_.store(false, std::memory_order_release);
     return false;
@@ -179,8 +185,12 @@ void MaterialDirectStateLayer::press_ready_cb_(void *arg) {
 
 void MaterialDirectStateLayer::restore_ready_cb_(void *arg) {
   auto *state_layer = static_cast<MaterialDirectStateLayer *>(arg);
-  if (state_layer != nullptr)
+  if (state_layer != nullptr) {
     state_layer->restore_in_flight_.store(false, std::memory_order_release);
+    if (state_layer->lvgl_component_ != nullptr && state_layer->width_ > 0 && state_layer->height_ > 0)
+      state_layer->lvgl_component_->direct_blit_rgb888_release(state_layer->x_, state_layer->y_, state_layer->width_,
+                                                               state_layer->height_);
+  }
 }
 
 bool MaterialDirectStateLayer::inside_rounded_rect_(int x, int y, int width, int height, int radius) {

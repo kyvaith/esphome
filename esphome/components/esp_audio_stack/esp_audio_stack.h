@@ -281,6 +281,14 @@ class ESPAudioStack : public Component {
   void set_output_volume(float volume);
   void set_output_volume_q31(int32_t q31);
   float get_master_volume() const { return this->master_volume_public_.load(std::memory_order_relaxed); }
+  float get_output_volume() const {
+    return static_cast<float>(this->output_volume_q31_.load(std::memory_order_relaxed)) /
+           static_cast<float>(INT32_MAX);
+  }
+  float get_hot_output_volume() const {
+    return static_cast<float>(this->hot_output_volume_q31_.load(std::memory_order_relaxed)) /
+           static_cast<float>(INT32_MAX);
+  }
 
   // ES8311 Digital Feedback mode: RX is stereo with L=ADC(mic), R=DAC(ref)
   void set_use_stereo_aec_reference(bool use) { this->use_stereo_aec_ref_ = use; }

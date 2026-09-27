@@ -50,6 +50,7 @@ MULTI_CONF = True
 CONF_ON_DOWNLOAD_FINISHED = "on_download_finished"
 CONF_ON_DOWNLOAD_READY = "on_download_ready"
 CONF_ON_DECODE_START = "on_decode_start"
+CONF_ON_BEFORE_IMAGE_SWAP = "on_before_image_swap"
 CONF_ON_DECODE_FINISHED = "on_decode_finished"
 CONF_ALLOW_INSECURE_LOCAL_URLS = "allow_insecure_local_urls"
 CONF_PLACEHOLDER = "placeholder"
@@ -58,8 +59,11 @@ CONF_UPDATE = "update"
 CONF_SENDSPIN_SLOT = "sendspin_slot"
 CONF_SENDSPIN_PAUSED = "sendspin_paused"
 CONF_IMMEDIATE = "immediate"
+CONF_PRESERVE_CAPACITY = "preserve_capacity"
 CONF_DARKEN = "darken"
 CONF_HARDWARE_JPEG = "hardware_jpeg"
+CONF_PREFER_INTERNAL_TASK_STACK = "prefer_internal_task_stack"
+CONF_REUSE_ACTIVE_BUFFER = "reuse_active_buffer"
 CONF_REUSE_ACTIVE_BUFFER_CAPACITY = "reuse_active_buffer_capacity"
 CONF_DEFER_DECODE = "defer_decode"
 CONF_SCRIM_COLOR = "scrim_color"
@@ -198,6 +202,8 @@ ARTWORK_IMAGE_SCHEMA = (
             cv.Optional(CONF_ALLOW_INSECURE_LOCAL_URLS, default=False): cv.boolean,
             cv.Optional(CONF_DARKEN, default=0): cv.int_range(0, 99),
             cv.Optional(CONF_HARDWARE_JPEG, default=True): cv.boolean,
+            cv.Optional(CONF_PREFER_INTERNAL_TASK_STACK, default=False): cv.boolean,
+            cv.Optional(CONF_REUSE_ACTIVE_BUFFER, default=True): cv.boolean,
             cv.Optional(CONF_REUSE_ACTIVE_BUFFER_CAPACITY, default=False): cv.boolean,
             cv.Optional(CONF_DEFER_DECODE, default=False): cv.boolean,
             cv.Optional(CONF_SCRIM_COLOR, default=0): cv.hex_uint32_t,
@@ -208,6 +214,7 @@ ARTWORK_IMAGE_SCHEMA = (
             cv.Optional(CONF_ON_DOWNLOAD_FINISHED): automation.validate_automation({}),
             cv.Optional(CONF_ON_DOWNLOAD_READY): automation.validate_automation({}),
             cv.Optional(CONF_ON_DECODE_START): automation.validate_automation({}),
+            cv.Optional(CONF_ON_BEFORE_IMAGE_SWAP): automation.validate_automation({}),
             cv.Optional(CONF_ON_DECODE_FINISHED): automation.validate_automation({}),
             cv.Optional(CONF_ON_ERROR): automation.validate_automation({}),
         }
@@ -276,6 +283,7 @@ RELEASE_IMAGE_SCHEMA = automation.maybe_simple_id(
     {
         cv.GenerateID(): cv.use_id(ArtworkImage),
         cv.Optional(CONF_IMMEDIATE, default=False): cv.templatable(cv.boolean),
+        cv.Optional(CONF_PRESERVE_CAPACITY, default=False): cv.templatable(cv.boolean),
     }
 )
 
@@ -283,6 +291,9 @@ RELEASE_IMAGE_SCHEMA = automation.maybe_simple_id(
 _CALLBACK_AUTOMATIONS = (
     automation.CallbackAutomation(CONF_ON_DOWNLOAD_READY, "add_on_download_ready_callback"),
     automation.CallbackAutomation(CONF_ON_DECODE_START, "add_on_decode_start_callback"),
+    automation.CallbackAutomation(
+        CONF_ON_BEFORE_IMAGE_SWAP, "add_on_before_image_swap_callback"
+    ),
     automation.CallbackAutomation(
         CONF_ON_DECODE_FINISHED,
         "add_on_decode_finished_callback",
@@ -328,6 +339,9 @@ async def artwork_image_action_to_code(config, action_id, template_arg, args):
     if CONF_IMMEDIATE in config:
         template_ = await cg.templatable(config[CONF_IMMEDIATE], args, bool)
         cg.add(var.set_immediate(template_))
+    if CONF_PRESERVE_CAPACITY in config:
+        template_ = await cg.templatable(config[CONF_PRESERVE_CAPACITY], args, bool)
+        cg.add(var.set_preserve_capacity(template_))
     return var
 
 
@@ -378,6 +392,8 @@ async def to_code(config):
     await cg.register_parented(var, config[CONF_HTTP_REQUEST_ID])
     cg.add(var.set_darken_percent(config[CONF_DARKEN]))
     cg.add(var.set_hardware_jpeg(config[CONF_HARDWARE_JPEG]))
+    cg.add(var.set_prefer_internal_task_stack(config[CONF_PREFER_INTERNAL_TASK_STACK]))
+    cg.add(var.set_reuse_active_buffer(config[CONF_REUSE_ACTIVE_BUFFER]))
     cg.add(var.set_reuse_active_buffer_capacity(config[CONF_REUSE_ACTIVE_BUFFER_CAPACITY]))
     cg.add(var.set_defer_decode(config[CONF_DEFER_DECODE]))
     cg.add(var.set_scrim_color(config[CONF_SCRIM_COLOR]))

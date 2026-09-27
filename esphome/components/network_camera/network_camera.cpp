@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "esphome/components/esp32_jpeg/esp32_jpeg.h"
+#include "esphome/components/esp32/task_utils.h"
 #include "esphome/components/network/util.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
@@ -13,6 +14,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include "esp_timer.h"
 #endif
 
@@ -66,6 +68,9 @@ NetworkCamera::~NetworkCamera() {
     heap_caps_free(this->read_buffer_);
   this->read_buffer_ = nullptr;
   this->release_frame_buffer_();
+  if (this->stream_task_stack_ != nullptr && this->stream_task_handle_ == nullptr)
+    heap_caps_free(this->stream_task_stack_);
+  this->stream_task_stack_ = nullptr;
 #endif
 }
 
@@ -101,8 +106,12 @@ void NetworkCamera::setup() {
     this->mark_failed();
     return;
   }
+  // esp_http_client_read copies into this buffer; it is not a DMA destination.
+  // Keep scarce internal memory available for lwIP and driver control objects.
   this->read_buffer_ =
-      static_cast<uint8_t *>(heap_caps_malloc(this->read_buffer_size_, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+      static_cast<uint8_t *>(heap_caps_malloc(this->read_buffer_size_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (this->read_buffer_ == nullptr)
+    this->read_buffer_ = static_cast<uint8_t *>(heap_caps_malloc(this->read_buffer_size_, MALLOC_CAP_8BIT));
   if (this->read_buffer_ == nullptr) {
     ESP_LOGE(TAG, "Unable to allocate the %zu-byte HTTP read buffer", this->read_buffer_size_);
     this->mark_failed();
@@ -110,21 +119,46 @@ void NetworkCamera::setup() {
   }
 
   esp32_jpeg::preallocate_decoder(static_cast<int>(this->request_timeout_ms_));
-  this->fps_window_started_ms_ = millis();
+  this->input_fps_window_started_ms_ = millis();
+  this->fps_window_started_ms_ = this->input_fps_window_started_ms_;
 
-#if CONFIG_FREERTOS_UNICORE
-  const BaseType_t task_core = tskNO_AFFINITY;
-#else
-  const BaseType_t task_core = this->task_core_ < 0 ? tskNO_AFFINITY : this->task_core_;
-#endif
-  const BaseType_t created =
-      xTaskCreatePinnedToCore(&NetworkCamera::stream_task_trampoline_, "network_camera", this->task_stack_size_, this,
-                              this->task_priority_, &this->stream_task_handle_, task_core);
-  if (created != pdPASS) {
+  const BaseType_t task_core = esp32::background_task_core(this->task_core_);
+  this->resolved_task_core_ = task_core;
+  ESP_LOGI(TAG, "Creating stream worker: requested=%d resolved=%d loop=%d caller=%d", this->task_core_,
+           static_cast<int>(task_core), static_cast<int>(esp32::loop_task_core()), static_cast<int>(xPortGetCoreID()));
+  if (this->task_stack_in_psram_) {
+    this->stream_task_stack_ = static_cast<StackType_t *>(
+        heap_caps_aligned_alloc(16, this->task_stack_size_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (this->stream_task_stack_ == nullptr) {
+      ESP_LOGW(TAG, "Unable to allocate camera task stack in PSRAM; falling back to internal RAM");
+      this->stream_task_stack_ = static_cast<StackType_t *>(
+          heap_caps_aligned_alloc(16, this->task_stack_size_, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    }
+    if (this->stream_task_stack_ != nullptr) {
+      this->stream_task_handle_ = xTaskCreateStaticPinnedToCore(
+          &NetworkCamera::stream_task_trampoline_, "network_camera", this->task_stack_size_, this,
+          this->task_priority_, this->stream_task_stack_, &this->stream_task_storage_, task_core);
+    }
+  } else {
+    const BaseType_t created =
+        xTaskCreatePinnedToCore(&NetworkCamera::stream_task_trampoline_, "network_camera", this->task_stack_size_, this,
+                                this->task_priority_, &this->stream_task_handle_, task_core);
+    if (created != pdPASS)
+      this->stream_task_handle_ = nullptr;
+  }
+  if (this->stream_task_handle_ == nullptr) {
+    if (this->stream_task_stack_ != nullptr)
+      heap_caps_free(this->stream_task_stack_);
+    this->stream_task_stack_ = nullptr;
     ESP_LOGE(TAG, "Unable to create stream task");
     this->mark_failed();
     return;
   }
+  ESP_LOGW(TAG, "Stream worker created: requested=%d resolved=%d assigned=%d stack=%s", this->task_core_,
+           static_cast<int>(this->resolved_task_core_), static_cast<int>(xTaskGetCoreID(this->stream_task_handle_)),
+           this->stream_task_stack_ == nullptr
+               ? "internal/dynamic"
+               : (esp_ptr_external_ram(this->stream_task_stack_) ? "PSRAM" : "internal/static"));
   this->queue_source_event_();
 #else
   ESP_LOGE(TAG, "Network camera requires ESP-IDF");
@@ -167,8 +201,9 @@ void NetworkCamera::dump_config() {
   ESP_LOGCONFIG(TAG, "  Frame interval: %u ms", static_cast<unsigned>(this->frame_interval_ms_));
   ESP_LOGCONFIG(TAG, "  Reconnect interval: %u ms", static_cast<unsigned>(this->reconnect_interval_ms_));
   ESP_LOGCONFIG(TAG, "  Release decoded frame on stop: %s", YESNO(this->release_buffer_on_stop_));
-  ESP_LOGCONFIG(TAG, "  Worker: core %d, priority %u, stack %u", this->task_core_, this->task_priority_,
-                static_cast<unsigned>(this->task_stack_size_));
+  ESP_LOGCONFIG(TAG, "  Worker: core %d%s, priority %u, stack %u (%s)", static_cast<int>(this->resolved_task_core_),
+                 this->task_core_ < 0 ? " (automatic)" : "", this->task_priority_,
+                 static_cast<unsigned>(this->task_stack_size_), this->task_stack_in_psram_ ? "PSRAM" : "internal");
 }
 
 void NetworkCamera::on_shutdown() {
@@ -396,6 +431,9 @@ void NetworkCamera::stream_task_trampoline_(void *arg) {
 }
 
 void NetworkCamera::stream_task_() {
+  ESP_LOGW(TAG, "Stream worker running: requested=%d resolved=%d current=%d stack_free=%uB", this->task_core_,
+           static_cast<int>(this->resolved_task_core_), static_cast<int>(xPortGetCoreID()),
+           static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
   uint32_t connected_revision = UINT32_MAX;
   while (!this->shutdown_requested_.load(std::memory_order_acquire)) {
     if (!this->running_requested_.load(std::memory_order_acquire)) {
@@ -510,12 +548,25 @@ void NetworkCamera::disconnect_stream_() {
 bool NetworkCamera::read_stream_() {
   const int received =
       esp_http_client_read(this->http_client_, reinterpret_cast<char *>(this->read_buffer_), this->read_buffer_size_);
-  if (received > 0)
-    return this->consume_stream_bytes_(this->read_buffer_, static_cast<size_t>(received));
-  if (received == -ESP_ERR_HTTP_EAGAIN)
+  if (received > 0) {
+    const uint32_t frames_before = this->received_frames_.load(std::memory_order_relaxed);
+    const bool consumed = this->consume_stream_bytes_(this->read_buffer_, static_cast<size_t>(received));
+    // Some live endpoints keep every socket read ready. Yield after a complete
+    // JPEG, not after every TCP chunk: the latter can add dozens of scheduler
+    // ticks to one frame. The direct JPEG consumer runs at a higher priority,
+    // so its notification preempts this producer as soon as a frame is queued.
+    if (this->received_frames_.load(std::memory_order_relaxed) != frames_before)
+      vTaskDelay(1);
+    return consumed;
+  }
+  if (received == -ESP_ERR_HTTP_EAGAIN) {
+    vTaskDelay(1);
     return true;
-  if (received == 0 && !esp_http_client_is_complete_data_received(this->http_client_))
+  }
+  if (received == 0 && !esp_http_client_is_complete_data_received(this->http_client_)) {
+    vTaskDelay(1);
     return true;
+  }
   return false;
 }
 
@@ -551,6 +602,15 @@ bool NetworkCamera::consume_stream_bytes_(const uint8_t *data, size_t size) {
 
 bool NetworkCamera::finish_jpeg_frame_() {
   const uint32_t now = millis();
+  this->received_frames_.fetch_add(1, std::memory_order_relaxed);
+  this->input_fps_window_frames_++;
+  const uint32_t input_elapsed = now - this->input_fps_window_started_ms_;
+  if (input_elapsed >= 2000) {
+    this->measured_input_fps_.store(static_cast<float>(this->input_fps_window_frames_) * 1000.0f / input_elapsed,
+                                    std::memory_order_relaxed);
+    this->input_fps_window_frames_ = 0;
+    this->input_fps_window_started_ms_ = now;
+  }
   if (this->last_frame_ms_ != 0 && now - this->last_frame_ms_ < this->frame_interval_ms_) {
     this->dropped_frames_.fetch_add(1, std::memory_order_relaxed);
     return true;

@@ -2021,7 +2021,17 @@ static esp_err_t jpeg_dec_pre_output_cache_msync(void *buffer, size_t size)
         '    ESP_LOGE(TAG, "JPEG decoder cleanup path ret=%d out_size=%" PRIu32, ret, *out_size);\n'
         "    xSemaphoreGive(decoder_engine->codec_base->codec_mutex);\n"
     )
-    if new not in text:
+    new_with_dequeue = (
+        "err1:\n"
+        '    ESP_LOGE(TAG, "JPEG decoder error path ret=%d out_size=%" PRIu32, ret, *out_size);\n'
+        "    if (dma2d_dequeue(decoder_engine->dma2d_group_handle, decoder_engine->trans_desc) != ESP_OK) {\n"
+        "        dma2d_force_end(decoder_engine->trans_desc, &need_yield);\n"
+        "    }\n"
+        "err2:\n"
+        '    ESP_LOGE(TAG, "JPEG decoder cleanup path ret=%d out_size=%" PRIu32, ret, *out_size);\n'
+        "    xSemaphoreGive(decoder_engine->codec_base->codec_mutex);\n"
+    )
+    if new not in text and new_with_dequeue not in text:
         if old not in text:
             raise RuntimeError(
                 "ESP-IDF JPEG decode error cleanup block not found; patch needs review"
@@ -2101,6 +2111,20 @@ def _patch_jpeg_encode_dma2d_burst(framework_dir: Path) -> None:
 
     text = target.read_text(encoding="utf-8")
     helper = """
+__attribute__((weak)) bool esphome_esp32_jpeg_skip_input_cache_msync(void)
+{
+    return false;
+}
+
+static esp_err_t jpeg_enc_input_cache_msync(void *buffer, size_t size)
+{
+    if (esphome_esp32_jpeg_skip_input_cache_msync()) {
+        return ESP_OK;
+    }
+    return esp_cache_msync(buffer, size,
+                           ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+}
+
 __attribute__((weak)) int esphome_esp32_jpeg_encoder_dma2d_burst_length(void)
 {
 #ifdef CONFIG_ESPHOME_JPEG_ENCODER_DMA2D_BURST_LENGTH
@@ -2158,14 +2182,24 @@ static bool jpeg_enc_select_dma2d_desc_burst_en(void)
     declaration_patch = (
         declaration_anchor
         + "\n#define ESPHOME_JPEG_ENCODER_MAX_TX_DESCRIPTORS 64\n"
+        + "bool esphome_esp32_jpeg_skip_input_cache_msync(void);\n"
+        + "static esp_err_t jpeg_enc_input_cache_msync(void *buffer, size_t size);\n"
+        + "int esphome_esp32_jpeg_encoder_dma2d_band_height(void);\n"
+    )
+    legacy_declaration_patch = (
+        declaration_anchor
+        + "\n#define ESPHOME_JPEG_ENCODER_MAX_TX_DESCRIPTORS 64\n"
         + "int esphome_esp32_jpeg_encoder_dma2d_band_height(void);\n"
     )
     if declaration_patch not in text:
-        if declaration_anchor not in text:
+        if legacy_declaration_patch in text:
+            text = text.replace(legacy_declaration_patch, declaration_patch, 1)
+        elif declaration_anchor in text:
+            text = text.replace(declaration_anchor, declaration_patch, 1)
+        else:
             raise RuntimeError(
                 "ESP-IDF JPEG encode declaration anchor not found; patch needs review"
             )
-        text = text.replace(declaration_anchor, declaration_patch, 1)
         changed = True
 
     allocation_candidates = (
@@ -2276,8 +2310,12 @@ static bool jpeg_enc_select_dma2d_desc_burst_en(void)
         )
 
     helper_start = text.find(
-        "__attribute__((weak)) int esphome_esp32_jpeg_encoder_dma2d_burst_length"
+        "__attribute__((weak)) bool esphome_esp32_jpeg_skip_input_cache_msync"
     )
+    if helper_start < 0:
+        helper_start = text.find(
+            "__attribute__((weak)) int esphome_esp32_jpeg_encoder_dma2d_burst_length"
+        )
     if helper_start < 0:
         helper_start = text.find(
             "static dma2d_data_burst_length_t jpeg_enc_select_dma2d_burst_length"
@@ -2289,6 +2327,21 @@ static bool jpeg_enc_select_dma2d_desc_burst_en(void)
             changed = True
     else:
         text = text[:anchor_pos] + f"{helper}\n" + text[anchor_pos:]
+        changed = True
+
+    input_sync_old = (
+        "    ret = esp_cache_msync((void*)raw_buffer, inbuf_size, "
+        "ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);"
+    )
+    input_sync_new = (
+        "    ret = jpeg_enc_input_cache_msync((void*)raw_buffer, inbuf_size);"
+    )
+    if input_sync_new not in text:
+        if input_sync_old not in text:
+            raise RuntimeError(
+                "ESP-IDF JPEG encode input cache sync line not found; patch needs review"
+            )
+        text = text.replace(input_sync_old, input_sync_new, 1)
         changed = True
 
     new = ".data_burst_length = jpeg_enc_select_dma2d_burst_length(),"
@@ -2492,6 +2545,339 @@ static inline void ppa_ll_srm_bypass_mb_order(ppa_dev_t *dev, bool enable)
     print("MIPI DSI patch: ESP-IDF PPA DIG-734 workaround is conditional")
 
 
+def _patch_dma2d_transaction_race(framework_dir: Path) -> None:
+    """Backport Espressif's DMA2D dequeue and force-end race fixes.
+
+    ESP-IDF 5.5.x and 6.0.x can let the natural completion ISR and
+    dma2d_force_end() free the same channels. The second teardown can stop the
+    transaction that was picked next and corrupt the shared pending queue.
+    Fixed upstream by esp-idf commits 92024d98b621 and 3d8fd22e1407.
+    """
+    source_candidates = (
+        framework_dir / "components" / "esp_hw_support" / "dma" / "dma2d.c",
+        framework_dir / "components" / "esp_driver_dma" / "src" / "dma2d.c",
+    )
+    private_candidates = (
+        framework_dir / "components" / "esp_hw_support" / "dma" / "dma2d_priv.h",
+        framework_dir / "components" / "esp_driver_dma" / "src" / "dma2d_priv.h",
+    )
+    public_candidates = (
+        framework_dir
+        / "components"
+        / "esp_hw_support"
+        / "dma"
+        / "include"
+        / "esp_private"
+        / "dma2d.h",
+        framework_dir
+        / "components"
+        / "esp_driver_dma"
+        / "include"
+        / "esp_private"
+        / "dma2d.h",
+    )
+    source_target = next((path for path in source_candidates if path.exists()), None)
+    private_target = next((path for path in private_candidates if path.exists()), None)
+    public_target = next((path for path in public_candidates if path.exists()), None)
+    if source_target is None or private_target is None or public_target is None:
+        raise RuntimeError("ESP-IDF DMA2D driver files not found; race patch needs review")
+
+    source = source_target.read_text(encoding="utf-8")
+    if "claim_rx_transaction" in source and "esp_err_t dma2d_dequeue" in source:
+        print("MIPI DSI patch: ESP-IDF DMA2D transaction race fix already present")
+        return
+
+    critical_enter = (
+        "portENTER_CRITICAL_SAFE"
+        if "portENTER_CRITICAL_SAFE(&group->spinlock)" in source
+        else "esp_os_enter_critical_safe"
+    )
+    critical_exit = (
+        "portEXIT_CRITICAL_SAFE"
+        if critical_enter == "portENTER_CRITICAL_SAFE"
+        else "esp_os_exit_critical_safe"
+    )
+    tx_channel_count = (
+        "DMA2D_LL_TX_CHANNELS_PER_GROUP"
+        if "DMA2D_LL_TX_CHANNELS_PER_GROUP" in source
+        else "DMA2D_LL_GET(TX_CHANS_PER_INST)"
+    )
+
+    private = private_target.read_text(encoding="utf-8")
+    if "#include <stdatomic.h>" not in private:
+        private = private.replace(
+            "#include <stdint.h>\n", "#include <stdint.h>\n#include <stdatomic.h>\n", 1
+        )
+    started_field = (
+        "    _Atomic bool started;                 // True after on_job_picked has started the hardware\n"
+    )
+    if "_Atomic bool started" not in private:
+        anchor = (
+            "    dma2d_channel_handle_t rx_chan;       // Pointer to the RX channel handle that will be used to do the transaction\n"
+        )
+        if anchor not in private:
+            raise RuntimeError("ESP-IDF DMA2D transaction struct anchor not found")
+        private = private.replace(anchor, f"{anchor}{started_field}", 1)
+    private_target.write_text(private, encoding="utf-8")
+
+    claim_helper = f"""
+static inline bool claim_rx_transaction(dma2d_group_t *group, dma2d_rx_channel_t *rx_chan,
+                                        dma2d_trans_t *expected)
+{{
+    bool claimed = false;
+    {critical_enter}(&group->spinlock);
+    if (expected != NULL && rx_chan->base.status.transaction == expected) {{
+        rx_chan->base.status.transaction = NULL;
+        claimed = true;
+    }}
+    {critical_exit}(&group->spinlock);
+    return claimed;
+}}
+
+"""
+    free_comment = (
+        "/* This function will free up the RX channel and its bundled TX channels, then check for whether there is next transaction to be picked up */\n"
+    )
+    if "claim_rx_transaction" not in source:
+        if free_comment not in source:
+            raise RuntimeError("ESP-IDF DMA2D free-up anchor not found")
+        source = source.replace(free_comment, f"{claim_helper}{free_comment}", 1)
+
+    old_pending = """    bool channels_found = false;
+    const dma2d_trans_config_t *next_trans = NULL;
+    dma2d_trans_channel_info_t channel_handle_array[DMA2D_MAX_CHANNEL_NUM_PER_TRANSACTION];
+"""
+    new_pending = """    bool channels_found = false;
+    const dma2d_trans_config_t *next_trans = NULL;
+    uint32_t total_channel_num = 0;
+    dma2d_trans_channel_info_t channel_handle_array[DMA2D_MAX_CHANNEL_NUM_PER_TRANSACTION];
+"""
+    if old_pending in source:
+        source = source.replace(old_pending, new_pending, 1)
+    elif "uint32_t total_channel_num = 0;" not in source:
+        raise RuntimeError("ESP-IDF DMA2D pending transaction declaration not found")
+
+    old_pick = f"""    if (channels_found) {{
+        TAILQ_REMOVE(&group->pending_trans_tailq, next_trans_elm, entry);
+    }}
+    {critical_exit}(&group->spinlock);
+
+    if (channels_found) {{
+        // If the transaction can be processed, let consumer handle the transaction
+        uint32_t total_channel_num = next_trans->tx_channel_num + next_trans->rx_channel_num;
+        // Store the acquired rx_chan into trans_elm (dma2d_trans_t) in case upper driver later need it to call `dma2d_force_end`
+        // Upper driver controls the life cycle of trans_elm
+        for (int i = 0; i < total_channel_num; i++) {{
+            if (channel_handle_array[i].dir == DMA2D_CHANNEL_DIRECTION_RX) {{
+                next_trans_elm->rx_chan = channel_handle_array[i].chan;
+            }}
+            // Also save the transaction pointer
+            channel_handle_array[i].chan->status.transaction = next_trans_elm;
+        }}
+        need_yield |= next_trans->on_job_picked(total_channel_num, channel_handle_array, next_trans->user_config);
+    }}
+"""
+    new_pick = f"""    if (channels_found) {{
+        TAILQ_REMOVE(&group->pending_trans_tailq, next_trans_elm, entry);
+        total_channel_num = next_trans->tx_channel_num + next_trans->rx_channel_num;
+        for (int i = 0; i < total_channel_num; i++) {{
+            if (channel_handle_array[i].dir == DMA2D_CHANNEL_DIRECTION_RX) {{
+                next_trans_elm->rx_chan = channel_handle_array[i].chan;
+            }}
+            channel_handle_array[i].chan->status.transaction = next_trans_elm;
+        }}
+        atomic_store(&next_trans_elm->started, false);
+    }}
+    {critical_exit}(&group->spinlock);
+
+    if (channels_found) {{
+        need_yield |= next_trans->on_job_picked(total_channel_num, channel_handle_array, next_trans->user_config);
+        atomic_store(&next_trans_elm->started, true);
+    }}
+"""
+    if old_pick in source:
+        source = source.replace(old_pick, new_pick, 1)
+    elif "atomic_store(&next_trans_elm->started, true);" not in source:
+        raise RuntimeError("ESP-IDF DMA2D pending transaction pickup block not found")
+
+    old_isr = """    // If last transaction completes (regardless success or not), free the channels
+    if (intr_status & (DMA2D_LL_EVENT_RX_SUC_EOF | DMA2D_LL_EVENT_RX_ERR_EOF | DMA2D_LL_EVENT_RX_DESC_ERROR | DMA2D_LL_EVENT_RX_DESC_EMPTY)) {
+        if (!(intr_status & DMA2D_LL_EVENT_RX_ERR_EOF)) {
+            assert(dma2d_ll_rx_is_fsm_idle(group->hal.dev, channel_id));
+        }
+        need_yield |= free_up_channels(group, rx_chan);
+    }
+
+    // Handle last transaction's end callbacks (at this point, last transaction's channels are completely freed,
+    // therefore, we don't pass in channel handle to the callbacks anymore)
+    if (intr_status & DMA2D_LL_EVENT_RX_SUC_EOF) {
+"""
+    new_isr = """    // Atomically claim teardown so dma2d_force_end and this ISR cannot free the same channels.
+    bool transaction_claimed = false;
+    if (intr_status & (DMA2D_LL_EVENT_RX_SUC_EOF | DMA2D_LL_EVENT_RX_ERR_EOF | DMA2D_LL_EVENT_RX_DESC_ERROR | DMA2D_LL_EVENT_RX_DESC_EMPTY)) {
+        if (claim_rx_transaction(group, rx_chan, edata.transaction)) {
+            transaction_claimed = true;
+            if (!(intr_status & DMA2D_LL_EVENT_RX_ERR_EOF)) {
+                assert(dma2d_ll_rx_is_fsm_idle(group->hal.dev, channel_id));
+            }
+            need_yield |= free_up_channels(group, rx_chan);
+        }
+    }
+
+    // Deliver EOF only when this ISR won ownership of the completed transaction.
+    if (transaction_claimed && (intr_status & DMA2D_LL_EVENT_RX_SUC_EOF)) {
+"""
+    if old_isr in source:
+        source = source.replace(old_isr, new_isr, 1)
+    elif "bool transaction_claimed = false;" not in source:
+        raise RuntimeError("ESP-IDF DMA2D RX ISR completion block not found")
+
+    old_enqueue = f"""    if (enqueue) {{
+        if (!trans_desc->specified_tx_channel_mask && !trans_desc->specified_rx_channel_mask) {{
+            TAILQ_INSERT_TAIL(&dma2d_group->pending_trans_tailq, trans_placeholder, entry);
+        }} else {{
+            TAILQ_INSERT_HEAD(&dma2d_group->pending_trans_tailq, trans_placeholder, entry);
+        }}
+    }}
+    {critical_exit}(&dma2d_group->spinlock);
+    if (!enqueue) {{
+        // Free channels available, start transaction immediately
+        // Store the acquired rx_chan into trans_placeholder (dma2d_trans_t) in case upper driver later need it to call `dma2d_force_end`
+        // Upper driver controls the life cycle of trans_placeholder
+        for (int i = 0; i < total_channel_num; i++) {{
+            if (channel_handle_array[i].dir == DMA2D_CHANNEL_DIRECTION_RX) {{
+                trans_placeholder->rx_chan = channel_handle_array[i].chan;
+            }}
+            // Also save the transaction pointer
+            channel_handle_array[i].chan->status.transaction = trans_placeholder;
+        }}
+        trans_desc->on_job_picked(total_channel_num, channel_handle_array, trans_desc->user_config);
+    }}
+"""
+    new_enqueue = f"""    if (enqueue) {{
+        if (!trans_desc->specified_tx_channel_mask && !trans_desc->specified_rx_channel_mask) {{
+            TAILQ_INSERT_TAIL(&dma2d_group->pending_trans_tailq, trans_placeholder, entry);
+        }} else {{
+            TAILQ_INSERT_HEAD(&dma2d_group->pending_trans_tailq, trans_placeholder, entry);
+        }}
+    }} else {{
+        for (int i = 0; i < total_channel_num; i++) {{
+            if (channel_handle_array[i].dir == DMA2D_CHANNEL_DIRECTION_RX) {{
+                trans_placeholder->rx_chan = channel_handle_array[i].chan;
+            }}
+            channel_handle_array[i].chan->status.transaction = trans_placeholder;
+        }}
+        atomic_store(&trans_placeholder->started, false);
+    }}
+    {critical_exit}(&dma2d_group->spinlock);
+    if (!enqueue) {{
+        trans_desc->on_job_picked(total_channel_num, channel_handle_array, trans_desc->user_config);
+        atomic_store(&trans_placeholder->started, true);
+    }}
+"""
+    if old_enqueue in source:
+        source = source.replace(old_enqueue, new_enqueue, 1)
+    elif "atomic_store(&trans_placeholder->started, true);" not in source:
+        raise RuntimeError("ESP-IDF DMA2D immediate enqueue block not found")
+
+    dequeue_function = f"""
+esp_err_t dma2d_dequeue(dma2d_pool_handle_t dma2d_pool, dma2d_trans_t *trans)
+{{
+    ESP_RETURN_ON_FALSE(dma2d_pool && trans, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
+    dma2d_group_t *dma2d_group = dma2d_pool;
+    bool found = false;
+    {critical_enter}(&dma2d_group->spinlock);
+    dma2d_trans_t *trans_elm;
+    TAILQ_FOREACH(trans_elm, &dma2d_group->pending_trans_tailq, entry) {{
+        if (trans_elm == trans) {{
+            TAILQ_REMOVE(&dma2d_group->pending_trans_tailq, trans, entry);
+            found = true;
+            break;
+        }}
+    }}
+    {critical_exit}(&dma2d_group->spinlock);
+    return found ? ESP_OK : ESP_ERR_NOT_FOUND;
+}}
+
+"""
+    if "esp_err_t dma2d_dequeue" not in source:
+        force_anchor = "esp_err_t dma2d_force_end(dma2d_trans_t *trans, bool *need_yield)\n"
+        if force_anchor not in source:
+            raise RuntimeError("ESP-IDF DMA2D force-end anchor not found")
+        source = source.replace(force_anchor, f"{dequeue_function}{force_anchor}", 1)
+
+    force_start = source.index(
+        "esp_err_t dma2d_force_end(dma2d_trans_t *trans, bool *need_yield)\n"
+    )
+    force_end = source.index("size_t dma2d_get_trans_elm_size(void)\n", force_start)
+    force_function = f"""esp_err_t dma2d_force_end(dma2d_trans_t *trans, bool *need_yield)
+{{
+    ESP_RETURN_ON_FALSE_ISR(trans && need_yield, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
+    ESP_RETURN_ON_FALSE_ISR(trans->rx_chan, ESP_ERR_INVALID_STATE, TAG, "transaction still pending in the queue");
+    assert(trans->rx_chan->direction == DMA2D_CHANNEL_DIRECTION_RX);
+
+    dma2d_group_t *group = trans->rx_chan->group;
+    dma2d_rx_channel_t *rx_chan = group->rx_chans[trans->rx_chan->channel_id];
+    *need_yield = false;
+
+    bool in_flight = false;
+    {critical_enter}(&group->spinlock);
+    if (rx_chan->base.status.transaction == trans) {{
+        in_flight = true;
+        dma2d_ll_rx_enable_interrupt(group->hal.dev, trans->rx_chan->channel_id, UINT32_MAX, false);
+        rx_chan->base.status.transaction = NULL;
+    }}
+    {critical_exit}(&group->spinlock);
+
+    if (in_flight) {{
+        while (!atomic_load(&trans->started)) {{
+        }}
+        dma2d_stop(&rx_chan->base);
+        uint32_t tx_chans = rx_chan->bundled_tx_channel_mask;
+        for (int i = 0; i < {tx_channel_count}; i++) {{
+            if (tx_chans & (1 << i)) {{
+                dma2d_stop(&group->tx_chans[i]->base);
+            }}
+        }}
+        *need_yield = free_up_channels(group, rx_chan);
+    }}
+    return ESP_OK;
+}}
+
+"""
+    source = source[:force_start] + force_function + source[force_end:]
+    source_target.write_text(source, encoding="utf-8")
+
+    public = public_target.read_text(encoding="utf-8")
+    if "esp_err_t dma2d_dequeue" not in public:
+        force_doc = "/**\n * @brief Force end an in-flight 2D-DMA transaction\n"
+        if force_doc not in public:
+            raise RuntimeError("ESP-IDF DMA2D public force-end documentation not found")
+        declaration = """/**
+ * @brief Remove a transaction that is still waiting in the DMA2D pool.
+ */
+esp_err_t dma2d_dequeue(dma2d_pool_handle_t dma2d_pool, dma2d_trans_t *trans);
+
+"""
+        public = public.replace(force_doc, f"{declaration}{force_doc}", 1)
+        public_target.write_text(public, encoding="utf-8")
+
+    for jpeg_name in ("jpeg_decode.c", "jpeg_encode.c"):
+        jpeg_target = framework_dir / "components" / "esp_driver_jpeg" / jpeg_name
+        if not jpeg_target.exists():
+            continue
+        jpeg = jpeg_target.read_text(encoding="utf-8")
+        old = "    dma2d_force_end(decoder_engine->trans_desc, &need_yield);" if jpeg_name == "jpeg_decode.c" else "    dma2d_force_end(encoder_engine->trans_desc, &need_yield);"
+        engine = "decoder_engine" if jpeg_name == "jpeg_decode.c" else "encoder_engine"
+        new = f"""    if (dma2d_dequeue({engine}->dma2d_group_handle, {engine}->trans_desc) != ESP_OK) {{
+        dma2d_force_end({engine}->trans_desc, &need_yield);
+    }}"""
+        if old in jpeg:
+            jpeg_target.write_text(jpeg.replace(old, new, 1), encoding="utf-8")
+
+    print("MIPI DSI patch: backported ESP-IDF DMA2D dequeue and force-end race fixes")
+
+
 def main() -> None:
     if len(sys.argv) > 1:
         framework_dir = sys.argv[1]
@@ -2522,6 +2908,7 @@ def main() -> None:
     _patch_jpeg_encode_dma2d_burst(framework_path)
     _patch_dma2d_yuv2rgb_full_range(framework_path)
     _patch_ppa_srm_dma_stall(framework_path)
+    _patch_dma2d_transaction_race(framework_path)
 
 
 if env is not None or len(sys.argv) > 1:

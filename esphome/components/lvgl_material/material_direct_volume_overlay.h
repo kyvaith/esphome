@@ -5,14 +5,21 @@
 #include "esphome/core/component.h"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+
+#ifdef USE_ESP32
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#endif
 
 namespace esphome::lvgl_material {
 
 class MaterialDirectVolumeOverlay : public Component {
  public:
   static constexpr size_t MAX_SCENE_CONTROLLERS = 4;
+  static constexpr int SCRATCH_BAND_ROWS = 128;
 
   explicit MaterialDirectVolumeOverlay(lvgl::LvglComponent *component) : lvgl_component_(component) {}
 
@@ -34,15 +41,16 @@ class MaterialDirectVolumeOverlay : public Component {
   }
 
   void setup() override;
+  void loop() override;
   void on_shutdown() override;
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::PROCESSOR - 5.0f; }
 
   bool prepare();
-  bool begin();
+  bool begin(int value_pct = -1, int visual_pct = -1);
   void cancel_prepare();
   void end(bool restore_screen = true);
-  bool is_active() const { return this->active_; }
+  bool is_active() const { return this->active_.load(std::memory_order_acquire); }
 
   void update(int value_pct, int visual_pct);
   void update_drag_point(int value_pct, int visual_pct, int touch_x, int touch_y);
@@ -62,16 +70,29 @@ class MaterialDirectVolumeOverlay : public Component {
   };
 
   void release_();
+  bool ensure_persistent_resources_();
+  void release_persistent_resources_();
   bool suspend_scene_controllers_();
   void resume_scene_controllers_();
   bool borrow_scene_frame_();
   void reset_visual_cache_();
   bool update_geometry_();
   bool rebuild_background_();
+  bool compose_region_(lv_color_t *buffer, int stride, int origin_x, int origin_y, int width, int height,
+                       int visual_pct, int value_pct);
+  bool restore_background_region_(int x, int y, int width, int height);
+  bool present_composed_region_(int x, int y, int width, int height, int visual_pct, int value_pct);
   void point_for_pct_(int pct, float &x, float &y) const;
-  bool direct_draw_value_(int value_pct);
+  bool draw_value_into_region_(lv_color_t *buffer, int stride, int origin_x, int origin_y, int width, int height,
+                               int value_pct);
+  bool render_frame_(int visual_pct, int value_pct);
   bool direct_update_(int visual_pct, int value_pct);
   void update_native_(int value_pct, int visual_pct);
+#ifdef USE_ESP32
+  static void worker_(void *arg);
+  bool ensure_worker_();
+  void quiesce_worker_();
+#endif
   void redraw_track_in_region_(lv_color_t *buffer, int stride, int origin_x, int origin_y, int width, int height,
                                int first_pct, int last_pct, lv_color_t color);
 
@@ -93,6 +114,7 @@ class MaterialDirectVolumeOverlay : public Component {
   const lv_color_t *original_{nullptr};
   lv_color_t *background_{nullptr};
   lv_color_t *scratch_{nullptr};
+  lv_color_t *activation_patch_{nullptr};
   lv_draw_buf_t *glyph_buffer_{nullptr};
 
   float point_x_[101]{};
@@ -110,8 +132,21 @@ class MaterialDirectVolumeOverlay : public Component {
   int label_y_{0};
   int label_width_{0};
   int label_height_{0};
+  int activation_patch_x_{0};
+  int activation_patch_y_{0};
+  int activation_patch_width_{0};
+  int activation_patch_height_{0};
   size_t scratch_capacity_{0};
+  size_t scratch_allocated_capacity_{0};
+  int glyph_buffer_width_{0};
+  int glyph_buffer_height_{0};
+  size_t activation_patch_capacity_{0};
+  size_t activation_patch_required_capacity_{0};
+  bool activation_patch_valid_{false};
   bool original_owned_{false};
+  display::FrameBufferLease background_lease_{};
+  const uint8_t *reserved_original_frame_{nullptr};
+  bool stable_background_{false};
   bool activation_widget_was_visible_{true};
   lv_opa_t scrim_opacity_{LV_OPA_70};
   lv_color_t inactive_color_{lv_color_hex(0x382949)};
@@ -121,13 +156,31 @@ class MaterialDirectVolumeOverlay : public Component {
   int visual_pct_{-1};
   int value_pct_{-1};
   bool prepared_{false};
-  bool active_{false};
+  std::atomic<bool> active_{false};
   bool presented_{false};
   bool frame_buffer_presentation_active_{false};
   bool invalidation_suspended_{false};
   std::array<lvgl::DirectSceneController *, MAX_SCENE_CONTROLLERS> scene_controllers_{};
   size_t scene_controller_count_{0};
   bool scene_controllers_suspended_{false};
+#ifdef USE_ESP32
+  static constexpr int NO_PENDING_UPDATE = -1;
+  std::atomic<int> pending_update_{NO_PENDING_UPDATE};
+  std::atomic<int> last_requested_update_{NO_PENDING_UPDATE};
+  std::atomic<bool> worker_busy_{false};
+  std::atomic<bool> worker_failed_{false};
+  std::atomic<uint32_t> pending_requested_us_{0};
+  std::atomic<uint32_t> stat_requests_{0};
+  std::atomic<uint32_t> stat_renders_{0};
+  std::atomic<uint32_t> stat_coalesced_{0};
+  std::atomic<uint32_t> stat_total_age_us_{0};
+  std::atomic<uint32_t> stat_max_age_us_{0};
+  std::atomic<uint32_t> stat_total_render_us_{0};
+  std::atomic<uint32_t> stat_max_render_us_{0};
+  TaskHandle_t worker_handle_{nullptr};
+  StackType_t *worker_stack_{nullptr};
+  StaticTask_t worker_storage_{};
+#endif
 };
 
 }  // namespace esphome::lvgl_material

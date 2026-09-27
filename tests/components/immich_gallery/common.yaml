@@ -1,5 +1,6 @@
 immich_gallery:
   id: test_immich_gallery
+  image_size: preview
 
 interval:
   - interval: 60s

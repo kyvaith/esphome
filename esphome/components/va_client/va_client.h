@@ -151,6 +151,13 @@ class VaClient : public Component {
   std::atomic<uint8_t> current_phase_{static_cast<uint8_t>(Phase::IDLE)};
   std::vector<OnPhaseTrigger *> phase_triggers_;
   std::vector<OnTranscriptTrigger *> transcript_triggers_;
+  // Transcript callbacks are delivered on the ESPHome main loop. Keep the
+  // last complete value for each role there so duplicate observer events from
+  // the backend cannot animate the same paragraph twice. A generation makes
+  // deferred messages from a previous session harmless.
+  std::atomic<uint32_t> transcript_generation_{0};
+  std::string last_user_transcript_;
+  std::string last_assistant_transcript_;
   std::vector<OnRepeatedFailureTrigger *> repeated_failure_triggers_;
   std::vector<OnFollowupOpenedTrigger *> followup_opened_triggers_;
 

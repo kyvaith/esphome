@@ -125,7 +125,11 @@ CONFIG_SCHEMA = cv.typed_schema(
 )
 
 
-def _configure_sdio(config):
+def _configure_sdio(config, modern_hosted):
+    if modern_hosted:
+        esp32.add_idf_sdkconfig_option(
+            "CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE", True
+        )
     slot = config[CONF_SLOT]
     esp32.add_idf_sdkconfig_option(
         f"CONFIG_ESP_HOSTED_SDIO_SLOT_{slot}",
@@ -217,6 +221,8 @@ def _configure_spi(config):
 
 async def to_code(config):
     add_define("USE_ESP32_HOSTED")
+    idf_ver = esp32.idf_version()
+    modern_hosted = idf_ver >= cv.Version(5, 5, 0)
     transport = config[CONF_TYPE]
     transport_prefix = "SDIO" if transport == "sdio" else "SPI"
 
@@ -239,10 +245,15 @@ async def to_code(config):
         f"CONFIG_SLAVE_IDF_TARGET_{config[CONF_VARIANT]}",  # NOLINT
         True,
     )
+    if modern_hosted:
+        esp32.add_idf_sdkconfig_option(
+            f"CONFIG_ESP_HOSTED_CP_TARGET_{config[CONF_VARIANT]}",  # NOLINT
+            True,
+        )
 
     # Transport-specific configuration
     if transport == "sdio":
-        _configure_sdio(config)
+        _configure_sdio(config, modern_hosted)
     else:
         _configure_spi(config)
 
@@ -253,7 +264,6 @@ async def to_code(config):
         esp32.add_idf_sdkconfig_option("CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM", True)
 
     # Library versions
-    idf_ver = esp32.idf_version()
     os.environ["ESP_IDF_VERSION"] = f"{idf_ver.major}.{idf_ver.minor}"
     if idf_ver >= cv.Version(5, 5, 0):
         esp32.add_idf_component(name="espressif/esp_wifi_remote", ref="1.5.1")

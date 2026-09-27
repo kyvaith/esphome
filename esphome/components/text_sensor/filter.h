@@ -4,6 +4,7 @@
 #ifdef USE_TEXT_SENSOR_FILTER
 
 #include <array>
+#include <cstdint>
 
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
@@ -116,6 +117,20 @@ class PrependFilter : public Filter {
 
  protected:
   const char *prefix_;
+};
+
+/// Decode common HTML entities, remove markup, and normalize display text.
+class SanitizeHtmlFilter : public Filter {
+ public:
+  SanitizeHtmlFilter(bool decode_entities, bool strip_tags, bool collapse_whitespace)
+      : decode_entities_(decode_entities), strip_tags_(strip_tags), collapse_whitespace_(collapse_whitespace) {}
+
+  bool new_value(std::string &value) override;
+
+ protected:
+  bool decode_entities_;
+  bool strip_tags_;
+  bool collapse_whitespace_;
 };
 
 struct Substitution {

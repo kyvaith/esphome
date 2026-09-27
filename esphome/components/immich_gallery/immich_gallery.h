@@ -22,6 +22,7 @@ struct ImmichPhoto {
 class ImmichGallery : public Component {
  public:
   void dump_config() override;
+  void set_image_size(const std::string &image_size) { this->image_size_ = image_size; }
 
   std::string trim_url(std::string url) const;
   bool valid_base_url(const std::string &url) const;
@@ -43,7 +44,9 @@ class ImmichGallery : public Component {
   static std::string json_array_from_csv_(const std::string &csv);
   static bool orientation_matches_(const ImmichPhoto &photo, const std::string &filter);
   static std::string parse_date_(const std::string &raw);
-  static std::string parse_asset_object_(JsonObject asset, const std::string &base_url, ImmichPhoto *out);
+  std::string parse_asset_object_(JsonObject asset, const std::string &base_url, ImmichPhoto *out) const;
+
+  std::string image_size_{"preview"};
 };
 
 }  // namespace esphome::immich_gallery

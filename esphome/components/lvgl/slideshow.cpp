@@ -30,12 +30,8 @@ void SlideshowController::setup() {
   if (this->use_direct_) {
 #if CONFIG_FREERTOS_UNICORE
     constexpr BaseType_t worker_core = tskNO_AFFINITY;
-#elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0) && CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0
-    constexpr BaseType_t worker_core = 1;
-#elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1) && CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1
-    constexpr BaseType_t worker_core = 0;
 #else
-    constexpr BaseType_t worker_core = 1;
+    const BaseType_t worker_core = xPortGetCoreID() == 0 ? 1 : 0;
 #endif
     constexpr uint32_t worker_stack_size = 8192;
     this->direct_worker_stack_ = static_cast<StackType_t *>(
@@ -67,6 +63,14 @@ void SlideshowController::loop() {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   if (this->use_direct_ && this->direct_worker_handle_ != nullptr) {
     if (this->direct_start_pending_.exchange(false)) {
+      if (::lvgl_esphome_snapshot_is_active()) {
+        // Application transitions own the DSI framebuffers and the PPA queue.
+        // Keep the slideshow request pending until that short hand-off is
+        // complete instead of competing with its first visible frame.
+        if (!this->paused_)
+          this->direct_start_pending_.store(true);
+        return;
+      }
       if (!this->start_direct_worker_()) {
         // Opening an app temporarily keeps the final snapshot frame pinned.
         // That hand-off is expected to last a few LVGL loops; retry instead of
@@ -112,8 +116,8 @@ void SlideshowController::loop() {
 
   // Do not jump forward after a blocked main loop or while the image was hidden.
   if (!this->phase_complete_) {
-    this->phase_elapsed_ms_ = std::min(this->phase_duration_ms_,
-                                       this->phase_elapsed_ms_ + std::min(delta, this->frame_interval_ms_ * 3U));
+    this->phase_elapsed_ms_ =
+        std::min(this->phase_duration_ms_, this->phase_elapsed_ms_ + std::min(delta, this->frame_interval_ms_ * 3U));
     this->phase_complete_ = this->phase_elapsed_ms_ >= this->phase_duration_ms_;
   }
   if (this->direct_active_) {
@@ -205,42 +209,16 @@ bool SlideshowController::pause_for_overlay() {
   if (component == nullptr || this->obj_ == nullptr || !lv_obj_is_valid(this->obj_))
     return false;
 
-  lv_display_t *display = lv_obj_get_display(this->obj_);
-  if (display == nullptr)
-    return false;
-  const int width = lv_display_get_horizontal_resolution(display);
-  const int height = lv_display_get_vertical_resolution(display);
-  constexpr size_t BYTES_PER_PIXEL = 3;
-  const size_t frame_size = static_cast<size_t>(width) * height * BYTES_PER_PIXEL;
-  if (width <= 0 || height <= 0 || !this->ensure_subpixel_scratch_(frame_size))
-    return false;
-
-  // Preserve the exact frame currently scanned by DSI. Re-rendering the
-  // transformed source through LVGL changes its crop and can expose partially
-  // replaced JPEG rows while the navigation HUD is visible.
-  if (!component->direct_capture_rgb888(this->subpixel_scratch_, width * BYTES_PER_PIXEL, 0, 0, width, height))
-    return false;
+  // The direct volume overlay immediately opens an exclusive DSI framebuffer
+  // session and reads the currently scanned frame from that pool. Do not make
+  // another 800x800 RGB888 copy here: gallery JPEG buffers can leave less than
+  // 1.92 MB contiguous PSRAM even though the active DSI frame is already the
+  // exact immutable background the overlay needs.
   if (!this->complete_snapshot_handoff())
     return false;
-
+  this->overlay_frame_active_ = false;
   this->overlay_frame_dsc_ = {};
-  this->overlay_frame_dsc_.header.cf = LV_COLOR_FORMAT_RGB888;
-  this->overlay_frame_dsc_.header.w = width;
-  this->overlay_frame_dsc_.header.h = height;
-  this->overlay_frame_dsc_.header.stride = static_cast<uint32_t>(width) * BYTES_PER_PIXEL;
-  this->overlay_frame_dsc_.data_size = frame_size;
-  this->overlay_frame_dsc_.data = this->subpixel_scratch_;
-  this->overlay_frame_active_ = true;
-
-  lv_lock();
-  if (lv_obj_is_valid(this->obj_)) {
-    lv_image_set_src(this->obj_, &this->overlay_frame_dsc_);
-    lv_image_set_pivot(this->obj_, width / 2, height / 2);
-    lv_image_set_scale(this->obj_, LV_SCALE_NONE);
-    lv_obj_set_pos(this->obj_, 0, 0);
-    lv_obj_set_size(this->obj_, width, height);
-  }
-  lv_unlock();
+  this->release_subpixel_scratch_();
   return true;
 #else
   return this->pause();
@@ -406,8 +384,8 @@ void SlideshowController::reset_transform() {
 bool SlideshowController::transition_to(const lv_image_dsc_t *source, uint32_t duration_ms) {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   if (!this->use_direct_ || this->direct_worker_handle_ == nullptr || source == nullptr || source->data == nullptr ||
-      source->header.w < 2 || source->header.h < 2 ||
-      this->transition_requested_.load() || this->transition_active_.load()) {
+      source->header.w < 2 || source->header.h < 2 || this->transition_requested_.load() ||
+      this->transition_active_.load()) {
     return false;
   }
 
@@ -549,8 +527,8 @@ bool SlideshowController::get_direct_overlay_frame(DirectSceneFrame &frame) cons
 
 bool SlideshowController::begin_direct_overlay_background_render() {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
-  if (!this->direct_overlay_suspended_ || !this->overlay_frame_active_ || this->obj_ == nullptr ||
-      this->direct_source_.data == nullptr || this->direct_component_ == nullptr || !lv_obj_is_valid(this->obj_)) {
+  if (!this->direct_overlay_suspended_ || this->obj_ == nullptr || this->direct_source_.data == nullptr ||
+      this->direct_component_ == nullptr || !lv_obj_is_valid(this->obj_)) {
     return false;
   }
 
@@ -562,7 +540,7 @@ bool SlideshowController::begin_direct_overlay_background_render() {
     if (!this->calculate_direct_crop_(&this->direct_source_, this->phase_elapsed_ms_, &crop_x, &crop_y, &crop_width,
                                       &crop_height) ||
         !this->direct_component_->direct_resolve_image_crop(&this->direct_source_, &crop_x, &crop_y, &crop_width,
-                                                             &crop_height)) {
+                                                            &crop_height)) {
       return false;
     }
   }
@@ -574,9 +552,8 @@ bool SlideshowController::begin_direct_overlay_background_render() {
   if (output_width <= 0)
     return false;
 
-  const uint32_t scale_q16 =
-      (static_cast<uint32_t>(output_width) * 16U + static_cast<uint32_t>(crop_width) - 1U) /
-      static_cast<uint32_t>(crop_width);
+  const uint32_t scale_q16 = (static_cast<uint32_t>(output_width) * 16U + static_cast<uint32_t>(crop_width) - 1U) /
+                             static_cast<uint32_t>(crop_width);
   const uint16_t lvgl_scale = static_cast<uint16_t>(std::min<uint32_t>(UINT16_MAX, scale_q16 * 16U));
   const int image_x = -static_cast<int>((static_cast<int64_t>(crop_x) * scale_q16 + 8) / 16);
   const int image_y = -static_cast<int>((static_cast<int64_t>(crop_y) * scale_q16 + 8) / 16);
@@ -615,8 +592,7 @@ void SlideshowController::end_direct_overlay_background_render() {
     if (invalidation_enabled)
       lv_display_enable_invalidation(display, false);
     lv_image_set_src(this->obj_, &this->overlay_frame_dsc_);
-    lv_image_set_pivot(this->obj_, this->overlay_frame_dsc_.header.w / 2,
-                       this->overlay_frame_dsc_.header.h / 2);
+    lv_image_set_pivot(this->obj_, this->overlay_frame_dsc_.header.w / 2, this->overlay_frame_dsc_.header.h / 2);
     lv_image_set_scale(this->obj_, LV_SCALE_NONE);
     lv_obj_set_pos(this->obj_, 0, 0);
     lv_obj_set_size(this->obj_, this->overlay_frame_dsc_.header.w, this->overlay_frame_dsc_.header.h);
@@ -647,9 +623,8 @@ void SlideshowController::log_memory_usage(const char *phase) const {
   const size_t old_bytes = this->transition_old_frame_ != nullptr && this->transition_old_frame_owned_
                                ? this->transition_old_frame_size_
                                : 0;
-  const size_t new_bytes = this->transition_new_frame_ != nullptr && this->transition_new_frame_owned_
-                               ? this->transition_frame_size_
-                               : 0;
+  const size_t new_bytes =
+      this->transition_new_frame_ != nullptr && this->transition_new_frame_owned_ ? this->transition_frame_size_ : 0;
   ESP_LOGW(TAG, "%s memory=%uK worker=%uK transition_old=%uK transition_new=%uK subpixel=%uK",
            phase == nullptr ? "runtime" : phase, (unsigned) (this->memory_usage_bytes() / 1024),
            (unsigned) (worker_bytes / 1024), (unsigned) (old_bytes / 1024), (unsigned) (new_bytes / 1024),
@@ -702,13 +677,13 @@ bool SlideshowController::update_direct_frame_(uint32_t elapsed_ms) {
 bool SlideshowController::calculate_direct_crop_(const lv_image_dsc_t *source, uint32_t elapsed_ms, int *crop_x,
                                                  int *crop_y, int *crop_width, int *crop_height,
                                                  uint8_t *subpixel_alpha, bool *subpixel_vertical) const {
-  if (source == nullptr || source->data == nullptr || source->header.w < 2 ||
-      source->header.h < 2 || this->phase_duration_ms_ == 0 || crop_x == nullptr || crop_y == nullptr ||
-      crop_width == nullptr || crop_height == nullptr)
+  if (source == nullptr || source->data == nullptr || source->header.w < 2 || source->header.h < 2 ||
+      this->phase_duration_ms_ == 0 || crop_x == nullptr || crop_y == nullptr || crop_width == nullptr ||
+      crop_height == nullptr)
     return false;
 
-  const float linear = std::clamp(static_cast<float>(elapsed_ms) / static_cast<float>(this->phase_duration_ms_),
-                                  0.0f, 1.0f);
+  const float linear =
+      std::clamp(static_cast<float>(elapsed_ms) / static_cast<float>(this->phase_duration_ms_), 0.0f, 1.0f);
   // The direct PPA path works with integer source coordinates. Smoothstep
   // spends too much of every phase below a one-pixel delta, which looks like
   // repeated pauses followed by a jump. Constant velocity keeps useful source
@@ -719,10 +694,8 @@ bool SlideshowController::calculate_direct_crop_(const lv_image_dsc_t *source, u
   // crop size therefore produces large 427 -> 413 -> 400 pixel jumps on an
   // 800px viewport. Keep one scale for the whole phase and animate only the
   // source origin; this remains a single hardware SRM operation per frame.
-  const float fixed_zoom =
-      (static_cast<float>(this->zoom_start_) + static_cast<float>(this->zoom_end_)) * 0.5f;
-  const float configured_zoom =
-      fixed_zoom / static_cast<float>(LV_SCALE_NONE);
+  const float fixed_zoom = (static_cast<float>(this->zoom_start_) + static_cast<float>(this->zoom_end_)) * 0.5f;
+  const float configured_zoom = fixed_zoom / static_cast<float>(LV_SCALE_NONE);
 
   const float source_aspect = static_cast<float>(source->header.w) / static_cast<float>(source->header.h);
   constexpr float VIEWPORT_ASPECT = 1.0f;
@@ -758,10 +731,10 @@ bool SlideshowController::calculate_direct_crop_(const lv_image_dsc_t *source, u
     effective_target_x = 0.0f;
   }
   const float pan_progress = directed * 2.0f - 1.0f;
-  const float center_x = static_cast<float>(source->header.w) * 0.5f +
-                         effective_target_x * movable_x * 0.5f * pan_progress;
-  const float center_y = static_cast<float>(source->header.h) * 0.5f +
-                         effective_target_y * movable_y * 0.5f * pan_progress;
+  const float center_x =
+      static_cast<float>(source->header.w) * 0.5f + effective_target_x * movable_x * 0.5f * pan_progress;
+  const float center_y =
+      static_cast<float>(source->header.h) * 0.5f + effective_target_y * movable_y * 0.5f * pan_progress;
   const float max_crop_x = static_cast<float>(static_cast<int>(source->header.w) - *crop_width);
   const float max_crop_y = static_cast<float>(static_cast<int>(source->header.h) - *crop_height);
   const float precise_crop_x = std::clamp(center_x - *crop_width * 0.5f, 0.0f, max_crop_x);
@@ -796,15 +769,14 @@ bool SlideshowController::render_direct_frame_(const lv_image_dsc_t *source, Lvg
   int crop_height = 0;
   uint8_t subpixel_alpha = 0;
   bool subpixel_vertical = false;
-  if (!this->calculate_direct_crop_(source, elapsed_ms, &crop_x, &crop_y, &crop_width, &crop_height,
-                                    &subpixel_alpha, &subpixel_vertical))
+  if (!this->calculate_direct_crop_(source, elapsed_ms, &crop_x, &crop_y, &crop_width, &crop_height, &subpixel_alpha,
+                                    &subpixel_vertical))
     return false;
   if (!component->direct_resolve_image_crop(source, &crop_x, &crop_y, &crop_width, &crop_height))
     return false;
 
-  const bool subpixel_in_bounds = subpixel_vertical
-                                      ? crop_y + crop_height < static_cast<int>(source->header.h)
-                                      : crop_x + crop_width < static_cast<int>(source->header.w);
+  const bool subpixel_in_bounds = subpixel_vertical ? crop_y + crop_height < static_cast<int>(source->header.h)
+                                                    : crop_x + crop_width < static_cast<int>(source->header.w);
   if (!subpixel_in_bounds)
     subpixel_alpha = 0;
 
@@ -816,34 +788,57 @@ bool SlideshowController::render_direct_frame_(const lv_image_dsc_t *source, Lvg
       this->last_direct_crop_y_ == crop_y && this->last_direct_crop_width_ == crop_width &&
       this->last_direct_crop_height_ == crop_height && this->last_direct_subpixel_alpha_ == subpixel_alpha &&
       this->last_direct_subpixel_vertical_ == subpixel_vertical) {
+    this->stat_reused_frames_.fetch_add(1, std::memory_order_relaxed);
     return true;
   }
+  const uint32_t render_started_us = micros();
   const bool source_rgb888 = static_cast<lv_color_format_t>(source->header.cf) == LV_COLOR_FORMAT_RGB888;
-  const bool direct_rgb888 = source_rgb888 && crop_width == component->get_width() &&
-                             crop_height == component->get_height();
+  const bool source_rgb565 = static_cast<lv_color_format_t>(source->header.cf) == LV_COLOR_FORMAT_RGB565;
+  const bool direct_unscaled = (source_rgb888 || source_rgb565) && crop_width == component->get_width() &&
+                               crop_height == component->get_height();
+  const bool direct_rgb888 =
+      source_rgb888 && crop_width == component->get_width() && crop_height == component->get_height();
   bool presented;
-  if (direct_rgb888 && subpixel_alpha != 0) {
-    presented = component->direct_present_rgb888_crop_subpixel(
-        source, crop_x, crop_y, crop_width, crop_height, subpixel_alpha, subpixel_vertical,
-        this->direct_blend_client_);
+  if (direct_unscaled && subpixel_alpha != 0) {
+    presented = component->direct_present_unscaled_crop_subpixel(
+        source, crop_x, crop_y, crop_width, crop_height, subpixel_alpha, subpixel_vertical, this->direct_blend_client_);
   } else if (direct_rgb888) {
     presented = component->direct_present_rgb888_crop_dma2d(source, crop_x, crop_y, crop_width, crop_height);
-  } else if (source_rgb888 && subpixel_alpha != 0) {
-    const size_t scratch_size = static_cast<size_t>(crop_width) * static_cast<size_t>(crop_height) * 3U;
+  } else if ((source_rgb888 || source_rgb565) && subpixel_alpha != 0) {
+    const size_t bytes_per_pixel = source_rgb565 ? 2U : 3U;
+    const size_t scratch_size =
+        static_cast<size_t>(crop_width) * static_cast<size_t>(crop_height) * bytes_per_pixel;
     if (this->ensure_subpixel_scratch_(scratch_size)) {
-      presented = component->direct_present_scaled_rgb888_crop_subpixel(
-          source, crop_x, crop_y, crop_width, crop_height, subpixel_alpha, subpixel_vertical,
-          this->subpixel_scratch_, this->subpixel_scratch_size_, this->direct_blend_client_,
-          this->direct_srm_client_);
+      presented = component->direct_present_scaled_crop_subpixel(
+          source, crop_x, crop_y, crop_width, crop_height, subpixel_alpha, subpixel_vertical, this->subpixel_scratch_,
+          this->subpixel_scratch_size_, this->direct_blend_client_, this->direct_srm_client_);
     } else {
       presented = component->direct_present_image_crop(source, crop_x, crop_y, crop_width, crop_height,
-                                                         this->direct_srm_client_);
+                                                       this->direct_srm_client_);
     }
   } else {
-    presented = component->direct_present_image_crop(source, crop_x, crop_y, crop_width, crop_height,
-                                                       this->direct_srm_client_);
+    presented =
+        component->direct_present_image_crop(source, crop_x, crop_y, crop_width, crop_height, this->direct_srm_client_);
   }
   if (presented) {
+    const uint32_t render_us = micros() - render_started_us;
+    this->stat_last_render_us_.store(render_us, std::memory_order_relaxed);
+    uint32_t previous_max = this->stat_max_render_us_.load(std::memory_order_relaxed);
+    while (render_us > previous_max &&
+           !this->stat_max_render_us_.compare_exchange_weak(previous_max, render_us, std::memory_order_relaxed)) {
+    }
+    this->stat_presented_frames_.fetch_add(1, std::memory_order_relaxed);
+    const uint32_t now_ms = millis();
+    if (this->stat_fps_window_started_ms_ == 0)
+      this->stat_fps_window_started_ms_ = now_ms;
+    this->stat_fps_window_frames_++;
+    const uint32_t fps_elapsed_ms = now_ms - this->stat_fps_window_started_ms_;
+    if (fps_elapsed_ms >= 2000) {
+      this->stat_measured_fps_.store(static_cast<float>(this->stat_fps_window_frames_) * 1000.0f / fps_elapsed_ms,
+                                     std::memory_order_relaxed);
+      this->stat_fps_window_started_ms_ = now_ms;
+      this->stat_fps_window_frames_ = 0;
+    }
     this->last_direct_source_data_ = source->data;
     this->last_direct_crop_x_ = crop_x;
     this->last_direct_crop_y_ = crop_y;
@@ -851,6 +846,8 @@ bool SlideshowController::render_direct_frame_(const lv_image_dsc_t *source, Lvg
     this->last_direct_crop_height_ = crop_height;
     this->last_direct_subpixel_alpha_ = subpixel_alpha;
     this->last_direct_subpixel_vertical_ = subpixel_vertical;
+  } else {
+    this->stat_rejected_frames_.fetch_add(1, std::memory_order_relaxed);
   }
   return presented;
 #else
@@ -873,6 +870,8 @@ void SlideshowController::reset_direct_frame_cache_() {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
 bool SlideshowController::start_direct_worker_() {
   if (!this->use_direct_ || this->paused_ || this->direct_worker_handle_ == nullptr || this->obj_ == nullptr)
+    return false;
+  if (::lvgl_esphome_snapshot_is_active())
     return false;
 
   lv_image_dsc_t source{};
@@ -936,12 +935,11 @@ bool SlideshowController::ensure_transition_buffers_(const lv_image_dsc_t *incom
 
   constexpr size_t ALIGNMENT = 64;
   constexpr size_t BYTES_PER_PIXEL = 3;
-  constexpr size_t BLACK_BAND_ROWS = 64;
+  constexpr size_t TRANSITION_BAND_ROWS = 64;
   const size_t required_size = static_cast<size_t>(width) * height * BYTES_PER_PIXEL;
-  const size_t black_band_size = static_cast<size_t>(width) * BLACK_BAND_ROWS * 3U;
-  const bool black_band_ready = !this->fade_through_black_ ||
-                                (this->transition_old_frame_ != nullptr &&
-                                 this->transition_old_frame_size_ == black_band_size);
+  const size_t band_size = static_cast<size_t>(width) * TRANSITION_BAND_ROWS * BYTES_PER_PIXEL;
+  const bool black_band_ready = !this->fade_through_black_ || (this->transition_old_frame_ != nullptr &&
+                                                               this->transition_old_frame_size_ == band_size);
   if (this->transition_new_frame_ != nullptr && this->transition_frame_size_ == required_size && black_band_ready) {
     return true;
   }
@@ -956,8 +954,7 @@ bool SlideshowController::ensure_transition_buffers_(const lv_image_dsc_t *incom
   // this removes the PSRAM allocation burst that can starve the DSI FIFO.
   const lv_image_dsc_t &old_source = this->direct_source_;
   const bool reusable_old_source = old_source.data != nullptr && old_source.data != incoming_source->data &&
-                                   old_source.data_size >= required_size &&
-                                   esp_ptr_external_ram(old_source.data) &&
+                                   old_source.data_size >= required_size && esp_ptr_external_ram(old_source.data) &&
                                    (reinterpret_cast<uintptr_t>(old_source.data) % ALIGNMENT) == 0;
   if (reusable_old_source) {
     this->transition_new_frame_ = const_cast<uint8_t *>(old_source.data);
@@ -965,42 +962,59 @@ bool SlideshowController::ensure_transition_buffers_(const lv_image_dsc_t *incom
     ESP_LOGD(TAG, "Reusing %u-byte old image source as RGB888 transition workspace",
              static_cast<unsigned>(old_source.data_size));
   } else {
-    this->transition_new_frame_ =
-        static_cast<uint8_t *>(heap_caps_aligned_alloc(ALIGNMENT, required_size, caps));
+    this->transition_new_frame_ = static_cast<uint8_t *>(heap_caps_aligned_alloc(ALIGNMENT, required_size, caps));
     this->transition_new_frame_owned_ = this->transition_new_frame_ != nullptr;
   }
   if (this->transition_new_frame_ == nullptr) {
-    ESP_LOGW(TAG, "Unable to allocate RGB888 transition frame (%u bytes, largest PSRAM block=%u)",
-             static_cast<unsigned>(required_size),
+    // A full RGB888 workspace is only an optimization. Under realistic
+    // gallery pressure PSRAM can have enough aggregate space but no contiguous
+    // 1.92 MB block. Keep the full-resolution transition and fall back to a
+    // small PPA SRM/blend band instead of retrying the doomed allocation on
+    // every slideshow tick.
+    this->transition_new_frame_ = static_cast<uint8_t *>(heap_caps_aligned_alloc(ALIGNMENT, band_size, caps));
+    this->transition_new_frame_owned_ = this->transition_new_frame_ != nullptr;
+    if (this->transition_new_frame_ == nullptr) {
+      ESP_LOGW(TAG, "Unable to allocate RGB888 transition frame or %u-byte band (largest PSRAM block=%u)",
+               static_cast<unsigned>(band_size),
+               static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
+      this->release_transition_buffers_();
+      return false;
+    }
+    this->transition_banded_ = true;
+    this->transition_frame_size_ = band_size;
+    ESP_LOGI(TAG, "Using %uK banded RGB888 transition workspace (largest_free=%u)",
+             static_cast<unsigned>(band_size / 1024U),
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
-    this->release_transition_buffers_();
-    return false;
+  } else {
+    this->transition_frame_size_ = required_size;
   }
-  this->transition_frame_size_ = required_size;
-  if (this->transition_new_frame_owned_) {
-    ESP_LOGI(TAG, "RGB888 transition frame allocated: total=%u largest_free=%u",
-             static_cast<unsigned>(required_size),
+  if (this->transition_new_frame_owned_ && !this->transition_banded_) {
+    ESP_LOGI(TAG, "RGB888 transition frame allocated: total=%u largest_free=%u", static_cast<unsigned>(required_size),
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
   }
 
   if (this->fade_through_black_) {
+    if (this->transition_banded_) {
+      memset(this->transition_new_frame_, 0, band_size);
+      esp_cache_msync(this->transition_new_frame_, band_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+      return true;
+    }
     const size_t reusable_tail_size = old_source.data_size > required_size ? old_source.data_size - required_size : 0;
-    if (!this->transition_new_frame_owned_ && reusable_tail_size >= black_band_size) {
+    if (!this->transition_new_frame_owned_ && reusable_tail_size >= band_size) {
       this->transition_old_frame_ = this->transition_new_frame_ + required_size;
       this->transition_old_frame_owned_ = false;
     } else {
-      this->transition_old_frame_ =
-          static_cast<uint8_t *>(heap_caps_aligned_alloc(ALIGNMENT, black_band_size, caps));
+      this->transition_old_frame_ = static_cast<uint8_t *>(heap_caps_aligned_alloc(ALIGNMENT, band_size, caps));
       this->transition_old_frame_owned_ = this->transition_old_frame_ != nullptr;
     }
     if (this->transition_old_frame_ == nullptr) {
-      ESP_LOGW(TAG, "Unable to allocate %u-byte fade-to-black band", static_cast<unsigned>(black_band_size));
+      ESP_LOGW(TAG, "Unable to allocate %u-byte fade-to-black band", static_cast<unsigned>(band_size));
       this->release_transition_buffers_();
       return false;
     }
-    memset(this->transition_old_frame_, 0, black_band_size);
-    esp_cache_msync(this->transition_old_frame_, black_band_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-    this->transition_old_frame_size_ = black_band_size;
+    memset(this->transition_old_frame_, 0, band_size);
+    esp_cache_msync(this->transition_old_frame_, band_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    this->transition_old_frame_size_ = band_size;
   }
   return true;
 }
@@ -1014,6 +1028,7 @@ void SlideshowController::release_transition_buffers_() {
   this->transition_new_frame_ = nullptr;
   this->transition_old_frame_size_ = 0;
   this->transition_frame_size_ = 0;
+  this->transition_banded_ = false;
   this->transition_old_frame_owned_ = false;
   this->transition_new_frame_owned_ = false;
 }
@@ -1026,8 +1041,8 @@ bool SlideshowController::ensure_subpixel_scratch_(size_t required_size) {
     return true;
 
   this->release_subpixel_scratch_();
-  this->subpixel_scratch_ = static_cast<uint8_t *>(heap_caps_aligned_alloc(
-      ALIGNMENT, required_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+  this->subpixel_scratch_ = static_cast<uint8_t *>(
+      heap_caps_aligned_alloc(ALIGNMENT, required_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
   if (this->subpixel_scratch_ == nullptr) {
     ESP_LOGW(TAG, "Unable to allocate %u-byte scaled subpixel workspace (largest PSRAM block=%u)",
              static_cast<unsigned>(required_size),
@@ -1080,11 +1095,9 @@ bool SlideshowController::perform_direct_transition_(const lv_image_dsc_t *sourc
   int new_y = 0;
   int new_w = 0;
   int new_h = 0;
-  bool new_crop_valid =
-      this->calculate_direct_crop_(source, incoming_phase_ms, &new_x, &new_y, &new_w, &new_h);
+  bool new_crop_valid = this->calculate_direct_crop_(source, incoming_phase_ms, &new_x, &new_y, &new_w, &new_h);
   if (new_crop_valid) {
-    new_crop_valid =
-        this->direct_component_->direct_resolve_image_crop(source, &new_x, &new_y, &new_w, &new_h);
+    new_crop_valid = this->direct_component_->direct_resolve_image_crop(source, &new_x, &new_y, &new_w, &new_h);
   }
   if (!new_crop_valid) {
     restore_previous_motion();
@@ -1105,10 +1118,11 @@ bool SlideshowController::perform_direct_transition_(const lv_image_dsc_t *sourc
   const uint8_t *visible_old_frame = this->direct_component_->direct_get_stable_presented_frame(80);
   const uint32_t stable_wait_us = static_cast<uint32_t>(esp_timer_get_time() - stable_wait_started_us);
   const int64_t render_started_us = esp_timer_get_time();
-  const bool prepared = visible_old_frame != nullptr &&
-                        this->direct_component_->direct_render_image_crop_rgb888(
-                            source, new_x, new_y, new_w, new_h, this->transition_new_frame_,
-                            this->transition_frame_size_, this->direct_srm_client_);
+  const bool prepared =
+      visible_old_frame != nullptr &&
+      (this->transition_banded_ || this->direct_component_->direct_render_image_crop_rgb888(
+                                       source, new_x, new_y, new_w, new_h, this->transition_new_frame_,
+                                       this->transition_frame_size_, this->direct_srm_client_));
   const uint32_t render_us = static_cast<uint32_t>(esp_timer_get_time() - render_started_us);
   if (!prepared) {
     ESP_LOGW(TAG, "Unable to prepare direct transition frames");
@@ -1138,9 +1152,11 @@ bool SlideshowController::perform_direct_transition_(const lv_image_dsc_t *sourc
         fade_to_black = true;
       } else {
         if (fade_black_frame == nullptr) {
+          uint8_t *black_band = this->transition_banded_ ? this->transition_new_frame_ : this->transition_old_frame_;
+          const size_t black_band_size =
+              this->transition_banded_ ? this->transition_frame_size_ : this->transition_old_frame_size_;
           if (!this->direct_component_->direct_present_rgb888_solid_crossfade_banded(
-                  visible_old_frame, 255, this->transition_old_frame_, this->transition_old_frame_size_,
-                  this->direct_blend_client_)) {
+                  visible_old_frame, 255, black_band, black_band_size, this->direct_blend_client_)) {
             ESP_LOGW(TAG, "Unable to complete fade to black");
             restore_previous_motion();
             this->release_transition_buffers_();
@@ -1161,13 +1177,21 @@ bool SlideshowController::perform_direct_transition_(const lv_image_dsc_t *sourc
     const float eased = transition_progress * transition_progress * (3.0f - 2.0f * transition_progress);
     const uint8_t opacity = static_cast<uint8_t>(std::lround(eased * 255.0f));
     const int64_t frame_blend_started_us = esp_timer_get_time();
-    const bool presented = fade_to_black
-                               ? this->direct_component_->direct_present_rgb888_solid_crossfade_banded(
-                                     background, opacity, this->transition_old_frame_,
-                                     this->transition_old_frame_size_,
-                                     this->direct_blend_client_)
-                               : this->direct_component_->direct_present_rgb888_crossfade(
-                                     background, this->transition_new_frame_, opacity, this->direct_blend_client_);
+    bool presented = false;
+    if (fade_to_black) {
+      uint8_t *black_band = this->transition_banded_ ? this->transition_new_frame_ : this->transition_old_frame_;
+      const size_t black_band_size =
+          this->transition_banded_ ? this->transition_frame_size_ : this->transition_old_frame_size_;
+      presented = this->direct_component_->direct_present_rgb888_solid_crossfade_banded(
+          background, opacity, black_band, black_band_size, this->direct_blend_client_);
+    } else if (this->transition_banded_) {
+      presented = this->direct_component_->direct_present_image_crop_rgb888_crossfade_banded(
+          source, new_x, new_y, new_w, new_h, background, opacity, this->transition_new_frame_,
+          this->transition_frame_size_, this->direct_srm_client_, this->direct_blend_client_);
+    } else {
+      presented = this->direct_component_->direct_present_rgb888_crossfade(background, this->transition_new_frame_,
+                                                                           opacity, this->direct_blend_client_);
+    }
     if (!presented) {
       ESP_LOGW(TAG, "Direct transition frame rejected at opacity %u", static_cast<unsigned>(opacity));
       restore_previous_motion();
@@ -1182,9 +1206,8 @@ bool SlideshowController::perform_direct_transition_(const lv_image_dsc_t *sourc
       break;
 
     const uint32_t frame_elapsed_ms = millis() - frame_started_ms;
-    const uint32_t wait_ms = frame_elapsed_ms < this->frame_interval_ms_
-                                 ? this->frame_interval_ms_ - frame_elapsed_ms
-                                 : 1;
+    const uint32_t wait_ms =
+        frame_elapsed_ms < this->frame_interval_ms_ ? this->frame_interval_ms_ - frame_elapsed_ms : 1;
     // PPA completion uses this task's notification slot. If the final IRQ
     // arrives just before the completion counter is inspected, its give can
     // remain pending and make a notification-based frame delay return
@@ -1208,9 +1231,8 @@ bool SlideshowController::perform_direct_transition_(const lv_image_dsc_t *sourc
   // Remember it so the first regular tick does not perform another 1.92 MB
   // full-screen render immediately after the transition.
   this->last_direct_source_data_ = source->data;
-  this->calculate_direct_crop_(source, incoming_phase_ms, &this->last_direct_crop_x_,
-                               &this->last_direct_crop_y_, &this->last_direct_crop_width_,
-                               &this->last_direct_crop_height_);
+  this->calculate_direct_crop_(source, incoming_phase_ms, &this->last_direct_crop_x_, &this->last_direct_crop_y_,
+                               &this->last_direct_crop_width_, &this->last_direct_crop_height_);
   this->zooming_in_ = true;
   this->phase_complete_ = false;
   this->last_loop_ms_ = millis();
@@ -1231,9 +1253,8 @@ bool SlideshowController::perform_direct_transition_(const lv_image_dsc_t *sourc
   ESP_LOGI(TAG,
            "transition: prepare=%uus wait=%uus render=%uus frames=%u blend_avg=%uus blend_max=%uus wall=%ums "
            "blend_wall=%uus fade=%s",
-           static_cast<unsigned>(prepare_us), static_cast<unsigned>(stable_wait_us),
-           static_cast<unsigned>(render_us), static_cast<unsigned>(frames),
-           static_cast<unsigned>(blend_total_us / std::max<uint32_t>(1, frames)),
+           static_cast<unsigned>(prepare_us), static_cast<unsigned>(stable_wait_us), static_cast<unsigned>(render_us),
+           static_cast<unsigned>(frames), static_cast<unsigned>(blend_total_us / std::max<uint32_t>(1, frames)),
            static_cast<unsigned>(blend_max_us), static_cast<unsigned>(millis() - started_ms),
            static_cast<unsigned>(blend_duration_us), YESNO(this->fade_through_black_));
   // The full-resolution source slots are larger than this workspace. Keeping
@@ -1280,8 +1301,7 @@ void SlideshowController::direct_worker_() {
     uint8_t consecutive_frame_failures = 0;
     while (this->direct_worker_run_.load()) {
       if (this->transition_requested_.exchange(false, std::memory_order_acq_rel)) {
-        const lv_image_dsc_t *transition_source =
-            this->transition_source_.load(std::memory_order_acquire);
+        const lv_image_dsc_t *transition_source = this->transition_source_.load(std::memory_order_acquire);
         this->transition_active_.store(true, std::memory_order_release);
         const bool transitioned = this->perform_direct_transition_(transition_source);
         this->transition_active_.store(false, std::memory_order_release);
@@ -1300,8 +1320,8 @@ void SlideshowController::direct_worker_() {
       const uint32_t delta = frame_started_ms - previous_ms;
       previous_ms = frame_started_ms;
       if (!this->phase_complete_) {
-        this->phase_elapsed_ms_ = std::min(
-            this->phase_duration_ms_, this->phase_elapsed_ms_ + std::min(delta, this->frame_interval_ms_ * 3U));
+        this->phase_elapsed_ms_ = std::min(this->phase_duration_ms_,
+                                           this->phase_elapsed_ms_ + std::min(delta, this->frame_interval_ms_ * 3U));
         this->phase_complete_ = this->phase_elapsed_ms_ >= this->phase_duration_ms_;
       }
 
@@ -1340,9 +1360,8 @@ void SlideshowController::direct_worker_() {
       // Never spin continuously when a frame exceeds its budget. The ESPHome
       // loop task shares this core and must get a scheduling point between
       // frames for networking, component lifecycle and the watchdog.
-      const uint32_t wait_ms = frame_elapsed_ms < this->frame_interval_ms_
-                                   ? this->frame_interval_ms_ - frame_elapsed_ms
-                                   : 1;
+      const uint32_t wait_ms =
+          frame_elapsed_ms < this->frame_interval_ms_ ? this->frame_interval_ms_ - frame_elapsed_ms : 1;
       vTaskDelay(std::max<TickType_t>(1, pdMS_TO_TICKS(wait_ms)));
     }
     this->direct_worker_active_.store(false);
@@ -1370,18 +1389,18 @@ bool SlideshowController::update_transform_(uint32_t elapsed_ms) {
     return false;
   }
 
-  const float linear = std::clamp(static_cast<float>(elapsed_ms) / static_cast<float>(this->phase_duration_ms_),
-                                  0.0f, 1.0f);
+  const float linear =
+      std::clamp(static_cast<float>(elapsed_ms) / static_cast<float>(this->phase_duration_ms_), 0.0f, 1.0f);
   const float progress = linear * linear * (3.0f - 2.0f * linear);
   const float directed = this->zooming_in_ ? progress : 1.0f - progress;
 
-  const uint32_t cover_scale = std::max(
-      (static_cast<uint32_t>(viewport_width) * LV_SCALE_NONE + source_width - 1) / source_width,
-      (static_cast<uint32_t>(viewport_height) * LV_SCALE_NONE + source_height - 1) / source_height);
+  const uint32_t cover_scale =
+      std::max((static_cast<uint32_t>(viewport_width) * LV_SCALE_NONE + source_width - 1) / source_width,
+               (static_cast<uint32_t>(viewport_height) * LV_SCALE_NONE + source_height - 1) / source_height);
   const uint32_t start_scale = cover_scale * this->zoom_start_ / LV_SCALE_NONE;
   const uint32_t end_scale = cover_scale * this->zoom_end_ / LV_SCALE_NONE;
-  const uint32_t scale = static_cast<uint32_t>(std::lround(
-      static_cast<float>(start_scale) + static_cast<float>(end_scale - start_scale) * directed));
+  const uint32_t scale = static_cast<uint32_t>(
+      std::lround(static_cast<float>(start_scale) + static_cast<float>(end_scale - start_scale) * directed));
 
   const int32_t scaled_width = static_cast<int32_t>((static_cast<int64_t>(source_width) * scale) / LV_SCALE_NONE);
   const int32_t scaled_height = static_cast<int32_t>((static_cast<int64_t>(source_height) * scale) / LV_SCALE_NONE);
@@ -1395,10 +1414,9 @@ bool SlideshowController::update_transform_(uint32_t elapsed_ms) {
 
   const int32_t base_x = (viewport_width - source_width) / 2;
   const int32_t base_y = (viewport_height - source_height) / 2;
-  const bool geometry_changed = source_width != this->geometry_source_width_ ||
-                                source_height != this->geometry_source_height_ ||
-                                viewport_width != this->geometry_viewport_width_ ||
-                                viewport_height != this->geometry_viewport_height_;
+  const bool geometry_changed =
+      source_width != this->geometry_source_width_ || source_height != this->geometry_source_height_ ||
+      viewport_width != this->geometry_viewport_width_ || viewport_height != this->geometry_viewport_height_;
 
   int32_t pivot_x = source_width / 2;
   int32_t pivot_y = source_height / 2;
@@ -1431,9 +1449,7 @@ bool SlideshowController::update_transform_(uint32_t elapsed_ms) {
   return true;
 }
 
-void SlideshowController::choose_target_() {
-  this->select_pan_direction_(this->pan_forward_);
-}
+void SlideshowController::choose_target_() { this->select_pan_direction_(this->pan_forward_); }
 
 void SlideshowController::select_pan_direction_(bool forward) {
   this->pan_forward_ = forward;

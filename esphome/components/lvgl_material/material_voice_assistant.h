@@ -153,6 +153,7 @@ class MaterialVoiceAssistant : public Component {
   std::string requested_assistant_text_;
   bool awaiting_new_assistant_{false};
   bool transcript_dirty_{false};
+  bool native_fallback_{false};
   bool animate_user_on_commit_{false};
   bool animate_assistant_on_commit_{false};
   bool animate_content_on_commit_{false};

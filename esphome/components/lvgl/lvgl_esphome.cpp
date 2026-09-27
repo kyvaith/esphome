@@ -5,6 +5,7 @@
 #include "dma2d_m2m_copy.h"
 #include "lvgl_esphome.h"
 #include "lvgl_navigation.h"
+#include "lottie_loader.h"
 
 #include "core/lv_obj_class_private.h"
 #include "core/lv_obj_draw_private.h"
@@ -15,9 +16,11 @@
 #include "draw/lv_draw_private.h"
 #include "misc/lv_ll.h"
 
+#include <algorithm>
 #include <atomic>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 #ifdef USE_MIPI_DSI
@@ -334,19 +337,190 @@ static volatile bool s_snapshot_direct_active = false;
 static bool s_snapshot_app_open_frame_held = false;
 static bool s_snapshot_app_regions_paused = false;
 static LvglComponent *s_snapshot_app_regions_component = nullptr;
-static volatile int s_snapshot_page_indicator_page = 0;
-static volatile int s_snapshot_page_indicator_count = 0;
+static std::atomic<int> s_snapshot_page_indicator_page{0};
+static std::atomic<int> s_snapshot_page_indicator_count{0};
+static std::atomic<int> s_snapshot_page_indicator_y{700};
+static std::atomic<int> s_snapshot_page_indicator_height{10};
+static std::atomic<bool> s_snapshot_status_icons_visible{true};
 static char s_snapshot_clock_text[8] = "9:30";
 static const lv_font_t *s_snapshot_clock_font = nullptr;
 static lv_draw_buf_t *s_snapshot_clock_glyph_buffer = nullptr;
 static lv_area_t s_snapshot_clock_text_area{};
 static bool s_snapshot_clock_text_area_valid = false;
 
-static constexpr int SNAPSHOT_PAGE_INDICATOR_Y = 716;
-static constexpr int SNAPSHOT_PAGE_INDICATOR_H = 10;
 static constexpr int SNAPSHOT_CLOCK_W = 180;
 static constexpr int SNAPSHOT_CLOCK_Y = 10;
 static constexpr int SNAPSHOT_CLOCK_H = 52;
+
+struct SnapshotClockRaster {
+  uint8_t *alpha{nullptr};
+  int x{-1};
+  int y{SNAPSHOT_CLOCK_Y};
+  int width{0};
+  int height{0};
+  bool valid{false};
+};
+
+static std::array<SnapshotClockRaster, 2> s_snapshot_clock_rasters{};
+static std::atomic<uint8_t> s_snapshot_clock_raster_index{0};
+
+static constexpr int SNAPSHOT_STATUS_ICON_MAX_W = 96;
+static constexpr int SNAPSHOT_STATUS_ICON_MAX_H = 96;
+struct SnapshotStatusIconRaster {
+  uint8_t *alpha{nullptr};
+  int x{0};
+  int y{0};
+  int width{0};
+  int height{0};
+  bool valid{false};
+};
+
+static std::array<SnapshotStatusIconRaster, 2> s_snapshot_status_icon_rasters{};
+static const lv_font_t *s_snapshot_status_icon_fonts[2]{};
+static char s_snapshot_status_icon_text[2][8]{};
+static bool snapshot_prepare_clock_glyph_buffer();
+
+static bool snapshot_prepare_status_icon_raster(SnapshotStatusIconRaster &raster) {
+  if (raster.alpha != nullptr)
+    return true;
+  constexpr size_t raster_size = static_cast<size_t>(SNAPSHOT_STATUS_ICON_MAX_W) * SNAPSHOT_STATUS_ICON_MAX_H;
+#ifdef USE_ESP32
+  raster.alpha = static_cast<uint8_t *>(
+      heap_caps_aligned_alloc(64, raster_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (raster.alpha == nullptr)
+    raster.alpha = static_cast<uint8_t *>(heap_caps_malloc(raster_size, MALLOC_CAP_8BIT));
+#else
+  raster.alpha = static_cast<uint8_t *>(std::malloc(raster_size));
+#endif
+  return raster.alpha != nullptr;
+}
+
+static uint32_t snapshot_decode_utf8(const char *text) {
+  if (text == nullptr || text[0] == '\0')
+    return 0;
+  const uint8_t first = static_cast<uint8_t>(text[0]);
+  if ((first & 0x80U) == 0)
+    return first;
+  uint32_t value = 0;
+  int remaining = 0;
+  if ((first & 0xE0U) == 0xC0U) {
+    value = first & 0x1FU;
+    remaining = 1;
+  } else if ((first & 0xF0U) == 0xE0U) {
+    value = first & 0x0FU;
+    remaining = 2;
+  } else if ((first & 0xF8U) == 0xF0U) {
+    value = first & 0x07U;
+    remaining = 3;
+  } else {
+    return 0;
+  }
+  for (int i = 0; i < remaining; i++) {
+    const uint8_t continuation = static_cast<uint8_t>(text[i + 1]);
+    if ((continuation & 0xC0U) != 0x80U)
+      return 0;
+    value = (value << 6U) | (continuation & 0x3FU);
+  }
+  return value;
+}
+
+static bool snapshot_rebuild_status_icon_raster(int index, lv_obj_t *label) {
+  if (index < 0 || index >= 2 || label == nullptr || !lv_obj_is_valid(label) ||
+      s_snapshot_status_icon_fonts[index] == nullptr || !snapshot_prepare_clock_glyph_buffer())
+    return false;
+  auto &raster = s_snapshot_status_icon_rasters[index];
+  if (!snapshot_prepare_status_icon_raster(raster))
+    return false;
+  lv_area_t area{};
+  lv_obj_get_content_coords(label, &area);
+  raster.x = area.x1;
+  raster.y = area.y1;
+  raster.width = std::min(SNAPSHOT_STATUS_ICON_MAX_W, static_cast<int>(lv_area_get_width(&area)));
+  raster.height = std::min(SNAPSHOT_STATUS_ICON_MAX_H, static_cast<int>(lv_area_get_height(&area)));
+  if (raster.width <= 0 || raster.height <= 0)
+    return false;
+  std::memset(raster.alpha, 0, static_cast<size_t>(SNAPSHOT_STATUS_ICON_MAX_W) * SNAPSHOT_STATUS_ICON_MAX_H);
+  const uint32_t codepoint = snapshot_decode_utf8(s_snapshot_status_icon_text[index]);
+  lv_font_glyph_dsc_t glyph{};
+  if (codepoint == 0 || !lv_font_get_glyph_dsc(s_snapshot_status_icon_fonts[index], &glyph, codepoint, 0))
+    return false;
+  const auto *draw_buf =
+      static_cast<const lv_draw_buf_t *>(lv_font_get_glyph_bitmap(&glyph, s_snapshot_clock_glyph_buffer));
+  if (draw_buf != nullptr && glyph.box_w > 0 && glyph.box_h > 0) {
+    const int pen_x = (raster.width - glyph.adv_w) / 2;
+    // A native label starts its first line at the content origin. It does not
+    // vertically center the font line box in a fixed-height label.
+    const int pen_y = 0;
+    const int glyph_x = pen_x + glyph.ofs_x;
+    const int glyph_y = pen_y + (s_snapshot_status_icon_fonts[index]->line_height -
+                                 s_snapshot_status_icon_fonts[index]->base_line) - glyph.box_h - glyph.ofs_y;
+    const int glyph_stride = lv_draw_buf_width_to_stride(glyph.box_w, LV_COLOR_FORMAT_A8);
+    for (int gy = 0; gy < glyph.box_h; gy++) {
+      const int y = glyph_y + gy;
+      if (y < 0 || y >= raster.height)
+        continue;
+      const uint8_t *src = draw_buf->data + static_cast<size_t>(gy) * glyph_stride;
+      uint8_t *dst = raster.alpha + static_cast<size_t>(y) * SNAPSHOT_STATUS_ICON_MAX_W;
+      for (int gx = 0; gx < glyph.box_w; gx++) {
+        const int x = glyph_x + gx;
+        if (x >= 0 && x < raster.width)
+          dst[x] = std::max(dst[x], src[gx]);
+      }
+    }
+  }
+  lv_font_glyph_release_draw_data(&glyph);
+  raster.valid = true;
+  return true;
+}
+
+static bool snapshot_draw_status_icons_rgb888(uint8_t *buffer, int width, int height) {
+  if (buffer == nullptr || !s_snapshot_status_icons_visible.load(std::memory_order_acquire))
+    return false;
+  bool drawn = false;
+  const size_t row_bytes = static_cast<size_t>(width) * 3U;
+  for (const auto &raster : s_snapshot_status_icon_rasters) {
+    if (!raster.valid || raster.alpha == nullptr)
+      continue;
+    for (int y = 0; y < raster.height; y++) {
+      const int target_y = raster.y + y;
+      if (target_y < 0 || target_y >= height)
+        continue;
+      const uint8_t *src = raster.alpha + static_cast<size_t>(y) * SNAPSHOT_STATUS_ICON_MAX_W;
+      uint8_t *dst = buffer + static_cast<size_t>(target_y) * row_bytes;
+      for (int x = 0; x < raster.width; x++) {
+        const int target_x = raster.x + x;
+        const uint8_t alpha = src[x];
+        if (target_x < 0 || target_x >= width || alpha == 0)
+          continue;
+        uint8_t *pixel = dst + static_cast<size_t>(target_x) * 3U;
+        for (int channel = 0; channel < 3; channel++)
+          pixel[channel] = static_cast<uint8_t>((255U * alpha + pixel[channel] * (255U - alpha) + 127U) / 255U);
+        drawn = true;
+      }
+    }
+  }
+  return drawn;
+}
+
+static void snapshot_sync_status_icons_rgb888(uint8_t *buffer, int width, int height, bool from_dma = false) {
+#if defined(USE_ESP32)
+  if (buffer == nullptr || width <= 0 || height <= 0)
+    return;
+  const size_t row_bytes = static_cast<size_t>(width) * 3U;
+  for (const auto &raster : s_snapshot_status_icon_rasters) {
+    if (!raster.valid || raster.y < 0 || raster.height <= 0 || raster.y + raster.height > height)
+      continue;
+    lvgl_cache_msync_external(buffer + static_cast<size_t>(raster.y) * row_bytes,
+                              row_bytes * static_cast<size_t>(raster.height),
+                              from_dma ? ESP_CACHE_MSYNC_FLAG_DIR_M2C : ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  }
+#else
+  (void) buffer;
+  (void) width;
+  (void) height;
+  (void) from_dma;
+#endif
+}
 
 static bool snapshot_prepare_clock_glyph_buffer() {
   if (s_snapshot_clock_glyph_buffer != nullptr)
@@ -355,11 +529,31 @@ static bool snapshot_prepare_clock_glyph_buffer() {
   return s_snapshot_clock_glyph_buffer != nullptr;
 }
 
-static bool snapshot_draw_clock_rgb888(uint8_t *buffer, int width, int height) {
-  static_assert(sizeof(lv_color_t) == 3, "Snapshot clock compositor requires RGB888");
-  if (buffer == nullptr || width <= 0 || height <= 0 || s_snapshot_clock_font == nullptr)
+static bool snapshot_prepare_clock_raster(SnapshotClockRaster &raster) {
+  if (raster.alpha != nullptr)
+    return true;
+  constexpr size_t raster_size = static_cast<size_t>(SNAPSHOT_CLOCK_W) * SNAPSHOT_CLOCK_H;
+#ifdef USE_ESP32
+  raster.alpha = static_cast<uint8_t *>(
+      heap_caps_aligned_alloc(64, raster_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (raster.alpha == nullptr)
+    raster.alpha = static_cast<uint8_t *>(heap_caps_malloc(raster_size, MALLOC_CAP_8BIT));
+#else
+  raster.alpha = static_cast<uint8_t *>(std::malloc(raster_size));
+#endif
+  return raster.alpha != nullptr;
+}
+
+// LVGL's font cache is not thread-safe. Rasterize the clock while the caller
+// already owns the LVGL context, then atomically publish an immutable A8 mask
+// for the snapshot worker to blend without touching any LVGL font API.
+static bool snapshot_rebuild_clock_raster() {
+  if (s_snapshot_clock_font == nullptr || !snapshot_prepare_clock_glyph_buffer())
     return false;
-  if (SNAPSHOT_CLOCK_Y < 0 || SNAPSHOT_CLOCK_Y + SNAPSHOT_CLOCK_H > height)
+
+  const uint8_t active = s_snapshot_clock_raster_index.load(std::memory_order_acquire) & 1U;
+  auto &raster = s_snapshot_clock_rasters[active ^ 1U];
+  if (!snapshot_prepare_clock_raster(raster))
     return false;
 
   char text[sizeof(s_snapshot_clock_text)];
@@ -387,15 +581,22 @@ static bool snapshot_draw_clock_rgb888(uint8_t *buffer, int width, int height) {
   if (glyph_count == 0 || text_width <= 0)
     return false;
 
-  lv_color_t *pixels = reinterpret_cast<lv_color_t *>(buffer);
-  int pen_x = (width - text_width) / 2;
-  int line_y = SNAPSHOT_CLOCK_Y + (SNAPSHOT_CLOCK_H - s_snapshot_clock_font->line_height) / 2;
+  raster.x = -1;
+  raster.y = SNAPSHOT_CLOCK_Y;
+  raster.width = SNAPSHOT_CLOCK_W;
+  raster.height = SNAPSHOT_CLOCK_H;
+  int pen_x = (raster.width - text_width) / 2;
+  int line_y = (raster.height - s_snapshot_clock_font->line_height) / 2;
   if (s_snapshot_clock_text_area_valid) {
-    const int area_width = lv_area_get_width(&s_snapshot_clock_text_area);
-    const int area_height = lv_area_get_height(&s_snapshot_clock_text_area);
-    pen_x = s_snapshot_clock_text_area.x1 + (area_width - text_width) / 2;
-    line_y = s_snapshot_clock_text_area.y1 + (area_height - s_snapshot_clock_font->line_height) / 2;
+    raster.x = s_snapshot_clock_text_area.x1;
+    raster.y = s_snapshot_clock_text_area.y1;
+    raster.width = std::min(SNAPSHOT_CLOCK_W, static_cast<int>(lv_area_get_width(&s_snapshot_clock_text_area)));
+    raster.height = std::min(SNAPSHOT_CLOCK_H, static_cast<int>(lv_area_get_height(&s_snapshot_clock_text_area)));
+    pen_x = (raster.width - text_width) / 2;
+    line_y = (raster.height - s_snapshot_clock_font->line_height) / 2;
   }
+
+  std::memset(raster.alpha, 0, static_cast<size_t>(SNAPSHOT_CLOCK_W) * SNAPSHOT_CLOCK_H);
   for (int i = 0; i < glyph_count; i++) {
     auto &glyph = glyphs[i];
     const auto *draw_buf =
@@ -407,27 +608,57 @@ static bool snapshot_draw_clock_rgb888(uint8_t *buffer, int width, int height) {
       const int glyph_stride = lv_draw_buf_width_to_stride(glyph.box_w, LV_COLOR_FORMAT_A8);
       for (int gy = 0; gy < glyph.box_h; gy++) {
         const int y = glyph_y + gy;
-        if (y < 0 || y >= height)
+        if (y < 0 || y >= raster.height)
           continue;
         const uint8_t *alpha_row = draw_buf->data + static_cast<size_t>(gy) * glyph_stride;
-        lv_color_t *dst_row = pixels + static_cast<size_t>(y) * width;
+        uint8_t *dst_row = raster.alpha + static_cast<size_t>(y) * SNAPSHOT_CLOCK_W;
         for (int gx = 0; gx < glyph.box_w; gx++) {
           const int x = glyph_x + gx;
-          if (x < 0 || x >= width)
+          if (x < 0 || x >= raster.width)
             continue;
-          const uint16_t alpha = alpha_row[gx];
-          if (alpha == 0)
-            continue;
-          lv_color_t &dst = dst_row[x];
-          const uint16_t inverse = 255U - alpha;
-          dst.red = static_cast<uint8_t>((0xF5U * alpha + dst.red * inverse + 127U) / 255U);
-          dst.green = static_cast<uint8_t>((0xEEU * alpha + dst.green * inverse + 127U) / 255U);
-          dst.blue = static_cast<uint8_t>((0xFBU * alpha + dst.blue * inverse + 127U) / 255U);
+          dst_row[x] = std::max(dst_row[x], alpha_row[gx]);
         }
       }
     }
     pen_x += glyph.adv_w;
     lv_font_glyph_release_draw_data(&glyph);
+  }
+
+  raster.valid = true;
+  s_snapshot_clock_raster_index.store(active ^ 1U, std::memory_order_release);
+  return true;
+}
+
+static bool snapshot_draw_clock_rgb888(uint8_t *buffer, int width, int height) {
+  static_assert(sizeof(lv_color_t) == 3, "Snapshot clock compositor requires RGB888");
+  if (buffer == nullptr || width <= 0 || height <= 0)
+    return false;
+
+  const auto &raster = s_snapshot_clock_rasters[s_snapshot_clock_raster_index.load(std::memory_order_acquire) & 1U];
+  if (!raster.valid || raster.alpha == nullptr || raster.width <= 0 || raster.height <= 0)
+    return false;
+
+  const int origin_x = raster.x >= 0 ? raster.x : (width - raster.width) / 2;
+  lv_color_t *pixels = reinterpret_cast<lv_color_t *>(buffer);
+  for (int ry = 0; ry < raster.height; ry++) {
+    const int y = raster.y + ry;
+    if (y < 0 || y >= height)
+      continue;
+    const uint8_t *alpha_row = raster.alpha + static_cast<size_t>(ry) * SNAPSHOT_CLOCK_W;
+    lv_color_t *dst_row = pixels + static_cast<size_t>(y) * width;
+    for (int rx = 0; rx < raster.width; rx++) {
+      const int x = origin_x + rx;
+      if (x < 0 || x >= width)
+        continue;
+      const uint16_t alpha = alpha_row[rx];
+      if (alpha == 0)
+        continue;
+      lv_color_t &dst = dst_row[x];
+      const uint16_t inverse = 255U - alpha;
+      dst.red = static_cast<uint8_t>((0xF5U * alpha + dst.red * inverse + 127U) / 255U);
+      dst.green = static_cast<uint8_t>((0xEEU * alpha + dst.green * inverse + 127U) / 255U);
+      dst.blue = static_cast<uint8_t>((0xFBU * alpha + dst.blue * inverse + 127U) / 255U);
+    }
   }
   return true;
 }
@@ -447,12 +678,12 @@ static void snapshot_sync_clock_rgb888(uint8_t *buffer, int width, int height) {
 static bool snapshot_draw_page_indicator_rgb888(uint8_t *buffer, int width, int height, int page, int count) {
   if (buffer == nullptr || width <= 0 || height <= 0 || count <= 0 || page <= 0 || page > count)
     return false;
-  constexpr int dot_h = SNAPSHOT_PAGE_INDICATOR_H;
+  const int dot_h = s_snapshot_page_indicator_height.load(std::memory_order_acquire);
   constexpr int inactive_w = 10;
   constexpr int active_w = 30;
   constexpr int gap = 12;
-  constexpr int y = SNAPSHOT_PAGE_INDICATOR_Y;
-  if (y < 0 || y + dot_h > height)
+  const int y = s_snapshot_page_indicator_y.load(std::memory_order_acquire);
+  if (dot_h <= 0 || y < 0 || y + dot_h > height)
     return false;
 
   const int total_w = active_w + (count - 1) * inactive_w + (count - 1) * gap;
@@ -503,24 +734,26 @@ static bool snapshot_draw_page_indicator_rgb888(uint8_t *buffer, int width, int 
     const bool active = i == page;
     const int w = active ? active_w : inactive_w;
     if (active) {
-      draw_rounded_rect(x, w, 0xF2, 0xF2, 0xF2);
+      draw_rounded_rect(x, w, 0xFF, 0xFF, 0xFF);
     } else {
-      draw_rounded_rect(x, w, 0x5C, 0x5F, 0x5E);
+      draw_rounded_rect(x, w, 0x8C, 0x8C, 0x8C);
     }
     x += w + gap;
   }
   return true;
 }
 
-static void snapshot_sync_page_indicator_rgb888(uint8_t *buffer, int width, int height) {
+static void snapshot_sync_page_indicator_rgb888(uint8_t *buffer, int width, int height, bool from_dma = false) {
 #if defined(USE_ESP32)
   if (buffer == nullptr || width <= 0 || height <= 0)
     return;
-  if (SNAPSHOT_PAGE_INDICATOR_Y < 0 || SNAPSHOT_PAGE_INDICATOR_Y + SNAPSHOT_PAGE_INDICATOR_H > height)
+  const int indicator_y = s_snapshot_page_indicator_y.load(std::memory_order_acquire);
+  const int indicator_height = s_snapshot_page_indicator_height.load(std::memory_order_acquire);
+  if (indicator_height <= 0 || indicator_y < 0 || indicator_y + indicator_height > height)
     return;
   const size_t row_bytes = (size_t) width * 3u;
-  lvgl_cache_msync_external(buffer + (size_t) SNAPSHOT_PAGE_INDICATOR_Y * row_bytes,
-                            row_bytes * SNAPSHOT_PAGE_INDICATOR_H, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  lvgl_cache_msync_external(buffer + (size_t) indicator_y * row_bytes, row_bytes * indicator_height,
+                            from_dma ? ESP_CACHE_MSYNC_FLAG_DIR_M2C : ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 #endif
 }
 
@@ -540,6 +773,15 @@ static bool s_snapshot_app_render_opening = true;
 static const void *s_snapshot_app_dma_synced_app = nullptr;
 static const void *s_snapshot_app_dma_synced_background = nullptr;
 
+static void snapshot_app_dma_source_modified(const void *source) {
+  if (source == nullptr)
+    return;
+  if (s_snapshot_app_dma_synced_app == source)
+    s_snapshot_app_dma_synced_app = nullptr;
+  if (s_snapshot_app_dma_synced_background == source)
+    s_snapshot_app_dma_synced_background = nullptr;
+}
+
 struct SnapshotAppFrameMetrics {
   uint32_t total_us{0};
   uint32_t prepare_us{0};
@@ -551,6 +793,14 @@ struct SnapshotAppFrameMetrics {
 };
 
 static SnapshotAppFrameMetrics s_snapshot_app_last_frame_metrics;
+static std::atomic<uint32_t> s_snapshot_app_diag_phase{0};
+static std::atomic<uint32_t> s_snapshot_app_diag_last_ms{0};
+static std::atomic<uint32_t> s_snapshot_app_diag_frames{0};
+
+static void snapshot_app_diag_mark(uint32_t phase) {
+  s_snapshot_app_diag_phase.store(phase, std::memory_order_release);
+  s_snapshot_app_diag_last_ms.store(millis(), std::memory_order_release);
+}
 
 #ifdef USE_LVGL_PPA
 struct SnapshotAppLowResolutionState {
@@ -594,8 +844,6 @@ static void snapshot_app_low_res_reset() {
 
 static void snapshot_app_render_buffers_reset(bool opening) {
   s_snapshot_app_render_opening = opening;
-  s_snapshot_app_dma_synced_app = nullptr;
-  s_snapshot_app_dma_synced_background = nullptr;
 #ifdef USE_LVGL_PPA
   snapshot_app_low_res_reset();
 #endif
@@ -1168,6 +1416,10 @@ static ppa_client_handle_t s_region_srm_client = nullptr;
 static ppa_client_handle_t s_region_blend_client = nullptr;
 /// Solid edge bands for elastic snapshot scrolling.
 static ppa_client_handle_t s_snapshot_fill_client = nullptr;
+// ESP-IDF 5.5 wakes a blocking PPA caller before the ISR has recycled the
+// completed transaction descriptor. Keep one spare descriptor so the next
+// blocking operation cannot observe a transiently empty client queue.
+static constexpr uint32_t DIRECT_REGION_PPA_MAX_PENDING_TRANSACTIONS = 2;
 // Title, media control and volume overlays can submit direct region updates
 // from different FreeRTOS tasks. The PPA ownership markers below describe one
 // transaction, so serialize the complete cache/PPA hand-off rather than
@@ -1184,6 +1436,74 @@ static std::atomic<uintptr_t> s_direct_ppa_source2_begin{0};
 static std::atomic<uintptr_t> s_direct_ppa_source2_end{0};
 static std::atomic<uintptr_t> s_direct_ppa_target_begin{0};
 static std::atomic<uintptr_t> s_direct_ppa_target_end{0};
+
+// Scaled animation frames can flow directly from PPA SRM into PPA Blend.
+// Keep their PSRAM ranges marked while DMA remains the sole owner so the draw
+// unit does not scan and synchronize a nearly 1 MiB buffer between the two
+// hardware operations.
+struct DmaImageRange {
+  std::atomic<uintptr_t> begin{0};
+  std::atomic<uintptr_t> end{0};
+};
+static std::array<DmaImageRange, 8> s_dma_image_ranges{};
+
+static void dma_image_range_mark(const void *buffer, size_t size) {
+  if (buffer == nullptr || size == 0)
+    return;
+  const uintptr_t begin = reinterpret_cast<uintptr_t>(buffer);
+  uintptr_t end = 0;
+  if (__builtin_add_overflow(begin, size, &end))
+    return;
+
+  for (auto &range : s_dma_image_ranges) {
+    if (range.begin.load(std::memory_order_acquire) != begin)
+      continue;
+    range.end.store(end, std::memory_order_release);
+    return;
+  }
+  for (auto &range : s_dma_image_ranges) {
+    uintptr_t empty = 0;
+    if (!range.begin.compare_exchange_strong(empty, begin, std::memory_order_acq_rel))
+      continue;
+    range.end.store(end, std::memory_order_release);
+    return;
+  }
+}
+
+static void dma_image_range_release(const void *buffer) {
+  if (buffer == nullptr)
+    return;
+  const uintptr_t begin = reinterpret_cast<uintptr_t>(buffer);
+  for (auto &range : s_dma_image_ranges) {
+    if (range.begin.load(std::memory_order_acquire) != begin)
+      continue;
+    range.begin.store(0, std::memory_order_release);
+    range.end.store(0, std::memory_order_relaxed);
+    return;
+  }
+}
+
+static bool dma_image_range_contains(const void *buffer, size_t size) {
+  if (buffer == nullptr || size == 0)
+    return false;
+  const uintptr_t begin = reinterpret_cast<uintptr_t>(buffer);
+  uintptr_t end = 0;
+  if (__builtin_add_overflow(begin, size, &end))
+    return false;
+  for (auto &range : s_dma_image_ranges) {
+    const uintptr_t range_begin = range.begin.load(std::memory_order_acquire);
+    const uintptr_t range_end = range.end.load(std::memory_order_acquire);
+    if (range_begin != 0 && begin >= range_begin && end <= range_end)
+      return true;
+  }
+  return false;
+}
+
+extern "C" bool esphome_lvgl_image_buffer_written_by_dma(const void *ptr) {
+  return dma_image_range_contains(ptr, 1);
+}
+
+extern "C" void lvgl_esphome_release_dma_image_buffer(const void *buffer) { dma_image_range_release(buffer); }
 
 struct DirectPpaFrameCompletion {
   std::atomic<uint32_t> remaining{0};
@@ -1316,6 +1636,10 @@ static bool ppa_rotate_display_buf(const void *src, void *dst, int32_t w, int32_
 }
 #endif  // USE_LVGL_PPA
 
+#ifndef USE_LVGL_PPA
+extern "C" void lvgl_esphome_release_dma_image_buffer(const void *buffer) { (void) buffer; }
+#endif
+
 static const size_t MIN_BUFFER_FRAC = 8;
 
 static const char *const EVENT_NAMES[] = {
@@ -1431,6 +1755,16 @@ void LvglComponent::direct_region_refresh_start_cb(lv_event_t *event) {
 #endif
 }
 
+void LvglComponent::direct_region_flush_start_cb(lv_event_t *event) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  auto *component = static_cast<LvglComponent *>(lv_event_get_user_data(event));
+  component->direct_region_refresh_relock_();
+  component->direct_region_sync_persistent_to_lvgl_target_();
+#else
+  (void) event;
+#endif
+}
+
 void LvglComponent::direct_region_refresh_end_cb(lv_event_t *event) {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
   auto *component = static_cast<LvglComponent *>(lv_event_get_user_data(event));
@@ -1483,8 +1817,15 @@ void LvglComponent::set_paused(bool paused, bool show_snow) {
 }
 
 bool LvglComponent::begin_frame_buffer_presentation(uint32_t timeout_ms) {
-  if (this->paused_ || this->disp_ == nullptr || this->displays_.size() != 1 ||
-      this->frame_buffer_presentation_active_.exchange(true, std::memory_order_acq_rel)) {
+  this->frame_buffer_presentation_failure_.store(FrameBufferPresentationFailure::NONE, std::memory_order_release);
+  if (this->paused_ || this->disp_ == nullptr || this->displays_.size() != 1) {
+    this->frame_buffer_presentation_failure_.store(FrameBufferPresentationFailure::COMPONENT_UNAVAILABLE,
+                                                   std::memory_order_release);
+    return false;
+  }
+  if (this->frame_buffer_presentation_active_.exchange(true, std::memory_order_acq_rel)) {
+    this->frame_buffer_presentation_failure_.store(FrameBufferPresentationFailure::ALREADY_ACTIVE,
+                                                   std::memory_order_release);
     return false;
   }
 
@@ -1492,6 +1833,8 @@ bool LvglComponent::begin_frame_buffer_presentation(uint32_t timeout_ms) {
   this->frame_buffer_presentation_refr_timer_ = lv_display_get_refr_timer(this->disp_);
   if (this->frame_buffer_presentation_refr_timer_ == nullptr) {
     lv_unlock();
+    this->frame_buffer_presentation_failure_.store(FrameBufferPresentationFailure::REFRESH_TIMER_UNAVAILABLE,
+                                                   std::memory_order_release);
     this->frame_buffer_presentation_active_.store(false, std::memory_order_release);
     return false;
   }
@@ -1502,6 +1845,8 @@ bool LvglComponent::begin_frame_buffer_presentation(uint32_t timeout_ms) {
 
   this->frame_buffer_presentation_paused_regions_ = !this->direct_region_paused_.load(std::memory_order_acquire);
   if (this->frame_buffer_presentation_paused_regions_ && !this->direct_regions_pause(true, timeout_ms)) {
+    this->frame_buffer_presentation_failure_.store(FrameBufferPresentationFailure::REGION_BARRIER_TIMEOUT,
+                                                   std::memory_order_release);
     this->direct_regions_pause(false, 0);
     this->frame_buffer_presentation_paused_regions_ = false;
     lv_lock();
@@ -1513,6 +1858,8 @@ bool LvglComponent::begin_frame_buffer_presentation(uint32_t timeout_ms) {
     return false;
   }
   if (!this->displays_[0]->begin_frame_buffer_session(timeout_ms)) {
+    this->frame_buffer_presentation_failure_.store(FrameBufferPresentationFailure::DISPLAY_SESSION_REJECTED,
+                                                   std::memory_order_release);
     lv_lock();
     lv_timer_set_period(this->frame_buffer_presentation_refr_timer_, this->frame_buffer_presentation_refr_period_);
     lv_timer_ready(this->frame_buffer_presentation_refr_timer_);
@@ -1527,20 +1874,91 @@ bool LvglComponent::begin_frame_buffer_presentation(uint32_t timeout_ms) {
   return true;
 }
 
+const char *LvglComponent::frame_buffer_presentation_failure_reason() const {
+  switch (this->frame_buffer_presentation_failure_.load(std::memory_order_acquire)) {
+    case FrameBufferPresentationFailure::NONE:
+      return "none";
+    case FrameBufferPresentationFailure::COMPONENT_UNAVAILABLE:
+      return "component unavailable";
+    case FrameBufferPresentationFailure::ALREADY_ACTIVE:
+      return "another framebuffer presenter is active";
+    case FrameBufferPresentationFailure::REFRESH_TIMER_UNAVAILABLE:
+      return "LVGL refresh timer unavailable";
+    case FrameBufferPresentationFailure::REGION_BARRIER_TIMEOUT:
+      return "direct-region barrier timeout";
+    case FrameBufferPresentationFailure::DISPLAY_SESSION_REJECTED:
+      return "display framebuffer session rejected";
+  }
+  return "unknown";
+}
+
 bool LvglComponent::acquire_presentation_frame(display::FrameBufferLease *lease, BufferWriter writer,
                                                uint32_t timeout_ms) {
   return this->frame_buffer_presentation_active_.load(std::memory_order_acquire) && this->displays_.size() == 1 &&
          this->displays_[0]->acquire_frame_buffer(lease, writer, timeout_ms);
 }
 
-bool LvglComponent::present_presentation_frame(display::FrameBufferLease *lease, uint32_t timeout_ms) {
+bool LvglComponent::get_presentation_active_frame(display::FrameBufferView *view, BufferReader reader) {
   return this->frame_buffer_presentation_active_.load(std::memory_order_acquire) && this->displays_.size() == 1 &&
-         this->displays_[0]->present_frame_buffer_lease(lease, timeout_ms);
+         this->displays_[0]->get_active_frame_buffer(view, reader);
+}
+
+bool LvglComponent::present_presentation_frame(display::FrameBufferLease *lease, uint32_t timeout_ms,
+                                               bool wait_for_active) {
+  return this->frame_buffer_presentation_active_.load(std::memory_order_acquire) && this->displays_.size() == 1 &&
+         this->displays_[0]->present_frame_buffer_lease(lease, timeout_ms, wait_for_active);
 }
 
 bool LvglComponent::release_presentation_frame(display::FrameBufferLease *lease) {
   return this->frame_buffer_presentation_active_.load(std::memory_order_acquire) && this->displays_.size() == 1 &&
          this->displays_[0]->release_frame_buffer(lease);
+}
+
+bool LvglComponent::reserve_presentation_frame(const uint8_t *frame) {
+#if defined(USE_MIPI_DSI)
+  if (!this->frame_buffer_presentation_active_.load(std::memory_order_acquire) || this->displays_.size() != 1 ||
+      frame == nullptr)
+    return false;
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  return mipi_display != nullptr &&
+         mipi_display->reserve_direct_render_frame_buffer(const_cast<uint8_t *>(frame));
+#else
+  (void) frame;
+  return false;
+#endif
+}
+
+void LvglComponent::release_reserved_presentation_frame(const uint8_t *frame) {
+#if defined(USE_MIPI_DSI)
+  if (this->displays_.size() != 1 || frame == nullptr)
+    return;
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  if (mipi_display != nullptr)
+    mipi_display->release_direct_render_frame_buffer(const_cast<uint8_t *>(frame));
+#else
+  (void) frame;
+#endif
+}
+
+bool LvglComponent::copy_presentation_frame_rgb888(const uint8_t *source, uint8_t *target, int width, int height) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  if (!this->frame_buffer_presentation_active_.load(std::memory_order_acquire) || source == nullptr ||
+      target == nullptr || width <= 0 || height <= 0 || width != this->width_ || height != this->height_ ||
+      s_region_srm_mutex == nullptr || xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(100)) != pdTRUE)
+    return false;
+  const size_t size = static_cast<size_t>(width) * height * sizeof(lv_color_t);
+  const bool copied = this->direct_region_ppa_copy_(source, width, height, 0, 0, width, height, target, size, width,
+                                                     height, 0, 0, false, false) &&
+                      lvgl_cache_msync_external_result(target, size, ESP_CACHE_MSYNC_FLAG_DIR_M2C) == ESP_OK;
+  xSemaphoreGive(s_region_srm_mutex);
+  return copied;
+#else
+  (void) source;
+  (void) target;
+  (void) width;
+  (void) height;
+  return false;
+#endif
 }
 
 bool LvglComponent::end_frame_buffer_presentation(uint32_t timeout_ms) {
@@ -1639,11 +2057,12 @@ void LvglComponent::esphome_lvgl_init() {
   if (s_region_srm_client == nullptr) {
     ppa_client_config_t region_cfg = {};
     region_cfg.oper_type = PPA_OPERATION_SRM;
-    region_cfg.max_pending_trans_num = 1;
+    region_cfg.max_pending_trans_num = DIRECT_REGION_PPA_MAX_PENDING_TRANSACTIONS;
     region_cfg.data_burst_length = LVGL_ESPHOME_PPA_DIRECT_REGION_DATA_BURST_LENGTH;
     if (ppa_register_client(&region_cfg, &s_region_srm_client) == ESP_OK) {
-      ESP_LOGI(TAG, "PPA direct region SRM client registered (srm_burst=%d)",
-               (int) LVGL_ESPHOME_PPA_DIRECT_REGION_DATA_BURST_LENGTH);
+      ESP_LOGI(TAG, "PPA direct region SRM client registered (srm_burst=%d pending=%u)",
+               (int) LVGL_ESPHOME_PPA_DIRECT_REGION_DATA_BURST_LENGTH,
+               (unsigned) DIRECT_REGION_PPA_MAX_PENDING_TRANSACTIONS);
     } else {
       ESP_LOGW(TAG, "PPA direct region SRM client failed; regional updates will use LVGL invalidation");
       s_region_srm_client = nullptr;
@@ -1652,11 +2071,12 @@ void LvglComponent::esphome_lvgl_init() {
   if (s_region_blend_client == nullptr) {
     ppa_client_config_t blend_cfg = {};
     blend_cfg.oper_type = PPA_OPERATION_BLEND;
-    blend_cfg.max_pending_trans_num = 1;
+    blend_cfg.max_pending_trans_num = DIRECT_REGION_PPA_MAX_PENDING_TRANSACTIONS;
     blend_cfg.data_burst_length = LVGL_ESPHOME_PPA_DIRECT_REGION_DATA_BURST_LENGTH;
     if (ppa_register_client(&blend_cfg, &s_region_blend_client) == ESP_OK) {
-      ESP_LOGI(TAG, "PPA direct region blend client registered (burst=%d)",
-               (int) LVGL_ESPHOME_PPA_DIRECT_REGION_DATA_BURST_LENGTH);
+      ESP_LOGI(TAG, "PPA direct region blend client registered (burst=%d pending=%u)",
+               (int) LVGL_ESPHOME_PPA_DIRECT_REGION_DATA_BURST_LENGTH,
+               (unsigned) DIRECT_REGION_PPA_MAX_PENDING_TRANSACTIONS);
     } else {
       ESP_LOGW(TAG, "PPA direct region blend client failed; regional alpha composites will use software");
       s_region_blend_client = nullptr;
@@ -1788,7 +2208,7 @@ void LvglComponent::rotate_coordinates(int32_t &x, int32_t &y) const {
   }
 }
 
-void LvglComponent::draw_buffer_(const lv_area_t *area, lv_color_data *ptr) {
+bool LvglComponent::draw_buffer_(const lv_area_t *area, lv_color_data *ptr) {
   auto width = lv_area_get_width(area);
   auto height = lv_area_get_height(area);
   auto height_rounded = (height + this->draw_rounding - 1) / this->draw_rounding * this->draw_rounding;
@@ -1831,7 +2251,7 @@ void LvglComponent::draw_buffer_(const lv_area_t *area, lv_color_data *ptr) {
         display->draw_pixels_at(x1, y1, width, height, (const uint8_t *) dst, display::COLOR_ORDER_RGB, LV_BITNESS,
                                 this->big_endian_);
       }
-      return;
+      return true;
     }
     // PPA failed → fall through to software rotation below
   }
@@ -1922,10 +2342,23 @@ void LvglComponent::draw_buffer_(const lv_area_t *area, lv_color_data *ptr) {
 
     default:
       if (direct_full_buffer) {
+#ifdef USE_MIPI_DSI
+        if (this->rotation == display::DISPLAY_ROTATION_0_DEGREES && this->displays_.size() == 1) {
+          auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+          // Full LVGL frames and PPA regional frames share the same pending
+          // DPI framebuffer slot. Queue both through the same ownership path;
+          // draw_pixels_at() waits for transfer completion but does not mirror
+          // the pending framebuffer, so replacing a regional frame there can
+          // leave queued_frame_buffer_ pointing at a frame that will never be
+          // activated.
+          return mipi_display != nullptr &&
+                 mipi_display->queue_direct_frame_buffer(const_cast<uint8_t *>(src8), 50, true);
+        }
+#endif
         for (auto *display : this->displays_) {
           display->draw_pixels_at(x1, y1, width, height, src8, display::COLOR_ORDER_RGB, LV_BITNESS, this->big_endian_);
         }
-        return;
+        return true;
       }
       dst = ptr;
       break;
@@ -1934,6 +2367,7 @@ void LvglComponent::draw_buffer_(const lv_area_t *area, lv_color_data *ptr) {
     display->draw_pixels_at(x1, y1, width, height, (const uint8_t *) dst, display::COLOR_ORDER_RGB, LV_BITNESS,
                             this->big_endian_);
   }
+  return true;
 }
 
 void LvglComponent::flush_cb_(lv_display_t *disp_drv, const lv_area_t *area, uint8_t *color_p) {
@@ -1977,19 +2411,37 @@ void LvglComponent::flush_cb_(lv_display_t *disp_drv, const lv_area_t *area, uin
       // rendered rows here; render_start_cb() commits LVGL's copied regions.
       this->sync_direct_framebuffer_area_(area, color_p);
       if (lv_display_flush_is_last(disp_drv)) {
-        this->draw_buffer_(area, reinterpret_cast<lv_color_data *>(color_p));
+        const bool frame_queued = this->draw_buffer_(area, reinterpret_cast<lv_color_data *>(color_p));
         // Keep flush pending until DSI reaches a real frame boundary. LVGL will
         // copy this frame's dirty regions to the next off-screen buffer during
         // its following refr_sync_areas() pass. Doing another copy here races
         // that built-in synchronization and produces short horizontal streaks.
-        if (!this->wait_for_direct_frame_presented(40))
+        const bool frame_presented = frame_queued && this->wait_for_direct_frame_presented(40);
+        if (!frame_presented) {
           ESP_LOGW(TAG, "DIRECT frame boundary timed out");
+          this->log_direct_frame_trace(frame_queued ? "lvgl-flush-present-timeout" : "lvgl-flush-queue-rejected");
+          this->log_direct_buffer_state("lvgl-flush-timeout");
+        }
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_LVGL_PPA)
-        // The regional compositor rebases lazily from the frame that LVGL has
-        // just presented. A generation counter avoids touching its mutex from
-        // the time-critical flush callback and lets an in-flight stale frame
-        // be discarded before it reaches DSI.
-        this->direct_region_base_generation_.fetch_add(1, std::memory_order_release);
+        // This frame is already the authoritative base for the new
+        // generation. Mark it immediately so the regional compositor never
+        // copies the same 1.92 MB framebuffer back onto itself on the next
+        // small animation update. The refresh callback owns the regional
+        // compositor mutex at this point.
+        const uint32_t generation = frame_presented
+                                        ? this->direct_region_base_generation_.fetch_add(1, std::memory_order_acq_rel) +
+                                              1U
+                                        : 0U;
+        if (frame_presented && this->displays_.size() == 1) {
+          auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+          auto *presented = mipi_display == nullptr ? nullptr : mipi_display->get_presented_frame_buffer();
+          for (size_t index = 0; presented != nullptr && index < 3; index++) {
+            if (mipi_display->get_frame_buffer(index) == presented) {
+              this->direct_region_buffer_generation_[index] = generation;
+              break;
+            }
+          }
+        }
 #endif
       }
     } else {
@@ -2037,8 +2489,8 @@ void LvglComponent::sync_direct_framebuffer_area_(const lv_area_t *area, uint8_t
     return;
   }
 
-  uint8_t *sync_start = framebuffer + (size_t) y1 * row_bytes;
-  const size_t sync_size = (size_t) (y2 - y1 + 1) * row_bytes;
+  uint8_t *sync_start = framebuffer + static_cast<size_t>(y1) * row_bytes;
+  const size_t sync_size = static_cast<size_t>(y2 - y1 + 1) * row_bytes;
   lvgl_cache_msync_external(sync_start, sync_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 #endif
 }
@@ -2059,7 +2511,12 @@ bool LvglComponent::sync_direct_other_buffer_(const lv_area_t *area, uint8_t *co
   if (this->draw_buf_ == nullptr || this->draw_buf2_ == nullptr)
     return false;
 
-  auto sync_range = [](uint8_t *ptr, size_t len) { lvgl_cache_msync_external(ptr, len, ESP_CACHE_MSYNC_FLAG_DIR_C2M); };
+  auto sync_to_cpu = [](uint8_t *ptr, size_t len) {
+    lvgl_cache_msync_external(ptr, len, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+  };
+  auto sync_to_memory = [](uint8_t *ptr, size_t len) {
+    lvgl_cache_msync_external(ptr, len, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  };
 
   const size_t row_bytes = this->width_ * BYTES_PER_PIXEL;
   const size_t area_width_bytes = (x2 - x1 + 1) * BYTES_PER_PIXEL;
@@ -2081,17 +2538,19 @@ bool LvglComponent::sync_direct_other_buffer_(const lv_area_t *area, uint8_t *co
     const uint8_t *src_block = src + y1 * row_bytes;
     const size_t block_bytes = (size_t) (y2 - y1 + 1) * row_bytes;
     if (sync_source)
-      sync_range(const_cast<uint8_t *>(src_block), block_bytes);
+      sync_to_cpu(const_cast<uint8_t *>(src_block), block_bytes);
+    sync_to_cpu(dst_block, block_bytes);
     memcpy(dst_block, src_block, block_bytes);
-    sync_range(dst_block, block_bytes);
+    sync_to_memory(dst_block, block_bytes);
   } else {
     for (int32_t y = y1; y <= y2; y++) {
       uint8_t *dst_line = dst + y * row_bytes + x1 * BYTES_PER_PIXEL;
       const uint8_t *src_line = src + y * row_bytes + x1 * BYTES_PER_PIXEL;
       if (sync_source)
-        sync_range(const_cast<uint8_t *>(src_line), area_width_bytes);
+        sync_to_cpu(const_cast<uint8_t *>(src_line), area_width_bytes);
+      sync_to_cpu(dst_line, area_width_bytes);
       memcpy(dst_line, src_line, area_width_bytes);
-      sync_range(dst_line, area_width_bytes);
+      sync_to_memory(dst_line, area_width_bytes);
     }
   }
   return true;
@@ -2191,7 +2650,7 @@ void LvglComponent::present_direct_render_buffer_(uint8_t *buffer) {
 }
 
 uint8_t *LvglComponent::next_snapshot_render_buffer_(const uint8_t *exclude_a, const uint8_t *exclude_b,
-                                                     uint32_t wait_ms) {
+                                                     uint32_t wait_ms, bool reserve) {
 #ifdef USE_MIPI_DSI
   if (this->rotation == display::DISPLAY_ROTATION_0_DEGREES && this->displays_.size() == 1) {
     auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
@@ -2206,6 +2665,8 @@ uint8_t *LvglComponent::next_snapshot_render_buffer_(const uint8_t *exclude_a, c
         // The DSI driver owns three framebuffers. Render into the one that is
         // neither scanned out nor queued for the next VSYNC so PPA work can
         // overlap the current frame instead of serializing on presentation.
+        if (reserve)
+          return mipi_display->acquire_direct_render_frame_buffer(exclude_a, exclude_b, wait_ms);
         if (auto *target = mipi_display->get_direct_render_frame_buffer(exclude_a, exclude_b))
           return target;
         if (wait_ms != 0)
@@ -2231,8 +2692,18 @@ uint8_t *LvglComponent::next_snapshot_render_buffer_(const uint8_t *exclude_a, c
 bool LvglComponent::present_snapshot_render_buffer_(uint8_t *buffer, bool wait_for_active) {
   if (buffer == nullptr)
     return false;
-  if (snapshot_draw_clock_rgb888(buffer, this->width_, this->height_))
-    snapshot_sync_clock_rgb888(buffer, this->width_, this->height_);
+  snapshot_app_diag_mark(261);
+  // Fixed chrome belongs to the compositor, not to a moving/zoomed source.
+  // DMA has finished writing this target; invalidate before blending on the
+  // CPU, then publish only the changed rows before DSI takes ownership.
+  if (s_snapshot_status_icons_visible.load(std::memory_order_acquire)) {
+    snapshot_sync_status_icons_rgb888(buffer, this->width_, this->height_, true);
+    if (snapshot_draw_status_icons_rgb888(buffer, this->width_, this->height_))
+      snapshot_sync_status_icons_rgb888(buffer, this->width_, this->height_);
+  }
+  snapshot_app_diag_mark(265);
+  snapshot_app_diag_mark(266);
+  snapshot_app_diag_mark(262);
 #ifdef USE_MIPI_DSI
   if (this->rotation == display::DISPLAY_ROTATION_0_DEGREES && this->displays_.size() == 1) {
     auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
@@ -2240,8 +2711,10 @@ bool LvglComponent::present_snapshot_render_buffer_(uint8_t *buffer, bool wait_f
                                                                 buffer == mipi_display->get_frame_buffer(1) ||
                                                                 buffer == mipi_display->get_frame_buffer(2));
     if (this->direct_mode_active_ && is_dsi_framebuffer) {
+      snapshot_app_diag_mark(263);
       if (!mipi_display->queue_direct_frame_buffer(buffer, 50, wait_for_active))
         return false;
+      snapshot_app_diag_mark(264);
       this->direct_last_flushed_buf_ = buffer;
       this->snapshot_last_presented_buf_ = buffer;
       return true;
@@ -2277,6 +2750,76 @@ void LvglComponent::log_direct_frame_trace(const char *label) {
     if (mipi_display != nullptr)
       mipi_display->log_direct_frame_trace(label);
   }
+#endif
+}
+
+void LvglComponent::log_direct_buffer_state(const char *label) {
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && LV_COLOR_DEPTH == 32
+  if (!this->direct_mode_active_ || this->displays_.size() != 1 || this->width_ <= 0 || this->height_ <= 0)
+    return;
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  if (mipi_display == nullptr)
+    return;
+
+  constexpr int SAMPLE_ROWS[] = {40, 160, 240, 360, 480, 600, 720, 780};
+  const size_t row_bytes = static_cast<size_t>(this->width_) * 3U;
+  auto signature = [&](uint8_t *buffer, uint32_t *nonzero) -> uint32_t {
+    if (buffer == nullptr)
+      return 0;
+    uint32_t hash = 2166136261U;
+    uint32_t populated = 0;
+    for (int row : SAMPLE_ROWS) {
+      if (row >= this->height_)
+        continue;
+      auto *line = buffer + static_cast<size_t>(row) * row_bytes;
+      lvgl_cache_msync_external(line, row_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+      for (size_t offset = 0; offset < row_bytes; offset++) {
+        const uint8_t value = line[offset];
+        hash = (hash ^ value) * 16777619U;
+        populated += value != 0;
+      }
+    }
+    if (nonzero != nullptr)
+      *nonzero = populated;
+    return hash;
+  };
+  auto buffer_index = [mipi_display](const uint8_t *buffer) -> int {
+    for (size_t index = 0; index < 3; index++) {
+      if (mipi_display->get_frame_buffer(index) == buffer)
+        return static_cast<int>(index);
+    }
+    return -1;
+  };
+
+  uint32_t signatures[3]{};
+  uint32_t nonzero[3]{};
+  for (size_t index = 0; index < 3; index++)
+    signatures[index] = signature(mipi_display->get_frame_buffer(index), &nonzero[index]);
+  auto *presented = mipi_display->get_presented_frame_buffer();
+  auto *queued = mipi_display->get_queued_frame_buffer();
+  auto *staged = mipi_display->get_staged_frame_buffer();
+  auto *buf_act = this->disp_ != nullptr && this->disp_->buf_act != nullptr
+                      ? static_cast<uint8_t *>(this->disp_->buf_act->data)
+                      : nullptr;
+  ESP_LOGW("lvgl.direct.state",
+           "%s active=%d queued=%d staged=%d last=%d buf_act=%d paused=%u depth=%u snap=%u swipe=%u "
+           "image_anim=%u regions=%u gen=%u fbgen=%u/%u/%u "
+           "sig=%08" PRIX32 "/%08" PRIX32 "/%08" PRIX32 " nz=%u/%u/%u",
+           label != nullptr ? label : "state", buffer_index(presented), buffer_index(queued), buffer_index(staged),
+           buffer_index(this->direct_last_flushed_buf_), buffer_index(buf_act),
+           static_cast<unsigned>(this->direct_region_paused_.load(std::memory_order_acquire)),
+           static_cast<unsigned>(this->direct_region_pause_depth_.load(std::memory_order_acquire)),
+           static_cast<unsigned>(s_snapshot_direct_active), static_cast<unsigned>(s_snapshot_swipe_active),
+           static_cast<unsigned>(this->direct_image_animation_active_),
+           static_cast<unsigned>(this->direct_image_animation_allows_regions_),
+           static_cast<unsigned>(this->direct_region_base_generation_.load(std::memory_order_acquire)),
+           static_cast<unsigned>(this->direct_region_buffer_generation_[0]),
+           static_cast<unsigned>(this->direct_region_buffer_generation_[1]),
+           static_cast<unsigned>(this->direct_region_buffer_generation_[2]), signatures[0], signatures[1],
+           signatures[2], static_cast<unsigned>(nonzero[0]), static_cast<unsigned>(nonzero[1]),
+           static_cast<unsigned>(nonzero[2]));
+#else
+  (void) label;
 #endif
 }
 
@@ -2661,9 +3204,12 @@ bool LvglComponent::wait_for_direct_frame_presented(uint32_t timeout_ms) {
   if (this->displays_.empty())
     return false;
   auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
-  if (mipi_display == nullptr || !mipi_display->wait_for_direct_frame_queue_idle(timeout_ms))
-    return false;
-  return mipi_display->wait_for_refresh_done(timeout_ms);
+  // The direct queue is cleared only by on_frame_buffer_active_from_isr(),
+  // after the queued buffer becomes the scanout source at a frame boundary.
+  // Waiting for another generic refresh event here races other consumers of
+  // the binary refresh semaphore and can report a false timeout even though
+  // the requested framebuffer is already visible.
+  return mipi_display != nullptr && mipi_display->wait_for_direct_frame_queue_idle(timeout_ms);
 #else
   return false;
 #endif
@@ -2697,6 +3243,26 @@ bool LvglComponent::direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, i
   const size_t framebuffer_stride = (size_t) this->width_ * bytes_per_pixel;
   const size_t row_bytes = (size_t) width * bytes_per_pixel;
   const uint8_t *source_row = source + (size_t) y * framebuffer_stride + (size_t) x * bytes_per_pixel;
+
+#if CONFIG_ESPHOME_LVGL_SNAPSHOT_DMA2D_M2M
+  // The presented DSI buffer is already a complete RGB888 surface. Waiting
+  // once for the scanout and handing the rectangular copy to DMA2D avoids the
+  // old four-line loop, which waited on the FIFO once per band and could turn
+  // a home-header refresh into hundreds of milliseconds of blocked work.
+  if (dst_stride % static_cast<int>(bytes_per_pixel) == 0) {
+    const size_t source_span = static_cast<size_t>(height - 1) * framebuffer_stride + row_bytes;
+    const size_t target_span = static_cast<size_t>(height - 1) * static_cast<size_t>(dst_stride) + row_bytes;
+    lvgl_esphome_wait_snapshot_dsi_fifo();
+    lvgl_cache_msync_external(source_row, source_span, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    lvgl_cache_msync_external(dst, target_span, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    if (dma2d_m2m_copy_rgb888_2d(source, this->width_, this->height_, x, y, dst,
+                                 dst_stride / static_cast<int>(bytes_per_pixel), height, 0, 0, width, height)) {
+      lvgl_cache_msync_external(dst, target_span, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+      return true;
+    }
+  }
+#endif
+
   uint8_t *target_row = dst;
   constexpr int ROWS_PER_BAND = 4;
   for (int row = 0; row < height;) {
@@ -2710,7 +3276,8 @@ bool LvglComponent::direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, i
       source_row += framebuffer_stride;
       target_row += dst_stride;
     }
-    lvgl_cache_msync_external(target_band, (size_t) dst_stride * (size_t) rows, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    const size_t target_span = (size_t) (rows - 1) * dst_stride + row_bytes;
+    lvgl_cache_msync_external(target_band, target_span, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     row += rows;
     if (row < height) {
       taskYIELD();
@@ -2723,7 +3290,8 @@ bool LvglComponent::direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, i
 }
 
 static bool render_objects_rgb888(lv_display_t *display, lv_obj_t *const *roots, size_t root_count, uint8_t *dst,
-                                  int dst_stride, int x, int y, int width, int height) {
+                                  int dst_stride, int x, int y, int width, int height, bool clear = true,
+                                  bool respect_root_visibility = false) {
   if (display == nullptr || roots == nullptr || root_count == 0 || dst == nullptr || width <= 0 || height <= 0 ||
       dst_stride < width * 3)
     return false;
@@ -2741,7 +3309,8 @@ static bool render_objects_rgb888(lv_display_t *display, lv_obj_t *const *roots,
   const size_t data_size = static_cast<size_t>(dst_stride) * height;
   if (lv_draw_buf_init(&draw_buf, width, height, LV_COLOR_FORMAT_RGB888, dst_stride, dst, data_size) != LV_RESULT_OK)
     return false;
-  lv_draw_buf_clear(&draw_buf, nullptr);
+  if (clear)
+    lv_draw_buf_clear(&draw_buf, nullptr);
 
   const lv_area_t area{x, y, x + width - 1, y + height - 1};
   lv_layer_t layer;
@@ -2759,7 +3328,11 @@ static bool render_objects_rgb888(lv_display_t *display, lv_obj_t *const *roots,
   lv_refr_set_disp_refreshing(display);
 
   for (size_t index = 0; index < root_count; index++) {
-    if (roots[index] != nullptr && lv_obj_is_valid(roots[index]))
+    if (roots[index] == nullptr || !lv_obj_is_valid(roots[index]))
+      continue;
+    if (respect_root_visibility)
+      lv_obj_refr(&layer, roots[index]);
+    else
       lv_obj_redraw(&layer, roots[index]);
   }
   layer.all_tasks_added = true;
@@ -2790,6 +3363,66 @@ bool LvglComponent::render_display_area_rgb888(lv_display_t *display, uint8_t *d
   lv_obj_t *roots[]{lv_display_get_layer_bottom(display), lv_display_get_screen_active(display),
                     lv_display_get_layer_top(display), lv_display_get_layer_sys(display)};
   return render_objects_rgb888(display, roots, std::size(roots), dst, dst_stride, x, y, width, height);
+}
+
+extern "C" bool lvgl_esphome_render_background_rgb888(lv_obj_t *exclude, uint8_t *dst, int dst_stride,
+                                                        int x, int y, int width, int height) {
+  if (exclude == nullptr || !lv_obj_is_valid(exclude))
+    return false;
+  auto *display = lv_obj_get_display(exclude);
+  if (display == nullptr)
+    return false;
+  auto *component = static_cast<LvglComponent *>(lv_display_get_user_data(display));
+  if (component == nullptr)
+    return false;
+  const bool hidden = lv_obj_has_flag(exclude, LV_OBJ_FLAG_HIDDEN);
+  const bool invalidation_enabled = lv_display_is_invalidation_enabled(display);
+  lv_display_enable_invalidation(display, false);
+  lv_obj_add_flag(exclude, LV_OBJ_FLAG_HIDDEN);
+  const bool rendered = component->render_display_area_rgb888(display, dst, dst_stride, x, y, width, height);
+  if (!hidden)
+    lv_obj_remove_flag(exclude, LV_OBJ_FLAG_HIDDEN);
+  lv_display_enable_invalidation(display, invalidation_enabled);
+#ifdef USE_ESP32
+  if (rendered)
+    lvgl_cache_msync_external(dst, static_cast<size_t>(dst_stride) * height, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+#endif
+  return rendered;
+}
+
+bool LvglComponent::render_display_above_object_rgb888(lv_obj_t *anchor, uint8_t *dst, int dst_stride, int x, int y,
+                                                       int width, int height) {
+  if (anchor == nullptr || !lv_obj_is_valid(anchor))
+    return false;
+  auto *display = lv_obj_get_display(anchor);
+  auto *parent = lv_obj_get_parent(anchor);
+  if (display == nullptr || parent == nullptr || !lv_obj_is_valid(parent))
+    return false;
+
+  std::array<lv_obj_t *, 64> roots{};
+  size_t root_count = 0;
+  bool anchor_found = false;
+  const uint32_t child_count = lv_obj_get_child_count(parent);
+  for (uint32_t index = 0; index < child_count; index++) {
+    auto *child = lv_obj_get_child(parent, static_cast<int32_t>(index));
+    if (child == anchor) {
+      anchor_found = true;
+      continue;
+    }
+    if (anchor_found && child != nullptr && root_count < roots.size())
+      roots[root_count++] = child;
+  }
+  if (!anchor_found)
+    return false;
+
+  auto append_root = [&](lv_obj_t *root) {
+    if (root != nullptr && root_count < roots.size())
+      roots[root_count++] = root;
+  };
+  append_root(lv_display_get_layer_top(display));
+  append_root(lv_display_get_layer_sys(display));
+  return root_count != 0 &&
+         render_objects_rgb888(display, roots.data(), root_count, dst, dst_stride, x, y, width, height, false, true);
 }
 
 extern "C" bool lvgl_esphome_direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, int y, int width, int height) {
@@ -2888,6 +3521,15 @@ bool LvglComponent::direct_blit_rgb888(const uint8_t *src, int src_stride, int x
   return this->direct_blit_(src, src_stride, x, y, width, height, false, false);
 }
 
+bool LvglComponent::direct_blit_rgb888_ppa(const uint8_t *src, int src_stride, int x, int y, int width, int height) {
+  return this->direct_blit_(src, src_stride, x, y, width, height, false, true);
+}
+
+bool LvglComponent::direct_blit_rgb888_ppa_dma_target(const uint8_t *src, int src_stride, int x, int y, int width,
+                                                       int height) {
+  return this->direct_blit_(src, src_stride, x, y, width, height, false, true, false, true);
+}
+
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
 LvglComponent::DirectRegionSlot *LvglComponent::direct_region_find_slot_(int x, int y, int width, int height,
                                                                          bool create) {
@@ -2898,11 +3540,22 @@ LvglComponent::DirectRegionSlot *LvglComponent::direct_region_find_slot_(int x, 
     if (!slot.valid && free_slot == nullptr)
       free_slot = &slot;
   }
-  if (!create || free_slot == nullptr)
+  if (!create)
     return nullptr;
+  if (free_slot == nullptr) {
+    static uint32_t last_exhausted_log_ms = 0;
+    const uint32_t now = millis();
+    if (now - last_exhausted_log_ms >= 1000U) {
+      last_exhausted_log_ms = now;
+      ESP_LOGW(TAG, "Direct region slots exhausted for %dx%d at %d,%d", width, height, x, y);
+    }
+    return nullptr;
+  }
   free_slot->blend = false;
   free_slot->animation_overlay_valid = false;
   free_slot->stable_carry = false;
+  free_slot->persistent_copy_valid = false;
+  free_slot->persistent_carry = false;
   free_slot->latest_background = nullptr;
   free_slot->latest_background_stride = 0;
   free_slot->transition_background_valid = false;
@@ -2922,13 +3575,25 @@ bool LvglComponent::direct_region_ppa_copy_(const uint8_t *source, int source_wi
 
   constexpr size_t BYTES_PER_PIXEL = 3;
   const size_t source_size = static_cast<size_t>(source_width) * source_height * BYTES_PER_PIXEL;
+  const size_t compact_output_size = static_cast<size_t>(copy_width) * copy_height * BYTES_PER_PIXEL;
+  const bool full_frame_output =
+      target_x == 0 && target_y == 0 && copy_width == target_width && copy_height == target_height;
   if (target_size < static_cast<size_t>(target_width) * target_height * BYTES_PER_PIXEL)
     return false;
   if (sync_source && lvgl_cache_msync_external_result(source, source_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M) != ESP_OK)
     return false;
-  if (invalidate_target &&
+  if (full_frame_output && invalidate_target &&
       lvgl_cache_msync_external_result(target, target_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK)
     return false;
+  if (!full_frame_output && !this->direct_region_ensure_blend_scratch_(compact_output_size))
+    return false;
+
+  uint8_t *ppa_target = full_frame_output ? target : this->direct_region_blend_scratch_;
+  const size_t ppa_target_size = full_frame_output ? target_size : this->direct_region_blend_scratch_size_;
+  const int ppa_target_width = full_frame_output ? target_width : copy_width;
+  const int ppa_target_height = full_frame_output ? target_height : copy_height;
+  const int ppa_target_x = full_frame_output ? target_x : 0;
+  const int ppa_target_y = full_frame_output ? target_y : 0;
 
   ppa_srm_oper_config_t cfg = {};
   cfg.in.buffer = const_cast<uint8_t *>(source);
@@ -2939,12 +3604,12 @@ bool LvglComponent::direct_region_ppa_copy_(const uint8_t *source, int source_wi
   cfg.in.block_offset_x = source_x;
   cfg.in.block_offset_y = source_y;
   cfg.in.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
-  cfg.out.buffer = target;
-  cfg.out.buffer_size = target_size;
-  cfg.out.pic_w = target_width;
-  cfg.out.pic_h = target_height;
-  cfg.out.block_offset_x = target_x;
-  cfg.out.block_offset_y = target_y;
+  cfg.out.buffer = ppa_target;
+  cfg.out.buffer_size = ppa_target_size;
+  cfg.out.pic_w = ppa_target_width;
+  cfg.out.pic_h = ppa_target_height;
+  cfg.out.block_offset_x = ppa_target_x;
+  cfg.out.block_offset_y = ppa_target_y;
   cfg.out.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
   cfg.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
   cfg.scale_x = 1.0f;
@@ -2952,21 +3617,159 @@ bool LvglComponent::direct_region_ppa_copy_(const uint8_t *source, int source_wi
   cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
   cfg.mode = PPA_TRANS_MODE_BLOCKING;
 
-  // Cache ownership was handled explicitly above. The patched PPA wrapper
-  // must not repeat a full-stride sync for a small region transaction.
+  // ESP-IDF invalidates complete output rows before PPA SRM. Confine that
+  // maintenance to a compact surface for partial updates; otherwise unrelated
+  // CPU-dirty pixels in the full DSI framebuffer can be discarded.
   const uintptr_t source_begin = reinterpret_cast<uintptr_t>(source);
-  const uintptr_t target_begin = reinterpret_cast<uintptr_t>(target);
+  const uintptr_t target_begin = reinterpret_cast<uintptr_t>(ppa_target);
   s_direct_ppa_source_begin.store(source_begin, std::memory_order_release);
   s_direct_ppa_source_end.store(source_begin + source_size, std::memory_order_release);
   s_direct_ppa_target_begin.store(target_begin, std::memory_order_release);
-  s_direct_ppa_target_end.store(target_begin + target_size, std::memory_order_release);
+  s_direct_ppa_target_end.store(target_begin + ppa_target_size, std::memory_order_release);
   lvgl_esphome_wait_direct_region_dsi_fifo();
   const esp_err_t result = ppa_do_scale_rotate_mirror(s_region_srm_client, &cfg);
   s_direct_ppa_source_begin.store(0, std::memory_order_release);
   s_direct_ppa_target_begin.store(0, std::memory_order_release);
   s_direct_ppa_source_end.store(0, std::memory_order_relaxed);
   s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
-  return result == ESP_OK;
+  if (result != ESP_OK)
+    return false;
+  if (full_frame_output)
+    return true;
+  return this->direct_region_copy_compact_rgb888_to_target_(ppa_target, copy_width, copy_height, target, target_size,
+                                                            target_width, target_height, target_x, target_y);
+}
+
+bool LvglComponent::direct_region_ppa_copy_xrgb8888_(const uint8_t *source, int source_width, int source_height,
+                                                     int source_x, int source_y, int copy_width, int copy_height,
+                                                     uint8_t *target, size_t target_size, int target_width,
+                                                     int target_height, int target_x, int target_y, bool sync_source) {
+  if (source == nullptr || target == nullptr || source_width <= 0 || source_height <= 0 || copy_width <= 0 ||
+      copy_height <= 0 || source_x < 0 || source_y < 0 || source_x + copy_width > source_width ||
+      source_y + copy_height > source_height || target_width <= 0 || target_height <= 0 || target_x < 0 ||
+      target_y < 0 || target_x + copy_width > target_width || target_y + copy_height > target_height ||
+      s_region_srm_client == nullptr) {
+    return false;
+  }
+
+  constexpr size_t source_pixel_size = 4;
+  constexpr size_t target_pixel_size = 3;
+  const size_t source_size = static_cast<size_t>(source_width) * source_height * source_pixel_size;
+  const size_t compact_output_size = static_cast<size_t>(copy_width) * copy_height * target_pixel_size;
+  const bool full_frame_output =
+      target_x == 0 && target_y == 0 && copy_width == target_width && copy_height == target_height;
+  if (target_size < static_cast<size_t>(target_width) * target_height * target_pixel_size ||
+      (sync_source && lvgl_cache_msync_external_result(source, source_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M) != ESP_OK)) {
+    return false;
+  }
+  if (!full_frame_output && !this->direct_region_ensure_blend_scratch_(compact_output_size))
+    return false;
+
+  uint8_t *ppa_target = full_frame_output ? target : this->direct_region_blend_scratch_;
+  const size_t ppa_target_size = full_frame_output ? target_size : this->direct_region_blend_scratch_size_;
+  const int ppa_target_width = full_frame_output ? target_width : copy_width;
+  const int ppa_target_height = full_frame_output ? target_height : copy_height;
+  const int ppa_target_x = full_frame_output ? target_x : 0;
+  const int ppa_target_y = full_frame_output ? target_y : 0;
+
+  ppa_srm_oper_config_t cfg{};
+  cfg.in.buffer = const_cast<uint8_t *>(source);
+  cfg.in.pic_w = source_width;
+  cfg.in.pic_h = source_height;
+  cfg.in.block_w = copy_width;
+  cfg.in.block_h = copy_height;
+  cfg.in.block_offset_x = source_x;
+  cfg.in.block_offset_y = source_y;
+  cfg.in.srm_cm = PPA_SRM_COLOR_MODE_ARGB8888;
+  cfg.out.buffer = ppa_target;
+  cfg.out.buffer_size = ppa_target_size;
+  cfg.out.pic_w = ppa_target_width;
+  cfg.out.pic_h = ppa_target_height;
+  cfg.out.block_offset_x = ppa_target_x;
+  cfg.out.block_offset_y = ppa_target_y;
+  cfg.out.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
+  cfg.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+  cfg.scale_x = 1.0f;
+  cfg.scale_y = 1.0f;
+  cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+  cfg.mode = PPA_TRANS_MODE_BLOCKING;
+
+  // Partial output goes through the compact surface for the same reason as
+  // RGB888 copies: stock ESP-IDF cache maintenance spans complete output rows.
+  const uintptr_t source_begin = reinterpret_cast<uintptr_t>(source);
+  const uintptr_t target_begin = reinterpret_cast<uintptr_t>(ppa_target);
+  s_direct_ppa_source_begin.store(source_begin, std::memory_order_release);
+  s_direct_ppa_source_end.store(source_begin + source_size, std::memory_order_release);
+  s_direct_ppa_target_begin.store(target_begin, std::memory_order_release);
+  s_direct_ppa_target_end.store(target_begin + ppa_target_size, std::memory_order_release);
+  lvgl_esphome_wait_direct_region_dsi_fifo();
+  const esp_err_t result = ppa_do_scale_rotate_mirror(s_region_srm_client, &cfg);
+  s_direct_ppa_source_begin.store(0, std::memory_order_release);
+  s_direct_ppa_target_begin.store(0, std::memory_order_release);
+  s_direct_ppa_source_end.store(0, std::memory_order_relaxed);
+  s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
+  if (result != ESP_OK)
+    return false;
+  if (full_frame_output)
+    return true;
+  return this->direct_region_copy_compact_rgb888_to_target_(ppa_target, copy_width, copy_height, target, target_size,
+                                                            target_width, target_height, target_x, target_y);
+}
+
+bool LvglComponent::direct_region_ensure_blend_scratch_(size_t size) {
+  constexpr size_t CACHE_ALIGNMENT = 128;
+  const size_t allocation_size = (size + CACHE_ALIGNMENT - 1U) & ~(CACHE_ALIGNMENT - 1U);
+  if (allocation_size == 0)
+    return false;
+  if (this->direct_region_blend_scratch_ != nullptr && this->direct_region_blend_scratch_size_ >= allocation_size)
+    return true;
+
+  auto *replacement = static_cast<uint8_t *>(
+      heap_caps_aligned_alloc(CACHE_ALIGNMENT, allocation_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (replacement == nullptr)
+    return false;
+  if (this->direct_region_blend_scratch_ != nullptr)
+    heap_caps_free(this->direct_region_blend_scratch_);
+  this->direct_region_blend_scratch_ = replacement;
+  this->direct_region_blend_scratch_size_ = allocation_size;
+  ESP_LOGI(TAG, "Direct region compact blend buffer: %u bytes", static_cast<unsigned>(allocation_size));
+  return true;
+}
+
+bool LvglComponent::direct_region_copy_compact_rgb888_to_target_(const uint8_t *source, int width, int height,
+                                                                 uint8_t *target, size_t target_size, int target_width,
+                                                                 int target_height, int target_x, int target_y) {
+  constexpr size_t BYTES_PER_PIXEL = 3;
+  if (source == nullptr || target == nullptr || width <= 0 || height <= 0 || target_width <= 0 || target_height <= 0 ||
+      target_x < 0 || target_y < 0 || target_x + width > target_width || target_y + height > target_height ||
+      target_size < static_cast<size_t>(target_width) * target_height * BYTES_PER_PIXEL)
+    return false;
+
+  const size_t target_stride = static_cast<size_t>(target_width) * BYTES_PER_PIXEL;
+  const size_t row_bytes = static_cast<size_t>(width) * BYTES_PER_PIXEL;
+  for (int row = 0; row < height; row++) {
+    auto *target_row =
+        target + static_cast<size_t>(target_y + row) * target_stride + static_cast<size_t>(target_x) * BYTES_PER_PIXEL;
+    if (lvgl_cache_msync_external_result(target_row, row_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK)
+      return false;
+  }
+
+#if CONFIG_ESPHOME_LVGL_SNAPSHOT_DMA2D_M2M
+  if (dma2d_m2m_copy_rgb888_2d(source, width, height, 0, 0, target, target_width, target_height, target_x, target_y,
+                               width, height)) {
+    return true;
+  }
+#endif
+
+  for (int row = 0; row < height; row++) {
+    auto *target_row =
+        target + static_cast<size_t>(target_y + row) * target_stride + static_cast<size_t>(target_x) * BYTES_PER_PIXEL;
+    const auto *source_row = source + static_cast<size_t>(row) * row_bytes;
+    memcpy(target_row, source_row, row_bytes);
+    if (lvgl_cache_msync_external_result(target_row, row_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M) != ESP_OK)
+      return false;
+  }
+  return true;
 }
 
 bool LvglComponent::direct_region_ppa_blend_argb8888_(const uint8_t *background, int background_stride,
@@ -2976,6 +3779,17 @@ bool LvglComponent::direct_region_ppa_blend_argb8888_(const uint8_t *background,
                                                       int blend_width, int blend_height, uint8_t *target,
                                                       size_t target_size, int target_width, int target_height,
                                                       int target_x, int target_y) {
+  auto fail = [&](const char *stage, esp_err_t error = ESP_FAIL) {
+    static uint32_t last_log_ms = 0;
+    const uint32_t now_ms = millis();
+    if (now_ms - last_log_ms >= 1000U) {
+      last_log_ms = now_ms;
+      ESP_LOGW(TAG, "Direct region blend failed stage=%s err=%d bg=%p fg=%p target=%p region=%dx%d@%d,%d",
+               stage, static_cast<int>(error), background, foreground, target, blend_width, blend_height, target_x,
+               target_y);
+    }
+    return false;
+  };
   const int background_pixel_size = background_rgb565 ? 2 : 3;
   if (background == nullptr || foreground == nullptr || target == nullptr || blend_width <= 0 || blend_height <= 0 ||
       background_stride != blend_width * background_pixel_size || foreground_width <= 0 || foreground_height <= 0 ||
@@ -2984,15 +3798,26 @@ bool LvglComponent::direct_region_ppa_blend_argb8888_(const uint8_t *background,
       target_width <= 0 || target_height <= 0 || target_x < 0 || target_y < 0 ||
       target_x + blend_width > target_width || target_y + blend_height > target_height ||
       s_region_blend_client == nullptr)
-    return false;
+    return fail("validation");
 
   const size_t background_size = static_cast<size_t>(background_stride) * blend_height;
-  const size_t foreground_size = static_cast<size_t>(foreground_stride) * foreground_height;
+  const size_t foreground_sync_offset = static_cast<size_t>(foreground_y) * foreground_stride +
+                                        static_cast<size_t>(foreground_x) * 4U;
+  const size_t foreground_sync_size = static_cast<size_t>(blend_height - 1) * foreground_stride +
+                                      static_cast<size_t>(blend_width) * 4U;
+  const size_t foreground_source_size = static_cast<size_t>(foreground_stride) * foreground_height;
   const size_t required_target_size = static_cast<size_t>(target_width) * target_height * 3U;
-  if (target_size < required_target_size ||
-      lvgl_cache_msync_external_result(background, background_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M) != ESP_OK ||
-      lvgl_cache_msync_external_result(foreground, foreground_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M) != ESP_OK)
-    return false;
+  if (target_size < required_target_size)
+    return fail("target-size");
+  const esp_err_t background_sync =
+      lvgl_cache_msync_external_result(background, background_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  if (background_sync != ESP_OK)
+    return fail("background-sync", background_sync);
+  const esp_err_t foreground_sync =
+      lvgl_cache_msync_external_result(foreground + foreground_sync_offset, foreground_sync_size,
+                                       ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  if (foreground_sync != ESP_OK)
+    return fail("foreground-sync", foreground_sync);
 
   ppa_blend_oper_config_t cfg{};
   cfg.in_bg.buffer = background;
@@ -3009,6 +3834,10 @@ bool LvglComponent::direct_region_ppa_blend_argb8888_(const uint8_t *background,
   cfg.in_fg.block_offset_x = foreground_x;
   cfg.in_fg.block_offset_y = foreground_y;
   cfg.in_fg.blend_cm = PPA_BLEND_COLOR_MODE_ARGB8888;
+  // The target was prepared as a complete DSI framebuffer immediately before
+  // this operation. Use PPA's native block offsets and write the blend result
+  // directly into that target. This avoids a second PSRAM scratch surface and
+  // the extra scratch-to-framebuffer copy for an unscaled 1:1 frame.
   cfg.out.buffer = target;
   cfg.out.buffer_size = target_size;
   cfg.out.pic_w = target_width;
@@ -3021,16 +3850,15 @@ bool LvglComponent::direct_region_ppa_blend_argb8888_(const uint8_t *background,
   cfg.fg_alpha_update_mode = PPA_ALPHA_NO_CHANGE;
   cfg.mode = PPA_TRANS_MODE_BLOCKING;
 
-  // Both immutable inputs have already been written back. Keep the output
-  // cache maintenance in the PPA driver because this is a partial write into
-  // a DSI framebuffer and pixels outside the block must be preserved.
+  // Both immutable inputs have already been written back. The target belongs
+  // exclusively to this compositor transaction until it is queued to DSI.
   const uintptr_t background_begin = reinterpret_cast<uintptr_t>(background);
   const uintptr_t foreground_begin = reinterpret_cast<uintptr_t>(foreground);
   const uintptr_t target_begin = reinterpret_cast<uintptr_t>(target);
   s_direct_ppa_source_begin.store(background_begin, std::memory_order_release);
   s_direct_ppa_source_end.store(background_begin + background_size, std::memory_order_release);
   s_direct_ppa_source2_begin.store(foreground_begin, std::memory_order_release);
-  s_direct_ppa_source2_end.store(foreground_begin + foreground_size, std::memory_order_release);
+  s_direct_ppa_source2_end.store(foreground_begin + foreground_source_size, std::memory_order_release);
   s_direct_ppa_target_begin.store(target_begin, std::memory_order_release);
   s_direct_ppa_target_end.store(target_begin + target_size, std::memory_order_release);
   lvgl_esphome_wait_direct_region_dsi_fifo();
@@ -3041,7 +3869,10 @@ bool LvglComponent::direct_region_ppa_blend_argb8888_(const uint8_t *background,
   s_direct_ppa_source_end.store(0, std::memory_order_relaxed);
   s_direct_ppa_source2_end.store(0, std::memory_order_relaxed);
   s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
-  return result == ESP_OK;
+  if (result != ESP_OK)
+    return fail("ppa", result);
+
+  return true;
 }
 
 bool LvglComponent::direct_region_ppa_overlay_argb8888_(const uint8_t *foreground, int foreground_stride,
@@ -3114,6 +3945,496 @@ bool LvglComponent::direct_region_ppa_overlay_argb8888_(const uint8_t *foregroun
   s_direct_ppa_source2_end.store(0, std::memory_order_relaxed);
   s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
   return result == ESP_OK;
+}
+
+bool LvglComponent::direct_region_ensure_scale_scratch_(size_t size) {
+  constexpr size_t CACHE_ALIGNMENT = 128;
+  const size_t allocation_size = (size + CACHE_ALIGNMENT - 1U) & ~(CACHE_ALIGNMENT - 1U);
+  if (allocation_size == 0)
+    return false;
+  if (this->direct_region_scale_scratch_ != nullptr && this->direct_region_scale_scratch_size_ >= allocation_size)
+    return true;
+
+  // PPA accepts both internal DMA memory and cache-line-aligned PSRAM. Audio
+  // initialization can leave the internal DMA heap fragmented even when its
+  // aggregate free space looks sufficient, so keep the small working surface
+  // alive with an external fallback instead of silently dropping every frame.
+  bool replacement_external = false;
+  auto *replacement = static_cast<uint8_t *>(heap_caps_aligned_alloc(
+      CACHE_ALIGNMENT, allocation_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+  if (replacement == nullptr) {
+    replacement = static_cast<uint8_t *>(
+        heap_caps_aligned_alloc(CACHE_ALIGNMENT, allocation_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+    replacement_external = replacement != nullptr;
+  }
+  if (replacement == nullptr) {
+    replacement = static_cast<uint8_t *>(
+        heap_caps_aligned_alloc(CACHE_ALIGNMENT, allocation_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    replacement_external = replacement != nullptr;
+  }
+  if (replacement == nullptr) {
+    ESP_LOGW(TAG, "Direct scaled ARGB scratch allocation failed: %u bytes, largest internal dma=%u internal=%u psram=%u",
+             static_cast<unsigned>(allocation_size),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+    return false;
+  }
+  if (this->direct_region_scale_scratch_ != nullptr)
+    heap_caps_free(this->direct_region_scale_scratch_);
+  this->direct_region_scale_scratch_ = replacement;
+  this->direct_region_scale_scratch_size_ = allocation_size;
+  ESP_LOGI(TAG, "Direct scaled ARGB band buffer: %u bytes %s", static_cast<unsigned>(allocation_size),
+           replacement_external ? "PSRAM" : "internal DMA");
+  return true;
+}
+
+bool LvglComponent::direct_region_capture_scaled_background_(DirectRegionSlot *slot, const uint8_t *active,
+                                                             size_t active_size, int active_width,
+                                                             int active_height) {
+  auto log_failure = [&](const char *stage, esp_err_t result = ESP_FAIL) {
+    static uint32_t last_failure_ms = 0;
+    const uint32_t now_ms = millis();
+    if (now_ms - last_failure_ms >= 1000U) {
+      last_failure_ms = now_ms;
+      ESP_LOGW(TAG,
+               "Direct region background capture failed stage=%s result=%s slot=%p active=%p active_size=%u "
+               "active=%dx%d region=%d,%d %dx%d out=%p out_size=%u",
+               stage == nullptr ? "unknown" : stage, esp_err_to_name(result), slot, active,
+               static_cast<unsigned>(active_size), active_width, active_height, slot == nullptr ? 0 : slot->x,
+               slot == nullptr ? 0 : slot->y, slot == nullptr ? 0 : slot->width, slot == nullptr ? 0 : slot->height,
+               slot == nullptr ? nullptr : slot->scaled_background,
+               slot == nullptr ? 0U : static_cast<unsigned>(slot->scaled_background_size));
+    }
+    return false;
+  };
+  if (slot == nullptr || active == nullptr || slot->width <= 0 || slot->height <= 0 || slot->x < 0 || slot->y < 0 ||
+      slot->x + slot->width > active_width || slot->y + slot->height > active_height ||
+      active_size < static_cast<size_t>(active_width) * active_height * 3U || s_region_srm_client == nullptr) {
+    return log_failure("invalid-args");
+  }
+  if (slot->scaled_background_valid && slot->scaled_background != nullptr)
+    return true;
+
+  constexpr size_t CACHE_ALIGNMENT = 128;
+  const size_t background_bytes = static_cast<size_t>(slot->width) * slot->height * 2U;
+  const size_t allocation_size = (background_bytes + CACHE_ALIGNMENT - 1U) & ~(CACHE_ALIGNMENT - 1U);
+  if (slot->scaled_background == nullptr || slot->scaled_background_size < allocation_size) {
+    // PPA can address cache-line-aligned PSRAM after the explicit cache
+    // synchronisation below. On ESP32-P4 the combined SPIRAM|DMA capability
+    // is not available for every heap configuration, even though the same
+    // PSRAM is valid for PPA and is used by the other direct-render scratch
+    // surfaces. Keep the DMA attempt first, then use the proven external
+    // fallback instead of failing the whole regional frame.
+    bool replacement_external = false;
+    auto *replacement = static_cast<uint8_t *>(heap_caps_aligned_alloc(
+        CACHE_ALIGNMENT, allocation_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+    if (replacement == nullptr) {
+      replacement = static_cast<uint8_t *>(heap_caps_aligned_alloc(
+          CACHE_ALIGNMENT, allocation_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+      replacement_external = replacement != nullptr;
+    }
+    if (replacement == nullptr) {
+      replacement = static_cast<uint8_t *>(
+          heap_caps_aligned_alloc(CACHE_ALIGNMENT, allocation_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+      replacement_external = replacement != nullptr;
+    }
+    if (replacement == nullptr) {
+      ESP_LOGW(TAG,
+               "Direct region background allocation failed: %u bytes, largest internal dma=%u internal=%u psram=%u",
+               static_cast<unsigned>(allocation_size),
+               static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
+               static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+               static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+      return log_failure("alloc", ESP_ERR_NO_MEM);
+    }
+    if (slot->scaled_background != nullptr)
+      heap_caps_free(slot->scaled_background);
+    slot->scaled_background = replacement;
+    slot->scaled_background_size = allocation_size;
+    ESP_LOGI(TAG, "Direct region background buffer: %u bytes %s", static_cast<unsigned>(allocation_size),
+             replacement_external ? "PSRAM" : "internal DMA");
+  }
+  if (lvgl_cache_msync_external_result(slot->scaled_background, slot->scaled_background_size,
+                                       ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK) {
+    return log_failure("output-cache");
+  }
+
+  ppa_srm_oper_config_t config{};
+  config.in.buffer = const_cast<uint8_t *>(active);
+  config.in.pic_w = active_width;
+  config.in.pic_h = active_height;
+  config.in.block_w = slot->width;
+  config.in.block_h = slot->height;
+  config.in.block_offset_x = slot->x;
+  config.in.block_offset_y = slot->y;
+  config.in.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
+  config.out.buffer = slot->scaled_background;
+  config.out.buffer_size = slot->scaled_background_size;
+  config.out.pic_w = slot->width;
+  config.out.pic_h = slot->height;
+  config.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+  config.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+  config.scale_x = 1.0f;
+  config.scale_y = 1.0f;
+  config.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+  config.mode = PPA_TRANS_MODE_BLOCKING;
+
+  const uintptr_t active_begin = reinterpret_cast<uintptr_t>(active);
+  const uintptr_t background_begin = reinterpret_cast<uintptr_t>(slot->scaled_background);
+  s_direct_ppa_source_begin.store(active_begin, std::memory_order_release);
+  s_direct_ppa_source_end.store(active_begin + active_size, std::memory_order_release);
+  s_direct_ppa_target_begin.store(background_begin, std::memory_order_release);
+  s_direct_ppa_target_end.store(background_begin + slot->scaled_background_size, std::memory_order_release);
+  lvgl_esphome_wait_direct_region_dsi_fifo();
+  const esp_err_t result = ppa_do_scale_rotate_mirror(s_region_srm_client, &config);
+  s_direct_ppa_source_begin.store(0, std::memory_order_release);
+  s_direct_ppa_target_begin.store(0, std::memory_order_release);
+  s_direct_ppa_source_end.store(0, std::memory_order_relaxed);
+  s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
+  slot->scaled_background_valid = result == ESP_OK;
+  if (result != ESP_OK)
+    return log_failure("ppa", result);
+  return slot->scaled_background_valid;
+}
+
+bool LvglComponent::direct_region_ppa_scale_blend_argb8888_(DirectRegionSlot *slot,
+                                                            const DirectRegionRequest &request, uint8_t *active,
+                                                            size_t active_size, uint8_t *target, size_t target_size,
+                                                            int target_width, int target_height) {
+  if (slot == nullptr || request.source == nullptr || active == nullptr || target == nullptr ||
+      request.integer_scale <= 0 || request.source_width <= 0 || request.source_height <= 0 ||
+      request.source_stride != request.source_width * 4 || request.source_x < 0 || request.source_y < 0 ||
+      request.width <= 0 || request.height <= 0 || request.width % request.integer_scale != 0 ||
+      request.height % request.integer_scale != 0 ||
+      request.source_x + request.width / request.integer_scale > request.source_width ||
+      request.source_y + request.height / request.integer_scale > request.source_height || request.x < 0 ||
+      request.y < 0 || request.x + request.width > target_width || request.y + request.height > target_height ||
+      target_size < static_cast<size_t>(target_width) * target_height * 3U || s_region_srm_client == nullptr ||
+      s_region_blend_client == nullptr) {
+    return false;
+  }
+
+  slot->x = request.x;
+  slot->y = request.y;
+  slot->width = request.width;
+  slot->height = request.height;
+  auto log_failure = [&](const char *stage, esp_err_t result = ESP_FAIL) {
+    static uint32_t last_failure_ms = 0;
+    const uint32_t now_ms = millis();
+    if (now_ms - last_failure_ms >= 1000U) {
+      last_failure_ms = now_ms;
+      ESP_LOGW(TAG, "Direct scaled ARGB compose failed stage=%s result=%s region=%d,%d %dx%d source=%d,%d %dx%d",
+               stage == nullptr ? "unknown" : stage, esp_err_to_name(result), request.x, request.y, request.width,
+               request.height, request.source_x, request.source_y, request.source_width, request.source_height);
+    }
+    return false;
+  };
+  // Transparent animation must replace the previous frame, not blend onto it.
+  // Full-canvas callers provide the clean scene rendered once before playback.
+  if (request.scale_target != nullptr &&
+      (request.background == nullptr || request.background_stride != request.width * 3))
+    return log_failure("missing-clean-background");
+  if (request.scale_target == nullptr &&
+      !this->direct_region_capture_scaled_background_(slot, active, active_size, target_width, target_height))
+    return log_failure("background");
+
+  // Keep the temporary ARGB surface below the smallest post-audio internal
+  // heap block observed on this board. The scale and blend operations remain
+  // hardware accelerated; only the band count changes.
+  // Weather is a single replaceable animation region. A 64-row scratch
+  // surface halves the number of blocking scale+blend transactions while
+  // staying well below the internal-DMA pressure that made the old full
+  // region path unsafe during display scanout.
+  constexpr int MAX_BAND_ROWS = 64;
+  const int scale = request.integer_scale;
+  int band_rows = std::min(MAX_BAND_ROWS, request.height);
+  band_rows -= band_rows % scale;
+  if (band_rows <= 0)
+    band_rows = scale;
+  const size_t scratch_bytes = static_cast<size_t>(request.width) * band_rows * 4U;
+  if (request.scale_target == nullptr && !this->direct_region_ensure_scale_scratch_(scratch_bytes))
+    return log_failure("scratch");
+
+  const size_t source_bytes = static_cast<size_t>(request.source_stride) * request.source_height;
+  const size_t source_sync_offset = static_cast<size_t>(request.source_y) * request.source_stride;
+  const size_t source_sync_bytes = static_cast<size_t>(request.height / scale) * request.source_stride;
+  const bool perf_enabled = lvgl_esphome_get_perf_logging_enabled() != 0;
+  const int64_t perf_sync_start_us = perf_enabled ? esp_timer_get_time() : 0;
+  const esp_err_t source_sync_result =
+      lvgl_cache_msync_external_result(request.source + source_sync_offset, source_sync_bytes,
+                                       ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  const int64_t perf_sync_end_us = perf_enabled ? esp_timer_get_time() : 0;
+  if (source_sync_result != ESP_OK)
+    return log_failure("source-sync");
+
+  const auto clear_ownership = []() {
+    s_direct_ppa_source_begin.store(0, std::memory_order_release);
+    s_direct_ppa_source2_begin.store(0, std::memory_order_release);
+    s_direct_ppa_target_begin.store(0, std::memory_order_release);
+    s_direct_ppa_source_end.store(0, std::memory_order_relaxed);
+    s_direct_ppa_source2_end.store(0, std::memory_order_relaxed);
+    s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
+  };
+
+  // The fast radial weather renderer already owns a full-size ARGB canvas.
+  // Use its beginning as a compact region surface for the complete SRM
+  // result. This removes the per-band scratch reuse and lets PPA perform one
+  // scale followed by one blend for a frame, without allocating another
+  // PSRAM block. The rest of this function remains the bounded band path for
+  // callers that do not provide that private surface.
+  if (request.scale_target != nullptr) {
+    static int64_t perf_window_start_us = 0;
+    static uint32_t perf_ops = 0;
+    static uint64_t perf_sync_us = 0;
+    static uint64_t perf_scale_us = 0;
+    static uint64_t perf_fifo_us = 0;
+    static uint64_t perf_blend_us = 0;
+    static uint64_t perf_total_us = 0;
+    static uint32_t perf_sync_max_us = 0;
+    static uint32_t perf_scale_max_us = 0;
+    static uint32_t perf_fifo_max_us = 0;
+    static uint32_t perf_blend_max_us = 0;
+    static uint32_t perf_total_max_us = 0;
+    if (!perf_enabled) {
+      perf_window_start_us = 0;
+      perf_ops = 0;
+      perf_sync_us = 0;
+      perf_scale_us = 0;
+      perf_fifo_us = 0;
+      perf_blend_us = 0;
+      perf_total_us = 0;
+      perf_sync_max_us = 0;
+      perf_scale_max_us = 0;
+      perf_fifo_max_us = 0;
+      perf_blend_max_us = 0;
+      perf_total_max_us = 0;
+    } else if (perf_window_start_us == 0) {
+      perf_window_start_us = esp_timer_get_time();
+    }
+    const int64_t perf_op_start_us = perf_enabled ? esp_timer_get_time() : 0;
+    constexpr size_t CACHE_ALIGNMENT = 128;
+    const size_t scale_output_bytes = static_cast<size_t>(request.width) * request.height * 4U;
+    const size_t scale_output_alloc = (scale_output_bytes + CACHE_ALIGNMENT - 1U) & ~(CACHE_ALIGNMENT - 1U);
+    if (request.scale_target_size < scale_output_alloc || request.scale_target_width < request.width ||
+        request.scale_target_height < request.height ||
+        (reinterpret_cast<uintptr_t>(request.scale_target) & 0x0FU) != 0 || request.scale_target == active ||
+        request.scale_target == target) {
+      return log_failure("scale-target");
+    }
+
+    const uintptr_t source_begin = reinterpret_cast<uintptr_t>(request.source);
+    const uintptr_t scale_target_begin = reinterpret_cast<uintptr_t>(request.scale_target);
+    const uint8_t *background = request.background;
+    const size_t background_size = static_cast<size_t>(request.background_stride) * request.height;
+    const uintptr_t background_begin = reinterpret_cast<uintptr_t>(background);
+    const uintptr_t target_begin = reinterpret_cast<uintptr_t>(target);
+    if (background == nullptr || background_size == 0)
+      return log_failure("background-pointer");
+
+    ppa_srm_oper_config_t scale_config{};
+    scale_config.in.buffer = const_cast<uint8_t *>(request.source);
+    scale_config.in.pic_w = request.source_width;
+    scale_config.in.pic_h = request.source_height;
+    scale_config.in.block_w = request.source_width > request.source_x
+                                  ? std::min(request.width / request.integer_scale,
+                                             request.source_width - request.source_x)
+                                  : 0;
+    scale_config.in.block_h = request.source_height > request.source_y
+                                  ? std::min(request.height / request.integer_scale,
+                                             request.source_height - request.source_y)
+                                  : 0;
+    scale_config.in.block_offset_x = request.source_x;
+    scale_config.in.block_offset_y = request.source_y;
+    scale_config.in.srm_cm = PPA_SRM_COLOR_MODE_ARGB8888;
+    scale_config.out.buffer = request.scale_target;
+    scale_config.out.buffer_size = request.scale_target_size;
+    scale_config.out.pic_w = request.width;
+    scale_config.out.pic_h = request.height;
+    scale_config.out.srm_cm = PPA_SRM_COLOR_MODE_ARGB8888;
+    scale_config.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+    scale_config.scale_x = static_cast<float>(request.integer_scale);
+    scale_config.scale_y = static_cast<float>(request.integer_scale);
+    scale_config.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+    scale_config.mode = PPA_TRANS_MODE_BLOCKING;
+
+    s_direct_ppa_source_begin.store(source_begin, std::memory_order_release);
+    s_direct_ppa_source_end.store(source_begin + source_bytes, std::memory_order_release);
+    s_direct_ppa_target_begin.store(scale_target_begin, std::memory_order_release);
+    s_direct_ppa_target_end.store(scale_target_begin + scale_output_alloc, std::memory_order_release);
+    // SRM only reads the private source and writes the private scale target.
+    // The DSI FIFO fence belongs immediately before the following blend, where
+    // the active framebuffer is actually touched.
+    const int64_t perf_scale_start_us = perf_enabled ? esp_timer_get_time() : 0;
+    const esp_err_t scale_result = ppa_do_scale_rotate_mirror(s_region_srm_client, &scale_config);
+    const int64_t perf_scale_end_us = perf_enabled ? esp_timer_get_time() : 0;
+    clear_ownership();
+    if (scale_result != ESP_OK)
+      return log_failure("scale-full", scale_result);
+
+    ppa_blend_oper_config_t blend_config{};
+    blend_config.in_bg.buffer = const_cast<uint8_t *>(background);
+    blend_config.in_bg.pic_w = request.width;
+    blend_config.in_bg.pic_h = request.height;
+    blend_config.in_bg.block_w = request.width;
+    blend_config.in_bg.block_h = request.height;
+    blend_config.in_bg.blend_cm = PPA_BLEND_COLOR_MODE_RGB888;
+    blend_config.in_fg.buffer = request.scale_target;
+    blend_config.in_fg.pic_w = request.width;
+    blend_config.in_fg.pic_h = request.height;
+    blend_config.in_fg.block_w = request.width;
+    blend_config.in_fg.block_h = request.height;
+    blend_config.in_fg.blend_cm = PPA_BLEND_COLOR_MODE_ARGB8888;
+    blend_config.out.buffer = target;
+    blend_config.out.buffer_size = target_size;
+    blend_config.out.pic_w = target_width;
+    blend_config.out.pic_h = target_height;
+    blend_config.out.block_offset_x = request.x;
+    blend_config.out.block_offset_y = request.y;
+    blend_config.out.blend_cm = PPA_BLEND_COLOR_MODE_RGB888;
+    blend_config.bg_alpha_update_mode = PPA_ALPHA_FIX_VALUE;
+    blend_config.bg_alpha_fix_val = 0xFF;
+    blend_config.fg_alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+    blend_config.mode = PPA_TRANS_MODE_BLOCKING;
+
+    s_direct_ppa_source_begin.store(background_begin, std::memory_order_release);
+    s_direct_ppa_source_end.store(background_begin + background_size, std::memory_order_release);
+    s_direct_ppa_source2_begin.store(scale_target_begin, std::memory_order_release);
+    s_direct_ppa_source2_end.store(scale_target_begin + scale_output_alloc, std::memory_order_release);
+    s_direct_ppa_target_begin.store(target_begin, std::memory_order_release);
+    s_direct_ppa_target_end.store(target_begin + target_size, std::memory_order_release);
+    const int64_t perf_fifo_start_us = perf_enabled ? esp_timer_get_time() : 0;
+    lvgl_esphome_wait_direct_region_dsi_fifo();
+    const int64_t perf_fifo_end_us = perf_enabled ? esp_timer_get_time() : 0;
+    const int64_t perf_blend_start_us = perf_enabled ? esp_timer_get_time() : 0;
+    const esp_err_t blend_result = ppa_do_blend(s_region_blend_client, &blend_config);
+    const int64_t perf_blend_end_us = perf_enabled ? esp_timer_get_time() : 0;
+    clear_ownership();
+    if (blend_result != ESP_OK)
+      return log_failure("blend-full", blend_result);
+    if (perf_enabled) {
+      const uint32_t sync_us = static_cast<uint32_t>(perf_sync_end_us - perf_sync_start_us);
+      const uint32_t scale_us = static_cast<uint32_t>(perf_scale_end_us - perf_scale_start_us);
+      const uint32_t fifo_us = static_cast<uint32_t>(perf_fifo_end_us - perf_fifo_start_us);
+      const uint32_t blend_us = static_cast<uint32_t>(perf_blend_end_us - perf_blend_start_us);
+      const uint32_t total_us = static_cast<uint32_t>(perf_blend_end_us - perf_op_start_us);
+      perf_ops++;
+      perf_sync_us += sync_us;
+      perf_scale_us += scale_us;
+      perf_fifo_us += fifo_us;
+      perf_blend_us += blend_us;
+      perf_total_us += total_us;
+      perf_sync_max_us = std::max(perf_sync_max_us, sync_us);
+      perf_scale_max_us = std::max(perf_scale_max_us, scale_us);
+      perf_fifo_max_us = std::max(perf_fifo_max_us, fifo_us);
+      perf_blend_max_us = std::max(perf_blend_max_us, blend_us);
+      perf_total_max_us = std::max(perf_total_max_us, total_us);
+      const int64_t now_us = perf_blend_end_us;
+      if (now_us - perf_window_start_us >= 2000000 && perf_ops != 0) {
+        ESP_LOGI("lvgl.direct",
+                 "scale_blend2s: ops=%u sync_avg=%lluus max=%uus scale_avg=%lluus max=%uus "
+                 "fifo_avg=%lluus max=%uus blend_avg=%lluus max=%uus total_avg=%lluus max=%uus",
+                 static_cast<unsigned>(perf_ops), static_cast<unsigned long long>(perf_sync_us / perf_ops),
+                 static_cast<unsigned>(perf_sync_max_us), static_cast<unsigned long long>(perf_scale_us / perf_ops),
+                 static_cast<unsigned>(perf_scale_max_us), static_cast<unsigned long long>(perf_fifo_us / perf_ops),
+                 static_cast<unsigned>(perf_fifo_max_us), static_cast<unsigned long long>(perf_blend_us / perf_ops),
+                 static_cast<unsigned>(perf_blend_max_us), static_cast<unsigned long long>(perf_total_us / perf_ops),
+                 static_cast<unsigned>(perf_total_max_us));
+        perf_window_start_us = now_us;
+        perf_ops = 0;
+        perf_sync_us = 0;
+        perf_scale_us = 0;
+        perf_fifo_us = 0;
+        perf_blend_us = 0;
+        perf_total_us = 0;
+        perf_sync_max_us = 0;
+        perf_scale_max_us = 0;
+        perf_fifo_max_us = 0;
+        perf_blend_max_us = 0;
+        perf_total_max_us = 0;
+      }
+    }
+    return true;
+  }
+
+  const uintptr_t source_begin = reinterpret_cast<uintptr_t>(request.source);
+  const uintptr_t background_begin = reinterpret_cast<uintptr_t>(slot->scaled_background);
+  const uintptr_t scratch_begin = reinterpret_cast<uintptr_t>(this->direct_region_scale_scratch_);
+  const uintptr_t target_begin = reinterpret_cast<uintptr_t>(target);
+  lvgl_esphome_wait_direct_region_dsi_fifo();
+
+  for (int output_y = 0; output_y < request.height; output_y += band_rows) {
+    const int output_h = std::min(band_rows, request.height - output_y);
+    const int input_h = output_h / scale;
+    const size_t active_scratch_bytes = static_cast<size_t>(request.width) * output_h * 4U;
+
+    ppa_srm_oper_config_t scale_config{};
+    scale_config.in.buffer = const_cast<uint8_t *>(request.source);
+    scale_config.in.pic_w = request.source_width;
+    scale_config.in.pic_h = request.source_height;
+    scale_config.in.block_w = request.width / scale;
+    scale_config.in.block_h = input_h;
+    scale_config.in.block_offset_x = request.source_x;
+    scale_config.in.block_offset_y = request.source_y + output_y / scale;
+    scale_config.in.srm_cm = PPA_SRM_COLOR_MODE_ARGB8888;
+    scale_config.out.buffer = this->direct_region_scale_scratch_;
+    scale_config.out.buffer_size = this->direct_region_scale_scratch_size_;
+    scale_config.out.pic_w = request.width;
+    scale_config.out.pic_h = output_h;
+    scale_config.out.srm_cm = PPA_SRM_COLOR_MODE_ARGB8888;
+    scale_config.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+    scale_config.scale_x = static_cast<float>(scale);
+    scale_config.scale_y = static_cast<float>(scale);
+    scale_config.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+    scale_config.mode = PPA_TRANS_MODE_BLOCKING;
+
+    s_direct_ppa_source_begin.store(source_begin, std::memory_order_release);
+    s_direct_ppa_source_end.store(source_begin + source_bytes, std::memory_order_release);
+    s_direct_ppa_target_begin.store(scratch_begin, std::memory_order_release);
+    s_direct_ppa_target_end.store(scratch_begin + active_scratch_bytes, std::memory_order_release);
+    const esp_err_t scale_result = ppa_do_scale_rotate_mirror(s_region_srm_client, &scale_config);
+    clear_ownership();
+    if (scale_result != ESP_OK)
+      return log_failure("scale", scale_result);
+
+    ppa_blend_oper_config_t blend_config{};
+    blend_config.in_bg.buffer = slot->scaled_background;
+    blend_config.in_bg.pic_w = request.width;
+    blend_config.in_bg.pic_h = request.height;
+    blend_config.in_bg.block_w = request.width;
+    blend_config.in_bg.block_h = output_h;
+    blend_config.in_bg.block_offset_y = output_y;
+    blend_config.in_bg.blend_cm = PPA_BLEND_COLOR_MODE_RGB565;
+    blend_config.in_fg.buffer = this->direct_region_scale_scratch_;
+    blend_config.in_fg.pic_w = request.width;
+    blend_config.in_fg.pic_h = output_h;
+    blend_config.in_fg.block_w = request.width;
+    blend_config.in_fg.block_h = output_h;
+    blend_config.in_fg.blend_cm = PPA_BLEND_COLOR_MODE_ARGB8888;
+    blend_config.out.buffer = target;
+    blend_config.out.buffer_size = target_size;
+    blend_config.out.pic_w = target_width;
+    blend_config.out.pic_h = target_height;
+    blend_config.out.block_offset_x = request.x;
+    blend_config.out.block_offset_y = request.y + output_y;
+    blend_config.out.blend_cm = PPA_BLEND_COLOR_MODE_RGB888;
+    blend_config.bg_alpha_update_mode = PPA_ALPHA_FIX_VALUE;
+    blend_config.bg_alpha_fix_val = 0xFF;
+    blend_config.fg_alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+    blend_config.mode = PPA_TRANS_MODE_BLOCKING;
+
+    s_direct_ppa_source_begin.store(background_begin, std::memory_order_release);
+    s_direct_ppa_source_end.store(background_begin + slot->scaled_background_size, std::memory_order_release);
+    s_direct_ppa_source2_begin.store(scratch_begin, std::memory_order_release);
+    s_direct_ppa_source2_end.store(scratch_begin + active_scratch_bytes, std::memory_order_release);
+    s_direct_ppa_target_begin.store(target_begin, std::memory_order_release);
+    s_direct_ppa_target_end.store(target_begin + target_size, std::memory_order_release);
+    const esp_err_t blend_result = ppa_do_blend(s_region_blend_client, &blend_config);
+    clear_ownership();
+    if (blend_result != ESP_OK)
+      return log_failure("blend", blend_result);
+  }
+  return true;
 }
 
 bool LvglComponent::direct_region_ppa_crossfade_background_(const uint8_t *background, int background_stride,
@@ -3189,7 +4510,9 @@ bool LvglComponent::direct_region_ppa_crossfade_background_(const uint8_t *backg
 }
 
 bool LvglComponent::direct_region_cache_animation_overlay_(DirectRegionSlot *slot, const DirectRegionRequest &request) {
-  if (slot == nullptr || request.operation != DirectRegionRequest::Operation::BLEND_ARGB8888 ||
+  if (slot == nullptr ||
+      (request.operation != DirectRegionRequest::Operation::BLEND_ARGB8888 &&
+       request.operation != DirectRegionRequest::Operation::OVERLAY_ARGB8888) ||
       request.source == nullptr || request.width <= 0 || request.height <= 0 || request.source_stride <= 0)
     return false;
 
@@ -3223,6 +4546,43 @@ bool LvglComponent::direct_region_cache_animation_overlay_(DirectRegionSlot *slo
     return false;
   }
   slot->animation_overlay_valid = true;
+  return true;
+}
+
+bool LvglComponent::direct_region_cache_persistent_copy_(DirectRegionSlot *slot,
+                                                          const DirectRegionRequest &request) {
+  if (slot == nullptr || request.operation != DirectRegionRequest::Operation::COPY_RGB888 ||
+      request.source == nullptr || request.width <= 0 || request.height <= 0 || request.source_stride <= 0)
+    return false;
+
+  constexpr size_t PIXEL_SIZE = 3;
+  constexpr size_t CACHE_ALIGNMENT = 128;
+  const size_t row_bytes = static_cast<size_t>(request.width) * PIXEL_SIZE;
+  const size_t data_size = row_bytes * request.height;
+  const size_t allocation_size = (data_size + CACHE_ALIGNMENT - 1U) & ~(CACHE_ALIGNMENT - 1U);
+  if (slot->persistent_copy == nullptr || slot->persistent_copy_size < allocation_size) {
+    auto *replacement = static_cast<uint8_t *>(
+        heap_caps_aligned_alloc(CACHE_ALIGNMENT, allocation_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (replacement == nullptr) {
+      slot->persistent_copy_valid = false;
+      return false;
+    }
+    if (slot->persistent_copy != nullptr)
+      heap_caps_free(slot->persistent_copy);
+    slot->persistent_copy = replacement;
+    slot->persistent_copy_size = allocation_size;
+  }
+
+  for (int row = 0; row < request.height; row++) {
+    memcpy(slot->persistent_copy + static_cast<size_t>(row) * row_bytes,
+           request.source + static_cast<size_t>(row) * request.source_stride, row_bytes);
+  }
+  if (lvgl_cache_msync_external_result(slot->persistent_copy, allocation_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M) !=
+      ESP_OK) {
+    slot->persistent_copy_valid = false;
+    return false;
+  }
+  slot->persistent_copy_valid = true;
   return true;
 }
 
@@ -3316,7 +4676,8 @@ void LvglComponent::direct_region_task_trampoline_(void *arg) {
   static_cast<LvglComponent *>(arg)->direct_region_task_();
 }
 
-bool LvglComponent::direct_region_prepare_target_(uint32_t generation, uint8_t **active_out, uint8_t **target_out) {
+bool LvglComponent::direct_region_prepare_target_(uint32_t generation, uint8_t **active_out, uint8_t **target_out,
+                                                  uint32_t target_wait_ms) {
   if (active_out == nullptr || target_out == nullptr || this->displays_.size() != 1)
     return false;
   auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
@@ -3335,30 +4696,73 @@ bool LvglComponent::direct_region_prepare_target_(uint32_t generation, uint8_t *
     return -1;
   };
 
-  // The queued framebuffer contains the newest complete overlay state. Use it
-  // as the source when it belongs to the current LVGL base generation; the
-  // active framebuffer remains the authoritative source immediately after a
-  // normal LVGL refresh.
-  uint8_t *source = active;
+  // Exclude LVGL's target only while a refresh has reserved it. Between
+  // refreshes buf_act is an idle DSI framebuffer and can be used by the
+  // regional compositor. With active/queued/staged all occupied, excluding it
+  // unconditionally cuts a 60 Hz animation down to roughly every second panel
+  // period. The refresh lock and reservation close the concurrent-write gap.
+  const uint8_t *lvgl_target =
+      this->disp_ != nullptr && this->disp_->buf_act != nullptr ? static_cast<uint8_t *>(this->disp_->buf_act->data)
+                                                               : nullptr;
+  const bool lvgl_refresh_owns_target = this->direct_region_refresh_locked_ ||
+                                        this->direct_region_refresh_reserved_buffer_ != nullptr;
+  uint8_t *target = target_wait_ms != 0
+                        ? mipi_display->acquire_direct_render_frame_buffer(
+                              lvgl_refresh_owns_target ? lvgl_target : nullptr, nullptr, target_wait_ms)
+                        : mipi_display->get_direct_render_frame_buffer(lvgl_refresh_owns_target ? lvgl_target : nullptr);
+  const int target_index = buffer_index(target);
+  if (target != nullptr && target_wait_ms == 0 && !mipi_display->reserve_direct_render_frame_buffer(target))
+    target = nullptr;
+  if (target == nullptr || target_index < 0) {
+    if (target != nullptr)
+      mipi_display->release_direct_render_frame_buffer(target);
+    return false;
+  }
+
+  // Waiting for a target can advance scanout. Choose the newest complete
+  // source only after the target has been reserved.
+  uint8_t *source = mipi_display->get_presented_frame_buffer();
   if (auto *queued = mipi_display->get_queued_frame_buffer(); queued != nullptr) {
     const int queued_index = buffer_index(queued);
     if (queued_index >= 0 && this->direct_region_buffer_generation_[queued_index] == generation)
       source = queued;
   }
-
-  // DSI owns the active and queued framebuffers. With three panel buffers the
-  // compositor can prepare the remaining one without waiting for VSYNC.
-  uint8_t *target = mipi_display->get_direct_render_frame_buffer();
-  const int target_index = buffer_index(target);
-  if (target == nullptr || target_index < 0 || target == source)
+  if (source == nullptr || source == target) {
+    mipi_display->release_direct_render_frame_buffer(target);
     return false;
+  }
 
   if (this->direct_region_buffer_generation_[target_index] != generation) {
+    const uint32_t rebase_started_us = micros();
     const size_t frame_size = mipi_display->get_frame_buffer_size();
-    if (!this->direct_region_ppa_copy_(source, this->width_, this->height_, 0, 0, this->width_, this->height_, target,
-                                       frame_size, this->width_, this->height_, 0, 0, false, true))
-      return false;
+    bool rebased = false;
+#if CONFIG_ESPHOME_LVGL_SNAPSHOT_DMA2D_M2M
+    // A generation change requires an exact full-frame copy. Use the same
+    // descriptor-based DMA2D path as the snapshot compositor; regional PPA
+    // remains responsible for the small overlays composed below.
+    lvgl_cache_msync_external(source, frame_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    lvgl_cache_msync_external(target, frame_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    rebased = dma2d_m2m_copy_rgb888_2d(source, this->width_, this->height_, 0, 0, target, this->width_, this->height_,
+                                       0, 0, this->width_, this->height_);
+#endif
+    if (!rebased) {
+      rebased = this->direct_region_ppa_copy_(source, this->width_, this->height_, 0, 0, this->width_, this->height_,
+                                              target, frame_size, this->width_, this->height_, 0, 0, false, true);
+    }
+    if (!rebased) {
+      lvgl_cache_msync_external(source, frame_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+      lvgl_cache_msync_external(target, frame_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+      memcpy(target, source, frame_size);
+      lvgl_cache_msync_external(target, frame_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    }
     this->direct_region_buffer_generation_[target_index] = generation;
+    const uint32_t rebase_us = micros() - rebase_started_us;
+    this->direct_region_full_rebases_.fetch_add(1, std::memory_order_relaxed);
+    this->direct_region_full_rebase_us_.fetch_add(rebase_us, std::memory_order_relaxed);
+    uint32_t previous_max = this->direct_region_full_rebase_max_us_.load(std::memory_order_relaxed);
+    while (rebase_us > previous_max && !this->direct_region_full_rebase_max_us_.compare_exchange_weak(
+                                           previous_max, rebase_us, std::memory_order_relaxed)) {
+    }
   }
 
   *active_out = source;
@@ -3395,12 +4799,23 @@ bool LvglComponent::direct_region_compose_to_(const DirectRegionRequest *request
     }
     if (replaced)
       continue;
-    if (slot.stable_carry && slot.blend && slot.animation_overlay_valid && slot.animation_overlay != nullptr &&
-        slot.latest_background != nullptr) {
-      if (!this->direct_region_ppa_blend_argb8888_(
-              slot.latest_background, slot.latest_background_stride, slot.latest_background_rgb565,
-              slot.animation_overlay, slot.width * 4, slot.width, slot.height, 0, 0, slot.width, slot.height, target,
-              frame_size, this->width_, this->height_, slot.x, slot.y)) {
+    if (slot.persistent_carry && slot.persistent_copy_valid && slot.persistent_copy != nullptr) {
+      if (!this->direct_region_ppa_copy_(slot.persistent_copy, slot.width, slot.height, 0, 0, slot.width, slot.height,
+                                         target, frame_size, this->width_, this->height_, slot.x, slot.y, false,
+                                         false)) {
+        return false;
+      }
+    } else if (slot.stable_carry && slot.blend && slot.animation_overlay_valid && slot.animation_overlay != nullptr) {
+      const bool composed =
+          slot.latest_background != nullptr
+              ? this->direct_region_ppa_blend_argb8888_(
+                    slot.latest_background, slot.latest_background_stride, slot.latest_background_rgb565,
+                    slot.animation_overlay, slot.width * 4, slot.width, slot.height, 0, 0, slot.width, slot.height,
+                    target, frame_size, this->width_, this->height_, slot.x, slot.y)
+              : this->direct_region_ppa_overlay_argb8888_(
+                    slot.animation_overlay, slot.width * 4, slot.width, slot.height, 0, 0, slot.width, slot.height,
+                    target, frame_size, this->width_, this->height_, slot.x, slot.y);
+      if (!composed) {
         return false;
       }
     } else if (!this->direct_region_ppa_copy_(active, this->width_, this->height_, slot.x, slot.y, slot.width,
@@ -3419,6 +4834,19 @@ bool LvglComponent::direct_region_compose_to_(const DirectRegionRequest *request
           request.background, request.background_stride, request.background_rgb565, request.source,
           request.source_stride, request.source_width, request.source_height, request.source_x, request.source_y,
           request.width, request.height, target, frame_size, this->width_, this->height_, request.x, request.y);
+    } else if (request.operation == DirectRegionRequest::Operation::SCALE_BLEND_ARGB8888) {
+      auto *slot = this->direct_region_find_slot_(request.x, request.y, request.width, request.height, true);
+      composed = this->direct_region_ppa_scale_blend_argb8888_(slot, request, active, frame_size, target, frame_size,
+                                                               this->width_, this->height_);
+    } else if (request.operation == DirectRegionRequest::Operation::OVERLAY_ARGB8888) {
+      composed = this->direct_region_ppa_overlay_argb8888_(
+          request.source, request.source_stride, request.source_width, request.source_height, request.source_x,
+          request.source_y, request.width, request.height, target, frame_size, this->width_, this->height_, request.x,
+          request.y);
+    } else if (request.operation == DirectRegionRequest::Operation::COPY_XRGB8888) {
+      composed = this->direct_region_ppa_copy_xrgb8888_(
+          request.source, request.source_width, request.source_height, request.source_x, request.source_y,
+          request.width, request.height, target, frame_size, this->width_, this->height_, request.x, request.y, true);
     } else {
       composed =
           this->direct_region_ppa_copy_(request.source, request.source_width, request.source_height, request.source_x,
@@ -3428,6 +4856,7 @@ bool LvglComponent::direct_region_compose_to_(const DirectRegionRequest *request
     if (!composed)
       return false;
   }
+
   return true;
 }
 
@@ -3455,10 +4884,16 @@ void LvglComponent::direct_region_refresh_begin_() {
     return;
 
   this->direct_last_flushed_buf_ = active;
-  // If a regional frame currently occupies one of LVGL's two buffers, render
-  // into the other one. This mirrors LVGL's normal DIRECT-mode ownership before
-  // it calculates and synchronizes dirty areas.
-  this->realign_direct_buffer_after_manual_present(false);
+  // LV_EVENT_REFR_START is emitted before refr_sync_areas() and rendering use
+  // disp_->buf_act. A direct presenter can finish between LVGL refreshes and
+  // leave buf_act pointing at the framebuffer that DSI is now scanning out.
+  // Re-establish the DIRECT-mode invariant here, before the first write of the
+  // refresh, so LVGL never modifies the presented framebuffer in place.
+  if (this->disp_->buf_act != nullptr && this->disp_->buf_act->data == active) {
+    lv_draw_buf_t *other = this->disp_->buf_act == this->disp_->buf_1 ? this->disp_->buf_2 : this->disp_->buf_1;
+    if (other != nullptr && other->data != nullptr && other->data != active)
+      this->disp_->buf_act = other;
+  }
 
   // Keep LVGL's off-screen target out of the regional compositor's pool. Once
   // refr_sync_areas() has completed, the compositor can continue animating on
@@ -3522,44 +4957,62 @@ void LvglComponent::direct_region_sync_to_lvgl_target_() {
     return;
   }
 
-  constexpr size_t bytes_per_pixel = 3;
   const size_t frame_size = mipi_display->get_frame_buffer_size();
-  const size_t frame_stride = mipi_display->get_frame_buffer_stride();
   for (const auto &slot : this->direct_region_slots_) {
     if (!slot.valid)
       continue;
-
-    auto *target_region =
-        target + static_cast<size_t>(slot.y) * frame_stride + static_cast<size_t>(slot.x) * bytes_per_pixel;
-    const size_t target_span =
-        static_cast<size_t>(slot.height - 1) * frame_stride + static_cast<size_t>(slot.width) * bytes_per_pixel;
-    // refr_sync_areas() has already been written back by
-    // direct_dirty_sync_after_lvgl_copy_(). Invalidate the old cached view of
-    // this rectangle before PPA replaces it, so a later CPU access cannot
-    // write an obsolete animation phase back over the DMA result.
-    if (lvgl_cache_msync_external_result(target_region, target_span, ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK) {
-      ESP_LOGW(TAG, "direct regions: failed to invalidate %dx%d target at %d,%d", slot.width, slot.height, slot.x,
-               slot.y);
-      return;
-    }
 
     // A stopped animation is authoritative in its cached overlay, not in an
     // arbitrary member of the DSI triple-buffer pool. Reconstruct it over its
     // compact clean background when LVGL rebases a native frame. Copying the
     // presented rectangle can otherwise reintroduce an older wave phase, and
     // the following regional frame appears to move it back again.
-    const bool synchronized =
-        slot.stable_carry && slot.blend && slot.animation_overlay_valid && slot.animation_overlay != nullptr &&
-                slot.latest_background != nullptr
-            ? this->direct_region_ppa_blend_argb8888_(
-                  slot.latest_background, slot.latest_background_stride, slot.latest_background_rgb565,
-                  slot.animation_overlay, slot.width * 4, slot.width, slot.height, 0, 0, slot.width, slot.height,
-                  target, frame_size, this->width_, this->height_, slot.x, slot.y)
-            : this->direct_region_ppa_copy_(source, this->width_, this->height_, slot.x, slot.y, slot.width,
-                                            slot.height, target, frame_size, this->width_, this->height_, slot.x,
-                                            slot.y, false, false);
+    bool synchronized;
+    if (slot.persistent_carry && slot.persistent_copy_valid && slot.persistent_copy != nullptr) {
+      synchronized = this->direct_region_ppa_copy_(slot.persistent_copy, slot.width, slot.height, 0, 0, slot.width,
+                                                    slot.height, target, frame_size, this->width_, this->height_,
+                                                    slot.x, slot.y, false, false);
+    } else if (slot.stable_carry && slot.blend && slot.animation_overlay_valid && slot.animation_overlay != nullptr) {
+      synchronized =
+          slot.latest_background != nullptr
+              ? this->direct_region_ppa_blend_argb8888_(
+                    slot.latest_background, slot.latest_background_stride, slot.latest_background_rgb565,
+                    slot.animation_overlay, slot.width * 4, slot.width, slot.height, 0, 0, slot.width, slot.height,
+                    target, frame_size, this->width_, this->height_, slot.x, slot.y)
+              : this->direct_region_ppa_overlay_argb8888_(
+                    slot.animation_overlay, slot.width * 4, slot.width, slot.height, 0, 0, slot.width, slot.height,
+                    target, frame_size, this->width_, this->height_, slot.x, slot.y);
+    } else {
+      synchronized = this->direct_region_ppa_copy_(source, this->width_, this->height_, slot.x, slot.y, slot.width,
+                                                    slot.height, target, frame_size, this->width_, this->height_,
+                                                    slot.x, slot.y, false, false);
+    }
     if (!synchronized) {
       ESP_LOGW(TAG, "direct regions: failed to rebase %dx%d region at %d,%d", slot.width, slot.height, slot.x, slot.y);
+      return;
+    }
+  }
+}
+
+void LvglComponent::direct_region_sync_persistent_to_lvgl_target_() {
+  if (!this->direct_region_refresh_locked_ || this->disp_ == nullptr || this->disp_->buf_act == nullptr ||
+      this->disp_->buf_act->data == nullptr || this->displays_.size() != 1)
+    return;
+
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  auto *target = static_cast<uint8_t *>(this->disp_->buf_act->data);
+  if (mipi_display == nullptr || target == nullptr ||
+      target == mipi_display->get_queued_frame_buffer() || target == mipi_display->get_staged_frame_buffer())
+    return;
+
+  const size_t frame_size = mipi_display->get_frame_buffer_size();
+  for (const auto &slot : this->direct_region_slots_) {
+    if (!slot.valid || !slot.persistent_carry || !slot.persistent_copy_valid || slot.persistent_copy == nullptr)
+      continue;
+    if (!this->direct_region_ppa_copy_(slot.persistent_copy, slot.width, slot.height, 0, 0, slot.width, slot.height,
+                                       target, frame_size, this->width_, this->height_, slot.x, slot.y, false, false)) {
+      ESP_LOGW(TAG, "direct regions: failed to restore persistent %dx%d region at %d,%d before flush", slot.width,
+               slot.height, slot.x, slot.y);
       return;
     }
   }
@@ -3588,6 +5041,10 @@ void LvglComponent::direct_region_task_() {
   uint32_t perf_request_count = 0;
   uint32_t perf_coalesced_count = 0;
   uint32_t perf_max_batch_count = 0;
+  uint32_t perf_prepare_miss_count = 0;
+  uint32_t perf_compose_fail_count = 0;
+  uint32_t perf_generation_race_count = 0;
+  uint32_t perf_queue_reject_count = 0;
   uint64_t perf_total_us = 0;
   uint32_t perf_max_us = 0;
   int64_t perf_window_start_us = 0;
@@ -3604,6 +5061,7 @@ void LvglComponent::direct_region_task_() {
     uint32_t raw_request_count = 0;
     uint32_t coalesced_request_count = 0;
     bool stable_boundary = false;
+    bool display_pacing_required = false;
     auto defer_completion = [&](LvglDirectBlitReadyCallback callback, void *arg) {
       if (callback == nullptr)
         return;
@@ -3618,6 +5076,7 @@ void LvglComponent::direct_region_task_() {
     auto add_latest_request = [&](const DirectRegionRequest &request) {
       raw_request_count++;
       stable_boundary |= request.stable_carry;
+      display_pacing_required |= request.operation != DirectRegionRequest::Operation::SCALE_BLEND_ARGB8888;
       if (request.operation == DirectRegionRequest::Operation::BARRIER) {
         if (request_count < DIRECT_REGION_BATCH_SIZE) {
           requests[request_count++] = request;
@@ -3652,7 +5111,13 @@ void LvglComponent::direct_region_task_() {
     add_latest_request(incoming);
     // Frame-pace independent animated regions so their newest states share one
     // DSI presentation instead of competing for PSRAM bandwidth.
-    if (next_present_us != 0 && !stable_boundary) {
+    // The weather producer is already driven by the display-timed Lottie
+    // clock and its SRM+blend transaction is shorter than one refresh period.
+    // Waiting for another compositor period would add a second clock and
+    // reduce it to roughly 50 FPS. Ordinary LVGL regions still use the paced
+    // path so they cannot flood the DSI queue.
+    const bool pace_batch = stable_boundary || display_pacing_required;
+    if (next_present_us != 0 && pace_batch) {
       while (true) {
         const int64_t remaining_us = next_present_us - esp_timer_get_time();
         if (remaining_us <= 0)
@@ -3669,12 +5134,17 @@ void LvglComponent::direct_region_task_() {
       add_latest_request(incoming);
     }
     const int64_t started_us = esp_timer_get_time();
-    next_present_us = started_us + frame_period_us;
+    next_present_us = pace_batch ? started_us + frame_period_us : 0;
     bool presented = false;
     bool has_render_request = false;
     for (size_t i = 0; i < request_count; i++)
       has_render_request |= requests[i].operation != DirectRegionRequest::Operation::BARRIER;
-    if (!has_render_request) {
+    const bool drop_render_requests = this->direct_region_paused_.load(std::memory_order_acquire);
+    if (!has_render_request || drop_render_requests) {
+      // Navigation and full-screen transitions take ownership of DSI. Sources
+      // already queued for an independent region are obsolete at that point;
+      // acknowledge them without spending another frame on PPA/PSRAM traffic.
+      // Their callbacks release producer buffers just like a presented frame.
       presented = true;
     } else if (s_region_srm_mutex != nullptr && xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(60)) == pdTRUE) {
       const bool cache_only = this->direct_image_animation_active_ && this->direct_image_animation_allows_regions_;
@@ -3689,7 +5159,8 @@ void LvglComponent::direct_region_task_() {
           const auto &request = requests[i];
           if (request.operation == DirectRegionRequest::Operation::BARRIER)
             continue;
-          if (request.operation != DirectRegionRequest::Operation::BLEND_ARGB8888) {
+          if (request.operation != DirectRegionRequest::Operation::BLEND_ARGB8888 &&
+              request.operation != DirectRegionRequest::Operation::OVERLAY_ARGB8888) {
             presented = false;
             continue;
           }
@@ -3704,9 +5175,13 @@ void LvglComponent::direct_region_task_() {
           slot->height = request.height;
           slot->blend = true;
           slot->valid = true;
-          slot->latest_background = request.background;
-          slot->latest_background_stride = request.background_stride;
-          slot->latest_background_rgb565 = request.background_rgb565;
+          slot->latest_background =
+              request.operation == DirectRegionRequest::Operation::BLEND_ARGB8888 ? request.background : nullptr;
+          slot->latest_background_stride = request.operation == DirectRegionRequest::Operation::BLEND_ARGB8888
+                                                ? request.background_stride
+                                                : 0;
+          slot->latest_background_rgb565 = request.operation == DirectRegionRequest::Operation::BLEND_ARGB8888 &&
+                                           request.background_rgb565;
           slot->stable_carry = request.stable_carry;
         }
       } else {
@@ -3716,15 +5191,30 @@ void LvglComponent::direct_region_task_() {
         // boundary and must not be followed by an older rotating frame that
         // was already staged in the DPI triple-buffer pipeline. Drain that
         // disposable work before choosing the source/target pair.
-        const bool boundary_ready = !stable_boundary ||
-                                    (mipi_display != nullptr &&
-                                     mipi_display->wait_for_direct_frame_queue_idle(60));
+        const bool boundary_ready =
+            !stable_boundary || (mipi_display != nullptr && mipi_display->wait_for_direct_frame_queue_idle(60));
         const uint32_t generation = this->direct_region_base_generation_.load(std::memory_order_acquire);
         uint8_t *active = nullptr;
         uint8_t *target = nullptr;
-        if (boundary_ready && this->direct_region_prepare_target_(generation, &active, &target) &&
-            this->direct_region_compose_to_(requests, request_count, active, target) &&
-            generation == this->direct_region_base_generation_.load(std::memory_order_acquire)) {
+        const bool weather_batch = request_count == 1 && !display_pacing_required &&
+                                   requests[0].operation == DirectRegionRequest::Operation::SCALE_BLEND_ARGB8888;
+        const bool target_prepared =
+            boundary_ready && this->direct_region_prepare_target_(generation, &active, &target, weather_batch ? 8 : 0);
+        const bool target_composed =
+            target_prepared && this->direct_region_compose_to_(requests, request_count, active, target);
+        const bool generation_current =
+            target_composed && generation == this->direct_region_base_generation_.load(std::memory_order_acquire);
+        auto invalidate_target = [this, mipi_display, target]() {
+          if (mipi_display == nullptr || target == nullptr)
+            return;
+          for (size_t index = 0; index < 3; index++) {
+            if (mipi_display->get_frame_buffer(index) == target) {
+              this->direct_region_buffer_generation_[index] = 0;
+              return;
+            }
+          }
+        };
+        if (generation_current) {
           // Composition has finished, so producers may reuse their source
           // buffers as soon as this frame is accepted by the DSI queue. The
           // driver performs the visible switch on VSYNC and safely replaces an
@@ -3745,13 +5235,32 @@ void LvglComponent::direct_region_task_() {
                 slot->y = request.y;
                 slot->width = request.width;
                 slot->height = request.height;
-                slot->blend = request.operation == DirectRegionRequest::Operation::BLEND_ARGB8888;
+                slot->blend = request.operation == DirectRegionRequest::Operation::BLEND_ARGB8888 ||
+                              request.operation == DirectRegionRequest::Operation::OVERLAY_ARGB8888;
                 slot->valid = true;
+                slot->persistent_carry = false;
+                slot->persistent_copy_valid = false;
                 if (slot->blend) {
-                  slot->latest_background = request.background;
-                  slot->latest_background_stride = request.background_stride;
-                  slot->latest_background_rgb565 = request.background_rgb565;
-                  const bool cache_overlay = request.stable_carry || !slot->animation_overlay_valid;
+                  slot->latest_background = request.operation == DirectRegionRequest::Operation::BLEND_ARGB8888
+                                                ? request.background
+                                                : nullptr;
+                  slot->latest_background_stride = request.operation == DirectRegionRequest::Operation::BLEND_ARGB8888
+                                                        ? request.background_stride
+                                                        : 0;
+                  slot->latest_background_rgb565 =
+                      request.operation == DirectRegionRequest::Operation::BLEND_ARGB8888 &&
+                      request.background_rgb565;
+                  // A continuously animated region is already represented by
+                  // the current DSI framebuffer. Caching every weather frame
+                  // would allocate and copy another full ARGB surface, which
+                  // only makes sense for a stopped/stable overlay.
+                  const bool cache_overlay = request.stable_carry;
+                  if (!cache_overlay && slot->animation_overlay != nullptr) {
+                    heap_caps_free(slot->animation_overlay);
+                    slot->animation_overlay = nullptr;
+                    slot->animation_overlay_size = 0;
+                    slot->animation_overlay_valid = false;
+                  }
                   if (cache_overlay && !this->direct_region_cache_animation_overlay_(slot, request)) {
                     ESP_LOGW(TAG, "Unable to cache direct ARGB overlay %dx%d at %d,%d", request.width, request.height,
                              request.x, request.y);
@@ -3759,7 +5268,15 @@ void LvglComponent::direct_region_task_() {
                   slot->stable_carry = request.stable_carry && slot->animation_overlay_valid;
                 } else {
                   slot->animation_overlay_valid = false;
-                  slot->stable_carry = false;
+                  slot->stable_carry = request.stable_carry;
+                  if (request.persistent_carry) {
+                    if (this->direct_region_cache_persistent_copy_(slot, request)) {
+                      slot->persistent_carry = true;
+                    } else {
+                      ESP_LOGW(TAG, "Unable to cache persistent direct RGB888 copy %dx%d at %d,%d", request.width,
+                               request.height, request.x, request.y);
+                    }
+                  }
                   slot->latest_background = nullptr;
                   slot->latest_background_stride = 0;
                   slot->transition_background_valid = false;
@@ -3798,14 +5315,12 @@ void LvglComponent::direct_region_task_() {
                 for (const auto &slot : this->direct_region_slots_) {
                   if (!slot.valid || !slot.stable_carry)
                     continue;
-                  constexpr size_t bytes_per_pixel = 3;
-                  auto *target_region = idle_target + static_cast<size_t>(slot.y) * frame_stride +
-                                        static_cast<size_t>(slot.x) * bytes_per_pixel;
-                  const size_t target_span = static_cast<size_t>(slot.height - 1) * frame_stride +
-                                             static_cast<size_t>(slot.width) * bytes_per_pixel;
-                  if (lvgl_cache_msync_external_result(target_region, target_span,
-                                                       ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK ||
-                      !this->direct_region_ppa_copy_(stable_source, this->width_, this->height_, slot.x, slot.y,
+                  // Partial region copies use a compact DMA surface and then
+                  // synchronize only the exact destination bytes per row.
+                  // Invalidating the full-stride span here discarded unrelated
+                  // CPU-dirty lines and caused the one-frame horizontal bands
+                  // seen on stable spinner and pressed-state boundaries.
+                  if (!this->direct_region_ppa_copy_(stable_source, this->width_, this->height_, slot.x, slot.y,
                                                      slot.width, slot.height, idle_target, frame_size, this->width_,
                                                      this->height_, slot.x, slot.y, false, false)) {
                     stable_pool_synchronized = false;
@@ -3821,12 +5336,36 @@ void LvglComponent::direct_region_task_() {
             // before submission, this frame must never be reused as though it
             // still represented the current generation; doing so leaks stale
             // horizontal regions into a later native LVGL update.
-            for (auto &buffer_generation : this->direct_region_buffer_generation_)
-              buffer_generation = 0;
+            mipi_display->release_direct_render_frame_buffer(target);
+            invalidate_target();
+            perf_queue_reject_count++;
+          }
+        } else if (target_prepared) {
+          // A target is reserved before composition. Queueing releases it on
+          // success; every other exit must release it here so a transient
+          // generation race cannot strand one of the three DSI buffers.
+          mipi_display->release_direct_render_frame_buffer(target);
+          // Having no free third framebuffer is normal while DSI scans one,
+          // another is queued, and LVGL owns its next DIRECT target.
+          // Nothing was written in that case, so invalidating every generation
+          // turns harmless backpressure into a 1.92 MB full-frame rebase on the
+          // following animation frame. Invalidate only a target that composition
+          // may actually have modified.
+          if (!target_composed) {
+            invalidate_target();
+            perf_compose_fail_count++;
+          } else {
+            invalidate_target();
+            perf_generation_race_count++;
           }
         } else {
-          for (auto &buffer_generation : this->direct_region_buffer_generation_)
-            buffer_generation = 0;
+          // Having no free third framebuffer is normal while DSI scans one
+          // buffer, another is queued, and LVGL owns its next DIRECT target.
+          // Nothing was written in that case, so invalidating every generation
+          // turns harmless backpressure into a 1.92 MB full-frame rebase on the
+          // following animation frame. Invalidate only a target that composition
+          // may actually have modified.
+          perf_prepare_miss_count++;
         }
       }
       xSemaphoreGive(s_region_srm_mutex);
@@ -3864,28 +5403,42 @@ void LvglComponent::direct_region_task_() {
             this->direct_region_refresh_relock_us_.exchange(0, std::memory_order_acq_rel);
         const uint32_t refresh_relock_max_us =
             this->direct_region_refresh_relock_max_us_.exchange(0, std::memory_order_acq_rel);
+        const uint32_t full_rebases = this->direct_region_full_rebases_.exchange(0, std::memory_order_acq_rel);
+        const uint32_t full_rebase_us = this->direct_region_full_rebase_us_.exchange(0, std::memory_order_acq_rel);
+        const uint32_t full_rebase_max_us =
+            this->direct_region_full_rebase_max_us_.exchange(0, std::memory_order_acq_rel);
         ESP_LOGI("lvgl.region",
                  "perf2s: frames=%u received=%u submitted=%u/%u busy=%u coalesced=%u batch_max=%u "
-                 "avg=%uus max=%uus queued=%u last=%s refresh=%u/%u relock=%u/%uus",
+                  "avg=%uus max=%uus queued=%u last=%s miss=%u compose_fail=%u race=%u reject=%u "
+                  "refresh=%u/%u relock=%u/%uus rebase=%u/%uus max=%uus",
                  static_cast<unsigned>(perf_count), static_cast<unsigned>(perf_request_count),
                  static_cast<unsigned>(submitted_copy), static_cast<unsigned>(submitted_blend),
                  static_cast<unsigned>(submit_busy), static_cast<unsigned>(perf_coalesced_count),
                  static_cast<unsigned>(perf_max_batch_count),
-                 static_cast<unsigned>(perf_total_us / std::max<uint32_t>(1, perf_count)),
-                 static_cast<unsigned>(perf_max_us),
-                 static_cast<unsigned>(uxQueueMessagesWaiting(this->direct_region_queue_)), YESNO(presented),
-                 static_cast<unsigned>(concurrent_refreshes), static_cast<unsigned>(refresh_fallbacks),
+                  static_cast<unsigned>(perf_total_us / std::max<uint32_t>(1, perf_count)),
+                  static_cast<unsigned>(perf_max_us),
+                  static_cast<unsigned>(uxQueueMessagesWaiting(this->direct_region_queue_)), YESNO(presented),
+                  static_cast<unsigned>(perf_prepare_miss_count), static_cast<unsigned>(perf_compose_fail_count),
+                  static_cast<unsigned>(perf_generation_race_count), static_cast<unsigned>(perf_queue_reject_count),
+                  static_cast<unsigned>(concurrent_refreshes), static_cast<unsigned>(refresh_fallbacks),
                  static_cast<unsigned>(refresh_relock_us / std::max<uint32_t>(1, concurrent_refreshes)),
-                 static_cast<unsigned>(refresh_relock_max_us));
+                 static_cast<unsigned>(refresh_relock_max_us), static_cast<unsigned>(full_rebases),
+                 static_cast<unsigned>(full_rebase_us / std::max<uint32_t>(1, full_rebases)),
+                 static_cast<unsigned>(full_rebase_max_us));
         perf_count = 0;
         perf_request_count = 0;
         perf_coalesced_count = 0;
         perf_max_batch_count = 0;
+        perf_prepare_miss_count = 0;
+        perf_compose_fail_count = 0;
+        perf_generation_race_count = 0;
+        perf_queue_reject_count = 0;
         perf_total_us = 0;
         perf_max_us = 0;
         perf_window_start_us = now_us;
       }
     }
+
   }
   this->direct_region_task_handle_ = nullptr;
   vTaskDelete(nullptr);
@@ -3893,7 +5446,8 @@ void LvglComponent::direct_region_task_() {
 #endif
 
 uint8_t LvglComponent::direct_blit_rgb888_async(const uint8_t *src, int src_stride, int x, int y, int width, int height,
-                                                LvglDirectBlitReadyCallback ready_callback, void *ready_arg) {
+                                                LvglDirectBlitReadyCallback ready_callback, void *ready_arg,
+                                                bool stable_carry, bool persistent_carry) {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
   if (!this->direct_mode_active_ || this->rotation != display::DISPLAY_ROTATION_0_DEGREES ||
       this->displays_.size() != 1 || src == nullptr || ready_callback == nullptr || s_snapshot_direct_active ||
@@ -3909,6 +5463,59 @@ uint8_t LvglComponent::direct_blit_rgb888_async(const uint8_t *src, int src_stri
     return LVGL_DIRECT_BLIT_REJECTED;
   DirectRegionRequest request{};
   request.operation = DirectRegionRequest::Operation::COPY_RGB888;
+  request.source = src;
+  request.source_stride = src_stride;
+  request.source_width = width;
+  request.source_height = height;
+  request.x = x;
+  request.y = y;
+  request.width = width;
+  request.height = height;
+  request.stable_carry = stable_carry;
+  request.persistent_carry = persistent_carry;
+  request.ready_callback = ready_callback;
+  request.ready_arg = ready_arg;
+  if (xQueueSend(this->direct_region_queue_, &request, 0) == pdTRUE) {
+    this->direct_region_copy_submitted_.fetch_add(1, std::memory_order_relaxed);
+    return LVGL_DIRECT_BLIT_SUBMITTED;
+  }
+  this->direct_region_submit_busy_.fetch_add(1, std::memory_order_relaxed);
+  return LVGL_DIRECT_BLIT_BUSY;
+#else
+  (void) src;
+  (void) src_stride;
+  (void) x;
+  (void) y;
+  (void) width;
+  (void) height;
+  (void) ready_callback;
+  (void) ready_arg;
+  (void) stable_carry;
+  (void) persistent_carry;
+  return LVGL_DIRECT_BLIT_REJECTED;
+#endif
+}
+
+uint8_t LvglComponent::direct_blit_xrgb8888_async(const uint8_t *src, int src_stride, int x, int y, int width,
+                                                  int height, LvglDirectBlitReadyCallback ready_callback,
+                                                  void *ready_arg) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  if (!this->direct_mode_active_ || this->rotation != display::DISPLAY_ROTATION_0_DEGREES ||
+      this->displays_.size() != 1 || src == nullptr || ready_callback == nullptr || s_snapshot_direct_active ||
+      s_snapshot_swipe_active || this->direct_image_animation_active_ || width <= 0 || height <= 0 ||
+      this->direct_region_paused_.load(std::memory_order_acquire) || src_stride != width * 4 || x < 0 || y < 0 ||
+      x + width > this->width_ || y + height > this->height_) {
+    return LVGL_DIRECT_BLIT_REJECTED;
+  }
+
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  if (mipi_display == nullptr || s_region_srm_client == nullptr || s_region_srm_mutex == nullptr ||
+      this->direct_region_queue_ == nullptr) {
+    return LVGL_DIRECT_BLIT_REJECTED;
+  }
+
+  DirectRegionRequest request{};
+  request.operation = DirectRegionRequest::Operation::COPY_XRGB8888;
   request.source = src;
   request.source_stride = src_stride;
   request.source_width = width;
@@ -4007,23 +5614,181 @@ uint8_t LvglComponent::direct_blend_argb8888_async(const uint8_t *background, in
 #endif
 }
 
+uint8_t LvglComponent::direct_overlay_argb8888_async(const uint8_t *foreground, int foreground_stride,
+                                                     int foreground_width, int foreground_height, int foreground_x,
+                                                     int foreground_y, int x, int y, int width, int height,
+                                                     LvglDirectBlitReadyCallback ready_callback, void *ready_arg,
+                                                     bool stable_carry) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  if (!this->direct_mode_active_ || this->rotation != display::DISPLAY_ROTATION_0_DEGREES ||
+      this->displays_.size() != 1 || foreground == nullptr || ready_callback == nullptr || s_snapshot_direct_active ||
+      s_snapshot_swipe_active || (this->direct_image_animation_active_ && !this->direct_image_animation_allows_regions_) ||
+      width <= 0 || height <= 0 || this->direct_region_paused_.load(std::memory_order_acquire) ||
+      foreground_width <= 0 || foreground_height <= 0 || foreground_stride != foreground_width * 4 ||
+      foreground_x < 0 || foreground_y < 0 || foreground_x + width > foreground_width ||
+      foreground_y + height > foreground_height || x < 0 || y < 0 || x + width > this->width_ ||
+      y + height > this->height_) {
+    return LVGL_DIRECT_BLIT_REJECTED;
+  }
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  if (mipi_display == nullptr || s_region_blend_client == nullptr || s_region_srm_mutex == nullptr ||
+      this->direct_region_queue_ == nullptr) {
+    return LVGL_DIRECT_BLIT_REJECTED;
+  }
+
+  DirectRegionRequest request{};
+  request.operation = DirectRegionRequest::Operation::OVERLAY_ARGB8888;
+  request.source = foreground;
+  request.source_stride = foreground_stride;
+  request.source_width = foreground_width;
+  request.source_height = foreground_height;
+  request.source_x = foreground_x;
+  request.source_y = foreground_y;
+  request.x = x;
+  request.y = y;
+  request.width = width;
+  request.height = height;
+  request.stable_carry = stable_carry;
+  request.ready_callback = ready_callback;
+  request.ready_arg = ready_arg;
+  if (xQueueSend(this->direct_region_queue_, &request, 0) == pdTRUE) {
+    this->direct_region_blend_submitted_.fetch_add(1, std::memory_order_relaxed);
+    return LVGL_DIRECT_BLIT_SUBMITTED;
+  }
+  this->direct_region_submit_busy_.fetch_add(1, std::memory_order_relaxed);
+  return LVGL_DIRECT_BLIT_BUSY;
+#else
+  (void) foreground;
+  (void) foreground_stride;
+  (void) foreground_width;
+  (void) foreground_height;
+  (void) foreground_x;
+  (void) foreground_y;
+  (void) x;
+  (void) y;
+  (void) width;
+  (void) height;
+  (void) ready_callback;
+  (void) ready_arg;
+  (void) stable_carry;
+  return LVGL_DIRECT_BLIT_REJECTED;
+#endif
+}
+
+uint8_t LvglComponent::direct_scale_blend_argb8888_async(
+    const uint8_t *foreground, int foreground_stride, int foreground_width, int foreground_height, int foreground_x,
+    int foreground_y, int foreground_crop_width, int foreground_crop_height, int integer_scale, int x, int y,
+    uint8_t *scale_target, size_t scale_target_size, int scale_target_width, int scale_target_height,
+    const uint8_t *background, int background_stride, LvglDirectBlitReadyCallback ready_callback, void *ready_arg) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  const int width = foreground_crop_width * integer_scale;
+  const int height = foreground_crop_height * integer_scale;
+  if (!this->direct_mode_active_ || this->rotation != display::DISPLAY_ROTATION_0_DEGREES ||
+      this->displays_.size() != 1 || foreground == nullptr || ready_callback == nullptr ||
+      s_snapshot_direct_active || s_snapshot_swipe_active ||
+      (this->direct_image_animation_active_ && !this->direct_image_animation_allows_regions_) ||
+      this->direct_region_paused_.load(std::memory_order_acquire) || foreground_width <= 0 ||
+      foreground_height <= 0 || foreground_stride != foreground_width * 4 || foreground_x < 0 ||
+      foreground_y < 0 || foreground_crop_width <= 0 || foreground_crop_height <= 0 || integer_scale <= 0 ||
+      foreground_x + foreground_crop_width > foreground_width ||
+      foreground_y + foreground_crop_height > foreground_height || x < 0 || y < 0 || width <= 0 || height <= 0 ||
+      x + width > this->width_ || y + height > this->height_) {
+    return LVGL_DIRECT_BLIT_REJECTED;
+  }
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  if (mipi_display == nullptr || s_region_srm_client == nullptr || s_region_blend_client == nullptr ||
+      s_region_srm_mutex == nullptr || this->direct_region_queue_ == nullptr) {
+    return LVGL_DIRECT_BLIT_REJECTED;
+  }
+
+  DirectRegionRequest request{};
+  request.operation = DirectRegionRequest::Operation::SCALE_BLEND_ARGB8888;
+  request.source = foreground;
+  request.source_stride = foreground_stride;
+  request.source_width = foreground_width;
+  request.source_height = foreground_height;
+  request.source_x = foreground_x;
+  request.source_y = foreground_y;
+  request.x = x;
+  request.y = y;
+  request.width = width;
+  request.height = height;
+  request.integer_scale = integer_scale;
+  request.scale_target = scale_target;
+  request.scale_target_size = scale_target_size;
+  request.scale_target_width = scale_target_width;
+  request.scale_target_height = scale_target_height;
+  request.background = background;
+  request.background_stride = background_stride;
+  request.ready_callback = ready_callback;
+  request.ready_arg = ready_arg;
+  if (xQueueSend(this->direct_region_queue_, &request, 0) == pdTRUE) {
+    this->direct_region_blend_submitted_.fetch_add(1, std::memory_order_relaxed);
+    return LVGL_DIRECT_BLIT_SUBMITTED;
+  }
+  this->direct_region_submit_busy_.fetch_add(1, std::memory_order_relaxed);
+  return LVGL_DIRECT_BLIT_BUSY;
+#else
+  (void) foreground;
+  (void) foreground_stride;
+  (void) foreground_width;
+  (void) foreground_height;
+  (void) foreground_x;
+  (void) foreground_y;
+  (void) foreground_crop_width;
+  (void) foreground_crop_height;
+  (void) integer_scale;
+  (void) x;
+  (void) y;
+  (void) scale_target;
+  (void) scale_target_size;
+  (void) scale_target_width;
+  (void) scale_target_height;
+  (void) background;
+  (void) background_stride;
+  (void) ready_callback;
+  (void) ready_arg;
+  return LVGL_DIRECT_BLIT_REJECTED;
+#endif
+}
+
 void LvglComponent::direct_blit_rgb888_release(int x, int y, int width, int height) {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
   if (s_region_srm_mutex == nullptr || xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(25)) != pdTRUE)
     return;
+  bool released = false;
   if (auto *slot = this->direct_region_find_slot_(x, y, width, height, false); slot != nullptr) {
+    released = true;
     slot->valid = false;
     slot->blend = false;
     slot->animation_overlay_valid = false;
     slot->stable_carry = false;
+    slot->persistent_copy_valid = false;
+    slot->persistent_carry = false;
     slot->latest_background = nullptr;
     slot->latest_background_stride = 0;
     slot->transition_background_valid = false;
+    if (slot->scaled_background != nullptr) {
+      heap_caps_free(slot->scaled_background);
+      slot->scaled_background = nullptr;
+      slot->scaled_background_size = 0;
+    }
+    slot->scaled_background_valid = false;
   }
   bool any_valid = false;
   for (const auto &slot : this->direct_region_slots_)
     any_valid |= slot.valid;
-  if (!any_valid) {
+  if (released) {
+    // Region frames rotate through all three DSI framebuffers. Removing one
+    // overlay changes the complete scene even when another regional renderer
+    // remains active. Invalidate every cached base so the next regional frame
+    // is rebased from the currently presented, overlay-free scene instead of
+    // repainting only its small region over a framebuffer that still contains
+    // the released overlay.
+    this->direct_region_base_generation_.fetch_add(1, std::memory_order_release);
+    for (auto &buffer_generation : this->direct_region_buffer_generation_)
+      buffer_generation = 0;
+  } else if (!any_valid) {
     for (auto &buffer_generation : this->direct_region_buffer_generation_)
       buffer_generation = 0;
   }
@@ -4053,22 +5818,18 @@ bool LvglComponent::direct_blit_rgb888_region_active(int x, int y, int width, in
 #endif
 }
 
-bool LvglComponent::direct_regions_pause(bool paused, uint32_t timeout_ms) {
+bool LvglComponent::direct_regions_pause_start() {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
-  if (!paused) {
-    if (s_region_srm_mutex != nullptr && xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-      for (auto &buffer_generation : this->direct_region_buffer_generation_)
-        buffer_generation = 0;
-      xSemaphoreGive(s_region_srm_mutex);
-    }
-    this->direct_region_base_generation_.fetch_add(1, std::memory_order_release);
-    this->direct_region_paused_.store(false, std::memory_order_release);
+  const uint32_t previous_depth = this->direct_region_pause_depth_.fetch_add(1U, std::memory_order_acq_rel);
+  if (previous_depth != 0)
     return true;
-  }
 
   this->direct_region_paused_.store(true, std::memory_order_release);
-  if (this->direct_region_queue_ == nullptr || this->direct_region_task_handle_ == nullptr)
+  this->direct_region_pause_ready_.store(false, std::memory_order_release);
+  if (this->direct_region_queue_ == nullptr || this->direct_region_task_handle_ == nullptr) {
+    this->direct_region_pause_ready_.store(true, std::memory_order_release);
     return true;
+  }
 
   if (this->direct_region_barrier_ == nullptr)
     this->direct_region_barrier_ = xSemaphoreCreateBinaryStatic(&this->direct_region_barrier_storage_);
@@ -4079,15 +5840,69 @@ bool LvglComponent::direct_regions_pause(bool paused, uint32_t timeout_ms) {
   DirectRegionRequest request{};
   request.operation = DirectRegionRequest::Operation::BARRIER;
   request.ready_callback = [](void *arg) {
-    auto semaphore = static_cast<SemaphoreHandle_t>(arg);
-    if (semaphore != nullptr)
-      xSemaphoreGive(semaphore);
+    auto *component = static_cast<LvglComponent *>(arg);
+    if (component == nullptr)
+      return;
+    component->direct_region_pause_ready_.store(true, std::memory_order_release);
+    if (component->direct_region_barrier_ != nullptr)
+      xSemaphoreGive(component->direct_region_barrier_);
   };
-  request.ready_arg = this->direct_region_barrier_;
-  const TickType_t timeout_ticks = std::max<TickType_t>(1, pdMS_TO_TICKS(timeout_ms));
-  if (xQueueSend(this->direct_region_queue_, &request, timeout_ticks) != pdTRUE)
+  request.ready_arg = this;
+  // Put the ownership barrier ahead of replaceable animation frames. The
+  // worker drops those frames while paused and still runs their completion
+  // callbacks. Touch-down only queues this barrier; first movement waits for
+  // an operation that was already in flight instead of starting the handoff.
+  if (xQueueSendToFront(this->direct_region_queue_, &request, 0) != pdTRUE)
     return false;
-  return xSemaphoreTake(this->direct_region_barrier_, timeout_ticks) == pdTRUE;
+  return true;
+#else
+  return true;
+#endif
+}
+
+bool LvglComponent::direct_regions_pause_wait(uint32_t timeout_ms) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  if (!this->direct_region_paused_.load(std::memory_order_acquire))
+    return false;
+  if (this->direct_region_pause_ready_.load(std::memory_order_acquire))
+    return true;
+  if (this->direct_region_barrier_ == nullptr)
+    return false;
+  const TickType_t timeout_ticks = std::max<TickType_t>(1, pdMS_TO_TICKS(timeout_ms));
+  if (xSemaphoreTake(this->direct_region_barrier_, timeout_ticks) != pdTRUE)
+    return false;
+  this->direct_region_pause_ready_.store(true, std::memory_order_release);
+  return true;
+#else
+  (void) timeout_ms;
+  return true;
+#endif
+}
+
+bool LvglComponent::direct_regions_pause(bool paused, uint32_t timeout_ms) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  if (!paused) {
+    uint32_t depth = this->direct_region_pause_depth_.load(std::memory_order_acquire);
+    while (depth != 0 && !this->direct_region_pause_depth_.compare_exchange_weak(
+                             depth, depth - 1U, std::memory_order_acq_rel, std::memory_order_acquire)) {
+    }
+    if (depth == 0 || depth > 1U)
+      return true;
+
+    if (s_region_srm_mutex != nullptr && xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+      for (auto &buffer_generation : this->direct_region_buffer_generation_)
+        buffer_generation = 0;
+      xSemaphoreGive(s_region_srm_mutex);
+    }
+    this->direct_region_base_generation_.fetch_add(1, std::memory_order_release);
+    this->direct_region_pause_ready_.store(false, std::memory_order_release);
+    this->direct_region_paused_.store(false, std::memory_order_release);
+    return true;
+  }
+
+  if (!this->direct_regions_pause_start())
+    return false;
+  return this->direct_regions_pause_wait(timeout_ms);
 #else
   (void) paused;
   (void) timeout_ms;
@@ -4112,8 +5927,233 @@ bool LvglComponent::direct_blit_xrgb8888_coherent(const uint8_t *src, int src_st
   return this->direct_blit_(src, src_stride, x, y, width, height, true, true, true);
 }
 
+bool LvglComponent::direct_handoff_to_lvgl(uint32_t timeout_ms) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI)
+  if (!this->direct_mode_active_ || this->displays_.size() != 1)
+    return false;
+#if defined(USE_LVGL_PPA)
+  const bool resume_regions = !this->direct_region_paused_.load(std::memory_order_acquire);
+  if (resume_regions && !this->direct_regions_pause(true, timeout_ms)) {
+    this->direct_regions_pause(false, 0);
+    return false;
+  }
+#endif
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  if (mipi_display == nullptr || !mipi_display->wait_for_direct_frame_queue_idle(timeout_ms)) {
+#if defined(USE_LVGL_PPA)
+    if (resume_regions)
+      this->direct_regions_pause(false, 0);
+#endif
+    return false;
+  }
+  auto *presented = mipi_display->get_presented_frame_buffer();
+  if (presented == nullptr) {
+#if defined(USE_LVGL_PPA)
+    if (resume_regions)
+      this->direct_regions_pause(false, 0);
+#endif
+    return false;
+  }
+  lv_lock();
+  this->direct_last_flushed_buf_ = presented;
+  const bool aligned = this->realign_direct_buffer_after_manual_present(true);
+  lv_unlock();
+#if defined(USE_LVGL_PPA)
+  if (resume_regions) {
+    this->direct_regions_pause(false, 0);
+    // realign_direct_buffer_after_manual_present(true) has just copied the
+    // authoritative frame into the complete three-buffer DSI pool. Resuming
+    // the regional compositor advances its base generation, but must preserve
+    // that coherence instead of forcing an immediate full-screen rebase over
+    // the first small animation update.
+    if (aligned && s_region_srm_mutex != nullptr && xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+      const uint32_t generation = this->direct_region_base_generation_.load(std::memory_order_acquire);
+      for (auto &buffer_generation : this->direct_region_buffer_generation_)
+        buffer_generation = generation;
+      xSemaphoreGive(s_region_srm_mutex);
+    }
+  }
+#endif
+  ESP_LOGW(TAG, "DIRECT handoff presented=%p fb0=%p fb1=%p fb2=%p buf_act=%p aligned=%s", presented,
+           mipi_display->get_frame_buffer(0), mipi_display->get_frame_buffer(1), mipi_display->get_frame_buffer(2),
+           this->disp_ != nullptr && this->disp_->buf_act != nullptr ? this->disp_->buf_act->data : nullptr,
+           YESNO(aligned));
+  return aligned;
+#else
+  (void) timeout_ms;
+  return false;
+#endif
+}
+
+bool LvglComponent::copy_argb8888(const uint8_t *src, uint8_t *dst, int width, int height) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_LVGL_PPA)
+  if (src == nullptr || dst == nullptr || src == dst || width <= 0 || height <= 0 || s_region_srm_client == nullptr ||
+      s_region_srm_mutex == nullptr)
+    return false;
+
+  constexpr size_t CACHE_LINE = 128;
+  const size_t bytes = static_cast<size_t>(width) * height * sizeof(uint32_t);
+  const size_t aligned_bytes = (bytes + CACHE_LINE - 1U) & ~(CACHE_LINE - 1U);
+  if ((reinterpret_cast<uintptr_t>(src) & (CACHE_LINE - 1U)) != 0 ||
+      (reinterpret_cast<uintptr_t>(dst) & (CACHE_LINE - 1U)) != 0)
+    return false;
+  if (xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(20)) != pdTRUE)
+    return false;
+  struct RegionSrmUnlock {
+    ~RegionSrmUnlock() { xSemaphoreGive(s_region_srm_mutex); }
+  } region_srm_unlock;
+
+  if (lvgl_cache_msync_external_result(src, aligned_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M) != ESP_OK ||
+      lvgl_cache_msync_external_result(dst, aligned_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK)
+    return false;
+
+  ppa_srm_oper_config_t cfg{};
+  cfg.in.buffer = const_cast<uint8_t *>(src);
+  cfg.in.pic_w = width;
+  cfg.in.pic_h = height;
+  cfg.in.block_w = width;
+  cfg.in.block_h = height;
+  cfg.in.srm_cm = PPA_SRM_COLOR_MODE_ARGB8888;
+  cfg.out.buffer = dst;
+  cfg.out.buffer_size = aligned_bytes;
+  cfg.out.pic_w = width;
+  cfg.out.pic_h = height;
+  cfg.out.srm_cm = PPA_SRM_COLOR_MODE_ARGB8888;
+  cfg.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+  cfg.scale_x = 1.0f;
+  cfg.scale_y = 1.0f;
+  cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+  cfg.mode = PPA_TRANS_MODE_BLOCKING;
+
+  const uintptr_t source_begin = reinterpret_cast<uintptr_t>(src);
+  const uintptr_t target_begin = reinterpret_cast<uintptr_t>(dst);
+  s_direct_ppa_source_begin.store(source_begin, std::memory_order_release);
+  s_direct_ppa_source_end.store(source_begin + aligned_bytes, std::memory_order_release);
+  s_direct_ppa_target_begin.store(target_begin, std::memory_order_release);
+  s_direct_ppa_target_end.store(target_begin + aligned_bytes, std::memory_order_release);
+  const esp_err_t result = ppa_do_scale_rotate_mirror(s_region_srm_client, &cfg);
+  s_direct_ppa_source_begin.store(0, std::memory_order_release);
+  s_direct_ppa_target_begin.store(0, std::memory_order_release);
+  s_direct_ppa_source_end.store(0, std::memory_order_relaxed);
+  s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
+  if (result != ESP_OK)
+    return false;
+
+  return lvgl_cache_msync_external_result(dst, aligned_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C) == ESP_OK;
+#else
+  (void) src;
+  (void) dst;
+  (void) width;
+  (void) height;
+  return false;
+#endif
+}
+
+bool LvglComponent::scale_argb8888(const uint8_t *src, int src_width, int src_height, uint8_t *dst, int dst_width,
+                                    int dst_height, bool keep_dma_owned) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_LVGL_PPA)
+  if (src == nullptr || dst == nullptr || src == dst || src_width <= 0 || src_height <= 0 || dst_width <= 0 ||
+      dst_height <= 0 || s_region_srm_client == nullptr || s_region_srm_mutex == nullptr)
+    return false;
+
+  constexpr size_t CACHE_LINE = 128;
+  const size_t source_stride = lv_draw_buf_width_to_stride(src_width, LV_COLOR_FORMAT_ARGB8888_PREMULTIPLIED);
+  const size_t target_stride = lv_draw_buf_width_to_stride(dst_width, LV_COLOR_FORMAT_ARGB8888_PREMULTIPLIED);
+  const size_t source_bytes = source_stride * static_cast<size_t>(src_height);
+  const size_t target_bytes = target_stride * static_cast<size_t>(dst_height);
+  const size_t source_sync_bytes = (source_bytes + CACHE_LINE - 1U) & ~(CACHE_LINE - 1U);
+  const size_t target_sync_bytes = (target_bytes + CACHE_LINE - 1U) & ~(CACHE_LINE - 1U);
+  if ((reinterpret_cast<uintptr_t>(src) & (CACHE_LINE - 1U)) != 0 ||
+      (reinterpret_cast<uintptr_t>(dst) & (CACHE_LINE - 1U)) != 0)
+    return false;
+  if (xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(30)) != pdTRUE)
+    return false;
+  struct RegionSrmUnlock {
+    ~RegionSrmUnlock() { xSemaphoreGive(s_region_srm_mutex); }
+  } region_srm_unlock;
+
+  const bool target_already_dma_owned = dma_image_range_contains(dst, target_sync_bytes);
+  if (lvgl_cache_msync_external_result(src, source_sync_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M) != ESP_OK ||
+      (!target_already_dma_owned &&
+       lvgl_cache_msync_external_result(dst, target_sync_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK))
+    return false;
+
+  ppa_srm_oper_config_t cfg{};
+  cfg.in.buffer = const_cast<uint8_t *>(src);
+  cfg.in.pic_w = src_width;
+  cfg.in.pic_h = src_height;
+  cfg.in.block_w = src_width;
+  cfg.in.block_h = src_height;
+  cfg.in.srm_cm = PPA_SRM_COLOR_MODE_ARGB8888;
+  cfg.out.buffer = dst;
+  cfg.out.buffer_size = target_sync_bytes;
+  cfg.out.pic_w = dst_width;
+  cfg.out.pic_h = dst_height;
+  cfg.out.srm_cm = PPA_SRM_COLOR_MODE_ARGB8888;
+  cfg.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+  cfg.scale_x = static_cast<float>(dst_width) / static_cast<float>(src_width);
+  cfg.scale_y = static_cast<float>(dst_height) / static_cast<float>(src_height);
+  cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+  cfg.mode = PPA_TRANS_MODE_BLOCKING;
+
+  const uintptr_t source_begin = reinterpret_cast<uintptr_t>(src);
+  const uintptr_t target_begin = reinterpret_cast<uintptr_t>(dst);
+  s_direct_ppa_source_begin.store(source_begin, std::memory_order_release);
+  s_direct_ppa_source_end.store(source_begin + source_sync_bytes, std::memory_order_release);
+  s_direct_ppa_target_begin.store(target_begin, std::memory_order_release);
+  s_direct_ppa_target_end.store(target_begin + target_sync_bytes, std::memory_order_release);
+  const esp_err_t result = ppa_do_scale_rotate_mirror(s_region_srm_client, &cfg);
+  s_direct_ppa_source_begin.store(0, std::memory_order_release);
+  s_direct_ppa_target_begin.store(0, std::memory_order_release);
+  s_direct_ppa_source_end.store(0, std::memory_order_relaxed);
+  s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
+  if (result != ESP_OK)
+    return false;
+
+  if (keep_dma_owned) {
+    dma_image_range_mark(dst, target_sync_bytes);
+    return true;
+  }
+  dma_image_range_release(dst);
+  return lvgl_cache_msync_external_result(dst, target_sync_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C) == ESP_OK;
+#else
+  (void) src;
+  (void) src_width;
+  (void) src_height;
+  (void) dst;
+  (void) dst_width;
+  (void) dst_height;
+  (void) keep_dma_owned;
+  return false;
+#endif
+}
+
+bool LvglComponent::copy_xrgb8888_to_rgb888(const uint8_t *src, uint8_t *dst, int width, int height) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_LVGL_PPA)
+  if (src == nullptr || dst == nullptr || src == dst || width <= 0 || height <= 0 || s_region_srm_client == nullptr ||
+      s_region_srm_mutex == nullptr) {
+    return false;
+  }
+  if (xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(20)) != pdTRUE)
+    return false;
+  struct RegionSrmUnlock {
+    ~RegionSrmUnlock() { xSemaphoreGive(s_region_srm_mutex); }
+  } region_srm_unlock;
+
+  const size_t target_size = static_cast<size_t>(width) * height * 3U;
+  return this->direct_region_ppa_copy_xrgb8888_(src, width, height, 0, 0, width, height, dst, target_size, width,
+                                                 height, 0, 0, true);
+#else
+  (void) src;
+  (void) dst;
+  (void) width;
+  (void) height;
+  return false;
+#endif
+}
+
 bool LvglComponent::direct_blit_(const uint8_t *src, int src_stride, int x, int y, int width, int height, bool xrgb8888,
-                                 bool skip_dma2d, bool source_coherent) {
+                                 bool skip_dma2d, bool source_coherent, bool target_dma_owned) {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
   const size_t source_pixel_size = xrgb8888 ? 4U : 3U;
   if (!this->direct_mode_active_ || this->rotation != display::DISPLAY_ROTATION_0_DEGREES ||
@@ -4186,10 +6226,27 @@ bool LvglComponent::direct_blit_(const uint8_t *src, int src_stride, int x, int 
 
   const size_t row_bytes = (size_t) width * BYTES_PER_PIXEL;
   uint8_t *target_region = frame_buffer + (size_t) y * framebuffer_stride + (size_t) x * BYTES_PER_PIXEL;
-  const size_t target_region_span = (size_t) (height - 1) * framebuffer_stride + row_bytes;
   phase_started_us = esp_timer_get_time();
-  if (lvgl_cache_msync_external_result(target_region, target_region_span, ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK) {
-    return false;
+  if (target_dma_owned) {
+    // A direct presenter can retain target ownership across a sequence of PPA
+    // updates. Its CPU-side scene is composed into `src`; neither LVGL nor the
+    // presenter reads or writes the scanout buffer until the normal handoff.
+    // Re-invalidating every sparse row here only saturates PSRAM and cannot
+    // expose newer pixels to a CPU consumer that does not exist.
+  } else if (row_bytes == framebuffer_stride) {
+    if (lvgl_cache_msync_external_result(target_region, row_bytes * static_cast<size_t>(height),
+                                         ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK)
+      return false;
+  } else {
+    // A rectangular framebuffer region is not contiguous. Invalidating the
+    // span from its first to last row also invalidates every untouched pixel
+    // between them, competing with DSI for PSRAM bandwidth and discarding
+    // unrelated CPU-dirty cache lines. Keep cache ownership exact per row.
+    for (int row = 0; row < height; row++) {
+      if (lvgl_cache_msync_external_result(target_region + static_cast<size_t>(row) * framebuffer_stride, row_bytes,
+                                           ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK)
+        return false;
+    }
   }
   const uint32_t target_sync_us = (uint32_t) (esp_timer_get_time() - phase_started_us);
 
@@ -4283,6 +6340,26 @@ extern "C" bool lvgl_esphome_direct_blit_rgb888(const uint8_t *src, int src_stri
   return component != nullptr && component->direct_blit_rgb888(src, src_stride, x, y, width, height);
 }
 
+extern "C" bool lvgl_esphome_ppa_crop_rgb888_to_rgb565(const lv_image_dsc_t *source, int source_x, int source_y,
+                                                        int width, int height, uint8_t *target,
+                                                        size_t target_capacity) {
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component != nullptr && component->direct_convert_rgb888_crop_to_rgb565(
+                                     source, source_x, source_y, width, height, target, target_capacity);
+#else
+  (void) source;
+  (void) source_x;
+  (void) source_y;
+  (void) width;
+  (void) height;
+  (void) target;
+  (void) target_capacity;
+  return false;
+#endif
+}
+
 extern "C" uint8_t lvgl_esphome_direct_blit_rgb888_async(const uint8_t *src, int src_stride, int x, int y, int width,
                                                          int height, LvglDirectBlitReadyCallback ready_callback,
                                                          void *ready_arg) {
@@ -4291,6 +6368,16 @@ extern "C" uint8_t lvgl_esphome_direct_blit_rgb888_async(const uint8_t *src, int
   return component == nullptr
              ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
              : component->direct_blit_rgb888_async(src, src_stride, x, y, width, height, ready_callback, ready_arg);
+}
+
+extern "C" uint8_t lvgl_esphome_direct_blit_xrgb8888_async(const uint8_t *src, int src_stride, int x, int y, int width,
+                                                           int height, LvglDirectBlitReadyCallback ready_callback,
+                                                           void *ready_arg) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component == nullptr
+             ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
+             : component->direct_blit_xrgb8888_async(src, src_stride, x, y, width, height, ready_callback, ready_arg);
 }
 
 extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_async(const uint8_t *background, int background_stride,
@@ -4317,8 +6404,8 @@ extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_async(
   return component == nullptr
              ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
              : component->direct_blend_argb8888_async(background, background_stride, foreground, foreground_stride,
-                                                       foreground_width, foreground_height, foreground_x, foreground_y,
-                                                       x, y, width, height, ready_callback, ready_arg, true);
+                                                      foreground_width, foreground_height, foreground_x, foreground_y,
+                                                      x, y, width, height, ready_callback, ready_arg, true);
 }
 
 extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_stable_async(
@@ -4330,8 +6417,49 @@ extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_stable_async(
   return component == nullptr
              ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
              : component->direct_blend_argb8888_async(background, background_stride, foreground, foreground_stride,
-                                                       foreground_width, foreground_height, foreground_x, foreground_y,
+                                                      foreground_width, foreground_height, foreground_x, foreground_y,
                                                        x, y, width, height, ready_callback, ready_arg, true, true);
+}
+
+extern "C" uint8_t lvgl_esphome_direct_overlay_argb8888_async(
+    const uint8_t *foreground, int foreground_stride, int foreground_width, int foreground_height, int foreground_x,
+    int foreground_y, int x, int y, int width, int height, LvglDirectBlitReadyCallback ready_callback,
+    void *ready_arg) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component == nullptr
+             ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
+             : component->direct_overlay_argb8888_async(foreground, foreground_stride, foreground_width,
+                                                        foreground_height, foreground_x, foreground_y, x, y, width,
+                                                        height, ready_callback, ready_arg);
+}
+
+extern "C" uint8_t lvgl_esphome_direct_overlay_argb8888_stable_async(
+    const uint8_t *foreground, int foreground_stride, int foreground_width, int foreground_height, int foreground_x,
+    int foreground_y, int x, int y, int width, int height, LvglDirectBlitReadyCallback ready_callback,
+    void *ready_arg) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component == nullptr
+             ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
+             : component->direct_overlay_argb8888_async(foreground, foreground_stride, foreground_width,
+                                                        foreground_height, foreground_x, foreground_y, x, y, width,
+                                                        height, ready_callback, ready_arg, true);
+}
+
+extern "C" uint8_t lvgl_esphome_direct_scale_blend_argb8888_async(
+    const uint8_t *foreground, int foreground_stride, int foreground_width, int foreground_height, int foreground_x,
+    int foreground_y, int foreground_crop_width, int foreground_crop_height, int integer_scale, int x, int y,
+    uint8_t *scale_target, size_t scale_target_size, int scale_target_width, int scale_target_height,
+    const uint8_t *background, int background_stride, LvglDirectBlitReadyCallback ready_callback, void *ready_arg) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component == nullptr
+             ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
+             : component->direct_scale_blend_argb8888_async(
+                   foreground, foreground_stride, foreground_width, foreground_height, foreground_x, foreground_y,
+                   foreground_crop_width, foreground_crop_height, integer_scale, x, y, scale_target, scale_target_size,
+                   scale_target_width, scale_target_height, background, background_stride, ready_callback, ready_arg);
 }
 
 extern "C" void lvgl_esphome_direct_blit_rgb888_release(int x, int y, int width, int height) {
@@ -4378,6 +6506,39 @@ extern "C" bool lvgl_esphome_direct_blit_xrgb8888_coherent(const uint8_t *src, i
   auto *disp = lv_display_get_default();
   auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
   return component != nullptr && component->direct_blit_xrgb8888_coherent(src, src_stride, x, y, width, height);
+}
+
+extern "C" bool lvgl_esphome_direct_handoff_to_lvgl(uint32_t timeout_ms) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component != nullptr && component->direct_handoff_to_lvgl(timeout_ms);
+}
+
+extern "C" bool lvgl_esphome_copy_argb8888(const uint8_t *src, uint8_t *dst, int width, int height) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component != nullptr && component->copy_argb8888(src, dst, width, height);
+}
+
+extern "C" bool lvgl_esphome_scale_argb8888(const uint8_t *src, int src_width, int src_height, uint8_t *dst,
+                                              int dst_width, int dst_height) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component != nullptr && component->scale_argb8888(src, src_width, src_height, dst, dst_width, dst_height);
+}
+
+extern "C" bool lvgl_esphome_scale_argb8888_dma_chain(const uint8_t *src, int src_width, int src_height,
+                                                        uint8_t *dst, int dst_width, int dst_height) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component != nullptr &&
+         component->scale_argb8888(src, src_width, src_height, dst, dst_width, dst_height, true);
+}
+
+extern "C" bool lvgl_esphome_copy_xrgb8888_to_rgb888(const uint8_t *src, uint8_t *dst, int width, int height) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component != nullptr && component->copy_xrgb8888_to_rgb888(src, dst, width, height);
 }
 
 void LvglComponent::synchronize_direct_framebuffer_area(int x, int y, int width, int height) {
@@ -4440,11 +6601,11 @@ void LvglComponent::synchronize_direct_framebuffer_rows(int y, int height) {
   this->synchronize_direct_framebuffer_area(0, y, this->width_, height);
 }
 
-void LvglComponent::realign_direct_buffer_after_manual_present(bool synchronize) {
+bool LvglComponent::realign_direct_buffer_after_manual_present(bool synchronize) {
   if (!this->direct_mode_active_ || this->disp_ == nullptr || this->direct_last_flushed_buf_ == nullptr)
-    return;
+    return false;
   if (this->disp_->buf_1 == nullptr || this->disp_->buf_2 == nullptr)
-    return;
+    return false;
 
   // A manual compositor replaces the normal LVGL frame history.
   this->direct_dirty_clear_();
@@ -4458,6 +6619,52 @@ void LvglComponent::realign_direct_buffer_after_manual_present(bool synchronize)
   }
 
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && LV_COLOR_DEPTH == 32
+  constexpr size_t BYTES_PER_PIXEL = 3;
+  const size_t frame_bytes = static_cast<size_t>(this->width_) * static_cast<size_t>(this->height_) * BYTES_PER_PIXEL;
+  auto copy_final_frame = [&](uint8_t *dst) -> bool {
+    if (dst == nullptr)
+      return false;
+    if (dst == this->direct_last_flushed_buf_)
+      return true;
+
+    // DSI scans physical memory, so the presented frame is authoritative.
+    // Discard stale cache lines on both sides before DMA and invalidate the
+    // destination afterwards so the next LVGL render observes copied pixels.
+    lvgl_cache_msync_external(this->direct_last_flushed_buf_, frame_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    lvgl_cache_msync_external(dst, frame_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+#if CONFIG_ESPHOME_LVGL_SNAPSHOT_DMA2D_M2M
+    if (dma2d_m2m_copy_rgb888_2d(this->direct_last_flushed_buf_, this->width_, this->height_, 0, 0, dst, this->width_,
+                                 this->height_, 0, 0, this->width_, this->height_)) {
+      lvgl_cache_msync_external(dst, frame_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+      if (memcmp(dst, this->direct_last_flushed_buf_, frame_bytes) == 0)
+        return true;
+      ESP_LOGW(TAG, "direct mode: DMA2D full-frame seed verification failed; using CPU fallback");
+    }
+#endif
+    memcpy(dst, this->direct_last_flushed_buf_, frame_bytes);
+    lvgl_cache_msync_external(dst, frame_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    return true;
+  };
+
+  bool dsi_pool_seeded = false;
+  if (synchronize && this->rotation == display::DISPLAY_ROTATION_0_DEGREES && this->displays_.size() == 1) {
+    auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+    dsi_pool_seeded = mipi_display != nullptr;
+    for (size_t index = 0; dsi_pool_seeded && index < 3; index++)
+      dsi_pool_seeded = copy_final_frame(mipi_display->get_frame_buffer(index));
+    if (dsi_pool_seeded) {
+      // LVGL owns framebuffers 0 and 1. Seeding the complete physical pool here
+      // also initializes framebuffer 2 before an independent regional renderer
+      // can select it, so a Lottie frame can never be painted over an old boot
+      // or zero-filled scene.
+      lvgl_buffers_seeded = true;
+    }
+  }
+
+  if (synchronize && next_lvgl_buf != nullptr && !lvgl_buffers_seeded) {
+    lvgl_buffers_seeded = copy_final_frame(static_cast<uint8_t *>(next_lvgl_buf->data));
+  }
+
   // Manual compositors can use the third DSI framebuffer, while LVGL owns
   // only framebuffers 0 and 1. Seed both LVGL buffers from that final frame
   // before returning control; otherwise the first ordinary refresh exposes
@@ -4475,34 +6682,8 @@ void LvglComponent::realign_direct_buffer_after_manual_present(bool synchronize)
                             ? this->disp_->buf_act
                             : this->disp_->buf_1;
       } else {
-        constexpr size_t BYTES_PER_PIXEL = 3;
-        const size_t frame_bytes =
-            static_cast<size_t>(this->width_) * static_cast<size_t>(this->height_) * BYTES_PER_PIXEL;
-        auto copy_final_frame = [&](lv_draw_buf_t *destination) -> bool {
-          if (destination == nullptr || destination->data == nullptr || destination->data_size < frame_bytes)
-            return false;
-          auto *dst = static_cast<uint8_t *>(destination->data);
-          // Clean any old CPU-owned destination lines before DMA takes
-          // ownership. The source is already coherent physical memory because
-          // it has just been queued to DSI by the manual compositor.
-          lvgl_cache_msync_external(dst, frame_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-#if CONFIG_ESPHOME_LVGL_SNAPSHOT_DMA2D_M2M
-          if (dma2d_m2m_copy_rgb888_2d(this->direct_last_flushed_buf_, this->width_, this->height_, 0, 0, dst,
-                                       this->width_, this->height_, 0, 0, this->width_, this->height_)) {
-            lvgl_cache_msync_external(dst, frame_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
-            return true;
-          }
-#endif
-          // DMA2D can be unavailable during early setup. In that rare case,
-          // invalidate the DMA-produced source before the CPU reads it.
-          lvgl_cache_msync_external(this->direct_last_flushed_buf_, frame_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
-          memcpy(dst, this->direct_last_flushed_buf_, frame_bytes);
-          lvgl_cache_msync_external(dst, frame_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-          return true;
-        };
-
-        const bool first_ready = copy_final_frame(this->disp_->buf_1);
-        const bool second_ready = copy_final_frame(this->disp_->buf_2);
+        const bool first_ready = dsi_pool_seeded || copy_final_frame(static_cast<uint8_t *>(this->disp_->buf_1->data));
+        const bool second_ready = dsi_pool_seeded || copy_final_frame(static_cast<uint8_t *>(this->disp_->buf_2->data));
         if (first_ready && second_ready) {
           // Mirror the normal direct-mode invariant: buf_1 is the coherent
           // previously-presented frame and LVGL starts drawing in buf_2.
@@ -4523,13 +6704,37 @@ void LvglComponent::realign_direct_buffer_after_manual_present(bool synchronize)
     full.y1 = 0;
     full.x2 = static_cast<lv_coord_t>(this->width_ - 1);
     full.y2 = static_cast<lv_coord_t>(this->height_ - 1);
-    this->sync_direct_other_buffer_(&full, this->direct_last_flushed_buf_);
+    lvgl_buffers_seeded = this->sync_direct_other_buffer_(&full, this->direct_last_flushed_buf_);
+  }
+
+  if (lvgl_buffers_seeded) {
+    // Both LVGL buffers now contain the authoritative manual frame. The old
+    // DIRECT sync list belongs to the pre-handoff buffer order and must not be
+    // replayed after buf_act is realigned.
+    lv_ll_clear(&this->disp_->sync_areas);
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+    // The regional compositor also rotates through the third DSI framebuffer.
+    // Advancing the base generation makes any pre-handoff copy of that buffer
+    // stale, so the next regional frame rebases it from the complete frame
+    // instead of painting only its small overlay over an older/blank scene.
+    // An in-flight compositor request observes the generation change and is
+    // discarded before it can be queued to DSI.
+    const uint32_t generation = this->direct_region_base_generation_.fetch_add(1, std::memory_order_acq_rel) + 1U;
+    if (dsi_pool_seeded) {
+      for (auto &buffer_generation : this->direct_region_buffer_generation_)
+        buffer_generation = generation;
+    } else {
+      for (auto &buffer_generation : this->direct_region_buffer_generation_)
+        buffer_generation = 0;
+    }
+#endif
   }
 
   if (next_lvgl_buf != nullptr && this->disp_->buf_act != next_lvgl_buf) {
     ESP_LOGD(TAG, "direct mode: realigning LVGL buf_act away from presented framebuffer");
     this->disp_->buf_act = next_lvgl_buf;
   }
+  return next_lvgl_buf != nullptr && (!synchronize || lvgl_buffers_seeded);
 }
 
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
@@ -4632,6 +6837,75 @@ bool LvglComponent::begin_direct_image_animation(bool allow_direct_regions) {
   return true;
 #else
   return false;
+#endif
+}
+
+bool LvglComponent::acquire_direct_animation_frame(display::FrameBufferLease *lease, BufferWriter writer,
+                                                   uint32_t timeout_ms) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  if (lease == nullptr || *lease || !this->direct_image_animation_active_ || this->displays_.size() != 1)
+    return false;
+
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  if (mipi_display == nullptr)
+    return false;
+  uint8_t *frame = mipi_display->acquire_direct_render_frame_buffer(nullptr, nullptr, timeout_ms);
+  if (frame == nullptr)
+    return false;
+
+  size_t index = 3;
+  for (size_t candidate = 0; candidate < 3; candidate++) {
+    if (mipi_display->get_frame_buffer(candidate) == frame) {
+      index = candidate;
+      break;
+    }
+  }
+  if (index == 3) {
+    mipi_display->release_direct_render_frame_buffer(frame);
+    return false;
+  }
+
+  const size_t size = mipi_display->get_frame_buffer_size();
+  if (esp_ptr_external_ram(frame) &&
+      esp_cache_msync(frame, size, ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK) {
+    mipi_display->release_direct_render_frame_buffer(frame);
+    return false;
+  }
+
+  *lease = {
+      .owner = mipi_display,
+      .data = frame,
+      .size = size,
+      .stride = mipi_display->get_frame_buffer_stride(),
+      .width = static_cast<size_t>(this->width_),
+      .height = static_cast<size_t>(this->height_),
+      .bitness = mipi_display->get_frame_buffer_bitness(),
+      .color_order = mipi_display->get_color_mode(),
+      .big_endian = false,
+      .writer = writer,
+      .index = index,
+      .generation = 0,
+  };
+  return true;
+#else
+  (void) lease;
+  (void) writer;
+  (void) timeout_ms;
+  return false;
+#endif
+}
+
+void LvglComponent::release_direct_animation_frame(display::FrameBufferLease *lease) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  if (lease == nullptr || !*lease || this->displays_.size() != 1)
+    return;
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  if (mipi_display != nullptr)
+    mipi_display->release_direct_render_frame_buffer(lease->data);
+  *lease = {};
+#else
+  if (lease != nullptr)
+    *lease = {};
 #endif
 }
 
@@ -4824,11 +7098,15 @@ bool LvglComponent::direct_present_rgb888_crop_dma2d(const lv_image_dsc_t *sourc
   return true;
 }
 
-bool LvglComponent::direct_present_rgb888_crop_subpixel(const lv_image_dsc_t *source, int source_x, int source_y,
-                                                        int source_width, int source_height, uint8_t subpixel_alpha,
-                                                        bool subpixel_vertical, ppa_client_handle_t blend_client) {
+bool LvglComponent::direct_present_unscaled_crop_subpixel(const lv_image_dsc_t *source, int source_x, int source_y,
+                                                          int source_width, int source_height,
+                                                          uint8_t subpixel_alpha, bool subpixel_vertical,
+                                                          ppa_client_handle_t blend_client) {
+  const auto source_format =
+      source == nullptr ? LV_COLOR_FORMAT_UNKNOWN : static_cast<lv_color_format_t>(source->header.cf);
   if (!this->direct_image_animation_active_ || source == nullptr || source->data == nullptr ||
-      static_cast<lv_color_format_t>(source->header.cf) != LV_COLOR_FORMAT_RGB888 || blend_client == nullptr ||
+      (source_format != LV_COLOR_FORMAT_RGB565 && source_format != LV_COLOR_FORMAT_RGB888) ||
+      blend_client == nullptr ||
       subpixel_alpha == 0 || source_width != this->width_ || source_height != this->height_ || source_x < 0 ||
       source_y < 0 || source_x + source_width + (subpixel_vertical ? 0 : 1) > static_cast<int>(source->header.w) ||
       source_y + source_height + (subpixel_vertical ? 1 : 0) > static_cast<int>(source->header.h) ||
@@ -4836,12 +7114,16 @@ bool LvglComponent::direct_present_rgb888_crop_subpixel(const lv_image_dsc_t *so
     return false;
   }
 
-  constexpr size_t bytes_per_pixel = 3;
+  const size_t source_bytes_per_pixel = source_format == LV_COLOR_FORMAT_RGB565 ? 2U : 3U;
+  const ppa_blend_color_mode_t source_color_mode =
+      source_format == LV_COLOR_FORMAT_RGB565 ? PPA_BLEND_COLOR_MODE_RGB565 : PPA_BLEND_COLOR_MODE_RGB888;
   const size_t source_stride =
-      source->header.stride != 0 ? source->header.stride : static_cast<size_t>(source->header.w) * bytes_per_pixel;
-  if (source_stride % bytes_per_pixel != 0)
+      source->header.stride != 0
+          ? source->header.stride
+          : static_cast<size_t>(source->header.w) * source_bytes_per_pixel;
+  if (source_stride % source_bytes_per_pixel != 0)
     return false;
-  const int source_stride_pixels = static_cast<int>(source_stride / bytes_per_pixel);
+  const int source_stride_pixels = static_cast<int>(source_stride / source_bytes_per_pixel);
   if (source_stride_pixels < static_cast<int>(source->header.w))
     return false;
 
@@ -4876,7 +7158,9 @@ bool LvglComponent::direct_present_rgb888_crop_subpixel(const lv_image_dsc_t *so
   if (target_index >= 3 || !this->prepare_direct_framebuffer_dma_ownership_(target, target_index))
     return false;
 
-  const size_t target_bytes = static_cast<size_t>(this->width_) * static_cast<size_t>(this->height_) * bytes_per_pixel;
+  constexpr size_t target_bytes_per_pixel = 3;
+  const size_t target_bytes =
+      static_cast<size_t>(this->width_) * static_cast<size_t>(this->height_) * target_bytes_per_pixel;
   if (mipi_display->get_frame_buffer_size() < target_bytes)
     return false;
 
@@ -4888,7 +7172,7 @@ bool LvglComponent::direct_present_rgb888_crop_subpixel(const lv_image_dsc_t *so
   config.in_bg.block_h = source_height;
   config.in_bg.block_offset_x = source_x;
   config.in_bg.block_offset_y = source_y;
-  config.in_bg.blend_cm = PPA_BLEND_COLOR_MODE_RGB888;
+  config.in_bg.blend_cm = source_color_mode;
   config.in_fg.buffer = source->data;
   config.in_fg.pic_w = source_stride_pixels;
   config.in_fg.pic_h = source->header.h;
@@ -4896,7 +7180,7 @@ bool LvglComponent::direct_present_rgb888_crop_subpixel(const lv_image_dsc_t *so
   config.in_fg.block_h = source_height;
   config.in_fg.block_offset_x = source_x + (subpixel_vertical ? 0 : 1);
   config.in_fg.block_offset_y = source_y + (subpixel_vertical ? 1 : 0);
-  config.in_fg.blend_cm = PPA_BLEND_COLOR_MODE_RGB888;
+  config.in_fg.blend_cm = source_color_mode;
   config.out.buffer = target;
   config.out.buffer_size = target_bytes;
   config.out.pic_w = this->width_;
@@ -4976,11 +7260,12 @@ bool LvglComponent::direct_present_rgb888_crop_subpixel(const lv_image_dsc_t *so
       window_started_us = now_us;
     if (now_us - window_started_us >= 2000000LL) {
       ESP_LOGI("lvgl.slideshow.subpixel",
-               "perf2s: frames=%u avg=%uus max=%uus fifo=%uus blend=%uus present=%uus axis=%c alpha=%u",
+               "perf2s: frames=%u avg=%uus max=%uus fifo=%uus blend=%uus present=%uus src=%s axis=%c alpha=%u",
                static_cast<unsigned>(frames), static_cast<unsigned>(total_us / std::max<uint32_t>(1, frames)),
                static_cast<unsigned>(max_us), static_cast<unsigned>(total_fifo_us / std::max<uint32_t>(1, frames)),
                static_cast<unsigned>(total_blend_us / std::max<uint32_t>(1, frames)),
-               static_cast<unsigned>(total_present_us / std::max<uint32_t>(1, frames)), subpixel_vertical ? 'y' : 'x',
+               static_cast<unsigned>(total_present_us / std::max<uint32_t>(1, frames)),
+               source_format == LV_COLOR_FORMAT_RGB565 ? "rgb565" : "rgb888", subpixel_vertical ? 'y' : 'x',
                static_cast<unsigned>(subpixel_alpha));
       frames = 0;
       total_us = 0;
@@ -4994,29 +7279,33 @@ bool LvglComponent::direct_present_rgb888_crop_subpixel(const lv_image_dsc_t *so
   return true;
 }
 
-bool LvglComponent::direct_present_scaled_rgb888_crop_subpixel(const lv_image_dsc_t *source, int source_x, int source_y,
-                                                               int source_width, int source_height,
-                                                               uint8_t subpixel_alpha, bool subpixel_vertical,
-                                                               uint8_t *scratch, size_t scratch_size,
-                                                               ppa_client_handle_t blend_client,
-                                                               ppa_client_handle_t srm_client) {
+bool LvglComponent::direct_present_scaled_crop_subpixel(const lv_image_dsc_t *source, int source_x, int source_y,
+                                                        int source_width, int source_height, uint8_t subpixel_alpha,
+                                                        bool subpixel_vertical, uint8_t *scratch, size_t scratch_size,
+                                                        ppa_client_handle_t blend_client,
+                                                        ppa_client_handle_t srm_client) {
+  const auto source_format =
+      source == nullptr ? LV_COLOR_FORMAT_UNKNOWN : static_cast<lv_color_format_t>(source->header.cf);
   if (!this->direct_image_animation_active_ || source == nullptr || source->data == nullptr || scratch == nullptr ||
-      static_cast<lv_color_format_t>(source->header.cf) != LV_COLOR_FORMAT_RGB888 || blend_client == nullptr ||
-      srm_client == nullptr || subpixel_alpha == 0 || source_width < 2 || source_height < 2 || source_x < 0 ||
-      source_y < 0 || source_x + source_width + (subpixel_vertical ? 0 : 1) > static_cast<int>(source->header.w) ||
+      (source_format != LV_COLOR_FORMAT_RGB565 && source_format != LV_COLOR_FORMAT_RGB888) ||
+      blend_client == nullptr || srm_client == nullptr || subpixel_alpha == 0 || source_width < 2 ||
+      source_height < 2 || source_x < 0 || source_y < 0 ||
+      source_x + source_width + (subpixel_vertical ? 0 : 1) > static_cast<int>(source->header.w) ||
       source_y + source_height + (subpixel_vertical ? 1 : 0) > static_cast<int>(source->header.h)) {
     return false;
   }
 
-  constexpr size_t BYTES_PER_PIXEL = 3;
+  const size_t bytes_per_pixel = source_format == LV_COLOR_FORMAT_RGB565 ? 2U : 3U;
+  const ppa_blend_color_mode_t source_color_mode =
+      source_format == LV_COLOR_FORMAT_RGB565 ? PPA_BLEND_COLOR_MODE_RGB565 : PPA_BLEND_COLOR_MODE_RGB888;
   const size_t source_stride =
-      source->header.stride != 0 ? source->header.stride : static_cast<size_t>(source->header.w) * BYTES_PER_PIXEL;
-  if (source_stride % BYTES_PER_PIXEL != 0)
+      source->header.stride != 0 ? source->header.stride : static_cast<size_t>(source->header.w) * bytes_per_pixel;
+  if (source_stride % bytes_per_pixel != 0)
     return false;
-  const int source_stride_pixels = static_cast<int>(source_stride / BYTES_PER_PIXEL);
+  const int source_stride_pixels = static_cast<int>(source_stride / bytes_per_pixel);
   const size_t source_bytes = source_stride * static_cast<size_t>(source->header.h);
   const size_t required_scratch =
-      static_cast<size_t>(source_width) * static_cast<size_t>(source_height) * BYTES_PER_PIXEL;
+      static_cast<size_t>(source_width) * static_cast<size_t>(source_height) * bytes_per_pixel;
   if (source_stride_pixels < static_cast<int>(source->header.w) || scratch_size < required_scratch ||
       (reinterpret_cast<uintptr_t>(scratch) & 63U) != 0 || (required_scratch & 63U) != 0) {
     return false;
@@ -5041,7 +7330,7 @@ bool LvglComponent::direct_present_scaled_rgb888_crop_subpixel(const lv_image_ds
   blend.in_bg.block_h = source_height;
   blend.in_bg.block_offset_x = source_x;
   blend.in_bg.block_offset_y = source_y;
-  blend.in_bg.blend_cm = PPA_BLEND_COLOR_MODE_RGB888;
+  blend.in_bg.blend_cm = source_color_mode;
   blend.in_fg.buffer = source->data;
   blend.in_fg.pic_w = source_stride_pixels;
   blend.in_fg.pic_h = source->header.h;
@@ -5049,14 +7338,14 @@ bool LvglComponent::direct_present_scaled_rgb888_crop_subpixel(const lv_image_ds
   blend.in_fg.block_h = source_height;
   blend.in_fg.block_offset_x = source_x + (subpixel_vertical ? 0 : 1);
   blend.in_fg.block_offset_y = source_y + (subpixel_vertical ? 1 : 0);
-  blend.in_fg.blend_cm = PPA_BLEND_COLOR_MODE_RGB888;
+  blend.in_fg.blend_cm = source_color_mode;
   blend.out.buffer = scratch;
   blend.out.buffer_size = required_scratch;
   blend.out.pic_w = source_width;
   blend.out.pic_h = source_height;
   blend.out.block_offset_x = 0;
   blend.out.block_offset_y = 0;
-  blend.out.blend_cm = PPA_BLEND_COLOR_MODE_RGB888;
+  blend.out.blend_cm = source_color_mode;
   blend.bg_alpha_update_mode = PPA_ALPHA_FIX_VALUE;
   blend.bg_alpha_fix_val = 0xFF;
   blend.fg_alpha_update_mode = PPA_ALPHA_FIX_VALUE;
@@ -5102,10 +7391,10 @@ bool LvglComponent::direct_present_scaled_rgb888_crop_subpixel(const lv_image_ds
   }
 
   lv_image_dsc_t interpolated{};
-  interpolated.header.cf = LV_COLOR_FORMAT_RGB888;
+  interpolated.header.cf = source_format;
   interpolated.header.w = source_width;
   interpolated.header.h = source_height;
-  interpolated.header.stride = static_cast<uint32_t>(source_width) * BYTES_PER_PIXEL;
+  interpolated.header.stride = static_cast<uint32_t>(source_width) * bytes_per_pixel;
   interpolated.data_size = required_scratch;
   interpolated.data = scratch;
 
@@ -5153,6 +7442,90 @@ bool LvglComponent::direct_present_scaled_rgb888_crop_subpixel(const lv_image_ds
     }
   }
   return presented;
+}
+
+bool LvglComponent::direct_convert_rgb888_crop_to_rgb565(const lv_image_dsc_t *source, int source_x, int source_y,
+                                                         int width, int height, uint8_t *target,
+                                                         size_t target_capacity) {
+  if (source == nullptr || source->data == nullptr || source->header.cf != LV_COLOR_FORMAT_RGB888 || target == nullptr ||
+      width <= 0 || height <= 0 || source_x < 0 || source_y < 0 ||
+      source_x + width > static_cast<int>(source->header.w) ||
+      source_y + height > static_cast<int>(source->header.h) || s_region_srm_client == nullptr ||
+      s_region_srm_mutex == nullptr || (reinterpret_cast<uintptr_t>(target) & 63U) != 0) {
+    return false;
+  }
+
+  const size_t source_stride = source->header.stride != 0
+                                   ? source->header.stride
+                                   : static_cast<size_t>(source->header.w) * sizeof(lv_color_t);
+  if (source_stride % sizeof(lv_color_t) != 0)
+    return false;
+  const int source_stride_pixels = static_cast<int>(source_stride / sizeof(lv_color_t));
+  const size_t output_bytes = static_cast<size_t>(width) * height * sizeof(lv_color16_t);
+  if (source_stride_pixels < static_cast<int>(source->header.w) || target_capacity < output_bytes)
+    return false;
+
+  if (xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(30)) != pdTRUE)
+    return false;
+  struct RegionSrmUnlock {
+    ~RegionSrmUnlock() { xSemaphoreGive(s_region_srm_mutex); }
+  } region_srm_unlock;
+
+  const size_t source_bytes = source_stride * static_cast<size_t>(source->header.h);
+  const bool source_written_by_dma = esphome_artwork_image_buffer_written_by_dma != nullptr &&
+                                     esphome_artwork_image_buffer_written_by_dma(source->data);
+  if (!source_written_by_dma &&
+      lvgl_cache_msync_external_result(source->data, source_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M) != ESP_OK) {
+    return false;
+  }
+  // The crop replaces every output pixel. Drop any CPU-cached copy before DMA
+  // starts so a later writeback cannot overwrite the freshly converted image.
+  if (lvgl_cache_msync_external_result(target, target_capacity, ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK)
+    return false;
+
+  ppa_srm_oper_config_t config{};
+  config.in.buffer = const_cast<uint8_t *>(source->data);
+  config.in.pic_w = source_stride_pixels;
+  config.in.pic_h = source->header.h;
+  config.in.block_w = width;
+  config.in.block_h = height;
+  config.in.block_offset_x = source_x;
+  config.in.block_offset_y = source_y;
+  config.in.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
+  config.out.buffer = target;
+  config.out.buffer_size = target_capacity;
+  config.out.pic_w = width;
+  config.out.pic_h = height;
+  config.out.block_offset_x = 0;
+  config.out.block_offset_y = 0;
+  config.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+  config.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+  config.scale_x = 1.0f;
+  config.scale_y = 1.0f;
+  config.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
+  config.mode = PPA_TRANS_MODE_BLOCKING;
+
+  const uintptr_t source_begin = reinterpret_cast<uintptr_t>(source->data);
+  const uintptr_t target_begin = reinterpret_cast<uintptr_t>(target);
+  s_direct_ppa_source_begin.store(source_begin, std::memory_order_release);
+  s_direct_ppa_source_end.store(source_begin + source_bytes, std::memory_order_release);
+  s_direct_ppa_target_begin.store(target_begin, std::memory_order_release);
+  s_direct_ppa_target_end.store(target_begin + target_capacity, std::memory_order_release);
+  const int64_t started_us = esp_timer_get_time();
+  const esp_err_t result = ppa_do_scale_rotate_mirror(s_region_srm_client, &config);
+  s_direct_ppa_source_begin.store(0, std::memory_order_release);
+  s_direct_ppa_target_begin.store(0, std::memory_order_release);
+  s_direct_ppa_source_end.store(0, std::memory_order_relaxed);
+  s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
+  if (result != ESP_OK)
+    return false;
+  if (lvgl_cache_msync_external_result(target, target_capacity, ESP_CACHE_MSYNC_FLAG_DIR_M2C) != ESP_OK)
+    return false;
+  if (s_perf_logging_enabled) {
+    ESP_LOGD("lvgl.wave", "PPA RGB888->RGB565 crop %dx%d took %uus", width, height,
+             static_cast<unsigned>(esp_timer_get_time() - started_us));
+  }
+  return true;
 }
 
 bool LvglComponent::direct_render_image_crop_rgb888(const lv_image_dsc_t *source, int source_x, int source_y,
@@ -6149,10 +8522,64 @@ const uint8_t *LvglComponent::direct_get_stable_presented_frame(uint32_t timeout
   auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
   if (mipi_display == nullptr || !mipi_display->wait_for_direct_frame_queue_idle(timeout_ms))
     return nullptr;
-  return mipi_display->get_presented_frame_buffer();
+  auto *presented = mipi_display->get_presented_frame_buffer();
+  if (presented == nullptr)
+    return nullptr;
+
+  // Manual PPA/DMA2D presenters update physical PSRAM without populating the
+  // CPU cache. Discard any stale cached view before handing this framebuffer
+  // to another DMA reader. In particular, the ESP-IDF JPEG encoder performs a
+  // C2M clean for ordinary CPU-produced images; without this preceding M2C,
+  // that clean can overwrite the displayed frame with old cached pixels.
+  lvgl_cache_msync_external(presented, mipi_display->get_frame_buffer_size(), ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+  return presented;
 #else
   (void) timeout_ms;
   return nullptr;
+#endif
+}
+
+bool LvglComponent::acquire_direct_transition_frame(lv_draw_buf_t *view, uint32_t timeout_ms) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI)
+  if (view == nullptr || view->data != nullptr || this->displays_.size() != 1 || this->width_ <= 0 ||
+      this->height_ <= 0)
+    return false;
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  if (mipi_display == nullptr)
+    return false;
+  // Keep the transition source pinned as a read-only DSI surface. It must not
+  // consume the render-reservation slot, otherwise the compositor has no
+  // target left when the other two surfaces are active/staged.
+  auto *frame = mipi_display->acquire_direct_source_frame_buffer(timeout_ms);
+  if (frame == nullptr)
+    return false;
+  const uint32_t stride = static_cast<uint32_t>(this->width_) * 3U;
+  if (lv_draw_buf_init(view, this->width_, this->height_, LV_COLOR_FORMAT_RGB888, stride, frame,
+                       static_cast<uint32_t>(mipi_display->get_frame_buffer_size())) != LV_RESULT_OK) {
+    mipi_display->release_direct_source_frame_buffer(frame);
+    return false;
+  }
+  ESP_LOGI(TAG, "Reserved DSI framebuffer for application transition source: %u KB",
+           static_cast<unsigned>(mipi_display->get_frame_buffer_size() / 1024U));
+  return true;
+#else
+  (void) view;
+  (void) timeout_ms;
+  return false;
+#endif
+}
+
+void LvglComponent::release_direct_transition_frame(lv_draw_buf_t *view) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI)
+  if (view == nullptr || view->data == nullptr || this->displays_.size() != 1)
+    return;
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  if (mipi_display != nullptr)
+    mipi_display->release_direct_source_frame_buffer(static_cast<uint8_t *>(view->data));
+  *view = {};
+#else
+  if (view != nullptr)
+    *view = {};
 #endif
 }
 
@@ -6165,11 +8592,6 @@ bool LvglComponent::direct_present_crossfade_(const uint8_t *background, const u
 
   const bool preserve_regions = preserve_direct_regions && this->direct_image_animation_allows_regions_;
   bool region_lock_taken = false;
-  if (preserve_regions) {
-    if (s_region_srm_mutex == nullptr || xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(60)) != pdTRUE)
-      return false;
-    region_lock_taken = true;
-  }
   struct RegionUnlock {
     bool &locked;
     ~RegionUnlock() {
@@ -6243,42 +8665,79 @@ bool LvglComponent::direct_present_crossfade_(const uint8_t *background, const u
   config.fg_alpha_fix_val = opacity;
   config.mode = PPA_TRANS_MODE_NON_BLOCKING;
 
-  const uintptr_t background_begin = reinterpret_cast<uintptr_t>(background);
-  const uintptr_t foreground_begin = reinterpret_cast<uintptr_t>(foreground);
-  const uintptr_t target_begin = reinterpret_cast<uintptr_t>(target);
-  s_direct_ppa_source_begin.store(background_begin, std::memory_order_release);
-  s_direct_ppa_source_end.store(background_begin + background_frame_bytes, std::memory_order_release);
-  s_direct_ppa_source2_begin.store(foreground_begin, std::memory_order_release);
-  s_direct_ppa_source2_end.store(foreground_begin + foreground_frame_bytes, std::memory_order_release);
-  s_direct_ppa_target_begin.store(target_begin, std::memory_order_release);
-  s_direct_ppa_target_end.store(target_begin + output_frame_bytes, std::memory_order_release);
-
-  DirectPpaFrameCompletion completion;
-  completion.remaining.store(1, std::memory_order_release);
-  completion.waiter = xTaskGetCurrentTaskHandle();
-  config.user_data = &completion;
-  ulTaskNotifyTake(pdTRUE, 0);
-
   const int64_t started_us = esp_timer_get_time();
-  const int64_t queue_started_us = started_us;
-  if (esphome_mipi_dsi_wait_fifo_margin != nullptr) {
-    esphome_mipi_dsi_wait_fifo_margin(CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_FIFO_MIN,
-                                      CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_WAIT_US);
-  }
-  const esp_err_t result = ppa_do_blend(blend_client, &config);
-  const uint32_t queue_us = static_cast<uint32_t>(esp_timer_get_time() - queue_started_us);
-  if (result == ESP_OK) {
-    while (completion.remaining.load(std::memory_order_acquire) != 0)
-      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  uint32_t queue_us = 0;
+  esp_err_t result = ESP_OK;
+  const bool copy_foreground = opacity == 255 && !foreground_rgb565;
+  if (copy_foreground) {
+    // At full opacity the background contributes no pixels. An RGB888 SRM
+    // copy reads one complete input instead of making the blend engine read
+    // both full-screen inputs, leaving materially more PSRAM bandwidth for
+    // direct-region animations such as the player wave.
+    const int64_t queue_started_us = esp_timer_get_time();
+    result = this->direct_region_ppa_copy_(foreground, this->width_, this->height_, 0, 0, this->width_,
+                                           this->height_, target, output_frame_bytes, this->width_, this->height_, 0,
+                                           0, false, false)
+                 ? ESP_OK
+                 : ESP_FAIL;
+    queue_us = static_cast<uint32_t>(esp_timer_get_time() - queue_started_us);
+  } else {
+    const uintptr_t background_begin = reinterpret_cast<uintptr_t>(background);
+    const uintptr_t foreground_begin = reinterpret_cast<uintptr_t>(foreground);
+    const uintptr_t target_begin = reinterpret_cast<uintptr_t>(target);
+    s_direct_ppa_source_begin.store(background_begin, std::memory_order_release);
+    s_direct_ppa_source_end.store(background_begin + background_frame_bytes, std::memory_order_release);
+    s_direct_ppa_source2_begin.store(foreground_begin, std::memory_order_release);
+    s_direct_ppa_source2_end.store(foreground_begin + foreground_frame_bytes, std::memory_order_release);
+    s_direct_ppa_target_begin.store(target_begin, std::memory_order_release);
+    s_direct_ppa_target_end.store(target_begin + output_frame_bytes, std::memory_order_release);
+
+    const int64_t queue_started_us = esp_timer_get_time();
+    if (esphome_mipi_dsi_wait_fifo_margin != nullptr) {
+      esphome_mipi_dsi_wait_fifo_margin(CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_FIFO_MIN,
+                                        CONFIG_ESPHOME_LVGL_PPA_SRM_TRANSFORM_DSI_WAIT_US);
+    }
+
+    // A single 800x800 blend owns PPA and the PSRAM bus for roughly 60-90 ms.
+    // Split it into short, cache-coherent bands so higher-priority regional
+    // producers (player wave, marquee and volume overlay) can run between
+    // bands without changing the final pixels or adding a scratch surface.
+    constexpr int BLEND_BAND_ROWS = 32;
+    for (int output_y = 0; output_y < this->height_ && result == ESP_OK; output_y += BLEND_BAND_ROWS) {
+      const int output_h = std::min(BLEND_BAND_ROWS, this->height_ - output_y);
+      config.in_bg.block_h = output_h;
+      config.in_bg.block_offset_x = 0;
+      config.in_bg.block_offset_y = output_y;
+      config.in_fg.block_h = output_h;
+      config.in_fg.block_offset_x = 0;
+      config.in_fg.block_offset_y = output_y;
+      config.out.block_offset_x = 0;
+      config.out.block_offset_y = output_y;
+
+      DirectPpaFrameCompletion completion;
+      completion.remaining.store(1, std::memory_order_release);
+      completion.waiter = xTaskGetCurrentTaskHandle();
+      config.user_data = &completion;
+      ulTaskNotifyTake(pdTRUE, 0);
+
+      result = ppa_do_blend(blend_client, &config);
+      if (result == ESP_OK) {
+        while (completion.remaining.load(std::memory_order_acquire) != 0)
+          ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+      }
+      if (output_y + output_h < this->height_)
+        taskYIELD();
+    }
+    queue_us = static_cast<uint32_t>(esp_timer_get_time() - queue_started_us);
+
+    s_direct_ppa_source_begin.store(0, std::memory_order_release);
+    s_direct_ppa_source2_begin.store(0, std::memory_order_release);
+    s_direct_ppa_target_begin.store(0, std::memory_order_release);
+    s_direct_ppa_source_end.store(0, std::memory_order_relaxed);
+    s_direct_ppa_source2_end.store(0, std::memory_order_relaxed);
+    s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
   }
   const uint32_t blend_us = static_cast<uint32_t>(esp_timer_get_time() - started_us);
-
-  s_direct_ppa_source_begin.store(0, std::memory_order_release);
-  s_direct_ppa_source2_begin.store(0, std::memory_order_release);
-  s_direct_ppa_target_begin.store(0, std::memory_order_release);
-  s_direct_ppa_source_end.store(0, std::memory_order_relaxed);
-  s_direct_ppa_source2_end.store(0, std::memory_order_relaxed);
-  s_direct_ppa_target_end.store(0, std::memory_order_relaxed);
 
   if (result != ESP_OK) {
     ESP_LOGW(TAG, "PPA %s/%s crossfade failed: %s", background_rgb565 ? "RGB565" : "RGB888",
@@ -6287,6 +8746,15 @@ bool LvglComponent::direct_present_crossfade_(const uint8_t *background, const u
   }
 
   if (preserve_regions) {
+    // While a complete scene is blended, direct-region producers only update
+    // their compact cached overlays; they do not touch a DSI framebuffer.
+    // Let them do that work in parallel, then briefly lock the cache and
+    // compose the newest overlay into the finished scene. Holding this mutex
+    // across the 800x800 blend made the player wave wait roughly 50-70 ms for
+    // every artwork transition frame.
+    if (s_region_srm_mutex == nullptr || xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(60)) != pdTRUE)
+      return false;
+    region_lock_taken = true;
     for (const auto &slot : this->direct_region_slots_) {
       if (!slot.valid || !slot.blend || !slot.animation_overlay_valid || slot.animation_overlay == nullptr)
         continue;
@@ -6427,6 +8895,18 @@ bool LvglComponent::end_direct_image_animation(uint32_t timeout_ms) {
       return false;
     }
   }
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  // Drain regional producers before returning the DSI pool to LVGL. They are
+  // resumed below from the framebuffer that is already active, rather than
+  // remaining paused until a later full LVGL refresh. Generation tracking then
+  // rebases an idle stale buffer before the first wave or marquee update.
+  if (!this->direct_regions_pause_start())
+    return false;
+  if (!this->direct_regions_pause_wait(timeout_ms)) {
+    this->direct_regions_pause(false, 0);
+    return false;
+  }
+#endif
   this->direct_image_animation_active_ = false;
   this->direct_image_animation_allows_regions_ = false;
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
@@ -6451,6 +8931,19 @@ bool LvglComponent::end_direct_image_animation(uint32_t timeout_ms) {
     if (screen != nullptr && lv_obj_is_valid(screen))
       lv_obj_invalidate(screen);
   }
+#if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
+  this->direct_regions_pause(false, 0);
+  if (this->displays_.size() == 1 && s_region_srm_mutex != nullptr &&
+      xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+    auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+    auto *presented = mipi_display == nullptr ? nullptr : mipi_display->get_presented_frame_buffer();
+    const uint32_t generation = this->direct_region_base_generation_.load(std::memory_order_acquire);
+    for (size_t index = 0; index < 3; index++)
+      this->direct_region_buffer_generation_[index] =
+          mipi_display != nullptr && mipi_display->get_frame_buffer(index) == presented ? generation : 0;
+    xSemaphoreGive(s_region_srm_mutex);
+  }
+#endif
   return true;
 }
 
@@ -6583,8 +9076,11 @@ bool LvglComponent::snapshot_swipe_direct_render(lv_draw_buf_t *current, lv_draw
       needs_full_sync |= copy_visible(dst, next, next_x, &next_copy_us);
     }
     const int64_t overlay_started_us = esp_timer_get_time();
+    if (!needs_full_sync)
+      snapshot_sync_page_indicator_rgb888(dst, this->width_, this->height_, true);
     const bool indicator_changed = snapshot_draw_page_indicator_rgb888(
-        dst, this->width_, this->height_, s_snapshot_page_indicator_page, s_snapshot_page_indicator_count);
+        dst, this->width_, this->height_, s_snapshot_page_indicator_page.load(std::memory_order_acquire),
+        s_snapshot_page_indicator_count.load(std::memory_order_acquire));
     if (needs_full_sync)
       sync_range(dst, fb_bytes);
     else if (indicator_changed)
@@ -6768,8 +9264,11 @@ bool LvglComponent::snapshot_swipe_direct_render_edge(lv_draw_buf_t *current, in
     clear_visible(this->width_ + current_x, this->width_);
   }
   needs_full_sync |= copy_visible(current, current_x);
+  if (!needs_full_sync)
+    snapshot_sync_page_indicator_rgb888(target, this->width_, this->height_, true);
   const bool indicator_changed = snapshot_draw_page_indicator_rgb888(
-      target, this->width_, this->height_, s_snapshot_page_indicator_page, s_snapshot_page_indicator_count);
+      target, this->width_, this->height_, s_snapshot_page_indicator_page.load(std::memory_order_acquire),
+      s_snapshot_page_indicator_count.load(std::memory_order_acquire));
   if (needs_full_sync)
     lvgl_cache_msync_external(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   else if (indicator_changed)
@@ -6855,8 +9354,10 @@ bool LvglComponent::snapshot_swipe_direct_render_panorama(const uint8_t *panoram
       return false;
     }
   }
-  if (snapshot_draw_page_indicator_rgb888(target, this->width_, this->height_, s_snapshot_page_indicator_page,
-                                          s_snapshot_page_indicator_count))
+  snapshot_sync_page_indicator_rgb888(target, this->width_, this->height_, true);
+  if (snapshot_draw_page_indicator_rgb888(target, this->width_, this->height_,
+                                          s_snapshot_page_indicator_page.load(std::memory_order_acquire),
+                                          s_snapshot_page_indicator_count.load(std::memory_order_acquire)))
     snapshot_sync_page_indicator_rgb888(target, this->width_, this->height_);
   const uint64_t present_start = esp_timer_get_time();
   if (!this->present_snapshot_render_buffer_(target, false))
@@ -6908,14 +9409,15 @@ bool LvglComponent::snapshot_swipe_direct_render_panorama(const uint8_t *panoram
 bool LvglComponent::snapshot_scroll_direct_render(lv_draw_buf_t *content, lv_draw_buf_t *content_tail,
                                                   int content_tail_y, int scroll_y, int viewport_w, int viewport_h) {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32)
+  constexpr lv_color_format_t SCROLL_CF = LV_COLOR_FORMAT_RGB565;
   uint64_t t0 = esp_timer_get_time();
   if (content == nullptr || content->data == nullptr)
     return false;
   if (viewport_w != this->width_ || viewport_h != this->height_ || viewport_w <= 0 || viewport_h <= 0)
     return false;
-  if (content->header.cf != LV_COLOR_FORMAT_RGB888 || content->header.w < viewport_w || content->header.h < viewport_h)
-    if (content_tail == nullptr || content->header.cf != LV_COLOR_FORMAT_RGB888 || content->header.w < viewport_w ||
-        content_tail->data == nullptr || content_tail->header.cf != LV_COLOR_FORMAT_RGB888 ||
+  if (content->header.cf != SCROLL_CF || content->header.w < viewport_w || content->header.h < viewport_h)
+    if (content_tail == nullptr || content->header.cf != SCROLL_CF || content->header.w < viewport_w ||
+        content_tail->data == nullptr || content_tail->header.cf != SCROLL_CF ||
         content_tail->header.w < viewport_w || content_tail_y != content->header.h)
       return false;
 
@@ -6963,9 +9465,11 @@ bool LvglComponent::snapshot_scroll_direct_render(lv_draw_buf_t *content, lv_dra
     if (source == nullptr || source->data == nullptr || rows <= 0)
       return rows == 0;
 #if CONFIG_ESPHOME_LVGL_SNAPSHOT_DMA2D_M2M
-    if (dma2d_m2m_copy_rgb888_2d(source->data, source->header.w, source->header.h, 0, source_y, target, viewport_w,
-                                 viewport_h, 0, target_y, viewport_w, rows)) {
-      return true;
+    if (source->header.cf == LV_COLOR_FORMAT_RGB888) {
+      if (dma2d_m2m_copy_rgb888_2d(source->data, source->header.w, source->header.h, 0, source_y, target,
+                                   viewport_w, viewport_h, 0, target_y, viewport_w, rows)) {
+        return true;
+      }
     }
 #endif
 #ifdef USE_LVGL_PPA
@@ -6978,7 +9482,7 @@ bool LvglComponent::snapshot_scroll_direct_render(lv_draw_buf_t *content, lv_dra
       cfg.in.block_h = rows;
       cfg.in.block_offset_x = 0;
       cfg.in.block_offset_y = source_y;
-      cfg.in.srm_cm = PPA_SRM_COLOR_MODE_RGB888;
+      cfg.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
       cfg.out.buffer = target;
       cfg.out.buffer_size = fb_bytes;
       cfg.out.pic_w = viewport_w;
@@ -7005,7 +9509,19 @@ bool LvglComponent::snapshot_scroll_direct_render(lv_draw_buf_t *content, lv_dra
     const uint8_t *src_row = source->data + (size_t) source_y * source->header.stride;
     uint8_t *dst_row = target + (size_t) target_y * row_bytes;
     for (int y = 0; y < rows; y++) {
-      memcpy(dst_row, src_row, row_bytes);
+      if (source->header.cf == LV_COLOR_FORMAT_RGB888) {
+        memcpy(dst_row, src_row, row_bytes);
+      } else {
+        // Expand in place when PPA is unavailable; no second conversion
+        // surface is needed for the settings scroll snapshot.
+        for (int x = 0; x < viewport_w; x++) {
+          const uint16_t pixel = static_cast<uint16_t>(src_row[x * 2]) |
+                                 (static_cast<uint16_t>(src_row[x * 2 + 1]) << 8);
+          dst_row[x * 3] = static_cast<uint8_t>((pixel >> 11) * 255 / 31);
+          dst_row[x * 3 + 1] = static_cast<uint8_t>(((pixel >> 5) & 0x3F) * 255 / 63);
+          dst_row[x * 3 + 2] = static_cast<uint8_t>((pixel & 0x1F) * 255 / 31);
+        }
+      }
       src_row += source->header.stride;
       dst_row += row_bytes;
     }
@@ -7022,14 +9538,16 @@ bool LvglComponent::snapshot_scroll_direct_render(lv_draw_buf_t *content, lv_dra
       return copy_rows(content_tail, source_y - content_tail_y, target_y, rows);
     const int head_rows = content_tail_y - source_y;
 #if CONFIG_ESPHOME_LVGL_SNAPSHOT_DMA2D_M2M
-    const Dma2dM2mCopySpan spans[2] = {
-        {content->data, static_cast<int>(content->header.w), static_cast<int>(content->header.h), 0, source_y, 0,
-         target_y, viewport_w, head_rows},
-        {content_tail->data, static_cast<int>(content_tail->header.w), static_cast<int>(content_tail->header.h), 0, 0,
-         0, target_y + head_rows, viewport_w, rows - head_rows},
-    };
-    if (dma2d_m2m_copy_rgb888_spans(spans, 2, target, viewport_w, viewport_h))
-      return true;
+    if (content->header.cf == LV_COLOR_FORMAT_RGB888 && content_tail->header.cf == LV_COLOR_FORMAT_RGB888) {
+      const Dma2dM2mCopySpan spans[2] = {
+          {content->data, static_cast<int>(content->header.w), static_cast<int>(content->header.h), 0, source_y, 0,
+           target_y, viewport_w, head_rows},
+          {content_tail->data, static_cast<int>(content_tail->header.w), static_cast<int>(content_tail->header.h), 0, 0,
+           0, target_y + head_rows, viewport_w, rows - head_rows},
+      };
+      if (dma2d_m2m_copy_rgb888_spans(spans, 2, target, viewport_w, viewport_h))
+        return true;
+    }
 #endif
     return copy_rows(content, source_y, target_y, head_rows) &&
            copy_rows(content_tail, 0, target_y + head_rows, rows - head_rows);
@@ -7088,6 +9606,7 @@ bool LvglComponent::snapshot_scroll_direct_render(lv_draw_buf_t *content, lv_dra
 bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_draw_buf_t *app, int center_x,
                                                int center_y, int width, int height) {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32)
+  snapshot_app_diag_mark(20);
   const int64_t frame_started_us = esp_timer_get_time();
   uint32_t init_copy_us = 0;
   uint32_t prepare_us = 0;
@@ -7118,20 +9637,28 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
   // background) out of the render-target rotation for the whole animation.
   const auto *app_source = static_cast<const uint8_t *>(app->data);
   const auto *background_source = background == nullptr ? nullptr : static_cast<const uint8_t *>(background->data);
-  uint8_t *target = this->next_snapshot_render_buffer_(app_source, background_source, 20);
+  snapshot_app_diag_mark(21);
+  uint8_t *target = this->next_snapshot_render_buffer_(app_source, background_source, 50, true);
 #ifdef USE_MIPI_DSI
-  if (target == nullptr && this->direct_mode_active_ && this->rotation == display::DISPLAY_ROTATION_0_DEGREES &&
+  struct SnapshotRenderReservation {
+    mipi_dsi::MipiDsi *display{};
+    uint8_t *buffer{};
+    ~SnapshotRenderReservation() {
+      if (display != nullptr && buffer != nullptr)
+        display->release_direct_render_frame_buffer(buffer);
+    }
+  } target_reservation;
+  if (target != nullptr && this->direct_mode_active_ && this->rotation == display::DISPLAY_ROTATION_0_DEGREES &&
       this->displays_.size() == 1) {
-    // Closing can reserve one framebuffer as its immutable source while the
-    // other two are active and staged/queued. Wait on the real frame-boundary
-    // ISR instead of counting scheduler yields or reusing a DSI-owned buffer.
-    auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
-    if (mipi_display != nullptr)
-      target = mipi_display->wait_for_direct_render_frame_buffer(app_source, background_source, 50);
+    target_reservation.display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+    target_reservation.buffer = target;
   }
 #endif
-  if (target == nullptr)
+  if (target == nullptr) {
+    snapshot_app_diag_mark(22);
     return false;
+  }
+  snapshot_app_diag_mark(23);
 
   bool needs_sync = false;
   int dirty_y1 = this->height_;
@@ -7258,29 +9785,39 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
     const bool target_has_frame = buffer_state->initialized;
     const int64_t prepare_started_us = esp_timer_get_time();
     if (!final_close && s_snapshot_app_dma_synced_app != app->data) {
+      snapshot_app_diag_mark(231);
       dma_ok = lvgl_cache_msync_external_result(app->data, (size_t) app->header.stride * app->header.h,
                                                 ESP_CACHE_MSYNC_FLAG_DIR_C2M) == ESP_OK;
+      snapshot_app_diag_mark(232);
       if (dma_ok)
         s_snapshot_app_dma_synced_app = app->data;
     }
     if (dma_ok && s_snapshot_app_dma_synced_background != background->data) {
+      snapshot_app_diag_mark(233);
       dma_ok = lvgl_cache_msync_external_result(background->data, visible_source_span(background),
                                                 ESP_CACHE_MSYNC_FLAG_DIR_C2M) == ESP_OK;
+      snapshot_app_diag_mark(234);
       if (dma_ok)
         s_snapshot_app_dma_synced_background = background->data;
     }
     if (dma_ok && !buffer_state->initialized) {
+      snapshot_app_diag_mark(235);
       dma_ok = lvgl_cache_msync_external_result(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M) == ESP_OK;
+      snapshot_app_diag_mark(236);
     }
     prepare_us = static_cast<uint32_t>(esp_timer_get_time() - prepare_started_us);
 
 #ifdef USE_MIPI_DSI
     if (dma_ok && this->displays_.size() == 1) {
       auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
-      if (mipi_display != nullptr)
+      if (mipi_display != nullptr) {
+        snapshot_app_diag_mark(237);
         lvgl_esphome_wait_snapshot_dsi_fifo();
+        snapshot_app_diag_mark(238);
+      }
     }
 #endif
+    snapshot_app_diag_mark(24);
     const int64_t compose_started_us = esp_timer_get_time();
     if (dma_ok) {
       if (final_close) {
@@ -7302,26 +9839,10 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
                                                  app->header.h, target, this->width_, this->height_, center_x, center_y,
                                                  dma_radius);
       }
-      if (dma_ok && target_has_frame && !final_close) {
-        // The clock is alpha-blended after every frame is composed. Incremental
-        // circle updates leave the previous glyph pixels untouched, so restore
-        // its small source region before drawing the current clock exactly once.
-        const int display_width = static_cast<int>(this->width_);
-        const int display_height = static_cast<int>(this->height_);
-        const int clock_width = std::min(display_width, SNAPSHOT_CLOCK_W);
-        const int clock_x = (display_width - clock_width) / 2;
-        const int clock_y = std::clamp(SNAPSHOT_CLOCK_Y, 0, display_height);
-        const int clock_height = std::min(SNAPSHOT_CLOCK_H, display_height - clock_y);
-        if (clock_width > 0 && clock_height > 0) {
-          dma_ok = dma2d_m2m_compose_rgb888_circle_region(
-              background->data, background->header.stride / BYTES_PER_PIXEL, background->header.h, app->data,
-              app->header.stride / BYTES_PER_PIXEL, app->header.h, target, this->width_, this->height_, center_x,
-              center_y, dma_radius, clock_x, clock_y, clock_width, clock_height);
-        }
-      }
     }
     circle_us = static_cast<uint32_t>(esp_timer_get_time() - compose_started_us);
 
+    snapshot_app_diag_mark(25);
     const int64_t sync_started_us = esp_timer_get_time();
     if (dma_ok)
       dma_ok = lvgl_cache_msync_external_result(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C) == ESP_OK;
@@ -7333,6 +9854,7 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
       buffer_state->radius = dma_radius;
       buffer_state->center_x = center_x;
       buffer_state->center_y = center_y;
+      snapshot_app_diag_mark(26);
       const int64_t present_started_us = esp_timer_get_time();
       // Keep one complete frame queued while DMA2D composes the next one into
       // the third DSI buffer. The final handoff waits for the queue explicitly.
@@ -7358,6 +9880,7 @@ bool LvglComponent::snapshot_app_direct_render(lv_draw_buf_t *background, lv_dra
                  static_cast<unsigned>(total_us), static_cast<unsigned>(prepare_us), static_cast<unsigned>(circle_us),
                  static_cast<unsigned>(cache_sync_us), static_cast<unsigned>(present_us), diameter);
       }
+      snapshot_app_diag_mark(27);
       return true;
     }
 
@@ -8712,11 +11235,20 @@ void LVTouchListener::finish_synthetic_tap_() {
 
   if (lv_obj_send_event(target, LV_EVENT_RELEASED, this->drv_) != LV_RESULT_OK || !lv_obj_is_valid(target))
     return;
+
+  // This tap is replayed by a timer rather than by LVGL's indev state
+  // machine, so LVGL does not perform its normal release-state transition for
+  // us. Clear PRESSED before any click callback can start an application
+  // transition; otherwise the opening snapshot can capture the source tile's
+  // pressed fill as a foreground rectangle.
+  lv_obj_clear_state(target, static_cast<lv_state_t>(LV_STATE_PRESSED | LV_STATE_FOCUSED | LV_STATE_HOVERED));
+  lv_obj_invalidate(target);
   if (lv_obj_send_event(target, LV_EVENT_SHORT_CLICKED, this->drv_) != LV_RESULT_OK || !lv_obj_is_valid(target))
     return;
   if (lv_obj_send_event(target, LV_EVENT_SINGLE_CLICKED, this->drv_) != LV_RESULT_OK || !lv_obj_is_valid(target))
     return;
   lv_obj_send_event(target, LV_EVENT_CLICKED, this->drv_);
+
 }
 
 void LVTouchListener::replay_deferred_tap_() {
@@ -8759,7 +11291,21 @@ void LVTouchListener::update(const touchscreen::TouchPoints_t &tpoints) {
   int32_t x = this->touch_point_.x;
   int32_t y = this->touch_point_.y;
   this->parent_->rotate_coordinates(x, y);
+  if (this->navigation_release_pending_) {
+    this->parent_->cancel_timeout("lvgl_navigation_release");
+    this->navigation_release_pending_ = false;
+    if (lvgl_esphome_get_swipe_logging_enabled())
+      ESP_LOGI("lvgl.touch", "ignored transient release; continuing captured gesture");
+  }
   if (!this->raw_touch_active_) {
+    const uint32_t now = millis();
+    this->raw_touch_started_ms_ = now;
+    this->raw_touch_last_sample_ms_ = now;
+    this->raw_touch_last_x_ = x;
+    this->raw_touch_last_y_ = y;
+    this->raw_touch_sample_count_ = 1;
+    if (lvgl_esphome_get_swipe_logging_enabled())
+      ESP_LOGI("lvgl.touch", "raw begin x=%d y=%d", static_cast<int>(x), static_cast<int>(y));
     if (this->synthetic_tap_timer_ != nullptr) {
       lv_timer_delete(this->synthetic_tap_timer_);
       this->synthetic_tap_timer_ = nullptr;
@@ -8774,6 +11320,19 @@ void LVTouchListener::update(const touchscreen::TouchPoints_t &tpoints) {
     this->navigation_press_deferred_ = this->parent_->navigation_should_defer_press(target);
     if (this->navigation_press_deferred_)
       this->navigation_deferred_target_ = target;
+  } else if (x != this->raw_touch_last_x_ || y != this->raw_touch_last_y_) {
+    const uint32_t now = millis();
+    this->raw_touch_sample_count_++;
+    if (lvgl_esphome_get_swipe_logging_enabled()) {
+      ESP_LOGI("lvgl.touch", "raw sample n=%u t=%ums dt=%ums x=%d y=%d dx=%d dy=%d",
+               static_cast<unsigned>(this->raw_touch_sample_count_),
+               static_cast<unsigned>(now - this->raw_touch_started_ms_),
+               static_cast<unsigned>(now - this->raw_touch_last_sample_ms_), static_cast<int>(x), static_cast<int>(y),
+               static_cast<int>(x - this->raw_touch_last_x_), static_cast<int>(y - this->raw_touch_last_y_));
+    }
+    this->raw_touch_last_sample_ms_ = now;
+    this->raw_touch_last_x_ = x;
+    this->raw_touch_last_y_ = y;
   }
 
   const bool captured = this->parent_->navigation_touch_update(x, y);
@@ -8787,7 +11346,13 @@ void LVTouchListener::update(const touchscreen::TouchPoints_t &tpoints) {
   this->touch_pressed_ = !this->navigation_touch_captured_ && !this->navigation_press_deferred_;
 }
 
-void LVTouchListener::release() {
+void LVTouchListener::finish_release_() {
+  if (this->raw_touch_active_ && lvgl_esphome_get_swipe_logging_enabled()) {
+    ESP_LOGI("lvgl.touch", "raw end samples=%u duration=%ums captured=%d deferred=%d",
+             static_cast<unsigned>(this->raw_touch_sample_count_),
+             static_cast<unsigned>(millis() - this->raw_touch_started_ms_), this->navigation_touch_captured_,
+             this->navigation_press_deferred_);
+  }
   const bool navigation_handled = this->raw_touch_active_ && this->parent_->navigation_touch_end();
   if (navigation_handled || this->navigation_touch_captured_)
     lv_indev_reset(this->drv_, nullptr);
@@ -8796,12 +11361,40 @@ void LVTouchListener::release() {
   this->raw_touch_active_ = false;
   this->navigation_touch_captured_ = false;
   this->navigation_press_deferred_ = false;
+  this->raw_touch_sample_count_ = 0;
   this->parent_->maybe_wakeup();
   if (replay_tap) {
     this->replay_deferred_tap_();
   } else {
     this->navigation_deferred_target_ = nullptr;
   }
+}
+
+void LVTouchListener::release() {
+  // GT911 can briefly report an empty contact set while a moving finger is
+  // still on the panel. Once navigation owns the gesture, committing on that
+  // single sample starts page settling underneath the finger and produces a
+  // visible jump. Debounce only captured drags; ordinary taps remain immediate.
+  //
+  // Do not use an LVGL timer here. Direct snapshot presentation deliberately
+  // skips lv_timer_handler() while it owns the scanout buffers, which can leave
+  // a release timer pending for hundreds of milliseconds and merge multiple
+  // physical swipes into one gesture. The component scheduler keeps running
+  // independently of the LVGL refresh timer.
+  if (this->raw_touch_active_ && this->navigation_touch_captured_) {
+    this->touch_pressed_ = false;
+    if (this->navigation_release_pending_)
+      return;
+    this->navigation_release_pending_ = true;
+    this->parent_->set_timeout("lvgl_navigation_release", 32, [this]() {
+      if (!this->navigation_release_pending_)
+        return;
+      this->navigation_release_pending_ = false;
+      this->finish_release_();
+    });
+    return;
+  }
+  this->finish_release_();
 }
 #endif  // USE_LVGL_TOUCHSCREEN
 
@@ -9112,8 +11705,15 @@ void LvglComponent::setup() {
     if (mipi_display != nullptr && this->rotation == display::DISPLAY_ROTATION_0_DEGREES &&
         mipi_display->get_frame_buffer(0) != nullptr && mipi_display->get_frame_buffer(1) != nullptr &&
         mipi_display->get_frame_buffer_size() >= buf_bytes) {
-      buffer = mipi_display->get_frame_buffer();
-      this->draw_buf2_ = mipi_display->get_frame_buffer(1);
+      auto *frame0 = mipi_display->get_frame_buffer(0);
+      auto *frame1 = mipi_display->get_frame_buffer(1);
+      auto *active = mipi_display->get_presented_frame_buffer();
+      // The DPI driver starts by scanning fb0. LVGL must initially render into
+      // the idle full buffer; selecting fb0 as buf_act makes the first native
+      // refresh modify scanout in place and cannot produce a frame-boundary
+      // handoff. Subsequent DIRECT swaps preserve the same invariant.
+      buffer = active == frame0 ? frame1 : frame0;
+      this->draw_buf2_ = active == frame0 ? frame0 : frame1;
       this->direct_mode_active_ = true;
       s_direct_mode_active = 1;
       ESP_LOGI(TAG, "LVGL direct mode enabled on MIPI framebuffer (%zu bytes)", buf_bytes);
@@ -9240,6 +11840,7 @@ void LvglComponent::setup() {
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   if (this->direct_mode_active_) {
     lv_display_add_event_cb(this->disp_, direct_region_refresh_start_cb, LV_EVENT_REFR_START, this);
+    lv_display_add_event_cb(this->disp_, direct_region_flush_start_cb, LV_EVENT_FLUSH_START, this);
     lv_display_add_event_cb(this->disp_, direct_region_refresh_end_cb, LV_EVENT_REFR_READY, this);
   }
   if (this->direct_mode_active_ && !this->start_direct_region_compositor_()) {
@@ -9281,6 +11882,21 @@ void LvglComponent::update() {
 void LvglComponent::loop() {
   if (!this->buffers_configured_)
     return;  // setup() not complete or failed, skip rendering
+#if defined(USE_ESP32) && LV_USE_LOTTIE
+  lottie_process_native_publications();
+#endif
+
+  // Invalidation is temporarily disabled only while an owner holds a full
+  // framebuffer or snapshot handoff. A failed handoff must never leave the
+  // display in that state permanently: LVGL would still show the last frame,
+  // while all native presses and label updates appear to do nothing.
+  if (this->disp_ != nullptr && !lv_display_is_invalidation_enabled(this->disp_) &&
+      !this->frame_buffer_presentation_active_.load(std::memory_order_acquire) &&
+      !this->direct_image_animation_active_.load(std::memory_order_acquire) && !s_snapshot_direct_active &&
+      !s_snapshot_swipe_active && !s_snapshot_app_open_frame_held) {
+    lv_display_enable_invalidation(this->disp_, true);
+    ESP_LOGW(TAG, "Recovered stale LVGL invalidation state after direct handoff");
+  }
 
   if (!this->loop_started_) {
     this->loop_started_ = true;
@@ -9655,6 +12271,7 @@ struct SnapshotSwipeState {
   bool pending_finish_commit{false};
   bool pending_finish_soft{false};
   bool direct_render{false};
+  bool direct_regions_paused{false};
   bool edge_bounce{false};
   bool worker_enabled{false};
   bool panorama_render{false};
@@ -9670,6 +12287,7 @@ struct SnapshotSwipeState {
   uint32_t perf_render_frames{0};
   uint32_t perf_max_render_us{0};
   uint32_t perf_failed_frames{0};
+  uint64_t gesture_begin_us{0};
   LvglComponent *component{nullptr};
 };
 
@@ -9695,6 +12313,8 @@ struct SnapshotScrollState {
   bool inertia_bounce_pending{false};
   bool worker_enabled{false};
   bool root_was_hidden{false};
+  bool owns_content_buf{true};
+  bool owns_content_tail_buf{true};
   uint64_t perf_first_render_us{0};
   uint64_t perf_last_render_us{0};
   uint64_t perf_total_render_us{0};
@@ -9702,6 +12322,13 @@ struct SnapshotScrollState {
   uint32_t perf_max_render_us{0};
   uint32_t perf_failed_frames{0};
   LvglComponent *component{nullptr};
+};
+
+struct SnapshotScrollExternalBuffer {
+  uint8_t *data{nullptr};
+  size_t capacity{0};
+  lv_draw_buf_t view{};
+  bool in_use{false};
 };
 
 struct SnapshotScrollConfig {
@@ -9752,6 +12379,7 @@ struct SnapshotSwipeWorkerState {
   std::atomic<bool> pause_requested{false};
   std::atomic<bool> pause_done{false};
   std::atomic<bool> failed{false};
+  std::atomic<uint8_t> stage{0};
   std::atomic<uint32_t> request_generation{0};
   std::atomic<uint32_t> processed_generation{0};
   std::atomic<int> requested_current_x{0};
@@ -9797,6 +12425,10 @@ SnapshotScrollWorkerState snapshot_scroll_worker;
 constexpr uint32_t SNAPSHOT_APP_WORKER_STACK_BYTES = 6144;
 constexpr uint32_t SNAPSHOT_APP_WORKER_STACK_WORDS =
     (SNAPSHOT_APP_WORKER_STACK_BYTES + sizeof(StackType_t) - 1) / sizeof(StackType_t);
+// Full-screen application transitions are short, user-visible operations.
+// Run above best-effort direct-scene raster workers (priorities 1-2), while
+// remaining well below the audio/network real-time tasks.
+constexpr UBaseType_t SNAPSHOT_APP_WORKER_PRIORITY = 3;
 
 struct SnapshotAppWorkerState {
   TaskHandle_t task{nullptr};
@@ -9930,6 +12562,7 @@ struct SnapshotTileWindowCache {
 SnapshotSwipeState snapshot_swipe_state;
 SnapshotScrollState snapshot_scroll_state;
 SnapshotScrollConfig snapshot_scroll_config;
+SnapshotScrollExternalBuffer snapshot_scroll_external_buffer;
 SnapshotAppState snapshot_app_state;
 lv_obj_t *snapshot_app_prepared_close_obj = nullptr;
 lv_draw_buf_t *snapshot_app_prepared_close_buf = nullptr;
@@ -9967,31 +12600,36 @@ size_t snapshot_tile_window_bytes() {
 [[maybe_unused]] bool snapshot_tile_window_reserve(int width, int height) {
   if (width <= 0 || height <= 0)
     return false;
-  if (snapshot_tile_window_cache.width == width && snapshot_tile_window_cache.height == height) {
-    bool ready = true;
-    for (auto *slot : snapshot_tile_window_cache.slots)
-      ready = ready && slot != nullptr && slot->data != nullptr;
-    if (ready)
-      return true;
+  const bool same_size = snapshot_tile_window_cache.width == width && snapshot_tile_window_cache.height == height;
+  if (same_size && lvgl_esphome_snapshot_tile_buffers_ready())
+    return true;
+  if (!same_size) {
+    for (size_t index = 0; index < SNAPSHOT_TILE_SLOT_COUNT; index++) {
+      if (snapshot_tile_window_cache.slots[index] != nullptr) {
+        snapshot_app_dma_source_modified(snapshot_tile_window_cache.slots[index]->data);
+        lv_draw_buf_destroy(snapshot_tile_window_cache.slots[index]);
+      }
+      snapshot_tile_window_cache.slots[index] = nullptr;
+      snapshot_tile_window_cache.pages[index] = nullptr;
+      snapshot_tile_window_cache.dirty[index] = false;
+      snapshot_tile_window_cache.busy[index] = false;
+    }
   }
-
+  snapshot_tile_window_cache.width = width;
+  snapshot_tile_window_cache.height = height;
+  // Refill a reduced window without invalidating its retained close-animation
+  // background. Roll back only allocations made by this attempt.
+  bool allocated[SNAPSHOT_TILE_SLOT_COUNT]{};
   for (size_t index = 0; index < SNAPSHOT_TILE_SLOT_COUNT; index++) {
     if (snapshot_tile_window_cache.slots[index] != nullptr)
-      lv_draw_buf_destroy(snapshot_tile_window_cache.slots[index]);
-    snapshot_tile_window_cache.slots[index] = nullptr;
-    snapshot_tile_window_cache.pages[index] = nullptr;
-    snapshot_tile_window_cache.dirty[index] = false;
-    snapshot_tile_window_cache.busy[index] = false;
-  }
-  snapshot_tile_window_cache.width = 0;
-  snapshot_tile_window_cache.height = 0;
-
-  for (size_t index = 0; index < SNAPSHOT_TILE_SLOT_COUNT; index++) {
+      continue;
     auto *slot = lv_draw_buf_create(width, height, LV_COLOR_FORMAT_RGB888, width * 3);
     if (slot == nullptr || slot->data == nullptr) {
       if (slot != nullptr)
         lv_draw_buf_destroy(slot);
       for (size_t rollback = 0; rollback < index; rollback++) {
+        if (!allocated[rollback])
+          continue;
         lv_draw_buf_destroy(snapshot_tile_window_cache.slots[rollback]);
         snapshot_tile_window_cache.slots[rollback] = nullptr;
         snapshot_tile_window_cache.pages[rollback] = nullptr;
@@ -10003,6 +12641,7 @@ size_t snapshot_tile_window_bytes() {
       return false;
     }
     snapshot_tile_window_cache.slots[index] = slot;
+    allocated[index] = true;
     snapshot_tile_window_cache.pages[index] = nullptr;
     snapshot_tile_window_cache.dirty[index] = false;
     snapshot_tile_window_cache.busy[index] = false;
@@ -10011,6 +12650,14 @@ size_t snapshot_tile_window_bytes() {
   snapshot_tile_window_cache.height = height;
   ESP_LOGI(TAG, "snapshot tiles: reserved %u reusable RGB888 slots (%u KB)",
            static_cast<unsigned>(SNAPSHOT_TILE_SLOT_COUNT), static_cast<unsigned>(snapshot_tile_window_bytes() / 1024));
+  return true;
+}
+
+extern "C" bool lvgl_esphome_snapshot_tile_buffers_ready(void) {
+  for (auto *slot : snapshot_tile_window_cache.slots) {
+    if (slot == nullptr || slot->data == nullptr)
+      return false;
+  }
   return true;
 }
 
@@ -10098,6 +12745,9 @@ extern "C" void lvgl_esphome_snapshot_log_memory(const char *phase) {
 }
 
 constexpr lv_color_format_t SNAPSHOT_CF = LV_COLOR_FORMAT_RGB888;
+// Settings is the only scroll-snapshot consumer. Keep its resident content
+// surface in RGB565 and expand once into the RGB888 display surface.
+constexpr lv_color_format_t SNAPSHOT_SCROLL_CF = LV_COLOR_FORMAT_RGB565;
 constexpr int SNAPSHOT_PANORAMA_SCALE = 1;
 constexpr bool SNAPSHOT_DIRECT_COMPOSITOR_ENABLED = true;
 constexpr bool SNAPSHOT_JPEG_CACHE_ENABLED = true;
@@ -10177,6 +12827,7 @@ uint32_t snapshot_draw_buf_signature(const lv_draw_buf_t *buf) {
 
 void snapshot_cache_destroy_raw(SnapshotCacheEntry &entry) {
   if (entry.buf != nullptr) {
+    snapshot_app_dma_source_modified(entry.buf->data);
     // The application work surface is shared by every application and owned
     // separately from cache entries. A cache entry may only borrow it while
     // snapshot_app_work_obj identifies that same application.
@@ -11111,8 +13762,14 @@ bool snapshot_swipe_render_direct_frame(int current_x, int next_x) {
   const uint64_t end_us = esp_timer_get_time();
   const uint32_t render_us = (uint32_t) (end_us - start_us);
   if (rendered) {
-    if (state.perf_first_render_us == 0)
+    if (state.perf_first_render_us == 0) {
       state.perf_first_render_us = start_us;
+      if (s_swipe_logging_enabled) {
+        ESP_LOGI(TAG, "snapshot swipe: first frame after begin=%lluus render=%uus x=%d next=%d",
+                 static_cast<unsigned long long>(state.gesture_begin_us == 0 ? 0 : end_us - state.gesture_begin_us),
+                 static_cast<unsigned>(render_us), current_x, next_x);
+      }
+    }
     state.perf_last_render_us = end_us;
     state.perf_total_render_us += render_us;
     state.perf_render_frames++;
@@ -11156,6 +13813,7 @@ void snapshot_swipe_worker_task(void *) {
       continue;
 
     worker.running.store(true, std::memory_order_release);
+    worker.stage.store(1, std::memory_order_release);
     uint32_t handled_generation = worker.processed_generation.load(std::memory_order_acquire);
     while (worker.active.load(std::memory_order_acquire) && !worker.cancel.load(std::memory_order_acquire)) {
       if (worker.pause_requested.exchange(false, std::memory_order_acq_rel)) {
@@ -11194,7 +13852,9 @@ void snapshot_swipe_worker_task(void *) {
                                   : snapshot_swipe_ease_out(start_next_x, target_next_x, elapsed_ms, duration_ms));
           if (current_x != worker.rendered_current_x.load(std::memory_order_relaxed) ||
               next_x != worker.rendered_next_x.load(std::memory_order_relaxed) || final_frame) {
+            worker.stage.store(2, std::memory_order_release);
             success = snapshot_swipe_render_direct_frame(current_x, next_x);
+            worker.stage.store(1, std::memory_order_release);
             if (!success)
               break;
             worker.rendered_current_x.store(current_x, std::memory_order_release);
@@ -11205,10 +13865,15 @@ void snapshot_swipe_worker_task(void *) {
 
           next_frame_us += 16666ULL;
           const int64_t wait_us = static_cast<int64_t>(next_frame_us - esp_timer_get_time());
-          if (wait_us > 1000)
-            vTaskDelay(pdMS_TO_TICKS(static_cast<uint32_t>(wait_us / 1000)));
-          else
+          if (wait_us > 1000) {
+            // A new touch sends a task notification from
+            // snapshot_swipe_worker_pause(). Unlike vTaskDelay(), this wait is
+            // interrupted immediately, so the user can grab a settling page
+            // without waiting for the next 60 Hz slot.
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(static_cast<uint32_t>((wait_us + 999) / 1000)));
+          } else {
             taskYIELD();
+          }
         }
 
         if (paused) {
@@ -11228,7 +13893,9 @@ void snapshot_swipe_worker_task(void *) {
         break;
       const int current_x = worker.requested_current_x.load(std::memory_order_acquire);
       const int next_x = worker.requested_next_x.load(std::memory_order_acquire);
+      worker.stage.store(3, std::memory_order_release);
       const bool success = snapshot_swipe_render_direct_frame(current_x, next_x);
+      worker.stage.store(1, std::memory_order_release);
       if (success) {
         worker.rendered_current_x.store(current_x, std::memory_order_release);
         worker.rendered_next_x.store(next_x, std::memory_order_release);
@@ -11238,6 +13905,7 @@ void snapshot_swipe_worker_task(void *) {
       handled_generation = generation;
       worker.processed_generation.store(generation, std::memory_order_release);
     }
+    worker.stage.store(0, std::memory_order_release);
     worker.running.store(false, std::memory_order_release);
   }
 }
@@ -11274,6 +13942,7 @@ bool snapshot_swipe_worker_activate(int current_x, int next_x) {
   worker.pause_requested.store(false, std::memory_order_release);
   worker.pause_done.store(false, std::memory_order_release);
   worker.failed.store(false, std::memory_order_release);
+  worker.stage.store(0, std::memory_order_release);
   worker.request_generation.store(0, std::memory_order_release);
   worker.processed_generation.store(0, std::memory_order_release);
   worker.requested_current_x.store(current_x, std::memory_order_release);
@@ -11334,8 +14003,18 @@ bool snapshot_swipe_worker_stop_and_wait(uint32_t timeout_ms = 1200) {
   const uint32_t started_ms = millis();
   while (worker.running.load(std::memory_order_acquire)) {
     if (millis() - started_ms >= timeout_ms) {
-      ESP_LOGE(TAG, "snapshot swipe: direct compositor worker did not stop within %ums",
-               static_cast<unsigned>(timeout_ms));
+      ESP_LOGE(TAG,
+               "snapshot swipe: direct compositor worker did not stop within %ums stage=%u active=%u cancel=%u "
+               "finish=%u pause=%u req=%u done=%u task=%u stack=%u",
+               static_cast<unsigned>(timeout_ms), static_cast<unsigned>(worker.stage.load(std::memory_order_acquire)),
+               static_cast<unsigned>(worker.active.load(std::memory_order_acquire)),
+               static_cast<unsigned>(worker.cancel.load(std::memory_order_acquire)),
+               static_cast<unsigned>(worker.finish_requested.load(std::memory_order_acquire)),
+               static_cast<unsigned>(worker.pause_requested.load(std::memory_order_acquire)),
+               static_cast<unsigned>(worker.request_generation.load(std::memory_order_acquire)),
+               static_cast<unsigned>(worker.processed_generation.load(std::memory_order_acquire)),
+               static_cast<unsigned>(eTaskGetState(worker.task)),
+               static_cast<unsigned>(uxTaskGetStackHighWaterMark(worker.task)));
       return false;
     }
     vTaskDelay(1);
@@ -11577,6 +14256,10 @@ void snapshot_swipe_cleanup() {
   }
   s_snapshot_swipe_active = false;
   s_snapshot_direct_active = false;
+  if (snapshot_swipe_state.direct_regions_paused && snapshot_swipe_state.component != nullptr) {
+    snapshot_swipe_state.component->direct_regions_pause(false, 0);
+    snapshot_swipe_state.direct_regions_paused = false;
+  }
   if (snapshot_swipe_state.direct_anim_timer != nullptr) {
     lv_timer_delete(snapshot_swipe_state.direct_anim_timer);
     snapshot_swipe_state.direct_anim_timer = nullptr;
@@ -11634,6 +14317,7 @@ void snapshot_swipe_cleanup() {
   snapshot_swipe_state.pending_finish_commit = false;
   snapshot_swipe_state.pending_finish_soft = false;
   snapshot_swipe_state.direct_render = false;
+  snapshot_swipe_state.direct_regions_paused = false;
   snapshot_swipe_state.edge_bounce = false;
   snapshot_swipe_state.worker_enabled = false;
   snapshot_swipe_state.perf_first_render_us = 0;
@@ -11642,6 +14326,7 @@ void snapshot_swipe_cleanup() {
   snapshot_swipe_state.perf_render_frames = 0;
   snapshot_swipe_state.perf_max_render_us = 0;
   snapshot_swipe_state.perf_failed_frames = 0;
+  snapshot_swipe_state.gesture_begin_us = 0;
   snapshot_swipe_state.component = nullptr;
 }
 
@@ -11749,6 +14434,7 @@ void snapshot_app_worker_task(void *) {
     }
 
     worker.running.store(true, std::memory_order_release);
+    snapshot_app_diag_mark(1);
     auto &state = snapshot_app_state;
     auto *component = state.component;
     auto *background = state.background_buf;
@@ -11775,10 +14461,12 @@ void snapshot_app_worker_task(void *) {
     uint32_t frame_signatures[FRAME_TRACE_CAPACITY]{};
     size_t frame_trace_count = 0;
     auto render_frame = [&](int center_x, int center_y, int size) {
+      snapshot_app_diag_mark(2);
       const int64_t started_us = esp_timer_get_time();
       const bool rendered = component->snapshot_app_direct_render(background, app, center_x, center_y, size, size);
       const uint32_t elapsed_us = static_cast<uint32_t>(esp_timer_get_time() - started_us);
       rendered_frames++;
+      s_snapshot_app_diag_frames.store(rendered_frames, std::memory_order_release);
       render_total_us += elapsed_us;
       render_max_us = std::max(render_max_us, elapsed_us);
       if (rendered) {
@@ -11873,6 +14561,7 @@ void snapshot_app_worker_task(void *) {
     }
     worker.running.store(false, std::memory_order_release);
     worker.done.store(true, std::memory_order_release);
+    snapshot_app_diag_mark(9);
   }
 }
 
@@ -11886,7 +14575,8 @@ bool snapshot_app_worker_start() {
 #endif
     worker.task =
         xTaskCreateStaticPinnedToCore(snapshot_app_worker_task, "lvgl_app_anim", SNAPSHOT_APP_WORKER_STACK_BYTES,
-                                      nullptr, 1, worker.task_stack, &worker.task_storage, worker_core);
+                                      nullptr, SNAPSHOT_APP_WORKER_PRIORITY, worker.task_stack, &worker.task_storage,
+                                      worker_core);
     if (worker.task == nullptr) {
       worker.task = nullptr;
       ESP_LOGW(TAG, "snapshot app: failed to create direct animation worker");
@@ -11977,7 +14667,22 @@ bool snapshot_app_reserve_work_buffer(lv_obj_t *obj) {
 bool snapshot_take_centered_to(lv_obj_t *obj, lv_draw_buf_t *buf) {
   if (obj == nullptr || buf == nullptr)
     return false;
+  snapshot_app_dma_source_modified(buf->data);
   const bool was_hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  auto *display = lv_obj_get_display(obj);
+  lv_area_t coords{};
+  lv_obj_get_coords(obj, &coords);
+  const bool visible_fullscreen = !was_hidden && display != nullptr && coords.x1 == 0 && coords.y1 == 0 &&
+                                  lv_area_get_width(&coords) == lv_display_get_horizontal_resolution(display) &&
+                                  lv_area_get_height(&coords) == lv_display_get_vertical_resolution(display);
+  if (visible_fullscreen) {
+    // Moving the live full-screen root through lv_obj_align() invalidates the
+    // physical DIRECT framebuffer. A regional renderer can present that
+    // intermediate blank base before the root is restored. It is already in
+    // the exact snapshot coordinates, so render it without touching layout.
+    return lv_snapshot_take_to_draw_buf(obj, SNAPSHOT_CF, buf) == LV_RESULT_OK;
+  }
+
   const lv_coord_t old_x = lv_obj_get_x(obj);
   const lv_coord_t old_y = lv_obj_get_y(obj);
 
@@ -12089,6 +14794,12 @@ lv_draw_buf_t *snapshot_app_cached_or_take(lv_obj_t *obj, bool force_fresh, bool
   if (!force_fresh && !use_work_buffer) {
     if (auto *panorama_view = snapshot_app_background_from_panorama(obj))
       return panorama_view;
+    if (auto *cached = snapshot_cache_find(obj))
+      return cached;
+    // Home backgrounds are owned by the fixed tile/panorama cache. Creating
+    // another full-screen draw buffer here defeats the bounded-memory design
+    // and fails once PSRAM is fragmented by gallery or artwork surfaces.
+    return nullptr;
   }
 
   if (!force_fresh) {
@@ -12130,7 +14841,8 @@ void snapshot_app_resume_direct_regions() {
 }
 
 bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_center_x, int end_center_y,
-                        uint32_t duration_ms, bool opening, lv_draw_buf_t *app_buffer_override = nullptr) {
+                        uint32_t duration_ms, bool opening, lv_draw_buf_t *app_buffer_override = nullptr,
+                        bool populate_app_buffer_override = false) {
 #if LV_USE_SNAPSHOT
   s_snapshot_app_open_frame_held = false;
   snapshot_swipe_cleanup();
@@ -12167,6 +14879,35 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
     }
     if (opening)
       snapshot_app_clear_prepared_close();
+    snapshot_app_dma_source_modified(app_buffer_override->data);
+    if (populate_app_buffer_override) {
+      bool populated = false;
+      auto *entry = snapshot_cache_find_entry(app);
+#ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
+      if (entry != nullptr && !entry->jpeg.empty())
+        populated = snapshot_cache_decode_jpeg_to_draw_buf(*entry, app_buffer_override);
+#endif
+      if (!populated && entry != nullptr && snapshot_cache_raw_is_valid(*entry) && entry->buf != nullptr &&
+          entry->buf->data != nullptr && entry->buf->header.cf == app_buffer_override->header.cf &&
+          entry->buf->header.w == app_buffer_override->header.w && entry->buf->header.h == app_buffer_override->header.h &&
+          entry->buf->header.stride == app_buffer_override->header.stride &&
+          entry->buf->data_size <= app_buffer_override->data_size) {
+#ifdef USE_ESP32
+        lvgl_cache_msync_external_result(entry->buf->data, entry->buf->data_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+#endif
+        snapshot_app_dma_source_modified(app_buffer_override->data);
+        std::memcpy(app_buffer_override->data, entry->buf->data, entry->buf->data_size);
+        populated = true;
+      }
+      if (!populated)
+        populated = snapshot_take_centered_to(app, app_buffer_override);
+      if (!populated) {
+        ESP_LOGW(TAG, "snapshot app: failed to populate borrowed transition buffer for app=%p", app);
+        snapshot_app_resume_direct_regions();
+        s_snapshot_direct_active = previous_direct_active;
+        return false;
+      }
+    }
     app_buf = app_buffer_override;
   } else if (!opening && snapshot_app_prepared_close_obj == app && snapshot_app_prepared_close_buf != nullptr) {
     app_buf = snapshot_app_prepared_close_buf;
@@ -12210,6 +14951,8 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
   snapshot_app_state.end_center_x = end_center_x;
   snapshot_app_state.end_center_y = end_center_y;
   snapshot_app_state.component = component;
+  s_snapshot_app_diag_frames.store(0, std::memory_order_release);
+  snapshot_app_diag_mark(10);
   snapshot_app_render_buffers_reset(opening);
 #ifdef USE_ESP32
   // Application taps are dispatched from inside lv_timer_handler(). Starting
@@ -12236,9 +14979,11 @@ bool snapshot_app_direct_anim_tick() {
     // The LVGL refresh which dispatched the tap can still have one framebuffer
     // queued for the next VSYNC. Make it the stable animation base before the
     // compositor starts cycling the other two buffers.
+    snapshot_app_diag_mark(11);
     state.component->wait_for_direct_frame_presented(50);
     state.anim_start_us = esp_timer_get_time();
     state.worker_enabled = snapshot_app_worker_start();
+    snapshot_app_diag_mark(state.worker_enabled ? 12 : 13);
     if (state.worker_enabled)
       return true;
   }
@@ -12309,7 +15054,7 @@ bool snapshot_app_direct_anim_tick() {
     // first native widget update cannot reveal the pre-transition base. Do
     // this only after caching a framebuffer-backed close source: realignment
     // copies the final Home frame into every DSI buffer, including that source.
-    state.component->realign_direct_buffer_after_manual_present();
+    state.component->realign_direct_buffer_after_manual_present(false);
     if (!snapshot_app_cleanup())
       return true;
     // Keep the final direct frame on DSI until YAML has loaded the destination
@@ -12404,6 +15149,7 @@ void snapshot_swipe_discard_pending_refresh(lv_display_t *disp) {
 
 void snapshot_swipe_finish_now() {
   const bool direct_render = snapshot_swipe_state.direct_render && snapshot_swipe_state.component != nullptr;
+  bool handoff_seeded = false;
   if (direct_render) {
     // Prime the inactive framebuffer with the exact final snapshot frame before
     // LVGL resumes. Otherwise the first real-page refresh can briefly present
@@ -12422,19 +15168,26 @@ void snapshot_swipe_finish_now() {
       // Mirror only that final 10-row strip into LVGL's two buffers before
       // handoff. This prevents correct -> previous -> correct indicator jumps
       // without copying two complete 1.92 MB frames.
-      snapshot_swipe_state.component->synchronize_direct_framebuffer_rows(SNAPSHOT_PAGE_INDICATOR_Y,
-                                                                          SNAPSHOT_PAGE_INDICATOR_H);
+      const int indicator_y = s_snapshot_page_indicator_y.load(std::memory_order_acquire);
+      const int indicator_height = s_snapshot_page_indicator_height.load(std::memory_order_acquire);
+      if (indicator_height > 0)
+        snapshot_swipe_state.component->synchronize_direct_framebuffer_rows(indicator_y, indicator_height);
     }
-    // FULL mode redraws the whole next LVGL buffer. Keep the compositor's
-    // final third framebuffer on DSI until that redraw is ready instead of
-    // copying 1.92 MB into each LVGL buffer between chained gestures.
-    snapshot_swipe_state.component->realign_direct_buffer_after_manual_present(false);
+    // The final compositor frame is already the authoritative native page.
+    // Seed the complete DSI pool once, then suppress the visibility-change
+    // invalidations below. This replaces the old two-buffer FULL redraw which
+    // blocked touch polling for roughly 150 ms after every gesture.
+    const uint64_t handoff_started_us = snapshot_diag_now_us_();
+    handoff_seeded = snapshot_swipe_state.component->realign_direct_buffer_after_manual_present(false);
+    if (s_swipe_logging_enabled) {
+      ESP_LOGI(TAG, "snapshot swipe: handoff seeded=%s in %lluus", YESNO(handoff_seeded),
+               static_cast<unsigned long long>(snapshot_diag_now_us_() - handoff_started_us));
+    }
   }
   snapshot_swipe_apply_final_roots();
   if (direct_render) {
     auto *component = snapshot_swipe_state.component;
-    const bool commit = snapshot_swipe_state.commit;
-    if (commit) {
+    if (handoff_seeded) {
       snapshot_swipe_discard_pending_refresh(component->get_disp());
     } else {
       s_snapshot_swipe_active = false;
@@ -12467,12 +15220,13 @@ void snapshot_scroll_cleanup() {
       lv_obj_clear_flag(snapshot_scroll_state.root, LV_OBJ_FLAG_HIDDEN);
     }
   }
-  if (snapshot_scroll_state.content_buf != nullptr) {
+  if (snapshot_scroll_state.content_buf != nullptr && snapshot_scroll_state.owns_content_buf) {
     lv_draw_buf_destroy(snapshot_scroll_state.content_buf);
   }
-  if (snapshot_scroll_state.content_tail_buf != nullptr) {
+  if (snapshot_scroll_state.content_tail_buf != nullptr && snapshot_scroll_state.owns_content_tail_buf) {
     lv_draw_buf_destroy(snapshot_scroll_state.content_tail_buf);
   }
+  snapshot_scroll_external_buffer.in_use = false;
   snapshot_scroll_state = {};
 }
 
@@ -12505,7 +15259,7 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
   const int old_scroll_y = lv_obj_get_scroll_y(obj);
   const int max_scroll_y = std::max<int>(0, lv_obj_get_scroll_top(obj) + lv_obj_get_scroll_bottom(obj));
   const int content_h = std::max(viewport_h, viewport_h + max_scroll_y);
-  const size_t stride = lv_draw_buf_width_to_stride(viewport_w, SNAPSHOT_CF);
+  const size_t stride = lv_draw_buf_width_to_stride(viewport_w, SNAPSHOT_SCROLL_CF);
   if (stride == 0 || static_cast<size_t>(content_h) > snapshot_scroll_config.max_content_bytes / stride) {
     ESP_LOGW(TAG, "snapshot scroll: content needs %u bytes, configured limit is %u",
              static_cast<unsigned>(stride * content_h),
@@ -12529,17 +15283,49 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
     lv_obj_update_layout(parent == nullptr ? obj : parent);
     lv_obj_scroll_to_y(obj, segment_y, LV_ANIM_OFF);
     lv_obj_update_layout(parent == nullptr ? obj : parent);
-    return lv_snapshot_take(obj, SNAPSHOT_CF);
+    return lv_snapshot_take(obj, SNAPSHOT_SCROLL_CF);
   };
 
-  lv_draw_buf_t *content_buf = take_segment(0, head_h);
+  const size_t required_bytes = stride * static_cast<size_t>(content_h);
+  lv_draw_buf_t *content_buf = nullptr;
   lv_draw_buf_t *content_tail_buf = nullptr;
+  bool owns_content_buf = true;
+  if (snapshot_scroll_external_buffer.data != nullptr && !snapshot_scroll_external_buffer.in_use &&
+      snapshot_scroll_external_buffer.capacity >= required_bytes) {
+    lv_obj_set_height(obj, content_h);
+    lv_obj_update_layout(parent == nullptr ? obj : parent);
+    lv_obj_scroll_to_y(obj, 0, LV_ANIM_OFF);
+    lv_obj_update_layout(parent == nullptr ? obj : parent);
+    snapshot_scroll_external_buffer.view = {};
+    if (lv_draw_buf_init(&snapshot_scroll_external_buffer.view, viewport_w, content_h, SNAPSHOT_SCROLL_CF,
+                         static_cast<uint32_t>(stride), snapshot_scroll_external_buffer.data,
+                         snapshot_scroll_external_buffer.capacity) == LV_RESULT_OK &&
+        lv_snapshot_take_to_draw_buf(obj, SNAPSHOT_SCROLL_CF, &snapshot_scroll_external_buffer.view) == LV_RESULT_OK) {
+      content_buf = &snapshot_scroll_external_buffer.view;
+      owns_content_buf = false;
+      snapshot_scroll_external_buffer.in_use = true;
+      ESP_LOGI(TAG, "snapshot scroll: captured into shared external buffer (%u/%u bytes)",
+               static_cast<unsigned>(required_bytes),
+               static_cast<unsigned>(snapshot_scroll_external_buffer.capacity));
+    }
+  }
+  // Do not spend a failed full-content allocation attempt when PSRAM is
+  // already fragmented below that size. Two smaller contiguous segments keep
+  // the same scroll surface while avoiding a long LVGL allocation failure and
+  // the resulting blank settings page.
+  const bool prefer_segments = required_bytes > heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+  if (content_buf == nullptr && !prefer_segments)
+    content_buf = take_segment(0, head_h);
   if (content_buf == nullptr && content_h > viewport_h) {
     content_tail_y = (content_h + 1) / 2;
     head_h = content_tail_y;
     tail_h = content_h - content_tail_y;
     content_buf = take_segment(0, head_h);
     content_tail_buf = content_buf != nullptr ? take_segment(content_tail_y, tail_h) : nullptr;
+    if (content_buf != nullptr && content_tail_buf != nullptr) {
+      ESP_LOGI(TAG, "snapshot scroll: captured as two segments head=%u tail=%u total=%u",
+               static_cast<unsigned>(head_h), static_cast<unsigned>(tail_h), static_cast<unsigned>(content_h));
+    }
   }
 
   lv_obj_set_height(obj, old_h);
@@ -12551,21 +15337,25 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
 
   if (content_buf == nullptr || (tail_h > 0 && content_tail_buf == nullptr)) {
     ESP_LOGW(TAG, "snapshot scroll: failed for obj=%p content_h=%d", obj, content_h);
-    if (content_buf != nullptr)
+    if (content_buf != nullptr && owns_content_buf)
       lv_draw_buf_destroy(content_buf);
     if (content_tail_buf != nullptr)
       lv_draw_buf_destroy(content_tail_buf);
     return false;
   }
-  if (content_buf->header.cf != LV_COLOR_FORMAT_RGB888 || content_buf->header.w < viewport_w ||
+  if (content_buf->header.cf != SNAPSHOT_SCROLL_CF || content_buf->header.w < viewport_w ||
       content_buf->header.h != head_h ||
-      (content_tail_buf != nullptr &&
-       (content_tail_buf->header.cf != LV_COLOR_FORMAT_RGB888 || content_tail_buf->header.w < viewport_w ||
+       (content_tail_buf != nullptr &&
+       (content_tail_buf->header.cf != SNAPSHOT_SCROLL_CF || content_tail_buf->header.w < viewport_w ||
         content_tail_buf->header.h != tail_h))) {
     ESP_LOGW(TAG, "snapshot scroll: invalid segmented buffers head=%dx%d tail=%dx%d", (int) content_buf->header.w,
              (int) content_buf->header.h, content_tail_buf == nullptr ? 0 : (int) content_tail_buf->header.w,
              content_tail_buf == nullptr ? 0 : (int) content_tail_buf->header.h);
-    lv_draw_buf_destroy(content_buf);
+    if (owns_content_buf) {
+      lv_draw_buf_destroy(content_buf);
+    } else {
+      snapshot_scroll_external_buffer.in_use = false;
+    }
     if (content_tail_buf != nullptr)
       lv_draw_buf_destroy(content_tail_buf);
     return false;
@@ -12589,6 +15379,8 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
   snapshot_scroll_state.content_buf = content_buf;
   snapshot_scroll_state.content_tail_buf = content_tail_buf;
   snapshot_scroll_state.content_tail_y = content_tail_y;
+  snapshot_scroll_state.owns_content_buf = owns_content_buf;
+  snapshot_scroll_state.owns_content_tail_buf = true;
   snapshot_scroll_state.viewport_w = viewport_w;
   snapshot_scroll_state.viewport_h = viewport_h;
   snapshot_scroll_state.content_h = content_h;
@@ -12731,6 +15523,30 @@ extern "C" bool lvgl_esphome_snapshot_cache_raw_page(lv_obj_t *obj) {
 #if LV_USE_SNAPSHOT
   return snapshot_cache_prepare_raw_page(obj);
 #else
+  return false;
+#endif
+}
+
+extern "C" bool lvgl_esphome_snapshot_cache_has_raw_page(lv_obj_t *obj) {
+#if LV_USE_SNAPSHOT
+  if (obj == nullptr)
+    return false;
+  if (snapshot_tile_window_find(obj) != nullptr)
+    return true;
+  auto *entry = snapshot_cache_find_entry(obj);
+  if (entry != nullptr && snapshot_cache_raw_is_valid(*entry))
+    return true;
+#if LV_COLOR_DEPTH == 32
+  auto *display = lv_obj_get_display(obj);
+  const int width = display == nullptr ? 0 : lv_display_get_horizontal_resolution(display);
+  SnapshotPanoramaPageSource source{};
+  return width > 0 && snapshot_panorama_source_from_cache(obj, width, 1, &source) && source.data != nullptr &&
+         source.owner != nullptr && source.owner->buf != nullptr && source.width == width;
+#else
+  return false;
+#endif
+#else
+  (void) obj;
   return false;
 #endif
 }
@@ -13001,8 +15817,22 @@ bool snapshot_tile_window_flush_slot(size_t slot_index) {
     return true;
   auto *page = snapshot_tile_window_cache.pages[slot_index];
   auto *slot = snapshot_tile_window_cache.slots[slot_index];
-  if (page == nullptr || slot == nullptr || !snapshot_tile_cache_encode(page, slot))
+  if (page == nullptr || slot == nullptr)
     return false;
+
+  if (!snapshot_tile_cache_encode(page, slot)) {
+    // Replacing a resident tile must not depend on successfully allocating a
+    // fresh JPEG at the exact moment PSRAM is busiest. Every Home page gets a
+    // compressed backing image during bootstrap, so retain that last complete
+    // generation and let the requested neighbour reuse this raw slot. The
+    // asynchronous prefetch path follows the same best-effort rule.
+    const auto *entry = snapshot_tile_cache_entry(page, false);
+    if (!snapshot_tile_cache_valid(entry, snapshot_tile_window_cache.width, snapshot_tile_window_cache.height))
+      return false;
+    if (s_swipe_logging_enabled)
+      ESP_LOGW(TAG, "snapshot tiles: retaining prior JPEG while recycling dirty slot %u",
+               static_cast<unsigned>(slot_index));
+  }
   snapshot_tile_window_cache.dirty[slot_index] = false;
   return true;
 }
@@ -13055,8 +15885,14 @@ bool snapshot_tile_prefetch_encode_outgoing(SnapshotTilePrefetchWorkerState &wor
   const esp_err_t err =
       esp32_jpeg::encode(encode_cfg, static_cast<const uint8_t *>(worker.slot->data), worker.raw_size, &output);
   worker.encode_us = snapshot_diag_now_us_() - started_us;
-  if (err != ESP_OK || output.empty() || output.size() >= worker.raw_size)
+  if (err != ESP_OK || output.empty() || output.size() >= worker.raw_size) {
+    if (s_swipe_logging_enabled) {
+      ESP_LOGW(TAG, "snapshot tiles: outgoing encode failed err=%d out=%u raw=%u in %lluus; retaining prior JPEG",
+               static_cast<int>(err), static_cast<unsigned>(output.size()), static_cast<unsigned>(worker.raw_size),
+               static_cast<unsigned long long>(worker.encode_us));
+    }
     return false;
+  }
   worker.outgoing_jpeg = std::move(output);
   worker.outgoing_encoded = true;
   return true;
@@ -13073,8 +15909,14 @@ void snapshot_tile_prefetch_worker_task(void *) {
     worker.decode_us = 0;
     worker.outgoing_jpeg.release();
 
-    bool success = snapshot_tile_prefetch_encode_outgoing(worker);
-    if (success && worker.target_entry != nullptr && worker.slot != nullptr) {
+    // Persisting a newer outgoing tile is best effort. Every Home page already
+    // has a compressed backing image, so an encoder allocation/contention
+    // failure must not prevent the missing neighbour from being decoded into
+    // this reusable raw slot. Coupling both operations left page four without
+    // any source and forced the navigation fallback into a black live page.
+    snapshot_tile_prefetch_encode_outgoing(worker);
+    bool success = worker.target_entry != nullptr && worker.slot != nullptr;
+    if (success) {
       worker.decode_attempted = true;
       const uint64_t started_us = snapshot_diag_now_us_();
       success = snapshot_cache_decode_jpeg_to_draw_buf(*worker.target_entry, worker.slot);
@@ -13271,6 +16113,34 @@ extern "C" bool lvgl_esphome_snapshot_cache_prefetch_tile_window(lv_obj_t **page
 #endif
 }
 
+extern "C" bool lvgl_esphome_snapshot_trim_tile_window(lv_obj_t *retained_page) {
+#if LV_USE_SNAPSHOT && defined(USE_LVGL_SNAPSHOT_JPEG_CACHE)
+  if (retained_page == nullptr || lvgl_esphome_snapshot_is_active() ||
+      !lvgl_esphome_snapshot_cache_complete_tile_prefetch(0) || snapshot_tile_window_find(retained_page) == nullptr)
+    return false;
+  for (size_t index = 0; index < SNAPSHOT_TILE_SLOT_COUNT; index++) {
+    if (snapshot_tile_window_cache.busy[index])
+      return false;
+    if (snapshot_tile_window_cache.pages[index] != retained_page && !snapshot_tile_window_flush_slot(index))
+      return false;
+  }
+  for (size_t index = 0; index < SNAPSHOT_TILE_SLOT_COUNT; index++) {
+    auto *slot = snapshot_tile_window_cache.slots[index];
+    if (slot == nullptr || snapshot_tile_window_cache.pages[index] == retained_page)
+      continue;
+    snapshot_app_dma_source_modified(slot->data);
+    lv_draw_buf_destroy(slot);
+    snapshot_tile_window_cache.slots[index] = nullptr;
+    snapshot_tile_window_cache.pages[index] = nullptr;
+    snapshot_tile_window_cache.dirty[index] = false;
+  }
+  ESP_LOGI(TAG, "snapshot tiles: retained close background, raw=%u KB", unsigned(snapshot_tile_window_bytes() / 1024));
+  return true;
+#else
+  return false;
+#endif
+}
+
 extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int page_count, int current_page, int width) {
 #if LV_USE_SNAPSHOT && defined(USE_LVGL_SNAPSHOT_JPEG_CACHE)
   if (!lvgl_esphome_snapshot_cache_complete_tile_prefetch(1000))
@@ -13349,8 +16219,11 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int pa
   }
 
   // Build the compressed backing store for pages outside the current window
-  // once. A single existing application work buffer is reused as scratch, so
-  // adding a page does not allocate another raw full-screen surface.
+  // once. Reuse one of the fixed tile slots as transient encoder scratch
+  // instead of allocating a fourth full-screen RGB888 surface. The current
+  // three visible pages are restored from their JPEG backing below before the
+  // function returns, so the window ownership contract remains unchanged.
+  lv_draw_buf_t *tile_cache_scratch = snapshot_tile_window_cache.slots[0];
   for (int page_index = 0; page_index < page_count; page_index++) {
     auto *entry = snapshot_tile_cache_entry(pages[page_index], false);
     if (snapshot_tile_cache_valid(entry, width, height))
@@ -13358,13 +16231,22 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int pa
     const int raw_slot = snapshot_tile_window_slot_index(pages[page_index]);
     lv_draw_buf_t *scratch = raw_slot >= 0 ? snapshot_tile_window_cache.slots[raw_slot] : nullptr;
     if (scratch == nullptr) {
-      if (!snapshot_app_reserve_work_buffer(pages[page_index]))
+      scratch = tile_cache_scratch;
+      if (scratch == nullptr || scratch->data == nullptr)
         return false;
-      scratch = snapshot_app_work_buf;
       if (!snapshot_take_centered_to(pages[page_index], scratch))
         return false;
     }
     if (!snapshot_tile_cache_encode(pages[page_index], scratch))
+      return false;
+  }
+
+  // The scratch slot may have been overwritten by an out-of-window page.
+  // Restore the active window from its compressed backing before exposing it
+  // to the direct compositor again.
+  for (int index = 0; index < window_count; index++) {
+    const size_t slot_index = static_cast<size_t>(desired_slots[index]);
+    if (!snapshot_tile_window_load_page(desired_pages[index], slot_index, width, height))
       return false;
   }
 
@@ -13426,6 +16308,304 @@ extern "C" bool lvgl_esphome_snapshot_refresh_tile_page(lv_obj_t *page, int widt
 #endif
 }
 
+extern "C" bool lvgl_esphome_snapshot_refresh_tile_backing(lv_obj_t *page, int width) {
+#if defined(USE_ESP32) && LV_COLOR_DEPTH == 32 && LV_USE_SNAPSHOT
+  if (page == nullptr || width <= 0 || lvgl_esphome_snapshot_is_active())
+    return false;
+  for (bool busy : snapshot_tile_window_cache.busy) {
+    if (busy)
+      return false;
+  }
+  const int slot_index = snapshot_tile_window_slot_index(page);
+  auto *buffer = slot_index >= 0 ? snapshot_tile_window_cache.slots[slot_index] : snapshot_app_work_buf;
+  int borrowed_slot = -1;
+  lv_obj_t *restore_page = nullptr;
+  // The shared application workspace is normally released on Home. Refresh an
+  // off-window page in a resident slot, then restore that slot before returning.
+  // This is synchronous background maintenance, never a fourth raw allocation.
+  if (buffer == nullptr && slot_index < 0) {
+    for (size_t index = SNAPSHOT_TILE_SLOT_COUNT; index-- > 0;) {
+      auto *candidate = snapshot_tile_window_cache.slots[index];
+      auto *resident = snapshot_tile_window_cache.pages[index];
+      if (candidate == nullptr || resident == nullptr || candidate->header.w != static_cast<uint32_t>(width))
+        continue;
+      auto *entry = snapshot_tile_cache_entry(resident, false);
+      if (snapshot_tile_window_cache.dirty[index] ||
+          !snapshot_tile_cache_valid(entry, width, snapshot_tile_window_cache.height)) {
+        if (!snapshot_tile_cache_encode(resident, candidate))
+          return false;
+        snapshot_tile_window_cache.dirty[index] = false;
+      }
+      borrowed_slot = static_cast<int>(index);
+      restore_page = resident;
+      buffer = candidate;
+      snapshot_tile_window_cache.busy[index] = true;
+      break;
+    }
+  }
+  if (buffer == nullptr || buffer->header.w != static_cast<uint32_t>(width))
+    return false;
+  if (buffer == snapshot_app_work_buf)
+    snapshot_app_work_obj = nullptr;
+  auto *display = lv_obj_get_display(page);
+  const bool invalidation = lv_display_is_invalidation_enabled(display);
+  lv_display_enable_invalidation(display, false);
+  const bool taken = snapshot_take_centered_to(page, buffer);
+  lv_display_enable_invalidation(display, invalidation);
+  const bool encoded = taken && snapshot_tile_cache_encode(page, buffer);
+  if (slot_index >= 0)
+    snapshot_tile_window_cache.dirty[slot_index] = !encoded;
+  if (borrowed_slot >= 0) {
+    snapshot_tile_window_cache.pages[borrowed_slot] = nullptr;
+    snapshot_tile_window_cache.busy[borrowed_slot] = false;
+    if (!snapshot_tile_window_load_page(restore_page, borrowed_slot, width, buffer->header.h)) {
+      ESP_LOGW(TAG, "snapshot tiles: background refresh could not restore slot %d", borrowed_slot);
+      return false;
+    }
+  }
+  return encoded;
+#else
+  return false;
+#endif
+}
+
+extern "C" bool lvgl_esphome_snapshot_refresh_tile_region(lv_obj_t *page, lv_obj_t *region, int width,
+                                                           bool persist_compressed, bool force_widget_render) {
+#if defined(USE_ESP32) && LV_COLOR_DEPTH == 32 && LV_USE_SNAPSHOT
+  if (page == nullptr || region == nullptr || width <= 0 || s_snapshot_direct_active || s_snapshot_swipe_active ||
+      snapshot_app_state.active || snapshot_scroll_state.direct_render)
+    return false;
+
+  const int slot_index = snapshot_tile_window_slot_index(page);
+  if (slot_index < 0)
+    return false;
+  auto *slot = snapshot_tile_window_cache.slots[slot_index];
+  if (slot == nullptr || slot->data == nullptr || slot->header.w != static_cast<uint32_t>(width) ||
+      static_cast<lv_color_format_t>(slot->header.cf) != LV_COLOR_FORMAT_RGB888)
+    return false;
+  snapshot_app_dma_source_modified(slot->data);
+
+  auto *display = lv_obj_get_display(page);
+  auto *component = display == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(display));
+  const int height = display == nullptr ? 0 : lv_display_get_vertical_resolution(display);
+  if (component == nullptr || height <= 0 || slot->header.h != static_cast<uint32_t>(height))
+    return false;
+
+  lv_area_t area{};
+  lv_area_t page_area{};
+  lv_lock();
+  const bool valid = lv_obj_is_valid(page) && lv_obj_is_valid(region);
+  const bool directly_visible = !force_widget_render && valid && lv_obj_is_visible(region) &&
+                                lv_obj_get_screen(page) == lv_display_get_screen_active(display);
+  if (valid) {
+    lv_obj_get_coords(region, &area);
+    lv_obj_get_coords(page, &page_area);
+  }
+  lv_unlock();
+  if (!valid)
+    return false;
+
+  const uint64_t started_us = snapshot_diag_now_us_();
+  int x1 = 0;
+  int y1 = 0;
+  int x2 = -1;
+  int y2 = -1;
+  if (directly_visible) {
+    x1 = std::clamp<int>(area.x1, 0, width - 1);
+    y1 = std::clamp<int>(area.y1, 0, height - 1);
+    x2 = std::clamp<int>(area.x2, 0, width - 1);
+    y2 = std::clamp<int>(area.y2, 0, height - 1);
+    if (x2 < x1 || y2 < y1)
+      return false;
+
+    component->wait_for_direct_frame_presented(60);
+    auto *destination = static_cast<uint8_t *>(slot->data) + static_cast<size_t>(y1) * slot->header.stride +
+                        static_cast<size_t>(x1) * 3U;
+    if (!component->direct_capture_rgb888(destination, slot->header.stride, x1, y1, x2 - x1 + 1, y2 - y1 + 1))
+      return false;
+  } else {
+    // Render a horizontal band directly into the resident cache. Full-stride
+    // rows keep LVGL's draw-buffer clear inside the destination allocation,
+    // while drawing the page also includes siblings overlapping the region.
+    lv_lock();
+    const bool invalidation_enabled = lv_display_is_invalidation_enabled(display);
+    lv_display_enable_invalidation(display, false);
+    const bool was_hidden = lv_obj_has_flag(page, LV_OBJ_FLAG_HIDDEN);
+    const lv_coord_t old_x = lv_obj_get_x(page);
+    const lv_coord_t old_y = lv_obj_get_y(page);
+    auto *parent = lv_obj_get_parent(page);
+    lv_obj_clear_flag(page, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_align(page, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_update_layout(parent == nullptr ? page : parent);
+    lv_obj_get_coords(page, &page_area);
+    lv_obj_get_coords(region, &area);
+    const int ext = lv_obj_get_ext_draw_size(region);
+    x1 = 0;
+    x2 = width - 1;
+    y1 = std::max(0, static_cast<int>(area.y1 - page_area.y1 - ext));
+    y2 = std::min(height - 1, static_cast<int>(area.y2 - page_area.y1 + ext));
+    bool taken = false;
+    if (y2 >= y1) {
+      auto *destination = static_cast<uint8_t *>(slot->data) + static_cast<size_t>(y1) * slot->header.stride;
+      const size_t span = static_cast<size_t>(y2 - y1 + 1) * slot->header.stride;
+      lvgl_cache_msync_external(destination, span, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+      taken = component->render_area_rgb888(page, destination, slot->header.stride,
+                                            page_area.x1, page_area.y1 + y1, width, y2 - y1 + 1);
+      if (taken)
+        lvgl_cache_msync_external(destination, span, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    }
+    lv_obj_set_pos(page, old_x, old_y);
+    lv_obj_update_layout(parent == nullptr ? page : parent);
+    if (was_hidden)
+      lv_obj_add_flag(page, LV_OBJ_FLAG_HIDDEN);
+    lv_display_enable_invalidation(display, invalidation_enabled);
+    lv_unlock();
+    if (!taken)
+      return false;
+  }
+
+  snapshot_tile_window_cache.dirty[slot_index] = persist_compressed;
+  const uint64_t elapsed_us = snapshot_diag_now_us_() - started_us;
+  if (s_swipe_logging_enabled || elapsed_us > 50000U) {
+    ESP_LOGI(TAG, "snapshot tiles: refreshed %s region slot=%d area=%d,%d %dx%d took=%lluus",
+             directly_visible ? "scanout" : "widget", slot_index, x1, y1, x2 - x1 + 1, y2 - y1 + 1,
+             static_cast<unsigned long long>(elapsed_us));
+  }
+  return true;
+#else
+  (void) page;
+  (void) region;
+  (void) width;
+  (void) persist_compressed;
+  (void) force_widget_render;
+  return false;
+#endif
+}
+
+extern "C" bool lvgl_esphome_snapshot_refresh_tile_regions(lv_obj_t *page, lv_obj_t **regions, size_t region_count,
+                                                            int width, bool persist_compressed) {
+#if defined(USE_ESP32) && LV_COLOR_DEPTH == 32 && LV_USE_SNAPSHOT
+  if (page == nullptr || regions == nullptr || region_count == 0 || width <= 0 || s_snapshot_direct_active ||
+      s_snapshot_swipe_active || snapshot_app_state.active || snapshot_scroll_state.direct_render)
+    return false;
+
+  const int slot_index = snapshot_tile_window_slot_index(page);
+  if (slot_index < 0)
+    return false;
+  auto *slot = snapshot_tile_window_cache.slots[slot_index];
+  if (slot == nullptr || slot->data == nullptr || slot->header.w != static_cast<uint32_t>(width) ||
+      static_cast<lv_color_format_t>(slot->header.cf) != LV_COLOR_FORMAT_RGB888)
+    return false;
+  snapshot_app_dma_source_modified(slot->data);
+
+  auto *display = lv_obj_get_display(page);
+  auto *component = display == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(display));
+  const int height = display == nullptr ? 0 : lv_display_get_vertical_resolution(display);
+  if (component == nullptr || height <= 0 || slot->header.h != static_cast<uint32_t>(height))
+    return false;
+
+  lv_area_t union_area{};
+  bool have_area = false;
+  lv_lock();
+  const bool page_visible = lv_obj_is_valid(page) && lv_obj_get_screen(page) == lv_display_get_screen_active(display) &&
+                            lv_obj_is_visible(page);
+  if (page_visible) {
+    for (size_t index = 0; index < region_count; index++) {
+      auto *region = regions[index];
+      if (region == nullptr || !lv_obj_is_valid(region) || !lv_obj_is_visible(region))
+        continue;
+      lv_area_t area{};
+      lv_obj_get_coords(region, &area);
+      if (!have_area) {
+        union_area = area;
+        have_area = true;
+      } else {
+        union_area.x1 = std::min(union_area.x1, area.x1);
+        union_area.y1 = std::min(union_area.y1, area.y1);
+        union_area.x2 = std::max(union_area.x2, area.x2);
+        union_area.y2 = std::max(union_area.y2, area.y2);
+      }
+    }
+  }
+  lv_unlock();
+
+  // Rendering a hidden LVGL subtree synchronously can block touch polling for
+  // more than 100 ms. Keep its pending bits and refresh it from scanout after
+  // the page is presented instead.
+  if (!page_visible || !have_area)
+    return false;
+
+  const int x1 = std::clamp<int>(union_area.x1, 0, width - 1);
+  const int y1 = std::clamp<int>(union_area.y1, 0, height - 1);
+  const int x2 = std::clamp<int>(union_area.x2, 0, width - 1);
+  const int y2 = std::clamp<int>(union_area.y2, 0, height - 1);
+  if (x2 < x1 || y2 < y1)
+    return false;
+
+  const uint64_t started_us = snapshot_diag_now_us_();
+  component->wait_for_direct_frame_presented(40);
+  auto *destination = static_cast<uint8_t *>(slot->data) + static_cast<size_t>(y1) * slot->header.stride +
+                      static_cast<size_t>(x1) * 3U;
+  const bool captured =
+      component->direct_capture_rgb888(destination, slot->header.stride, x1, y1, x2 - x1 + 1, y2 - y1 + 1);
+  if (!captured)
+    return false;
+
+  snapshot_tile_window_cache.dirty[slot_index] = persist_compressed;
+  const uint64_t elapsed_us = snapshot_diag_now_us_() - started_us;
+  if (s_swipe_logging_enabled || elapsed_us > 50000U) {
+    ESP_LOGI(TAG, "snapshot tiles: refreshed merged scanout slot=%d regions=%u area=%d,%d %dx%d took=%lluus",
+             slot_index, static_cast<unsigned>(region_count), x1, y1, x2 - x1 + 1, y2 - y1 + 1,
+             static_cast<unsigned long long>(elapsed_us));
+  }
+  return true;
+#else
+  (void) page;
+  (void) regions;
+  (void) region_count;
+  (void) width;
+  (void) persist_compressed;
+  return false;
+#endif
+}
+
+extern "C" bool lvgl_esphome_snapshot_invalidate_tile_page(lv_obj_t *page, int width) {
+#if defined(USE_ESP32) && LV_COLOR_DEPTH == 32 && LV_USE_SNAPSHOT && defined(USE_LVGL_SNAPSHOT_JPEG_CACHE)
+  if (page == nullptr || width <= 0 || s_snapshot_direct_active || s_snapshot_swipe_active ||
+      snapshot_app_state.active || snapshot_scroll_state.direct_render)
+    return false;
+
+  auto *display = lv_obj_get_display(page);
+  const int height = display == nullptr ? 0 : lv_display_get_vertical_resolution(display);
+  if (height <= 0)
+    return false;
+
+  auto *entry = snapshot_tile_cache_entry(page, false);
+  if (entry != nullptr) {
+    // Keep vector capacity for the replacement JPEG, but make the old image
+    // impossible to decode while the live page is being refreshed.
+    entry->jpeg.clear();
+    entry->width = 0;
+    entry->height = 0;
+    entry->generation++;
+  }
+
+  const int slot_index = snapshot_tile_window_slot_index(page);
+  if (slot_index < 0)
+    return true;
+  auto *slot = snapshot_tile_window_cache.slots[slot_index];
+  if (slot == nullptr || slot->header.w != static_cast<uint32_t>(width) ||
+      slot->header.h != static_cast<uint32_t>(height) || !snapshot_take_centered_to(page, slot))
+    return false;
+  snapshot_tile_window_cache.dirty[slot_index] = true;
+  return true;
+#else
+  (void) page;
+  (void) width;
+  return false;
+#endif
+}
+
 extern "C" bool lvgl_esphome_snapshot_is_active(void) {
   return s_snapshot_swipe_active || snapshot_app_state.active ||
          (s_snapshot_direct_active && !s_snapshot_app_open_frame_held);
@@ -13436,9 +16616,14 @@ extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *backgrou
 }
 
 extern "C" bool lvgl_esphome_snapshot_app_open_with_buffer(lv_obj_t *app, lv_obj_t *background,
-                                                            lv_draw_buf_t *app_buffer, int width,
-                                                            uint32_t duration_ms) {
+                                                           lv_draw_buf_t *app_buffer, int width, uint32_t duration_ms) {
   return snapshot_app_begin(app, background, width, width / 2, width / 2, duration_ms, true, app_buffer);
+}
+
+extern "C" bool lvgl_esphome_snapshot_app_open_cached_with_buffer(lv_obj_t *app, lv_obj_t *background,
+                                                                  lv_draw_buf_t *app_buffer, int width,
+                                                                  uint32_t duration_ms) {
+  return snapshot_app_begin(app, background, width, width / 2, width / 2, duration_ms, true, app_buffer, true);
 }
 
 extern "C" void lvgl_esphome_snapshot_app_release_open_hold(void) {
@@ -13449,6 +16634,37 @@ extern "C" void lvgl_esphome_snapshot_app_release_open_hold(void) {
   snapshot_app_resume_direct_regions();
   s_snapshot_direct_active = false;
   lv_obj_invalidate(lv_screen_active());
+#endif
+}
+
+extern "C" void lvgl_esphome_snapshot_app_log_state(const char *label) {
+#ifdef USE_ESP32
+  const uint32_t last_ms = s_snapshot_app_diag_last_ms.load(std::memory_order_acquire);
+  ESP_LOGW(
+      "lvgl.app.state",
+      "%s active=%u opening=%u pending_start=%u worker_enabled=%u worker_task=%p pending=%u running=%u "
+      "done=%u failed=%u cancel=%u phase=%u age=%ums frames=%u app=%p app_buf=%p bg=%p bg_buf=%p "
+      "regions_paused=%u hold=%u direct=%u",
+      label != nullptr ? label : "state", static_cast<unsigned>(snapshot_app_state.active),
+      static_cast<unsigned>(snapshot_app_state.opening), static_cast<unsigned>(snapshot_app_state.worker_start_pending),
+      static_cast<unsigned>(snapshot_app_state.worker_enabled), snapshot_app_worker.task,
+      static_cast<unsigned>(snapshot_app_worker.pending.load(std::memory_order_acquire)),
+      static_cast<unsigned>(snapshot_app_worker.running.load(std::memory_order_acquire)),
+      static_cast<unsigned>(snapshot_app_worker.done.load(std::memory_order_acquire)),
+      static_cast<unsigned>(snapshot_app_worker.failed.load(std::memory_order_acquire)),
+      static_cast<unsigned>(snapshot_app_worker.cancel.load(std::memory_order_acquire)),
+      static_cast<unsigned>(s_snapshot_app_diag_phase.load(std::memory_order_acquire)),
+      static_cast<unsigned>(millis() - last_ms),
+      static_cast<unsigned>(s_snapshot_app_diag_frames.load(std::memory_order_acquire)), snapshot_app_state.app_root,
+      snapshot_app_state.app_buf == nullptr ? nullptr : snapshot_app_state.app_buf->data,
+      snapshot_app_state.background_root,
+      snapshot_app_state.background_buf == nullptr ? nullptr : snapshot_app_state.background_buf->data,
+      static_cast<unsigned>(s_snapshot_app_regions_paused), static_cast<unsigned>(s_snapshot_app_open_frame_held),
+      static_cast<unsigned>(s_snapshot_direct_active));
+  if (snapshot_app_state.component != nullptr)
+    snapshot_app_state.component->log_direct_buffer_state(label);
+#else
+  (void) label;
 #endif
 }
 
@@ -13508,13 +16724,20 @@ extern "C" bool lvgl_esphome_snapshot_app_prepare_close(lv_obj_t *app) {
     const int width = lv_display_get_horizontal_resolution(disp);
     const int height = lv_display_get_vertical_resolution(disp);
     const int stride = width * 3;
-    const uint8_t *presented = component->direct_get_stable_presented_frame(50);
+    // Regional renderers have just been drained by on_prepare_close. Allow a
+    // pending DSI frame enough time to cross the next VSYNC boundary so the
+    // already-presented framebuffer can remain the zero-copy animation
+    // source. Falling through after only 50 ms intermittently allocated a
+    // second 1.92 MB RGB888 surface and failed once PSRAM was fragmented.
+    const uint8_t *presented = component->direct_get_stable_presented_frame(180);
     snapshot_app_presented_close_view = {};
     if (presented != nullptr && width > 0 && height > 0 &&
         lv_draw_buf_init(&snapshot_app_presented_close_view, width, height, LV_COLOR_FORMAT_RGB888, stride,
                          const_cast<uint8_t *>(presented), static_cast<uint32_t>(stride) * height) == LV_RESULT_OK) {
       buf = &snapshot_app_presented_close_view;
     }
+    if (buf == nullptr)
+      component->log_direct_buffer_state("app close: stable presented frame unavailable");
   }
 #endif
   if (buf == nullptr && component != nullptr && snapshot_app_reserve_work_buffer(app)) {
@@ -13554,8 +16777,7 @@ extern "C" bool lvgl_esphome_snapshot_app_prepare_close_with_buffer(lv_obj_t *ap
   const int width = disp == nullptr ? 0 : lv_display_get_horizontal_resolution(disp);
   const int height = disp == nullptr ? 0 : lv_display_get_vertical_resolution(disp);
   if (width <= 0 || height <= 0 || app_buffer->header.cf != SNAPSHOT_CF ||
-      app_buffer->header.w != static_cast<uint32_t>(width) ||
-      app_buffer->header.h != static_cast<uint32_t>(height)) {
+      app_buffer->header.w != static_cast<uint32_t>(width) || app_buffer->header.h != static_cast<uint32_t>(height)) {
     return false;
   }
   snapshot_app_prepared_close_obj = app;
@@ -13573,7 +16795,8 @@ extern "C" void lvgl_esphome_snapshot_app_clear_prepared_close(void) {
 #endif
 }
 
-extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *next, int width, int next_x) {
+extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *next, int width, int next_x,
+                                                    bool direct_regions_prepaused) {
 #if LV_USE_SNAPSHOT
   const uint64_t begin_started_us = snapshot_diag_now_us_();
 #if defined(USE_ESP32) && defined(USE_LVGL_SNAPSHOT_JPEG_CACHE)
@@ -13593,10 +16816,25 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
     return false;
   snapshot_swipe_state.current_root = current;
   snapshot_swipe_state.next_root = next;
+  snapshot_swipe_state.gesture_begin_us = begin_started_us;
 
   auto *disp = lv_obj_get_display(current);
   auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  bool direct_regions_ready = false;
   if (component != nullptr && SNAPSHOT_DIRECT_COMPOSITOR_ENABLED) {
+    // Direct widgets publish from independent tasks. Drain that queue before
+    // the full-screen swipe compositor takes ownership so a late weather,
+    // clock, or marquee frame cannot be written over the moving snapshot.
+    direct_regions_ready = direct_regions_prepaused ? component->direct_regions_pause_wait(120)
+                                                    : component->direct_regions_pause(true, 120);
+    if (!direct_regions_ready) {
+      component->direct_regions_pause(false, 0);
+    } else {
+      snapshot_swipe_state.component = component;
+      snapshot_swipe_state.direct_regions_paused = true;
+    }
+  }
+  if (direct_regions_ready) {
     constexpr int scale = SNAPSHOT_PANORAMA_SCALE;
     SnapshotPanoramaPageSource current_source{};
     SnapshotPanoramaPageSource next_source{};
@@ -13658,6 +16896,11 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
       }
       return true;
     }
+  }
+  if (snapshot_swipe_state.direct_regions_paused) {
+    component->direct_regions_pause(false, 0);
+    snapshot_swipe_state.direct_regions_paused = false;
+    snapshot_swipe_state.component = nullptr;
   }
 
 #if LV_USE_IMAGE
@@ -13772,7 +17015,8 @@ extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *n
 #endif
 }
 
-extern "C" bool lvgl_esphome_snapshot_swipe_edge_begin(lv_obj_t *current, int width) {
+extern "C" bool lvgl_esphome_snapshot_swipe_edge_begin(lv_obj_t *current, int width,
+                                                         bool direct_regions_prepaused) {
 #if LV_USE_SNAPSHOT
   snapshot_swipe_complete_before_next_gesture();
   s_snapshot_swipe_active = true;
@@ -13823,10 +17067,19 @@ extern "C" bool lvgl_esphome_snapshot_swipe_edge_begin(lv_obj_t *current, int wi
   }
 
   snapshot_swipe_state.current_root = current;
+  snapshot_swipe_state.gesture_begin_us = snapshot_diag_now_us_();
   snapshot_swipe_state.width = width;
   snapshot_swipe_state.current_x = 0;
   snapshot_swipe_state.next_x = 0;
   snapshot_swipe_state.component = component;
+  const bool direct_regions_ready = direct_regions_prepaused ? component->direct_regions_pause_wait(120)
+                                                             : component->direct_regions_pause(true, 120);
+  if (!direct_regions_ready) {
+    component->direct_regions_pause(false, 0);
+    snapshot_swipe_cleanup();
+    return false;
+  }
+  snapshot_swipe_state.direct_regions_paused = true;
   snapshot_swipe_state.direct_render = true;
   snapshot_swipe_state.edge_bounce = true;
   s_snapshot_direct_active = true;
@@ -13927,8 +17180,20 @@ extern "C" bool lvgl_esphome_snapshot_swipe_rebase_edge(lv_obj_t *current, int w
 }
 
 extern "C" void lvgl_esphome_snapshot_swipe_set_page_indicator(int page, int page_count) {
-  s_snapshot_page_indicator_page = page;
-  s_snapshot_page_indicator_count = page_count;
+  s_snapshot_page_indicator_page.store(page, std::memory_order_release);
+  s_snapshot_page_indicator_count.store(page_count, std::memory_order_release);
+}
+
+extern "C" void lvgl_esphome_snapshot_swipe_set_page_indicator_geometry(lv_obj_t *row) {
+  if (row == nullptr || !lv_obj_is_valid(row))
+    return;
+  lv_area_t coords{};
+  lv_obj_get_coords(row, &coords);
+  const int height = static_cast<int>(lv_area_get_height(&coords));
+  if (height <= 0)
+    return;
+  s_snapshot_page_indicator_y.store(static_cast<int>(coords.y1), std::memory_order_release);
+  s_snapshot_page_indicator_height.store(height, std::memory_order_release);
 }
 
 extern "C" void lvgl_esphome_snapshot_set_clock_text(const char *text) {
@@ -13936,11 +17201,12 @@ extern "C" void lvgl_esphome_snapshot_set_clock_text(const char *text) {
     return;
   std::strncpy(s_snapshot_clock_text, text, sizeof(s_snapshot_clock_text) - 1);
   s_snapshot_clock_text[sizeof(s_snapshot_clock_text) - 1] = '\0';
+  snapshot_rebuild_clock_raster();
 }
 
 extern "C" void lvgl_esphome_snapshot_set_clock_font(const lv_font_t *font) {
   s_snapshot_clock_font = font;
-  snapshot_prepare_clock_glyph_buffer();
+  snapshot_rebuild_clock_raster();
 }
 
 extern "C" void lvgl_esphome_snapshot_sync_clock_widget(lv_obj_t *label) {
@@ -13956,7 +17222,37 @@ extern "C" void lvgl_esphome_snapshot_sync_clock_widget(lv_obj_t *label) {
     std::strncpy(s_snapshot_clock_text, text, sizeof(s_snapshot_clock_text) - 1);
     s_snapshot_clock_text[sizeof(s_snapshot_clock_text) - 1] = '\0';
   }
-  snapshot_prepare_clock_glyph_buffer();
+  snapshot_rebuild_clock_raster();
+}
+
+extern "C" void lvgl_esphome_snapshot_sync_status_widgets(lv_obj_t *volume, lv_obj_t *wifi) {
+  lv_obj_t *widgets[2] = {volume, wifi};
+  for (int index = 0; index < 2; index++) {
+    lv_obj_t *widget = widgets[index];
+    if (widget == nullptr || !lv_obj_is_valid(widget))
+      continue;
+    const char *text = lv_label_get_text(widget);
+    if (text == nullptr)
+      text = "";
+    const auto *font = lv_obj_get_style_text_font(widget, LV_PART_MAIN);
+    lv_area_t area{};
+    lv_obj_get_content_coords(widget, &area);
+    const auto &raster = s_snapshot_status_icon_rasters[index];
+    if (raster.valid && s_snapshot_status_icon_fonts[index] == font &&
+        std::strcmp(s_snapshot_status_icon_text[index], text) == 0 &&
+        raster.x == area.x1 && raster.y == area.y1 &&
+        raster.width == std::min(SNAPSHOT_STATUS_ICON_MAX_W, static_cast<int>(lv_area_get_width(&area))) &&
+        raster.height == std::min(SNAPSHOT_STATUS_ICON_MAX_H, static_cast<int>(lv_area_get_height(&area))))
+      continue;
+    std::strncpy(s_snapshot_status_icon_text[index], text, sizeof(s_snapshot_status_icon_text[index]) - 1);
+    s_snapshot_status_icon_text[index][sizeof(s_snapshot_status_icon_text[index]) - 1] = '\0';
+    s_snapshot_status_icon_fonts[index] = font;
+    snapshot_rebuild_status_icon_raster(index, widget);
+  }
+}
+
+extern "C" void lvgl_esphome_snapshot_set_status_icons_visible(bool visible) {
+  s_snapshot_status_icons_visible.store(visible, std::memory_order_release);
 }
 
 extern "C" void lvgl_esphome_snapshot_swipe_update(int current_x, int next_x) {
@@ -14177,6 +17473,10 @@ extern "C" void lvgl_esphome_snapshot_swipe_end(void) {
   lv_obj_invalidate(lv_screen_active());
 }
 
+extern "C" void lvgl_esphome_snapshot_discard_pending_refresh(void) {
+  snapshot_swipe_discard_pending_refresh(lv_display_get_default());
+}
+
 extern "C" void lvgl_esphome_snapshot_scroll_configure(float overscroll_ratio, uint32_t momentum_duration_ms,
                                                        uint32_t bounce_duration_ms, uint32_t max_inertia_duration_ms,
                                                        size_t max_content_bytes) {
@@ -14185,6 +17485,40 @@ extern "C" void lvgl_esphome_snapshot_scroll_configure(float overscroll_ratio, u
   snapshot_scroll_config.bounce_duration_ms = std::max<uint32_t>(1, bounce_duration_ms);
   snapshot_scroll_config.max_inertia_duration_ms = std::max<uint32_t>(1, max_inertia_duration_ms);
   snapshot_scroll_config.max_content_bytes = std::max<size_t>(1, max_content_bytes);
+}
+
+extern "C" size_t lvgl_esphome_snapshot_scroll_required_bytes(lv_obj_t *obj) {
+  if (obj == nullptr)
+    return 0;
+  auto *parent = lv_obj_get_parent(obj);
+  lv_obj_update_layout(parent == nullptr ? obj : parent);
+  const int width = lv_obj_get_width(obj);
+  const int height = lv_obj_get_height(obj);
+  const int max_scroll_y = std::max<int>(0, lv_obj_get_scroll_top(obj) + lv_obj_get_scroll_bottom(obj));
+  const size_t stride = width > 0 ? lv_draw_buf_width_to_stride(width, SNAPSHOT_SCROLL_CF) : 0;
+  return height > 0 ? stride * static_cast<size_t>(height + max_scroll_y) : 0;
+}
+
+extern "C" bool lvgl_esphome_snapshot_scroll_set_external_buffer(uint8_t *data, size_t capacity) {
+  if (data == nullptr || capacity == 0 || snapshot_scroll_external_buffer.data != nullptr ||
+      snapshot_scroll_state.root != nullptr)
+    return false;
+  snapshot_scroll_external_buffer.data = data;
+  snapshot_scroll_external_buffer.capacity = capacity;
+  snapshot_scroll_external_buffer.in_use = false;
+  return true;
+}
+
+extern "C" uint8_t *lvgl_esphome_snapshot_scroll_take_external_buffer(size_t *capacity) {
+  if (capacity != nullptr)
+    *capacity = 0;
+  if (snapshot_scroll_state.root != nullptr || snapshot_scroll_external_buffer.in_use)
+    return nullptr;
+  uint8_t *data = snapshot_scroll_external_buffer.data;
+  if (capacity != nullptr)
+    *capacity = snapshot_scroll_external_buffer.capacity;
+  snapshot_scroll_external_buffer = {};
+  return data;
 }
 
 extern "C" bool lvgl_esphome_snapshot_scroll_begin(lv_obj_t *obj, int viewport_w, int viewport_h) {
@@ -14277,7 +17611,7 @@ extern "C" bool lvgl_esphome_snapshot_scroll_refresh(lv_obj_t *obj, int viewport
 #ifdef USE_ESP32
   snapshot_scroll_worker_stop_and_wait();
 #endif
-  if (state.viewport_w != viewport_w || state.viewport_h != viewport_h || state.content_buf->header.cf != SNAPSHOT_CF ||
+  if (state.viewport_w != viewport_w || state.viewport_h != viewport_h || state.content_buf->header.cf != SNAPSHOT_SCROLL_CF ||
       state.content_buf->header.w < viewport_w)
     return false;
 
@@ -14295,7 +17629,7 @@ extern "C" bool lvgl_esphome_snapshot_scroll_refresh(lv_obj_t *obj, int viewport
     lv_obj_update_layout(parent == nullptr ? obj : parent);
     lv_obj_scroll_to_y(obj, segment_y, LV_ANIM_OFF);
     lv_obj_update_layout(parent == nullptr ? obj : parent);
-    return lv_snapshot_take_to_draw_buf(obj, SNAPSHOT_CF, buffer) == LV_RESULT_OK;
+    return lv_snapshot_take_to_draw_buf(obj, SNAPSHOT_SCROLL_CF, buffer) == LV_RESULT_OK;
   };
 
   const bool refreshed_head = refresh_segment(0, state.content_buf);

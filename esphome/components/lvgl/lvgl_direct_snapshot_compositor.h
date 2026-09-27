@@ -13,6 +13,8 @@ class LvglDirectSnapshotCompositor final : public LvglSnapshotCompositor {
   bool prepare_applications(const std::vector<LvglApplication *> &applications) override;
   bool is_home_prepared() const override { return this->home_prepared_; }
   void loop() override;
+  bool prime_home(int page_index) override;
+  void cancel_home_prime() override;
   bool begin_home(int page_index) override;
   bool take_over_home(int *page_index, int32_t *offset_x) override;
   bool update_home(int32_t delta_x) override;
@@ -34,6 +36,7 @@ class LvglDirectSnapshotCompositor final : public LvglSnapshotCompositor {
 
   bool can_use_direct_home_() const;
   bool can_use_direct_application_(LvglApplication *application, int home_index) const;
+  bool ensure_home_transition_source_(int home_index);
   bool start_direct_home_(int32_t delta_x);
   bool rebase_direct_home_(int new_current_index, int direction, int32_t current_x);
   void complete_direct_home_();
@@ -49,6 +52,7 @@ class LvglDirectSnapshotCompositor final : public LvglSnapshotCompositor {
   bool direct_edge_{};
   bool widget_fallback_{};
   bool home_prepared_{};
+  bool home_regions_primed_{};
   DirectApplicationPhase direct_application_phase_{DirectApplicationPhase::NONE};
   bool application_fallback_{};
 };

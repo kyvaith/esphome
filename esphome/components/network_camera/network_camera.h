@@ -63,6 +63,7 @@ class NetworkCamera : public Component, public image::Image {
   void set_task_core(int8_t core) { this->task_core_ = core; }
   void set_task_priority(uint8_t priority) { this->task_priority_ = priority; }
   void set_task_stack_size(uint32_t size) { this->task_stack_size_ = size; }
+  void set_task_stack_in_psram(bool in_psram) { this->task_stack_in_psram_ = in_psram; }
   void set_max_runtime_sources(size_t count) { this->max_runtime_sources_ = count; }
   void set_source_select(NetworkCameraSourceSelect *source_select) { this->source_select_ = source_select; }
 
@@ -81,7 +82,9 @@ class NetworkCamera : public Component, public image::Image {
   std::vector<std::string> source_names() const;
   std::string active_source_name() const;
   const char *state_name() const;
+  float measured_input_fps() const { return this->measured_input_fps_.load(std::memory_order_relaxed); }
   float measured_fps() const { return this->measured_fps_.load(std::memory_order_relaxed); }
+  uint32_t received_frames() const { return this->received_frames_.load(std::memory_order_relaxed); }
   uint32_t decoded_frames() const { return this->decoded_frames_.load(std::memory_order_relaxed); }
   uint32_t direct_frames() const { return this->direct_frames_.load(std::memory_order_relaxed); }
   uint32_t dropped_frames() const { return this->dropped_frames_.load(std::memory_order_relaxed); }
@@ -136,8 +139,10 @@ class NetworkCamera : public Component, public image::Image {
   uint32_t reconnect_interval_ms_{2000};
   uint32_t request_timeout_ms_{3000};
   int8_t task_core_{-1};
-  uint8_t task_priority_{5};
+  BaseType_t resolved_task_core_{tskNO_AFFINITY};
+  uint8_t task_priority_{1};
   uint32_t task_stack_size_{8192};
+  bool task_stack_in_psram_{false};
   bool release_buffer_on_stop_{true};
 
   mutable Mutex frame_mutex_{};
@@ -161,13 +166,17 @@ class NetworkCamera : public Component, public image::Image {
   std::atomic<bool> awaiting_first_frame_{true};
   std::atomic<bool> source_event_pending_{false};
 
+  std::atomic<uint32_t> received_frames_{0};
   std::atomic<uint32_t> decoded_frames_{0};
   std::atomic<uint32_t> direct_frames_{0};
   std::atomic<uint32_t> dropped_frames_{0};
   std::atomic<uint32_t> reconnects_{0};
   std::atomic<uint32_t> last_decode_us_{0};
+  std::atomic<float> measured_input_fps_{0.0f};
   std::atomic<float> measured_fps_{0.0f};
   std::atomic<image::JpegFrameConsumer *> jpeg_frame_consumer_{nullptr};
+  uint32_t input_fps_window_started_ms_{0};
+  uint32_t input_fps_window_frames_{0};
   uint32_t fps_window_started_ms_{0};
   uint32_t fps_window_frames_{0};
   uint32_t last_frame_ms_{0};
@@ -179,6 +188,8 @@ class NetworkCamera : public Component, public image::Image {
 
 #ifdef USE_ESP_IDF
   TaskHandle_t stream_task_handle_{nullptr};
+  StackType_t *stream_task_stack_{nullptr};
+  StaticTask_t stream_task_storage_{};
   esp_http_client_handle_t http_client_{nullptr};
   uint8_t *encoded_buffer_{nullptr};
   uint8_t *read_buffer_{nullptr};

@@ -437,7 +437,10 @@ class Display : public PollingComponent {
   virtual bool get_active_frame_buffer(FrameBufferView *view, BufferReader reader = BufferReader::CPU) const {
     return false;
   }
-  virtual bool present_frame_buffer_lease(FrameBufferLease *lease, uint32_t timeout_ms = 50) { return false; }
+  virtual bool present_frame_buffer_lease(FrameBufferLease *lease, uint32_t timeout_ms = 50,
+                                          bool wait_for_active = true) {
+    return false;
+  }
   virtual bool release_frame_buffer(FrameBufferLease *lease) { return false; }
   virtual bool end_frame_buffer_session(uint32_t timeout_ms = 50) { return false; }
 

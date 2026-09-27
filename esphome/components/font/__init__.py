@@ -13,8 +13,13 @@ from freetype import (
     FT_LOAD_NO_BITMAP,
     FT_LOAD_RENDER,
     FT_LOAD_TARGET_MONO,
+    FT_RENDER_MODE_MONO,
+    FT_RENDER_MODE_NORMAL,
+    FT_STROKER_LINECAP_ROUND,
+    FT_STROKER_LINEJOIN_ROUND,
     Face,
     FT_Exception,
+    Stroker,
     ft_pixel_mode_mono,
 )
 import requests
@@ -55,6 +60,7 @@ CONF_EXTRAS = "extras"
 CONF_FONTS = "fonts"
 CONF_GLYPHSETS = "glyphsets"
 CONF_IGNORE_MISSING_GLYPHS = "ignore_missing_glyphs"
+CONF_OUTLINE_WIDTH = "outline_width"
 
 
 # Cache loaded freetype fonts
@@ -211,6 +217,14 @@ def validate_font_config(config):
 
     # Populate the default after the above checks so that use of the default doesn't trigger errors
     font = FONT_CACHE[fileconf]
+    if config.get(CONF_OUTLINE_WIDTH, 0) and (
+        not font.is_scalable
+        or any(
+            not FONT_CACHE[extra[CONF_FILE]].is_scalable
+            for extra in config[CONF_EXTRAS]
+        )
+    ):
+        raise cv.Invalid("outline_width requires scalable base and extra fonts")
     if not config[CONF_GLYPHS] and not config[CONF_GLYPHSETS]:
         # set a default glyphset, intersected with what the font actually offers
         config[CONF_GLYPHS] = [
@@ -452,6 +466,7 @@ FONT_SCHEMA = cv.Schema(
         cv.Optional(CONF_IGNORE_MISSING_GLYPHS, default=False): cv.boolean,
         cv.Optional(CONF_SIZE): cv.int_range(min=1),
         cv.Optional(CONF_BPP, default=1): cv.one_of(1, 2, 4, 8),
+        cv.Optional(CONF_OUTLINE_WIDTH, default=0): cv.int_range(min=0, max=32),
         cv.Optional(CONF_EXTRAS, default=[]): cv.ensure_list(
             cv.Schema(
                 {
@@ -485,7 +500,7 @@ class GlyphInfo:
         self.height = height
 
 
-def glyph_to_glyphinfo(glyph, font, size, bpp):
+def glyph_to_glyphinfo(glyph, font, size, bpp, outline_width=0):
     # Convert to 32 bit unicode codepoint
     glyph = ord(glyph)
     scale = 256 // (1 << bpp)
@@ -500,13 +515,35 @@ def glyph_to_glyphinfo(glyph, font, size, bpp):
         flags |= FT_LOAD_NO_BITMAP
     else:
         flags |= FT_LOAD_TARGET_MONO
+    if outline_width:
+        if not font.is_scalable:
+            raise cv.Invalid("outline_width requires a scalable font")
+        flags = (flags & ~FT_LOAD_RENDER) | FT_LOAD_NO_BITMAP
     font.load_char(glyph, flags)
-    width = font.glyph.bitmap.width
-    height = font.glyph.bitmap.rows
-    buffer = font.glyph.bitmap.buffer
-    pitch = font.glyph.bitmap.pitch
+    bitmap = font.glyph.bitmap
+    offset_x = font.glyph.bitmap_left
+    bitmap_top = font.glyph.bitmap_top
+    if outline_width:
+        # Keep the original advance/baseline. Enlarging the font itself shifts
+        # every later glyph and cannot serve as a registered text contour.
+        stroker = Stroker()
+        stroker.set(
+            outline_width * 64, FT_STROKER_LINECAP_ROUND, FT_STROKER_LINEJOIN_ROUND, 0
+        )
+        outline = font.glyph.get_glyph()
+        outline.stroke(stroker, True)
+        rendered = outline.to_bitmap(
+            FT_RENDER_MODE_MONO if bpp == 1 else FT_RENDER_MODE_NORMAL, None, True
+        )
+        bitmap = rendered.bitmap
+        offset_x = rendered.left
+        bitmap_top = rendered.top
+    width = bitmap.width
+    height = bitmap.rows
+    buffer = bitmap.buffer
+    pitch = bitmap.pitch
     glyph_data = [0] * ((height * width * bpp + 7) // 8)
-    src_mode = font.glyph.bitmap.pixel_mode
+    src_mode = bitmap.pixel_mode
     pos = 0
     for y in range(height):
         for x in range(width):
@@ -536,8 +573,8 @@ def glyph_to_glyphinfo(glyph, font, size, bpp):
         glyph,
         glyph_data,
         pt_to_px(font.glyph.metrics.horiAdvance),
-        font.glyph.bitmap_left,
-        ascender - font.glyph.bitmap_top,
+        offset_x,
+        ascender - bitmap_top,
         width,
         height,
     )
@@ -577,7 +614,10 @@ async def to_code(config):
     size = config[CONF_SIZE]
     # create the data array for all glyphs
     glyph_args = [
-        glyph_to_glyphinfo(x, point_font_map[x], size, bpp) for x in codepoints
+        glyph_to_glyphinfo(
+            x, point_font_map[x], size, bpp, config.get(CONF_OUTLINE_WIDTH, 0)
+        )
+        for x in codepoints
     ]
     rhs = [HexInt(x) for x in flatten([x.bitmap_data for x in glyph_args])]
     prog_arr = cg.progmem_array(config[CONF_RAW_DATA_ID], rhs)

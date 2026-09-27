@@ -28,6 +28,30 @@ bool LvglDirectSnapshotCompositor::can_use_direct_application_(LvglApplication *
          this->home_views_[home_index] != nullptr;
 }
 
+bool LvglDirectSnapshotCompositor::ensure_home_transition_source_(int home_index) {
+  if (home_index < 0 || home_index >= static_cast<int>(this->home_views_.size()) || this->parent_ == nullptr)
+    return false;
+
+  auto *home = this->home_views_[home_index];
+  if (lvgl_esphome_snapshot_cache_has_raw_page(home))
+    return true;
+
+  // A Home page can fall outside the three-slot raw window after a diagnostic
+  // jump or an interrupted prefetch. App transitions must not answer that by
+  // allocating a fourth 800x800 RGB888 surface: fragmented PSRAM frequently
+  // has less than the required 1.92 MB contiguous even when total free memory
+  // is sufficient. Restore the invariant once and keep using the fixed slots.
+  const bool prepared = lvgl_esphome_snapshot_cache_tile_window(
+      this->home_views_.data(), static_cast<int>(this->home_views_.size()), home_index + 1,
+      this->parent_->get_width());
+  if (!prepared || !lvgl_esphome_snapshot_cache_has_raw_page(home)) {
+    ESP_LOGW(TAG, "Home transition source unavailable page=%d", home_index);
+    return false;
+  }
+  ESP_LOGI(TAG, "Restored Home transition source page=%d from fixed tile window", home_index);
+  return true;
+}
+
 bool LvglDirectSnapshotCompositor::prepare_home(int page_index) {
   if (!this->can_use_direct_home_() || page_index < 0 || page_index >= static_cast<int>(this->home_views_.size())) {
     this->home_prepared_ = false;
@@ -40,22 +64,55 @@ bool LvglDirectSnapshotCompositor::prepare_home(int page_index) {
 
 bool LvglDirectSnapshotCompositor::prepare_applications(const std::vector<LvglApplication *> &applications) {
   bool prepared = true;
+  bool needs_black_transition = false;
   for (auto *application : applications) {
     auto *view = application == nullptr ? nullptr : application->get_view();
     if (application != nullptr && application->uses_black_open_transition_snapshot())
-      prepared = this->ensure_black_application_buffer_() && prepared;
+      needs_black_transition = true;
     else if (view != nullptr)
       prepared = lvgl_esphome_snapshot_cache_compressed_page(view) && prepared;
+  }
+
+  // App JPEG encoding and the transition frame are both full-screen RGB888
+  // surfaces. Release the temporary encoder scratch before reserving the
+  // transition frame so the two never fragment PSRAM side by side. The DSI
+  // source lease is preparation-only and must not remain held on Home.
+  lvgl_esphome_snapshot_app_release_work_buffer();
+  if (needs_black_transition) {
+    prepared = this->ensure_black_application_buffer_() && prepared;
+    this->release_external_application_transition_buffer_();
   }
   return prepared;
 }
 
-bool LvglDirectSnapshotCompositor::begin_home(int page_index) {
-  if (this->home_active_ || page_index < 0 || page_index >= static_cast<int>(this->home_views_.size()))
+bool LvglDirectSnapshotCompositor::prime_home(int page_index) {
+  if (this->home_regions_primed_)
+    return true;
+  if (this->home_active_ || !this->can_use_direct_home_() || page_index < 0 ||
+      page_index >= static_cast<int>(this->home_views_.size()))
     return false;
+  this->home_regions_primed_ = this->parent_->direct_regions_pause_start();
+  if (!this->home_regions_primed_)
+    this->parent_->direct_regions_pause(false, 0);
+  return this->home_regions_primed_;
+}
+
+void LvglDirectSnapshotCompositor::cancel_home_prime() {
+  if (!this->home_regions_primed_)
+    return;
+  this->parent_->direct_regions_pause(false, 0);
+  this->home_regions_primed_ = false;
+}
+
+bool LvglDirectSnapshotCompositor::begin_home(int page_index) {
+  if (this->home_active_ || page_index < 0 || page_index >= static_cast<int>(this->home_views_.size())) {
+    this->cancel_home_prime();
+    return false;
+  }
 
   this->widget_fallback_ = false;
   if (!this->can_use_direct_home_()) {
+    this->cancel_home_prime();
     this->widget_fallback_ = true;
     return LvglSnapshotCompositor::begin_home(page_index);
   }
@@ -83,6 +140,10 @@ bool LvglDirectSnapshotCompositor::take_over_home(int *page_index, int32_t *offs
   int next_x = 0;
   if (!lvgl_esphome_snapshot_swipe_pause(&current_x, &next_x))
     return false;
+  // The settle animation may have finished decoding the page beyond its
+  // destination while this gesture was taking over. Publish that ready slot
+  // now so a chained swipe can rebase onto it without exposing a black page.
+  lvgl_esphome_snapshot_cache_complete_tile_prefetch(0);
   this->home_offset_ = current_x;
   this->target_index_ = this->current_index_;
   this->gesture_input_shift_ = 0;
@@ -106,11 +167,15 @@ bool LvglDirectSnapshotCompositor::start_direct_home_(int32_t delta_x) {
     this->direct_neighbor_index_ = candidate;
     this->direct_neighbor_origin_ = direction > 0 ? width : -width;
     started = lvgl_esphome_snapshot_swipe_begin(this->home_views_[this->current_index_], this->home_views_[candidate],
-                                                width, this->direct_neighbor_origin_);
+                                                width, this->direct_neighbor_origin_, this->home_regions_primed_);
   } else {
     this->direct_edge_ = true;
-    started = lvgl_esphome_snapshot_swipe_edge_begin(this->home_views_[this->current_index_], width);
+    started = lvgl_esphome_snapshot_swipe_edge_begin(this->home_views_[this->current_index_], width,
+                                                     this->home_regions_primed_);
   }
+  // The swipe state either adopted the primed pause or released it while
+  // falling back. From this point it owns the direct-region handoff.
+  this->home_regions_primed_ = false;
 
   this->direct_pending_ = false;
   this->direct_active_ = started;
@@ -147,6 +212,10 @@ bool LvglDirectSnapshotCompositor::start_direct_home_(int32_t delta_x) {
 bool LvglDirectSnapshotCompositor::rebase_direct_home_(int new_current_index, int direction, int32_t current_x) {
   if (new_current_index < 0 || new_current_index >= static_cast<int>(this->home_views_.size()) || direction == 0)
     return false;
+  // Non-blocking: if the predictive JPEG worker has completed, make its raw
+  // tile visible before snapshot_swipe_rebase() looks it up. A running worker
+  // remains untouched and the next pointer update will retry the rebase.
+  lvgl_esphome_snapshot_cache_complete_tile_prefetch(0);
   const int32_t width = this->parent_->get_width();
   const int candidate = new_current_index + direction;
   const int32_t origin = direction > 0 ? width : -width;
@@ -236,9 +305,9 @@ bool LvglDirectSnapshotCompositor::settle_home(int target_index, int32_t release
     duration = 240U + std::min<uint32_t>(160U, distance * 320U / width);
   }
   if (commit) {
-    // The destination window differs by at most one tile. Decode that JPEG
-    // into the outgoing third slot while the 60 Hz worker is still settling
-    // the visible pair, rather than blocking the LVGL loop after animation.
+    // Decode the page beyond the destination while the visible settle still
+    // has hundreds of milliseconds left. Starting this only after handoff
+    // left a fast follow-up swipe with no raw page-four source.
     lvgl_esphome_snapshot_cache_prefetch_tile_window(this->home_views_.data(),
                                                      static_cast<int>(this->home_views_.size()),
                                                      this->target_index_ + 1, this->parent_->get_width());
@@ -248,6 +317,7 @@ bool LvglDirectSnapshotCompositor::settle_home(int target_index, int32_t release
 }
 
 void LvglDirectSnapshotCompositor::cancel_home() {
+  this->cancel_home_prime();
   if (this->widget_fallback_) {
     LvglSnapshotCompositor::cancel_home();
     this->widget_fallback_ = false;
@@ -267,15 +337,31 @@ bool LvglDirectSnapshotCompositor::open_application(LvglApplication *application
     this->application_fallback_ = true;
     return LvglSnapshotCompositor::open_application(application, home_index);
   }
+  if (!this->ensure_home_transition_source_(home_index)) {
+    this->application_fallback_ = true;
+    return LvglSnapshotCompositor::open_application(application, home_index);
+  }
 
   const int32_t width = this->parent_->get_width();
-  const bool started = application->uses_black_open_transition_snapshot()
-                           ? this->ensure_black_application_buffer_() &&
-                                 lvgl_esphome_snapshot_app_open_with_buffer(
-                                     application->get_view(), this->home_views_[home_index],
-                                     this->black_application_buffer_, width, this->application_open_duration_)
-                           : lvgl_esphome_snapshot_app_open(application->get_view(), this->home_views_[home_index],
-                                                           width, this->application_open_duration_);
+  bool started = false;
+  if (application->uses_black_open_transition_snapshot()) {
+    started = this->ensure_black_application_buffer_() &&
+              lvgl_esphome_snapshot_app_open_with_buffer(application->get_view(), this->home_views_[home_index],
+                                                         this->black_application_buffer_, width,
+                                                         this->application_open_duration_);
+  } else if (this->ensure_application_transition_buffer_()) {
+    // Reuse the permanently allocated full-screen transition surface as the
+    // JPEG decode target. Reallocating a second 800x800 RGB888 buffer after
+    // artwork/gallery activity failed once PSRAM's largest free block dropped
+    // below 1.92 MB, leaving the compositor active with no animation frames.
+    started = lvgl_esphome_snapshot_app_open_cached_with_buffer(
+        application->get_view(), this->home_views_[home_index], this->black_application_buffer_, width,
+        this->application_open_duration_);
+    // The cached-open helper may have written either a JPEG frame or a fresh
+    // LVGL snapshot before a later startup check failed. Restore black lazily
+    // before the next black transition in either case.
+    this->black_application_buffer_is_black_ = false;
+  }
   if (!started) {
     if (lvgl_esphome_get_swipe_logging_enabled())
       ESP_LOGI(TAG, "application open direct start failed app=%p home=%d", application, home_index);
@@ -299,6 +385,10 @@ bool LvglDirectSnapshotCompositor::open_application(LvglApplication *application
 bool LvglDirectSnapshotCompositor::begin_application_close(LvglApplication *application, int home_index) {
   this->application_fallback_ = false;
   if (!this->can_use_direct_application_(application, home_index)) {
+    this->application_fallback_ = true;
+    return LvglSnapshotCompositor::begin_application_close(application, home_index);
+  }
+  if (!this->ensure_home_transition_source_(home_index)) {
     this->application_fallback_ = true;
     return LvglSnapshotCompositor::begin_application_close(application, home_index);
   }
@@ -374,11 +464,20 @@ void LvglDirectSnapshotCompositor::cancel_application() {
     lvgl_esphome_snapshot_app_cancel();
   lvgl_esphome_snapshot_app_release_work_buffer();
   this->reset_direct_application_();
+  this->release_external_application_transition_buffer_();
 }
 
 void LvglDirectSnapshotCompositor::loop() {
   if (lvgl_esphome_snapshot_is_active())
     return;
+
+  // A zero-time completion attempt at the end of a swipe can legitimately
+  // race the JPEG worker by a few milliseconds. Polling here is non-blocking
+  // and makes the completed page visible to the tile window as soon as the
+  // worker finishes; otherwise that slot can remain marked busy until another
+  // navigation operation happens to service it.
+  lvgl_esphome_snapshot_cache_complete_tile_prefetch(0);
+
   if (this->direct_application_phase_ == DirectApplicationPhase::OPENING ||
       this->direct_application_phase_ == DirectApplicationPhase::CLOSING) {
     this->complete_direct_application_();
@@ -389,31 +488,42 @@ void LvglDirectSnapshotCompositor::loop() {
 
 void LvglDirectSnapshotCompositor::complete_direct_home_() {
   const int target = this->target_index_;
-  // The JPEG worker normally finishes during the settle animation. If it is
-  // still busy, leave the final compositor frame on screen and try again in
-  // the next component loop instead of blocking touch/LVGL for up to a second.
-  if (!lvgl_esphome_snapshot_cache_complete_tile_prefetch(0))
-    return;
+  const int source = this->current_index_;
+  const int direction = target > source ? 1 : (target < source ? -1 : 0);
+  // Finalize a completed prediction without waiting for hardware JPEG. A
+  // previous decode may still be running, but it only owns the page behind
+  // the committed direction and must never hold the final frame or touch loop.
+  lvgl_esphome_snapshot_cache_complete_tile_prefetch(0);
   this->reset_direct_home_();
   if (target >= 0) {
-    // Rebuild the adjacent tile window before exposing the native page. The
-    // navigation controller then becomes the single source of truth for
-    // widget visibility, including recovery from an interrupted transition.
-    this->prepare_home(target);
+    // settle_home() already moved the adjacent tile window asynchronously.
+    // Re-running prepare_home() here encoded every dirty full-screen tile on
+    // the LVGL loop (hundreds of milliseconds) exactly when the user was most
+    // likely to begin the next gesture. The completed prefetch is the prepared
+    // window; dirty outgoing pages are encoded only when their slot is reused.
+    this->home_prepared_ = true;
+    lv_obj_align(this->home_views_[target], LV_ALIGN_CENTER, 0, 0);
     if (this->navigation_ != nullptr) {
-      this->navigation_->activate_home_view(target);
+      this->navigation_->activate_home_view(target, true);
     } else {
       lv_obj_remove_flag(this->home_views_[target], LV_OBJ_FLAG_HIDDEN);
+      lvgl_esphome_snapshot_discard_pending_refresh();
     }
-    lv_obj_align(this->home_views_[target], LV_ALIGN_CENTER, 0, 0);
     if (lv_obj_has_flag(this->home_views_[target], LV_OBJ_FLAG_HIDDEN)) {
       ESP_LOGW(TAG, "Home handoff left target %d hidden; recovering visibility", target);
       lv_obj_remove_flag(this->home_views_[target], LV_OBJ_FLAG_HIDDEN);
     }
-    // Commit schedules the real LVGL page behind the exact final snapshot.
-    // The redraw is asynchronous, so scanout keeps the snapshot until the
-    // complete native frame is ready.
-    lv_obj_invalidate(this->home_views_[target]);
+    if (direction != 0) {
+      // Keep the three reusable raw slots symmetric around the committed page:
+      // previous/current/next. Directional bias evicted page N-1 immediately
+      // after a forward settle, so an equally common reverse gesture had to
+      // wait for a full-screen JPEG decode and could expose an empty native
+      // page. The symmetric window makes both directions immediately usable;
+      // edge pages naturally consume only two slots.
+      lvgl_esphome_snapshot_cache_prefetch_tile_window(this->home_views_.data(),
+                                                       static_cast<int>(this->home_views_.size()), target + 1,
+                                                       this->parent_->get_width());
+    }
   }
 }
 
@@ -432,9 +542,29 @@ void LvglDirectSnapshotCompositor::complete_direct_application_() {
 
   if (this->navigation_ != nullptr)
     this->navigation_->complete_application_transition(application, opening, !opening);
+  // The transition source is only needed while the animation is running. It
+  // is a real DSI framebuffer, so retaining its lease would permanently
+  // remove one of the three scanout buffers from the normal LVGL pool. That
+  // leaves later native refreshes with no idle target and causes frame-boundary
+  // timeouts after a few application transitions.
+  this->release_external_application_transition_buffer_();
   this->reset_direct_application_();
-  if (!opening && home_index >= 0)
-    this->prepare_home(home_index);
+  if (!opening && home_index >= 0) {
+    if (!lvgl_esphome_snapshot_tile_buffers_ready()) {
+      // A memory-intensive app may return idle neighbour slots to PSRAM.
+      // Its close callback releases image buffers before we restore the Home
+      // working set; ordinary app closes keep the allocation-free fast path.
+      this->prepare_home(home_index);
+      return;
+    }
+    // The close animation reads its background from the retained Home tile
+    // window, so those raw slots are already ready for the next gesture.
+    // prepare_home() also flushes every dirty slot to JPEG and used to block
+    // the LVGL loop for several hundred milliseconds immediately after close.
+    // Let the normal window-prefetch worker encode a slot only when it is
+    // actually recycled for a page outside the current three-page window.
+    this->home_prepared_ = true;
+  }
 }
 
 void LvglDirectSnapshotCompositor::reset_direct_home_() {

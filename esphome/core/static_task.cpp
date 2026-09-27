@@ -43,6 +43,23 @@ bool StaticTask::create(TaskFunction_t fn, const char *name, uint32_t stack_size
 void StaticTask::destroy() {
   if (this->handle_ != nullptr) {
     TaskHandle_t handle = this->handle_;
+    // Static storage cannot be freed while IDF still has the task on a core
+    // (or on its deferred IDLE cleanup list). Match vTaskDeleteWithCaps: stop
+    // scheduling it and wait for both cores to finish the context switch.
+    assert(handle != xTaskGetCurrentTaskHandle());
+    vTaskSuspend(handle);
+    for (;;) {
+      bool running = false;
+      for (BaseType_t core = 0; core < configNUMBER_OF_CORES; core++) {
+        if (xTaskGetCurrentTaskHandleForCore(core) == handle) {
+          running = true;
+          break;
+        }
+      }
+      if (!running)
+        break;
+      taskYIELD();
+    }
     this->handle_ = nullptr;
     vTaskDelete(handle);
   }

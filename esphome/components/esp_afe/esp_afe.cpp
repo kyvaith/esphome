@@ -1789,8 +1789,14 @@ void EspAfe::handle_manager_result_(afe_fetch_result_t *result) {
 
 #ifdef USE_ESP_AFE_DIRECT_PATH
 void EspAfe::direct_fetch_task_trampoline_(void *arg) {
-  static_cast<EspAfe *>(arg)->direct_fetch_task_loop_();
-  vTaskDelete(nullptr);
+  auto *self = static_cast<EspAfe *>(arg);
+  // Keep the static TCB alive between sessions. A self-deleted task remains
+  // on FreeRTOS's idle cleanup list even after eTaskGetState() says eDeleted.
+  // Recreating it in the same TCB can corrupt the scheduler's linked lists.
+  while (true) {
+    self->direct_fetch_task_loop_();
+    vTaskSuspend(nullptr);
+  }
 }
 
 void EspAfe::direct_fetch_task_loop_() {
@@ -1817,6 +1823,16 @@ void EspAfe::direct_fetch_task_loop_() {
 
 bool EspAfe::start_direct_fetch_task_() {
   if (this->direct_fetch_task_handle_ != nullptr) {
+    if (this->direct_fetch_running_.load(std::memory_order_acquire)) {
+      return true;
+    }
+    if (eTaskGetState(this->direct_fetch_task_handle_) != eSuspended) {
+      ESP_LOGE(TAG, "AFE fetch task has not finished its previous session");
+      return false;
+    }
+    this->direct_fetch_running_.store(true, std::memory_order_release);
+    vTaskResume(this->direct_fetch_task_handle_);
+    ESP_LOGD(TAG, "Single-mic AFE fetch task resumed");
     return true;
   }
   if (this->direct_fetch_task_stack_ == nullptr) {
@@ -1852,12 +1868,12 @@ void EspAfe::stop_direct_fetch_task_() {
     xSemaphoreGive(this->direct_feed_signal_);
   }
   for (int i = 0; i < 25; i++) {
-    if (eTaskGetState(this->direct_fetch_task_handle_) == eDeleted) {
-      break;
+    if (eTaskGetState(this->direct_fetch_task_handle_) == eSuspended) {
+      return;
     }
     vTaskDelay(pdMS_TO_TICKS(10));
   }
-  this->direct_fetch_task_handle_ = nullptr;
+  ESP_LOGE(TAG, "Timed out waiting for AFE fetch task to suspend");
 }
 #endif
 
@@ -2298,6 +2314,14 @@ EspAfe::~EspAfe() {
     this->destroy_instance_(&instance);
     this->release_runtime_buffers_();
   }
+#ifdef USE_ESP_AFE_DIRECT_PATH
+  if (this->direct_fetch_task_handle_ != nullptr) {
+    vTaskDelete(this->direct_fetch_task_handle_);
+    this->direct_fetch_task_handle_ = nullptr;
+  }
+  heap_caps_free(this->direct_fetch_task_stack_);
+  this->direct_fetch_task_stack_ = nullptr;
+#endif
 }
 
 }  // namespace esp_afe

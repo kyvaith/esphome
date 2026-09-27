@@ -344,6 +344,8 @@ void LvglSnapshotCompositor::complete_home_() {
   if (this->display_ != nullptr)
     lv_refr_now(this->display_);
   this->release_home_();
+  if (this->navigation_ != nullptr)
+    this->navigation_->notify_home_presented(target);
 }
 
 void LvglSnapshotCompositor::release_home_() {
@@ -389,7 +391,7 @@ bool LvglSnapshotCompositor::bind_application_(LvglApplication *application, boo
   return true;
 }
 
-bool LvglSnapshotCompositor::ensure_black_application_buffer_() {
+bool LvglSnapshotCompositor::ensure_application_transition_buffer_() {
   const int32_t width = this->parent_ == nullptr ? 0 : this->parent_->get_width();
   const int32_t height = this->parent_ == nullptr ? 0 : this->parent_->get_height();
   if (width <= 0 || height <= 0)
@@ -403,16 +405,29 @@ bool LvglSnapshotCompositor::ensure_black_application_buffer_() {
   constexpr uint32_t BYTES_PER_PIXEL = 3;
 #endif
   const uint32_t stride = static_cast<uint32_t>(width) * BYTES_PER_PIXEL;
-  if (this->black_application_buffer_ != nullptr &&
-      this->black_application_buffer_->header.cf == COLOR_FORMAT &&
+  if (this->external_application_transition_active_ && this->external_application_transition_view_.data != nullptr)
+    return true;
+  if (this->black_application_buffer_ != nullptr && this->black_application_buffer_->header.cf == COLOR_FORMAT &&
       this->black_application_buffer_->header.w == static_cast<uint32_t>(width) &&
       this->black_application_buffer_->header.h == static_cast<uint32_t>(height) &&
       this->black_application_buffer_->header.stride == stride) {
     return true;
   }
 
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI)
+  if (COLOR_FORMAT == LV_COLOR_FORMAT_RGB888 &&
+      this->parent_->acquire_direct_transition_frame(&this->external_application_transition_view_)) {
+    this->external_application_transition_active_ = true;
+    this->black_application_buffer_ = &this->external_application_transition_view_;
+    this->black_application_buffer_is_black_ = false;
+    ESP_LOGI("lvgl.snapshot", "Using an existing DSI framebuffer for application transition source");
+    return true;
+  }
+#endif
+
   if (this->black_application_buffer_ != nullptr)
     lv_draw_buf_destroy(this->black_application_buffer_);
+  this->black_application_buffer_is_black_ = false;
   this->black_application_buffer_ = lv_draw_buf_create(width, height, COLOR_FORMAT, stride);
   if (this->black_application_buffer_ == nullptr || this->black_application_buffer_->data == nullptr) {
     if (this->black_application_buffer_ != nullptr)
@@ -423,8 +438,31 @@ bool LvglSnapshotCompositor::ensure_black_application_buffer_() {
     return false;
   }
   lv_draw_buf_clear(this->black_application_buffer_, nullptr);
+  this->black_application_buffer_is_black_ = true;
   ESP_LOGI("lvgl.snapshot", "Allocated shared black application transition frame: %u KB",
            static_cast<unsigned>(this->black_application_buffer_->data_size / 1024U));
+  return true;
+}
+
+void LvglSnapshotCompositor::release_external_application_transition_buffer_() {
+  if (!this->external_application_transition_active_)
+    return;
+  if (this->parent_ != nullptr)
+    this->parent_->release_direct_transition_frame(&this->external_application_transition_view_);
+  this->external_application_transition_active_ = false;
+  if (this->black_application_buffer_ == &this->external_application_transition_view_)
+    this->black_application_buffer_ = nullptr;
+  this->black_application_buffer_is_black_ = false;
+}
+
+bool LvglSnapshotCompositor::ensure_black_application_buffer_() {
+  if (!this->ensure_application_transition_buffer_())
+    return false;
+  if (this->black_application_buffer_is_black_)
+    return true;
+
+  lv_draw_buf_clear(this->black_application_buffer_, nullptr);
+  this->black_application_buffer_is_black_ = true;
   return true;
 }
 

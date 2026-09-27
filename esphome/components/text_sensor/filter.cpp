@@ -6,6 +6,8 @@
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 
+#include <string_view>
+
 namespace esphome::text_sensor {
 
 static const char *const TAG = "text_sensor.filter";
@@ -70,6 +72,127 @@ bool AppendFilter::new_value(std::string &value) {
 // Prepend
 bool PrependFilter::new_value(std::string &value) {
   value.insert(0, this->prefix_);
+  return true;
+}
+
+namespace {
+
+struct HtmlEntity {
+  std::string_view name;
+  uint32_t code_point;
+};
+
+constexpr HtmlEntity HTML_ENTITIES[] = {
+    {"amp", '&'},       {"apos", '\''},    {"bull", 0x2022},   {"copy", 0x00A9},  {"deg", 0x00B0},
+    {"eacute", 0x00E9}, {"gt", '>'},       {"hellip", 0x2026}, {"ldquo", 0x201C}, {"lsquo", 0x2018},
+    {"lt", '<'},        {"mdash", 0x2014}, {"middot", 0x00B7}, {"nbsp", ' '},     {"ndash", 0x2013},
+    {"quot", '"'},      {"rdquo", 0x201D}, {"reg", 0x00AE},    {"rsquo", 0x2019}, {"trade", 0x2122},
+};
+
+bool parse_uint(std::string_view text, uint8_t base, uint32_t &value) {
+  if (text.empty())
+    return false;
+  value = 0;
+  for (const char character : text) {
+    uint8_t digit;
+    if (character >= '0' && character <= '9') {
+      digit = character - '0';
+    } else if (base == 16 && character >= 'a' && character <= 'f') {
+      digit = character - 'a' + 10;
+    } else if (base == 16 && character >= 'A' && character <= 'F') {
+      digit = character - 'A' + 10;
+    } else {
+      return false;
+    }
+    if (digit >= base || value > (0x10FFFFU - digit) / base)
+      return false;
+    value = value * base + digit;
+  }
+  return value != 0 && value <= 0x10FFFFU && !(value >= 0xD800U && value <= 0xDFFFU);
+}
+
+bool decode_html_entity(std::string_view entity, uint32_t &code_point) {
+  if (!entity.empty() && entity.front() == '#') {
+    entity.remove_prefix(1);
+    uint8_t base = 10;
+    if (!entity.empty() && (entity.front() == 'x' || entity.front() == 'X')) {
+      base = 16;
+      entity.remove_prefix(1);
+    }
+    return parse_uint(entity, base, code_point);
+  }
+  for (const auto &candidate : HTML_ENTITIES) {
+    if (candidate.name == entity) {
+      code_point = candidate.code_point;
+      return true;
+    }
+  }
+  return false;
+}
+
+void append_utf8(std::string &output, uint32_t code_point) {
+  if (code_point <= 0x7FU) {
+    output.push_back(static_cast<char>(code_point));
+  } else if (code_point <= 0x7FFU) {
+    output.push_back(static_cast<char>(0xC0U | (code_point >> 6U)));
+    output.push_back(static_cast<char>(0x80U | (code_point & 0x3FU)));
+  } else if (code_point <= 0xFFFFU) {
+    output.push_back(static_cast<char>(0xE0U | (code_point >> 12U)));
+    output.push_back(static_cast<char>(0x80U | ((code_point >> 6U) & 0x3FU)));
+    output.push_back(static_cast<char>(0x80U | (code_point & 0x3FU)));
+  } else {
+    output.push_back(static_cast<char>(0xF0U | (code_point >> 18U)));
+    output.push_back(static_cast<char>(0x80U | ((code_point >> 12U) & 0x3FU)));
+    output.push_back(static_cast<char>(0x80U | ((code_point >> 6U) & 0x3FU)));
+    output.push_back(static_cast<char>(0x80U | (code_point & 0x3FU)));
+  }
+}
+
+}  // namespace
+
+bool SanitizeHtmlFilter::new_value(std::string &value) {
+  std::string output;
+  output.reserve(value.size());
+  bool pending_space = false;
+
+  for (size_t index = 0; index < value.size();) {
+    if (this->strip_tags_ && value[index] == '<') {
+      const size_t close = value.find('>', index + 1);
+      if (close != std::string::npos) {
+        pending_space = pending_space || !output.empty();
+        index = close + 1;
+        continue;
+      }
+    }
+
+    uint32_t code_point = static_cast<unsigned char>(value[index]);
+    size_t consumed = 1;
+    if (this->decode_entities_ && value[index] == '&') {
+      const size_t close = value.find(';', index + 1);
+      if (close != std::string::npos && close - index <= 16 &&
+          decode_html_entity(std::string_view(value).substr(index + 1, close - index - 1), code_point)) {
+        consumed = close - index + 1;
+      }
+    }
+
+    const bool whitespace =
+        code_point <= 0x7FU && (code_point == ' ' || code_point == '\t' || code_point == '\r' || code_point == '\n');
+    if (this->collapse_whitespace_ && whitespace) {
+      pending_space = pending_space || !output.empty();
+    } else {
+      if (pending_space && !output.empty())
+        output.push_back(' ');
+      pending_space = false;
+      if (consumed == 1 && static_cast<unsigned char>(value[index]) >= 0x80U) {
+        output.push_back(value[index]);
+      } else {
+        append_utf8(output, code_point);
+      }
+    }
+    index += consumed;
+  }
+
+  value = std::move(output);
   return true;
 }
 

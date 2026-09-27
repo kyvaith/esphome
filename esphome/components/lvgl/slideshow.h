@@ -63,6 +63,12 @@ class SlideshowController : public Component, public DirectSceneController {
   void end_direct_overlay_background_render() override;
   size_t memory_usage_bytes() const;
   void log_memory_usage(const char *phase) const;
+  uint32_t presented_frames() const { return this->stat_presented_frames_.load(std::memory_order_relaxed); }
+  uint32_t reused_frames() const { return this->stat_reused_frames_.load(std::memory_order_relaxed); }
+  uint32_t rejected_frames() const { return this->stat_rejected_frames_.load(std::memory_order_relaxed); }
+  uint32_t last_render_us() const { return this->stat_last_render_us_.load(std::memory_order_relaxed); }
+  uint32_t max_render_us() const { return this->stat_max_render_us_.load(std::memory_order_relaxed); }
+  float measured_fps() const { return this->stat_measured_fps_.load(std::memory_order_relaxed); }
 
  protected:
   void choose_target_();
@@ -70,8 +76,8 @@ class SlideshowController : public Component, public DirectSceneController {
   bool update_transform_(uint32_t elapsed_ms);
   bool update_direct_frame_(uint32_t elapsed_ms);
   bool calculate_direct_crop_(const lv_image_dsc_t *source, uint32_t elapsed_ms, int *crop_x, int *crop_y,
-                               int *crop_width, int *crop_height, uint8_t *subpixel_alpha = nullptr,
-                               bool *subpixel_vertical = nullptr) const;
+                              int *crop_width, int *crop_height, uint8_t *subpixel_alpha = nullptr,
+                              bool *subpixel_vertical = nullptr) const;
   bool render_direct_frame_(const lv_image_dsc_t *source, LvglComponent *component, uint32_t elapsed_ms);
   void reset_direct_frame_cache_();
   const lv_image_dsc_t *get_source_descriptor_() const;
@@ -104,6 +110,7 @@ class SlideshowController : public Component, public DirectSceneController {
   ppa_client_handle_t direct_blend_client_{nullptr};
   uint8_t *transition_old_frame_{nullptr};
   uint8_t *transition_new_frame_{nullptr};
+  bool transition_banded_{false};
   bool transition_old_frame_owned_{false};
   bool transition_new_frame_owned_{false};
   size_t transition_old_frame_size_{0};
@@ -147,6 +154,14 @@ class SlideshowController : public Component, public DirectSceneController {
   bool direct_active_{false};
   bool direct_overlay_suspended_{false};
   bool direct_overlay_resume_pending_{false};
+  std::atomic<uint32_t> stat_presented_frames_{0};
+  std::atomic<uint32_t> stat_reused_frames_{0};
+  std::atomic<uint32_t> stat_rejected_frames_{0};
+  std::atomic<uint32_t> stat_last_render_us_{0};
+  std::atomic<uint32_t> stat_max_render_us_{0};
+  std::atomic<float> stat_measured_fps_{0.0f};
+  uint32_t stat_fps_window_started_ms_{0};
+  uint32_t stat_fps_window_frames_{0};
 };
 
 }  // namespace esphome::lvgl

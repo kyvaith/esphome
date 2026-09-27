@@ -2,11 +2,13 @@
 #include "esphome/core/log.h"
 
 #include <math.h>
+#include <algorithm>
 #include <atomic>
 #include <stdint.h>
 #include <string.h>
 
 #ifdef ESP_PLATFORM
+#include "esphome/components/esp32/task_utils.h"
 #include "esp_heap_caps.h"
 #include "esp_memory_utils.h"
 #include "esp_timer.h"
@@ -19,12 +21,10 @@ extern "C" bool lvgl_esphome_direct_blit_rgb888(const uint8_t *src, int src_stri
                                                 int height);
 extern "C" uint8_t lvgl_esphome_direct_blit_rgb888_async(const uint8_t *src, int src_stride, int x, int y, int width,
                                                          int height, void (*ready_callback)(void *), void *ready_arg);
-extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_async(const uint8_t *background, int background_stride,
-                                                                   const uint8_t *foreground, int foreground_stride,
-                                                                   int foreground_width, int foreground_height,
-                                                                   int foreground_x, int foreground_y, int x, int y,
-                                                                   int width, int height,
-                                                                   void (*ready_callback)(void *), void *ready_arg);
+extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_async(
+    const uint8_t *background, int background_stride, const uint8_t *foreground, int foreground_stride,
+    int foreground_width, int foreground_height, int foreground_x, int foreground_y, int x, int y, int width,
+    int height, void (*ready_callback)(void *), void *ready_arg);
 extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_stable_async(
     const uint8_t *background, int background_stride, const uint8_t *foreground, int foreground_stride,
     int foreground_width, int foreground_height, int foreground_x, int foreground_y, int x, int y, int width,
@@ -44,7 +44,7 @@ namespace {
 // StackType_t units while giving the raster worker enough headroom for LVGL,
 // PPA and cache-sync calls.
 constexpr uint32_t WAVE_RENDER_STACK_BYTES = 8192;
-constexpr UBaseType_t WAVE_RENDER_TASK_PRIORITY = 1;
+constexpr UBaseType_t WAVE_RENDER_TASK_PRIORITY = 2;
 constexpr UBaseType_t WAVE_CONTROL_TASK_PRIORITY = 3;
 
 // A 244-pixel RGB888 row is 4-byte aligned, allowing the DSI DMA2D path to
@@ -136,6 +136,8 @@ struct WavyArcState {
   lv_color16_t *backdrop_pixels{nullptr};
   WavePolarPixel *dynamic_pixels{nullptr};
   WavePixelSpan *dynamic_spans{nullptr};
+  void *geometry_storage{nullptr};
+  bool geometry_in_internal_ram{false};
   uint32_t dynamic_pixel_count{0};
   uint32_t dynamic_span_count{0};
   int16_t sin_q8[360];
@@ -143,9 +145,14 @@ struct WavyArcState {
   int16_t ring_boundary_by_angle[360];
   uint8_t cap_mask_by_angle[360];
   lv_image_dsc_t image{};
-  bool background_pending{false};
-  uint32_t background_request_generation{0};
-  uint32_t background_ready_generation{0};
+  std::atomic<bool> background_pending{false};
+  std::atomic<uint32_t> background_request_generation{0};
+  std::atomic<uint32_t> background_ready_generation{0};
+  // Artwork handoff only publishes the latest source here. The render worker
+  // performs the 800x800 backdrop conversion so the LVGL loop never spends
+  // hundreds of milliseconds walking PSRAM pixel-by-pixel.
+  const lv_image_dsc_t *pending_background_source{nullptr};
+  bool pending_background_scrim{false};
 #ifdef ESP_PLATFORM
   SemaphoreHandle_t render_mutex{nullptr};
   StaticSemaphore_t render_mutex_storage{};
@@ -172,6 +179,9 @@ struct WavyArcState {
   uint32_t perf_render_count{0};
   uint64_t perf_render_total_us{0};
   uint32_t perf_render_max_us{0};
+  uint64_t perf_prepare_total_us{0};
+  uint64_t perf_raster_total_us{0};
+  uint64_t perf_icon_total_us{0};
   uint32_t perf_present_count{0};
   uint64_t perf_present_total_us{0};
   uint32_t perf_present_max_us{0};
@@ -233,8 +243,7 @@ static void record_wave_trace(WavyArcState *state, char event, const lv_color32_
   entry.loader_phase = static_cast<int16_t>(state->loader_phase_deg);
   entry.event = static_cast<uint8_t>(event);
   entry.buffer_index = trace_buffer_index(state, buffer);
-  entry.flags = (state->pressed ? 0x01 : 0x00) | (state->playing ? 0x02 : 0x00) |
-                (state->pending ? 0x04 : 0x00) |
+  entry.flags = (state->pressed ? 0x01 : 0x00) | (state->playing ? 0x02 : 0x00) | (state->pending ? 0x04 : 0x00) |
                 (present_in_flight_count(state) != 0 ? 0x08 : 0x00) | (state->frame_ready ? 0x10 : 0x00) |
                 (present_has_stable_frame(state) ? 0x20 : 0x00);
   entry.extra = extra;
@@ -445,10 +454,23 @@ static bool ensure_buffers(WavyArcState *state) {
   }
 
 #ifdef ESP_PLATFORM
-  state->dynamic_pixels = static_cast<WavePolarPixel *>(
-      heap_caps_malloc(dynamic_count * sizeof(WavePolarPixel), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  state->dynamic_spans = static_cast<WavePixelSpan *>(
-      heap_caps_malloc(span_count * sizeof(WavePixelSpan), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  const size_t pixel_bytes = dynamic_count * sizeof(WavePolarPixel);
+  const size_t span_offset = (pixel_bytes + alignof(WavePixelSpan) - 1U) & ~(alignof(WavePixelSpan) - 1U);
+  const size_t geometry_bytes = span_offset + span_count * sizeof(WavePixelSpan);
+  constexpr size_t INTERNAL_HEADROOM = 192U * 1024U;
+  const size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (largest_internal >= geometry_bytes + INTERNAL_HEADROOM) {
+    state->geometry_storage = heap_caps_malloc(geometry_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    state->geometry_in_internal_ram = state->geometry_storage != nullptr;
+  }
+  if (state->geometry_storage == nullptr) {
+    state->geometry_storage = heap_caps_malloc(geometry_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  }
+  state->dynamic_pixels = static_cast<WavePolarPixel *>(state->geometry_storage);
+  state->dynamic_spans =
+      state->geometry_storage == nullptr
+          ? nullptr
+          : reinterpret_cast<WavePixelSpan *>(static_cast<uint8_t *>(state->geometry_storage) + span_offset);
 #else
   state->dynamic_pixels = static_cast<WavePolarPixel *>(malloc(dynamic_count * sizeof(WavePolarPixel)));
   state->dynamic_spans = static_cast<WavePixelSpan *>(malloc(span_count * sizeof(WavePixelSpan)));
@@ -456,6 +478,13 @@ static bool ensure_buffers(WavyArcState *state) {
   if (state->dynamic_pixels == nullptr || state->dynamic_spans == nullptr) {
     return false;
   }
+
+#ifdef ESP_PLATFORM
+  ESP_LOGI("media.wave", "Geometry table: %u pixels/%u spans, %u bytes in %s (internal largest before=%u KiB)",
+           static_cast<unsigned>(dynamic_count), static_cast<unsigned>(span_count),
+           static_cast<unsigned>(geometry_bytes), state->geometry_in_internal_ram ? "internal RAM" : "PSRAM",
+           static_cast<unsigned>(largest_internal / 1024U));
+#endif
 
   uint32_t dynamic_index = 0;
   uint32_t span_index = 0;
@@ -523,17 +552,10 @@ static uint8_t cap_coverage(int radius_q4, int angle_q4, int cap_angle_q4, int c
 }
 
 static lv_color_t read_source_pixel(const lv_image_dsc_t *source, int x, int y) {
-  if (source == nullptr || source->data == nullptr || source->header.w == 0 || source->header.h == 0) {
+  if (source == nullptr || source->data == nullptr || source->header.w == 0 || source->header.h == 0)
     return make_color(0, 0, 0);
-  }
-  if (x < 0)
-    x = 0;
-  if (y < 0)
-    y = 0;
-  if (x >= source->header.w)
-    x = source->header.w - 1;
-  if (y >= source->header.h)
-    y = source->header.h - 1;
+  x = std::clamp(x, 0, static_cast<int>(source->header.w) - 1);
+  y = std::clamp(y, 0, static_cast<int>(source->header.h) - 1);
   const uint8_t *row = source->data + static_cast<size_t>(y) * source->header.stride;
   switch (source->header.cf) {
     case LV_COLOR_FORMAT_RGB565: {
@@ -623,15 +645,12 @@ static bool capture_backdrop(WavyArcState *state, lv_color16_t *target, const lv
       } else {
         color = read_source_pixel(source, source_x, source_y);
       }
-      if (apply_scrim) {
+      if (apply_scrim)
         color = blend_rgb(color, scrim_red, scrim_green, scrim_blue, scrim_alpha);
-      }
-      const int index = y * WAVE_SIZE + x;
       const uint16_t color16 = lv_color_to_u16(color);
-      memcpy(&target[index], &color16, sizeof(color16));
+      memcpy(&target[static_cast<size_t>(y) * WAVE_SIZE + x], &color16, sizeof(color16));
     }
   }
-
   return true;
 }
 
@@ -643,9 +662,8 @@ static lv_color16_t *find_free_backdrop(WavyArcState *state) {
       continue;
 #ifdef ESP_PLATFORM
     bool presented = false;
-    for (const auto &slot : state->present_slots) {
+    for (const auto &slot : state->present_slots)
       presented |= slot.in_flight.load(std::memory_order_acquire) && slot.backdrop_pixels == buffer;
-    }
     if (presented)
       continue;
 #endif
@@ -870,6 +888,10 @@ static void render_bitmap(WavyArcState *state) {
 
   update_static_blob_if_needed(state);
 
+#ifdef ESP_PLATFORM
+  const int64_t raster_start_us = perf_enabled ? esp_timer_get_time() : 0;
+#endif
+
   // Pixels outside these two radial bands are transparent for every phase and
   // were cleared once when the buffer was allocated. Avoid touching them.
   constexpr int blob_possible_max_q4 = (84 + 4 + 1) * 16;
@@ -973,6 +995,10 @@ static void render_bitmap(WavyArcState *state) {
     }
   }
 
+#ifdef ESP_PLATFORM
+  const int64_t icon_start_us = perf_enabled ? esp_timer_get_time() : 0;
+#endif
+
   // The glyph is static while the wavy surface rotates. Track it per physical
   // triple buffer so steady animation frames do not clear and rasterize the
   // same 67x65 area again.
@@ -990,6 +1016,9 @@ static void render_bitmap(WavyArcState *state) {
   if (perf_enabled) {
     const int64_t now_us = esp_timer_get_time();
     const uint32_t render_us = static_cast<uint32_t>(now_us - render_start_us);
+    state->perf_prepare_total_us += static_cast<uint32_t>(raster_start_us - render_start_us);
+    state->perf_raster_total_us += static_cast<uint32_t>(icon_start_us - raster_start_us);
+    state->perf_icon_total_us += static_cast<uint32_t>(now_us - icon_start_us);
     state->perf_render_count++;
     state->perf_render_total_us += render_us;
     if (render_us > state->perf_render_max_us)
@@ -1006,15 +1035,25 @@ static void render_bitmap(WavyArcState *state) {
               : static_cast<uint32_t>(state->perf_present_total_us / state->perf_present_count);
       const uint32_t dma_avg_us =
           state->perf_dma_count == 0 ? 0 : static_cast<uint32_t>(state->perf_dma_total_us / state->perf_dma_count);
+      const uint32_t prepare_avg_us = static_cast<uint32_t>(state->perf_prepare_total_us / state->perf_render_count);
+      const uint32_t raster_avg_us = static_cast<uint32_t>(state->perf_raster_total_us / state->perf_render_count);
+      const uint32_t icon_avg_us = static_cast<uint32_t>(state->perf_icon_total_us / state->perf_render_count);
       ESP_LOGI("media.wave",
-               "perf2s: renders=%lu render=%luus max=%luus submit=%luus max=%luus dma=%luus max=%luus pixels=%d",
+               "perf2s: renders=%lu render=%luus max=%luus stages=%lu/%lu/%luus submit=%luus max=%luus "
+               "dma=%luus max=%luus pixels=%lu",
                static_cast<unsigned long>(state->perf_render_count), static_cast<unsigned long>(avg_us),
-               static_cast<unsigned long>(state->perf_render_max_us), static_cast<unsigned long>(present_avg_us),
+               static_cast<unsigned long>(state->perf_render_max_us), static_cast<unsigned long>(prepare_avg_us),
+               static_cast<unsigned long>(raster_avg_us), static_cast<unsigned long>(icon_avg_us),
+               static_cast<unsigned long>(present_avg_us),
                static_cast<unsigned long>(state->perf_present_max_us), static_cast<unsigned long>(dma_avg_us),
-               static_cast<unsigned long>(state->perf_dma_max_us), WAVE_PIXELS);
+               static_cast<unsigned long>(state->perf_dma_max_us),
+               static_cast<unsigned long>(state->dynamic_pixel_count));
       state->perf_render_count = 0;
       state->perf_render_total_us = 0;
       state->perf_render_max_us = 0;
+      state->perf_prepare_total_us = 0;
+      state->perf_raster_total_us = 0;
+      state->perf_icon_total_us = 0;
       state->perf_present_count = 0;
       state->perf_present_total_us = 0;
       state->perf_present_max_us = 0;
@@ -1072,6 +1111,28 @@ static void render_worker_task(void *arg) {
 
     if (xSemaphoreTake(state->render_mutex, portMAX_DELAY) != pdTRUE)
       continue;
+    // Artwork changes used to convert the complete 800x800 backdrop while the
+    // caller held the render mutex. That kept the LVGL loop out of the mutex
+    // for roughly 0.5-0.8 s and made the whole Player appear frozen. Consume
+    // only the newest request here, on the already isolated render worker.
+    if (state->background_pending.load(std::memory_order_acquire)) {
+      const lv_image_dsc_t *source = state->pending_background_source;
+      const bool apply_scrim = state->pending_background_scrim;
+      const uint32_t background_generation =
+          state->background_request_generation.load(std::memory_order_acquire);
+      lv_color16_t *target = find_free_backdrop(state);
+      if (target != nullptr) {
+        const bool captured = capture_backdrop(state, target, source, apply_scrim);
+        if (captured && background_generation ==
+                            state->background_request_generation.load(std::memory_order_acquire)) {
+          state->backdrop_pixels = target;
+          state->background_ready_generation.store(background_generation, std::memory_order_release);
+          state->background_pending.store(false, std::memory_order_release);
+          state->render_generation++;
+          state->dirty = true;
+        }
+      }
+    }
     bool control_changed = false;
     bool pressed_update_received = false;
     bool pressed_changed = false;
@@ -1182,6 +1243,19 @@ static void render_worker_task(void *arg) {
       state->dirty = true;
     }
 
+    // The overlay pixels and the PPA blend both live in PSRAM. Rasterizing a
+    // new frame while the previous blend is still reading PSRAM makes both
+    // operations several times slower on ESP32-P4. Keep accepting/coalescing
+    // logical phase updates, but wait for direct_present_ready() before
+    // touching the next pixel buffer.
+    if (present_in_flight_count(state) != 0) {
+      state->dirty = true;
+      xSemaphoreGive(state->render_mutex);
+      if (pressed_update_received)
+        vTaskPrioritySet(state->render_task, WAVE_RENDER_TASK_PRIORITY);
+      continue;
+    }
+
     if (state->worker_pixels == nullptr) {
       // All three buffers are currently the native front plus two queued
       // regional frames. Keep only the newest logical state; a completion
@@ -1229,10 +1303,10 @@ static bool ensure_render_worker(WavyArcState *state) {
     return true;
   if (state->render_task_stack == nullptr) {
     state->render_task_stack = static_cast<StackType_t *>(
-        heap_caps_aligned_alloc(16, WAVE_RENDER_STACK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        heap_caps_aligned_alloc(16, WAVE_RENDER_STACK_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (state->render_task_stack == nullptr) {
       state->render_task_stack = static_cast<StackType_t *>(
-          heap_caps_aligned_alloc(16, WAVE_RENDER_STACK_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+          heap_caps_aligned_alloc(16, WAVE_RENDER_STACK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     }
     if (state->render_task_stack == nullptr)
       return false;
@@ -1240,10 +1314,10 @@ static bool ensure_render_worker(WavyArcState *state) {
 #if CONFIG_FREERTOS_UNICORE
   constexpr BaseType_t render_core = tskNO_AFFINITY;
 #else
-  // The regional PPA compositor is deliberately created on the other core.
-  // Keep CPU rasterization on the caller/loop core so the 15 ms raster and
-  // the PPA submission can overlap instead of serializing on one CPU.
-  const BaseType_t render_core = xPortGetCoreID();
+  // Keep wave rasterization away from the LVGL loop core. The regional PPA
+  // compositor runs on the other core too, but serializes PSRAM ownership with
+  // this worker before the next raster pass begins.
+  const BaseType_t render_core = esp32::background_task_core(-1);
 #endif
   // Audio and AFE tasks use much higher priorities, so they can still pre-empt
   // this best-effort worker without the UI renderer stalling audio delivery.
@@ -1256,8 +1330,9 @@ static bool ensure_render_worker(WavyArcState *state) {
     return false;
   }
   state->render_task = task;
-  ESP_LOGI("media.wave", "Render worker uses %s stack",
-           esp_ptr_external_ram(state->render_task_stack) ? "PSRAM" : "internal");
+  ESP_LOGI("media.wave", "Render worker uses %s stack on core %d (loop core %d)",
+           esp_ptr_external_ram(state->render_task_stack) ? "PSRAM" : "internal", static_cast<int>(render_core),
+           static_cast<int>(esp32::loop_task_core()));
   return true;
 }
 
@@ -1322,40 +1397,59 @@ inline void media_wavy_arc_init(lv_obj_t *image_obj) {
 inline void media_wavy_arc_set_background(const lv_image_dsc_t *source, bool apply_scrim) {
   auto &state = media_wavy_arc;
 #ifdef ESP_PLATFORM
-  // Artwork replacement is not a disposable animation update. Dropping it
-  // after the normal 2 ms try-lock leaves the previous cover permanently
-  // embedded below the wave. The raster worker never waits for the LVGL task,
-  // so taking this mutex to completion is a bounded ownership handoff.
+  // Artwork replacement is an ownership boundary, not a disposable animation
+  // update. Publish only the latest source and let the isolated render worker
+  // copy it. The old synchronous copy blocked the LVGL loop for hundreds of ms.
   if (state.render_mutex != nullptr && xSemaphoreTake(state.render_mutex, portMAX_DELAY) != pdTRUE)
     return;
 #endif
-  const uint32_t background_generation = ++state.background_request_generation;
-  auto *next_backdrop = find_free_backdrop(&state);
-  const bool captured = capture_backdrop(&state, next_backdrop, source, apply_scrim);
-  state.background_pending = false;
-  if (captured) {
-    // A queued PPA operation owns its source pointer until its callback. The
-    // three RGB565 crops let a new cover become active immediately without
-    // touching either that in-flight source or the current active crop.
-    state.backdrop_pixels = next_backdrop;
-    state.background_ready_generation = background_generation;
-    state.dirty = true;
-  }
+  const uint32_t background_generation = state.background_request_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
 #ifdef ESP_PLATFORM
-  if (captured)
-    state.render_generation++;
+  state.pending_background_source = source;
+  state.pending_background_scrim = apply_scrim;
+  state.background_pending.store(true, std::memory_order_release);
+  state.dirty = true;
   const bool use_worker = state.render_task != nullptr;
   unlock_render_state(&state);
-  if (captured && use_worker && state.direct_present_enabled.load(std::memory_order_relaxed))
+  if (use_worker)
     notify_render_worker(&state);
-  else if (captured && !use_worker && state.arc != nullptr)
-    invalidate_bitmap(&state);
+  else {
+    // Keep a safe fallback for a build where the optional worker could not be
+    // created. During initial LVGL setup there is intentionally no worker or
+    // mutex yet, so do not pass a null handle to xSemaphoreTake().
+    bool locked = false;
+    if (state.render_mutex != nullptr) {
+      locked = xSemaphoreTake(state.render_mutex, portMAX_DELAY) == pdTRUE;
+    } else {
+      locked = true;
+    }
+    if (locked) {
+      auto *next_backdrop = find_free_backdrop(&state);
+      const bool captured = capture_backdrop(&state, next_backdrop, source, apply_scrim);
+      state.background_pending.store(false, std::memory_order_release);
+      if (captured) {
+        state.backdrop_pixels = next_backdrop;
+        state.background_ready_generation.store(background_generation, std::memory_order_release);
+        state.render_generation++;
+        state.dirty = true;
+      }
+      unlock_render_state(&state);
+      if (captured && state.arc != nullptr)
+        invalidate_bitmap(&state);
+    }
+  }
 #else
+  auto *next_backdrop = find_free_backdrop(&state);
+  const bool captured = capture_backdrop(&state, next_backdrop, source, apply_scrim);
+  state.background_pending.store(false, std::memory_order_release);
+  if (captured) {
+    state.backdrop_pixels = next_backdrop;
+    state.background_ready_generation.store(background_generation, std::memory_order_release);
+    state.dirty = true;
+  }
   if (captured && state.arc != nullptr)
     invalidate_bitmap(&state);
 #endif
-  if (!captured)
-    ESP_LOGW("media.wave", "unable to capture backdrop generation %u", static_cast<unsigned>(background_generation));
 }
 
 inline void media_wavy_arc_log_state(const char *reason) {
@@ -1367,11 +1461,11 @@ inline void media_wavy_arc_log_state(const char *reason) {
            "stale_drops=%u queued=%d/%d/%d/%d",
            reason == nullptr ? "state" : reason, YESNO(state.registered), YESNO(state.buffers_ready), state.render_task,
            YESNO(state.direct_present_enabled.load(std::memory_order_relaxed)), YESNO(state.dirty),
-           YESNO(state.frame_ready), YESNO(state.background_pending), static_cast<unsigned>(state.ready_generation),
+           YESNO(state.frame_ready), YESNO(state.background_pending.load(std::memory_order_relaxed)),
+           static_cast<unsigned>(state.ready_generation),
            static_cast<unsigned>(state.render_generation), state.phase_deg, state.loader_phase_deg,
            state.value_basis_points, YESNO(state.playing), YESNO(state.pending), YESNO(state.pressed),
-           YESNO(present_in_flight_count(&state) != 0),
-           static_cast<unsigned>(state.stale_ready_drop_count),
+           YESNO(present_in_flight_count(&state) != 0), static_cast<unsigned>(state.stale_ready_drop_count),
            state.queued_value_basis_points.load(std::memory_order_relaxed),
            state.queued_playing.load(std::memory_order_relaxed), state.queued_pending.load(std::memory_order_relaxed),
            state.queued_pressed.load(std::memory_order_relaxed));
@@ -1396,8 +1490,7 @@ inline void media_wavy_arc_log_trace(const char *reason) {
   state.trace_enabled.store(false, std::memory_order_release);
   const uint32_t count = std::min<uint32_t>(state.trace_position.load(std::memory_order_acquire), WAVE_TRACE_CAPACITY);
   const uint32_t started_us = count == 0 ? 0 : state.trace_events[0].timestamp_us;
-  ESP_LOGW("media.wave.trace", "%s events=%u", reason == nullptr ? "trace" : reason,
-           static_cast<unsigned>(count));
+  ESP_LOGW("media.wave.trace", "%s events=%u", reason == nullptr ? "trace" : reason, static_cast<unsigned>(count));
   for (uint32_t index = 0; index < count; index++) {
     const auto &entry = state.trace_events[index];
     if (entry.timestamp_us == 0)
@@ -1683,17 +1776,9 @@ inline void media_wavy_arc_set_pressed(bool pressed) {
 inline bool media_wavy_arc_background_ready() {
 #ifdef ESP_PLATFORM
   auto &state = media_wavy_arc;
-  if (state.render_task == nullptr)
-    return !state.background_pending && state.background_ready_generation == state.background_request_generation;
-  if (state.render_mutex == nullptr || xSemaphoreTake(state.render_mutex, 0) != pdTRUE)
-    return false;
-  // Holding render_mutex guarantees that an in-progress backdrop rebuild has
-  // completed. The rendered frame may already have been handed to the direct
-  // presenter, so frame_ready is not a valid backdrop-readiness condition.
-  const bool ready =
-      !state.background_pending && state.background_ready_generation == state.background_request_generation;
-  unlock_render_state(&state);
-  return ready;
+  const uint32_t requested = state.background_request_generation.load(std::memory_order_acquire);
+  return !state.background_pending.load(std::memory_order_acquire) &&
+         state.background_ready_generation.load(std::memory_order_acquire) == requested;
 #else
   return true;
 #endif
@@ -1705,12 +1790,23 @@ inline bool media_wavy_arc_present_ready(bool worker_context) {
   if (state.render_task == nullptr)
     return false;
 
-  auto control_update_pending = [&state]() {
-    return state.queued_value_basis_points.load(std::memory_order_acquire) >= 0 ||
-           state.queued_playback_state.load(std::memory_order_acquire) >= 0 ||
-           state.queued_playing.load(std::memory_order_acquire) >= 0 ||
-           state.queued_pending.load(std::memory_order_acquire) >= 0 ||
-           state.queued_pressed.load(std::memory_order_acquire) >= 0;
+  // Progress is a coalesced latest-value update. Treating its mere presence as
+  // a presentation barrier can starve every rendered frame when the media
+  // source repeatedly publishes the same value. Only a real state boundary
+  // may suppress a frame that was rendered immediately before it.
+  auto visual_boundary_update_pending = [&state]() {
+    const int playback_state = state.queued_playback_state.load(std::memory_order_acquire);
+    if (playback_state >= 0 &&
+        (state.playing != ((playback_state & 0x01) != 0) || state.pending != ((playback_state & 0x02) != 0)))
+      return true;
+    const int playing = state.queued_playing.load(std::memory_order_acquire);
+    if (playing >= 0 && state.playing != (playing != 0))
+      return true;
+    const int pending = state.queued_pending.load(std::memory_order_acquire);
+    if (pending >= 0 && state.pending != (pending != 0))
+      return true;
+    const int pressed = state.queued_pressed.load(std::memory_order_acquire);
+    return pressed >= 0 && state.pressed != (pressed != 0);
   };
 
   if (!lock_render_state(&state))
@@ -1740,8 +1836,7 @@ inline bool media_wavy_arc_present_ready(bool worker_context) {
   while (true) {
     WavePresentSlot *completed = nullptr;
     for (auto &slot : state.present_slots) {
-      if (!slot.in_flight.load(std::memory_order_acquire) ||
-          !slot.complete.load(std::memory_order_acquire))
+      if (!slot.in_flight.load(std::memory_order_acquire) || !slot.complete.load(std::memory_order_acquire))
         continue;
       if (completed == nullptr || slot.sequence < completed->sequence)
         completed = &slot;
@@ -1759,8 +1854,7 @@ inline bool media_wavy_arc_present_ready(bool worker_context) {
 
     bool newer_submission = false;
     for (const auto &slot : state.present_slots) {
-      newer_submission |= slot.in_flight.load(std::memory_order_acquire) &&
-                          slot.sequence > completed->sequence;
+      newer_submission |= slot.in_flight.load(std::memory_order_acquire) && slot.sequence > completed->sequence;
     }
     lv_color32_t *completed_pixels = completed->pixels;
     const uint32_t completed_generation = completed->generation;
@@ -1776,9 +1870,8 @@ inline bool media_wavy_arc_present_ready(bool worker_context) {
     completed->in_flight.store(false, std::memory_order_release);
     completed->owner = nullptr;
 
-    if (completed_pixels != nullptr && !newer_submission &&
-        completed_generation == state.render_generation && state.direct_present_enabled &&
-        !control_update_pending()) {
+    if (completed_pixels != nullptr && !newer_submission && completed_generation == state.render_generation &&
+        state.direct_present_enabled && !visual_boundary_update_pending()) {
       lv_color32_t *old_front = state.pixels;
       state.pixels = completed_pixels;
       state.image.data = reinterpret_cast<const uint8_t *>(state.pixels);
@@ -1791,16 +1884,15 @@ inline bool media_wavy_arc_present_ready(bool worker_context) {
     retired_any = true;
   }
 
-  bool current_frame_owned = adopted_current ||
-                             (state.frame_ready && state.ready_generation == state.render_generation);
+  bool current_frame_owned =
+      adopted_current || (state.frame_ready && state.ready_generation == state.render_generation);
   for (const auto &slot : state.present_slots) {
-    current_frame_owned |= slot.in_flight.load(std::memory_order_acquire) &&
-                           slot.generation == state.render_generation;
+    current_frame_owned |= slot.in_flight.load(std::memory_order_acquire) && slot.generation == state.render_generation;
   }
-  if (retired_any && !current_frame_owned && !control_update_pending())
+  if (retired_any && !current_frame_owned && !visual_boundary_update_pending())
     state.dirty = true;
 
-  bool request_another = state.dirty || state.background_pending ||
+  bool request_another = state.dirty || state.background_pending.load(std::memory_order_acquire) ||
                          state.queued_phase_delta.load(std::memory_order_relaxed) != 0 ||
                          state.queued_value_basis_points.load(std::memory_order_relaxed) >= 0 ||
                          state.queued_playback_state.load(std::memory_order_relaxed) >= 0 ||
@@ -1816,10 +1908,14 @@ inline bool media_wavy_arc_present_ready(bool worker_context) {
   // completion left present_in_flight asserted forever, timed out the
   // handoff, and later exposed the stale wave/background frame.
   if (!state.direct_present_enabled.load(std::memory_order_relaxed)) {
-    const bool wake_worker = request_another && state.worker_pixels != nullptr;
     unlock_render_state(&state);
-    if (wake_worker)
-      notify_render_worker(&state);
+    // Keep dirty/control state queued until the player becomes visible again.
+    // Re-notifying here makes the priority-2 worker wake itself forever while
+    // the player is hidden. That starves priority-1 HTTP/JPEG work on the same
+    // core, so opening the gallery after the player can never start its request.
+    // An in-flight completion already wakes this task through
+    // direct_present_ready(); enabling direct presentation explicitly wakes it
+    // at the next player open.
     return false;
   }
 
@@ -1828,7 +1924,7 @@ inline bool media_wavy_arc_present_ready(bool worker_context) {
   uint32_t ready_generation = 0;
   bool present_stable = false;
   if (state.frame_ready) {
-    if (state.ready_generation == state.render_generation && !control_update_pending()) {
+    if (state.ready_generation == state.render_generation && !visual_boundary_update_pending()) {
       rendered = state.worker_pixels;
       present_backdrop = state.backdrop_pixels;
       ready_generation = state.ready_generation;
@@ -1908,10 +2004,7 @@ inline bool media_wavy_arc_present_ready(bool worker_context) {
 
   if (async_result == 2) {
     present_slot->started_us = esp_timer_get_time();
-    const bool wake_worker = state.worker_pixels != nullptr;
     unlock_render_state(&state);
-    if (wake_worker)
-      notify_render_worker(&state);
     return true;
   }
 

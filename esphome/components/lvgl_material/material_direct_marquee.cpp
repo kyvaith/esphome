@@ -319,25 +319,21 @@ bool MaterialDirectMarquee::ensure_worker_() {
   if (this->worker_handle_ != nullptr)
     return true;
 #if CONFIG_FREERTOS_UNICORE
-  constexpr BaseType_t WORKER_CORE = tskNO_AFFINITY;
-#elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0) && CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0
-  constexpr BaseType_t WORKER_CORE = 1;
-#elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1) && CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1
-  constexpr BaseType_t WORKER_CORE = 0;
+  constexpr BaseType_t worker_core = tskNO_AFFINITY;
 #else
-  constexpr BaseType_t WORKER_CORE = 1;
+  const BaseType_t worker_core = xPortGetCoreID() == 0 ? 1 : 0;
 #endif
   constexpr uint32_t WORKER_STACK_SIZE = 6144;
   this->worker_stack_ =
-      static_cast<StackType_t *>(heap_caps_aligned_alloc(16, WORKER_STACK_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+      static_cast<StackType_t *>(heap_caps_aligned_alloc(16, WORKER_STACK_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (this->worker_stack_ == nullptr) {
     this->worker_stack_ =
-        static_cast<StackType_t *>(heap_caps_aligned_alloc(16, WORKER_STACK_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        static_cast<StackType_t *>(heap_caps_aligned_alloc(16, WORKER_STACK_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   }
   if (this->worker_stack_ == nullptr)
     return false;
   this->worker_handle_ = xTaskCreateStaticPinnedToCore(worker_, "material_marquee", WORKER_STACK_SIZE, this, 1,
-                                                       this->worker_stack_, &this->worker_storage_, WORKER_CORE);
+                                                       this->worker_stack_, &this->worker_storage_, worker_core);
   if (this->worker_handle_ == nullptr) {
     heap_caps_free(this->worker_stack_);
     this->worker_stack_ = nullptr;

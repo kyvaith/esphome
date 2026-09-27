@@ -262,7 +262,7 @@ class EspAfe : public Component, public AudioProcessor {
   bool afe_pipeline_running_{false};
   bool afe_pipeline_paused_{false};
 #ifdef USE_ESP_AFE_DIRECT_PATH
-  bool direct_fetch_running_{false};
+  std::atomic<bool> direct_fetch_running_{false};
 #endif
 
   // Feed buffer: interleaved [mic, ref, ...], [mic1, mic2, ref, ...] or

@@ -83,6 +83,60 @@ static inline void esphome_lvgl_rgb888_artwork_throttle(bool active, int32_t y)
 }
 """
 
+THORVG_RENDERER_MARKER = "esphome_thorvg_psram_compositor_buffers"
+THORVG_RENDERER_HELPER = """
+// esphome_thorvg_psram_compositor_buffers
+// ThorVG compositor surfaces can be much larger than LVGL's TLSF pool.  On
+// ESP targets keep these temporary pixel buffers in PSRAM instead of making
+// the small LVGL pool fail after the UI has reserved its buffers.
+#if defined(ESP_PLATFORM)
+    #include "esp_heap_caps.h"
+#endif
+
+static inline void* _allocCompositorBuffer(size_t bytes)
+{
+#if defined(ESP_PLATFORM)
+    return heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+    return lv_malloc(bytes);
+#endif
+}
+
+static inline void _freeCompositorBuffer(void* buffer)
+{
+#if defined(ESP_PLATFORM)
+    heap_caps_free(buffer);
+#else
+    lv_free(buffer);
+#endif
+}
+"""
+
+THORVG_RASTER_MARKER = "esphome_thorvg_rle_bounds_guard"
+THORVG_RASTER_HELPER = """
+// esphome_thorvg_rle_bounds_guard
+// RLE data can outlive a transformed shape.  Clip every span before it is
+// used as a surface offset so a stale span cannot corrupt the framebuffer.
+static inline bool _validRle(const SwRle* rle)
+{
+    return rle && rle->spans && rle->size > 0 && rle->size <= rle->alloc;
+}
+
+static inline bool _clipRleSpan(const SwSurface* surface, const SwSpan* span,
+                                uint32_t& x, uint32_t& len)
+{
+    if (!surface || !span || span->len == 0 || span->y >= surface->h || span->x >= surface->w) {
+        return false;
+    }
+
+    x = span->x;
+    const uint32_t available = surface->w - x;
+    len = (span->len < available) ? span->len : available;
+    return len > 0;
+}
+"""
+
+
 PPA_CACHE_SYNC_HELPER = """
 extern bool esphome_lvgl_ppa_skip_cache_msync(const void *buffer, size_t size,
                                               int flags) __attribute__((weak));
@@ -183,6 +237,8 @@ def patch_piolibdeps_lvgl_sources():
     patch_sw_rgb888_artwork_throttle_source(
         lvgl_src / "draw" / "sw" / "blend" / "lv_draw_sw_blend_to_rgb888.c"
     )
+    patch_thorvg_renderer_source(lvgl_src / "libs" / "thorvg" / "tvgSwRenderer.cpp")
+    patch_thorvg_raster_source(lvgl_src / "libs" / "thorvg" / "tvgSwRaster.cpp")
 
 
 def patch_profiler_builtin_source(src):
@@ -272,6 +328,141 @@ def patch_sw_rgb888_artwork_throttle_source(src):
         print("Patched LVGL RGB565 artwork DSI backpressure:", src)
     except OSError as err:
         print("WARNING: failed to patch LVGL RGB888 blend source:", err)
+
+
+def patch_thorvg_renderer_source(src):
+    src = Path(src)
+    if not src.exists():
+        return
+    try:
+        text = src.read_text(encoding="utf-8", errors="ignore")
+    except OSError as err:
+        print("WARNING: failed to read ThorVG renderer source:", err)
+        return
+    if THORVG_RENDERER_MARKER in text:
+        return
+
+    original = text
+    include = '#include <algorithm>\n'
+    if include not in text:
+        print("WARNING: failed to find ThorVG renderer include anchor")
+        return
+    text = text.replace(include, include + THORVG_RENDERER_HELPER.strip() + "\n", 1)
+
+    old_alloc = (
+        "        cmp->compositor->image.data = "
+        "(pixel_t*)lv_malloc(channelSize * surface->stride * surface->h);\n"
+        "        LV_ASSERT_MALLOC(cmp->compositor->image.data);"
+    )
+    new_alloc = (
+        "        const size_t bytes = static_cast<size_t>(channelSize) * surface->stride * surface->h;\n"
+        "        cmp->compositor->image.data = (pixel_t*)_allocCompositorBuffer(bytes);\n"
+        "        if (!cmp->compositor->image.data) {\n"
+        "            TVGERR(\"SW_ENGINE\", \"Failed to allocate compositor surface (%u bytes)\", (unsigned)bytes);\n"
+        "            delete(cmp->compositor);\n"
+        "            delete(cmp);\n"
+        "            return nullptr;\n"
+        "        }"
+    )
+    if old_alloc not in text:
+        print("WARNING: failed to find ThorVG compositor allocation")
+        return
+    text = text.replace(old_alloc, new_alloc, 1)
+
+    old_free = "        lv_free((*comp)->compositor->image.data);"
+    if old_free not in text:
+        print("WARNING: failed to find ThorVG compositor release")
+        return
+    text = text.replace(old_free, "        _freeCompositorBuffer((*comp)->compositor->image.data);", 1)
+
+    old_target = "    auto cmp = request(CHANNEL_SIZE(cs));\n"
+    if old_target not in text:
+        print("WARNING: failed to find ThorVG compositor target request")
+        return
+    text = text.replace(old_target, old_target + "    if (!cmp) return nullptr;\n", 1)
+
+    old_effect = "    auto& buffer = request(surface->channelSize)->compositor->image;"
+    new_effect = (
+        "    auto scratch = request(surface->channelSize);\n"
+        "    if (!scratch) return false;\n"
+        "    auto& buffer = scratch->compositor->image;"
+    )
+    if old_effect not in text:
+        print("WARNING: failed to find ThorVG effect scratch request")
+        return
+    text = text.replace(old_effect, new_effect, 1)
+
+    if text == original:
+        return
+    try:
+        src.write_text(text, encoding="utf-8")
+        print("Patched ThorVG compositor buffers:", src)
+    except OSError as err:
+        print("WARNING: failed to patch ThorVG renderer source:", err)
+
+
+def patch_thorvg_raster_source(src):
+    src = Path(src)
+    if not src.exists():
+        return
+    try:
+        text = src.read_text(encoding="utf-8", errors="ignore")
+    except OSError as err:
+        print("WARNING: failed to read ThorVG raster source:", err)
+        return
+    if THORVG_RASTER_MARKER in text:
+        return
+
+    original = text
+    anchor = "static bool _rasterCompositeMaskedRle("
+    if anchor not in text:
+        print("WARNING: failed to find ThorVG RLE anchor")
+        return
+    text = text.replace(anchor, THORVG_RASTER_HELPER.strip() + "\n\n" + anchor, 1)
+
+    solid_start = text.find("static bool _rasterSolidRle(")
+    rle_start = text.find("static bool _rasterRle(", solid_start)
+    if solid_start == -1 or rle_start == -1:
+        print("WARNING: failed to find ThorVG solid RLE function")
+        return
+    solid = text[solid_start:rle_start]
+    loop = (
+        "        for (uint32_t i = 0; i < rle->size; ++i, ++span) {\n"
+        "            if (span->coverage == 255) {"
+    )
+    guarded_loop = (
+        "        for (uint32_t i = 0; i < rle->size; ++i, ++span) {\n"
+        "            uint32_t x, len;\n"
+        "            if (!_clipRleSpan(surface, span, x, len)) continue;\n"
+        "            if (span->coverage == 255) {"
+    )
+    if solid.count(loop) != 2:
+        print("WARNING: failed to find both ThorVG solid RLE loops")
+        return
+    solid = solid.replace(loop, guarded_loop, 2)
+    solid = solid.replace("span->x, span->len", "x, len")
+    solid = solid.replace("span->x];", "x];")
+    solid = solid.replace("span->len;", "len;")
+    text = text[:solid_start] + solid + text[rle_start:]
+
+    rle_body_start = text.find("static bool _rasterRle(")
+    brace = text.find("{", rle_body_start)
+    if rle_body_start == -1 or brace == -1:
+        print("WARNING: failed to find ThorVG RLE dispatcher")
+        return
+    text = (
+        text[:brace + 1]
+        + "\n    if (!_validRle(rle)) return false;"
+        + text[brace + 1:]
+    )
+
+    if text == original:
+        return
+    try:
+        src.write_text(text, encoding="utf-8")
+        print("Patched ThorVG RLE bounds guards:", src)
+    except OSError as err:
+        print("WARNING: failed to patch ThorVG raster source:", err)
 
 
 create_piolibdeps_atomic_shim()
@@ -485,6 +676,12 @@ def lvgl_src_filter(build_env, node):
 
     if path.endswith("/draw/sw/blend/lv_draw_sw_blend_to_rgb888.c"):
         patch_sw_rgb888_artwork_throttle_source(node.get_path())
+
+    if path.endswith("/libs/thorvg/tvgSwRenderer.cpp"):
+        patch_thorvg_renderer_source(node.get_path())
+
+    if path.endswith("/libs/thorvg/tvgSwRaster.cpp"):
+        patch_thorvg_raster_source(node.get_path())
 
     # Only filter files inside the LVGL library
     if "/lvgl/" not in path:

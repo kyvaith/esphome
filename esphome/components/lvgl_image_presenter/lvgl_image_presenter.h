@@ -16,6 +16,7 @@
 #if defined(USE_ESP32_VARIANT_ESP32P4) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
 #include "driver/ppa.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #endif
 
@@ -69,6 +70,8 @@ class LvglImagePresenter : public Component, public image::JpegFrameConsumer, pu
   void cancel_transition();
   bool transition_to(image::Image *source, uint32_t duration_ms = 800);
   bool is_transition_pending_or_active() const;
+  bool is_transition_active() const { return this->transition_state_ != TransitionState::NONE; }
+  bool is_transition_prepared() const { return this->transition_prepared_; }
   bool transition_failed() const;
   bool is_phase_complete() const { return this->phase_complete_.load(std::memory_order_acquire); }
   uint32_t presented_frames() const { return this->presented_frames_.load(std::memory_order_relaxed); }
@@ -78,12 +81,32 @@ class LvglImagePresenter : public Component, public image::JpegFrameConsumer, pu
   uint32_t last_direct_jpeg_decode_us() const {
     return this->last_direct_jpeg_decode_us_.load(std::memory_order_relaxed);
   }
+  uint32_t direct_jpeg_queue_drops() const {
+#if defined(USE_ESP32_JPEG) && defined(USE_ESP32_VARIANT_ESP32P4)
+    return this->direct_jpeg_queue_drops_.load(std::memory_order_relaxed);
+#else
+    return 0;
+#endif
+  }
+  uint32_t direct_jpeg_stale_drops() const {
+#if defined(USE_ESP32_JPEG) && defined(USE_ESP32_VARIANT_ESP32P4)
+    return this->direct_jpeg_stale_drops_.load(std::memory_order_relaxed);
+#else
+    return 0;
+#endif
+  }
   image::JpegFrameResult consume_jpeg_frame(const uint8_t *data, size_t size) override;
   bool freeze_direct();
   void resume_direct();
   bool suspend_for_direct_overlay() override;
   void resume_after_direct_overlay() override;
-  size_t memory_usage_bytes() const { return 0; }
+  size_t memory_usage_bytes() const {
+#if defined(USE_ESP32_JPEG) && defined(USE_ESP32_VARIANT_ESP32P4)
+    return this->direct_jpeg_memory_bytes_.load(std::memory_order_relaxed);
+#else
+    return 0;
+#endif
+  }
   void log_memory_usage(const char *phase) const;
 
  protected:
@@ -102,6 +125,9 @@ class LvglImagePresenter : public Component, public image::JpegFrameConsumer, pu
   bool start_crossfade_(image::Image *source, uint32_t duration_ms);
   void finish_crossfade_();
   void cleanup_crossfade_(bool show_current_source);
+  bool capture_transition_buffer_(image::Image *source);
+  void release_image_lease_(image::ImageBufferLease *lease);
+  void adopt_transition_buffer_();
   bool is_widget_visible_() const;
   bool is_widget_full_screen_() const;
   bool ensure_direct_session_();
@@ -116,6 +142,25 @@ class LvglImagePresenter : public Component, public image::JpegFrameConsumer, pu
   void record_presented_frame_(uint32_t elapsed_us);
   void reset_direct_frame_cache_();
   void disable_direct_backend_(const char *reason);
+
+#if defined(USE_ESP32_JPEG) && defined(USE_ESP32_VARIANT_ESP32P4)
+  enum class DirectJpegSlotState : uint8_t { FREE, WRITING, PENDING, ACTIVE };
+  struct DirectJpegSlot {
+    uint8_t *data{nullptr};
+    size_t size{0};
+    size_t capacity{0};
+    uint32_t generation{0};
+    DirectJpegSlotState state{DirectJpegSlotState::FREE};
+  };
+
+  bool create_direct_jpeg_worker_();
+  bool stop_direct_jpeg_worker_(uint32_t timeout_ms = 800);
+  void clear_direct_jpeg_queue_();
+  image::JpegFrameResult enqueue_direct_jpeg_frame_(const uint8_t *data, size_t size);
+  image::JpegFrameResult present_direct_jpeg_frame_(const uint8_t *data, size_t size, uint32_t generation = 0);
+  static void direct_jpeg_worker_trampoline_(void *arg);
+  void direct_jpeg_worker_();
+#endif
 
 #ifdef USE_ESP32_VARIANT_ESP32P4
   bool sync_dma_source_for_ppa_(const image::ImageBufferLease &source) const;
@@ -179,6 +224,10 @@ class LvglImagePresenter : public Component, public image::JpegFrameConsumer, pu
   lv_opa_t base_opacity_{LV_OPA_COVER};
   bool transition_prepared_{false};
   lv_image_dsc_t previous_dsc_{};
+  lv_image_dsc_t displayed_dsc_{};
+  lv_image_dsc_t transition_dsc_{};
+  image::ImageBufferLease displayed_lease_{};
+  image::ImageBufferLease transition_lease_{};
   std::atomic<bool> transition_failed_{false};
   display::FrameBufferLease direct_target_lease_{};
   const uint8_t *last_direct_source_data_{nullptr};
@@ -198,11 +247,35 @@ class LvglImagePresenter : public Component, public image::JpegFrameConsumer, pu
   uint32_t present_fps_window_started_ms_{0};
   uint32_t present_fps_window_frames_{0};
 
+#if defined(USE_ESP32_JPEG) && defined(USE_ESP32_VARIANT_ESP32P4)
+  // Two slots are sufficient for latest-frame semantics: one can be ACTIVE
+  // while the other is WRITING/PENDING. A newer producer replaces the pending
+  // slot, so a third encoded-frame allocation would only retain stale data.
+  static constexpr size_t DIRECT_JPEG_SLOT_COUNT = 2;
+  static constexpr size_t DIRECT_JPEG_MAX_FRAME_SIZE = 1024U * 1024U;
+  static constexpr uint32_t DIRECT_JPEG_WORKER_STACK_SIZE = 6144;
+  std::array<DirectJpegSlot, DIRECT_JPEG_SLOT_COUNT> direct_jpeg_slots_{};
+  SemaphoreHandle_t direct_jpeg_queue_mutex_{nullptr};
+  StaticSemaphore_t direct_jpeg_queue_mutex_storage_{};
+  TaskHandle_t direct_jpeg_worker_handle_{nullptr};
+  StackType_t *direct_jpeg_worker_stack_{nullptr};
+  StaticTask_t direct_jpeg_worker_storage_{};
+  std::atomic<bool> direct_jpeg_worker_run_{false};
+  std::atomic<bool> direct_jpeg_worker_active_{false};
+  std::atomic<bool> direct_jpeg_worker_exited_{true};
+  std::atomic<bool> direct_jpeg_writer_busy_{false};
+  std::atomic<uint32_t> direct_jpeg_generation_{0};
+  std::atomic<uint32_t> direct_jpeg_queue_drops_{0};
+  std::atomic<uint32_t> direct_jpeg_stale_drops_{0};
+  std::atomic<size_t> direct_jpeg_memory_bytes_{0};
+#endif
+
 #ifdef USE_ESP32_VARIANT_ESP32P4
   ppa_client_handle_t direct_srm_client_{nullptr};
 #endif
 #if defined(USE_ESP32_VARIANT_ESP32P4) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   ppa_client_handle_t crossfade_blend_client_{nullptr};
+  ppa_client_handle_t crossfade_srm_client_{nullptr};
   TaskHandle_t crossfade_worker_handle_{nullptr};
   StackType_t *crossfade_worker_stack_{nullptr};
   StaticTask_t crossfade_worker_storage_{};
@@ -212,9 +285,9 @@ class LvglImagePresenter : public Component, public image::JpegFrameConsumer, pu
   std::atomic<bool> crossfade_worker_complete_{false};
   std::atomic<bool> crossfade_worker_success_{false};
   std::atomic<image::Image *> crossfade_source_{nullptr};
+  display::FrameBufferLease crossfade_frame_lease_{};
   uint8_t *crossfade_frame_{nullptr};
   size_t crossfade_frame_size_{0};
-  size_t crossfade_frame_allocation_size_{0};
   std::atomic<bool> crossfade_direct_active_{false};
 #endif
 };

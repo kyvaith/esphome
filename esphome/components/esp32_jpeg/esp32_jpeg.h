@@ -57,6 +57,7 @@ class JpegBuffer {
   size_t capacity() const { return this->capacity_; }
   bool empty() const { return this->data_ == nullptr || this->size_ == 0; }
 
+  void clear() { this->size_ = 0; }
   void reset(uint8_t *data, size_t size, size_t capacity);
   void release();
 
@@ -73,10 +74,16 @@ struct EncodeConfig {
   DownSampling down_sampling{DownSampling::YUV420};
   uint8_t quality{80};
   bool pixel_reverse{false};
+  // The source was last written by a peripheral (for example PPA/DMA2D) and
+  // CPU cache lines must not be written back over it before JPEG DMA reads it.
+  bool input_dma_owned{false};
   // Reuse one full-size hardware output buffer across a batch of encodes.
   // Disable this for occasional runtime encodes when retaining that scratch
   // allocation would cost more memory than the compressed image itself.
   bool retain_output_buffer{true};
+  // Zero reserves the raw image size. A diagnostic caller may use a bounded
+  // compressed output budget and accept an error if that budget is exceeded.
+  size_t output_buffer_size{0};
   // Zero/-1 retain the component defaults. Per-operation overrides keep
   // fullscreen snapshot traffic from starving a continuously scanned display.
   uint16_t dma2d_burst_length{0};

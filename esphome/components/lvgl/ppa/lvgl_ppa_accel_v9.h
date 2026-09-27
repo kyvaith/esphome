@@ -22,6 +22,11 @@ extern "C" {
 
 void lvgl_port_ppa_v9_init(lv_display_t *display);
 
+// Fill a complete external XRGB/ARGB8888 surface through the shared PPA fill
+// client. The caller keeps a CPU fallback for early LVGL startup.
+bool lvgl_port_ppa_v9_fill_argb8888(void *buffer, size_t buffer_size, uint32_t width, uint32_t height,
+                                    uint32_t argb_color);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,5 +1,6 @@
 #include "material_direct_volume_overlay.h"
 
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <cstring>
 
 #ifdef USE_ESP32
+#include "esphome/components/esp32/task_utils.h"
 #include "esp_heap_caps.h"
 #endif
 
@@ -16,7 +18,11 @@ namespace esphome::lvgl_material {
 
 static const char *const TAG = "lvgl_material.volume";
 static constexpr float PI = 3.14159265358979323846f;
-static constexpr int SCRATCH_BAND_ROWS = 64;
+static void update_atomic_max(std::atomic<uint32_t> &target, uint32_t value) {
+  uint32_t current = target.load(std::memory_order_relaxed);
+  while (current < value && !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {
+  }
+}
 
 static void set_hidden_without_invalidation(lv_obj_t *obj, bool hidden) {
   if (obj == nullptr)
@@ -47,10 +53,38 @@ void MaterialDirectVolumeOverlay::setup() {
   if (this->lvgl_component_ == nullptr || this->arc_ == nullptr || this->knob_ == nullptr || this->label_ == nullptr) {
     ESP_LOGE(TAG, "Direct volume overlay configuration is incomplete");
     this->mark_failed();
+    return;
   }
+#ifdef USE_ESP32
+  // Reserve the tiny worker before image/Lottie pipelines consume most of the
+  // internal heap. Lazy creation during a gesture used to fail after a
+  // gallery/camera cycle and forced full-frame work back onto the main loop.
+  if (!this->ensure_worker_())
+    ESP_LOGW(TAG, "Unable to reserve direct volume worker during setup; native fallback will be used");
+#endif
+  if (!this->update_geometry_() || !this->ensure_persistent_resources_())
+    ESP_LOGW(TAG, "Unable to reserve direct volume rendering buffers during setup; will retry on first use");
 }
 
-void MaterialDirectVolumeOverlay::on_shutdown() { this->end(false); }
+void MaterialDirectVolumeOverlay::loop() {
+#ifdef USE_ESP32
+  if (!this->worker_failed_.exchange(false, std::memory_order_acq_rel))
+    return;
+  const int requested = this->last_requested_update_.load(std::memory_order_acquire);
+  ESP_LOGW(TAG, "Direct volume worker failed; switching this gesture to native LVGL rendering");
+  this->end(true);
+  auto *root = this->arc_ == nullptr ? nullptr : lv_obj_get_parent(this->arc_);
+  if (root != nullptr)
+    lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
+  if (requested != NO_PENDING_UPDATE)
+    this->update_native_((requested >> 8) & 0xFF, requested & 0xFF);
+#endif
+}
+
+void MaterialDirectVolumeOverlay::on_shutdown() {
+  this->end(false);
+  this->release_persistent_resources_();
+}
 
 void MaterialDirectVolumeOverlay::dump_config() {
   ESP_LOGCONFIG(TAG, "Material Direct Volume Overlay:");
@@ -114,41 +148,132 @@ bool MaterialDirectVolumeOverlay::update_geometry_() {
   this->inactive_color_ = lv_obj_get_style_arc_color(this->arc_, LV_PART_MAIN);
   this->active_color_ = lv_obj_get_style_arc_color(this->arc_, LV_PART_INDICATOR);
   this->knob_color_ = lv_obj_get_style_bg_color(this->knob_, LV_PART_MAIN);
-  const size_t band_capacity =
-      static_cast<size_t>(this->screen_width_) * std::min(this->screen_height_, SCRATCH_BAND_ROWS);
-  this->scratch_capacity_ = std::max(band_capacity, static_cast<size_t>(this->label_width_) * this->label_height_);
+  // A bounded band keeps the gesture allocation-free without reserving a
+  // contiguous 800x480 RGB888 surface. At 128 rows a full overlay refresh is
+  // at most four PPA transfers, while the common damage-only path needs one.
+  this->scratch_capacity_ =
+      std::max(static_cast<size_t>(this->screen_width_) * std::min(this->capture_height_, SCRATCH_BAND_ROWS),
+               static_cast<size_t>(this->label_width_) * this->label_height_);
+  this->activation_patch_required_capacity_ = 0;
+  if (this->activation_widget_ != nullptr && lv_obj_is_valid(this->activation_widget_)) {
+    lv_area_t activation_area{};
+    lv_obj_get_coords(this->activation_widget_, &activation_area);
+    const int patch_x1 = std::clamp(static_cast<int>(activation_area.x1), 0, this->screen_width_ - 1);
+    const int patch_y1 = std::clamp(static_cast<int>(activation_area.y1), 0, this->screen_height_ - 1);
+    const int patch_x2 = std::clamp(static_cast<int>(activation_area.x2), patch_x1, this->screen_width_ - 1);
+    const int patch_y2 = std::clamp(static_cast<int>(activation_area.y2), patch_y1, this->screen_height_ - 1);
+    this->activation_patch_required_capacity_ =
+        static_cast<size_t>(patch_x2 - patch_x1 + 1) * static_cast<size_t>(patch_y2 - patch_y1 + 1);
+  }
   return this->scratch_capacity_ != 0;
 }
 
-void MaterialDirectVolumeOverlay::release_() {
+bool MaterialDirectVolumeOverlay::ensure_persistent_resources_() {
+  if (this->scratch_capacity_ == 0 || this->font_ == nullptr)
+    return false;
+
+  if (this->scratch_ == nullptr || this->scratch_allocated_capacity_ < this->scratch_capacity_) {
+#ifdef USE_ESP32
+    if (this->scratch_ != nullptr)
+      heap_caps_free(this->scratch_);
+    this->scratch_ = static_cast<lv_color_t *>(
+        heap_caps_malloc(this->scratch_capacity_ * sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+#else
+    std::free(this->scratch_);
+    this->scratch_ = static_cast<lv_color_t *>(std::malloc(this->scratch_capacity_ * sizeof(lv_color_t)));
+#endif
+    this->scratch_allocated_capacity_ = this->scratch_ == nullptr ? 0 : this->scratch_capacity_;
+  }
+
+  const int glyph_width = std::max(64, static_cast<int>(this->font_->line_height) * 2);
+  const int glyph_height = std::max(64, static_cast<int>(this->font_->line_height) + 48);
+  if (this->glyph_buffer_ == nullptr || this->glyph_buffer_width_ < glyph_width ||
+      this->glyph_buffer_height_ < glyph_height) {
+    if (this->glyph_buffer_ != nullptr)
+      lv_draw_buf_destroy(this->glyph_buffer_);
+    this->glyph_buffer_ = lv_draw_buf_create(glyph_width, glyph_height, LV_COLOR_FORMAT_A8, LV_STRIDE_AUTO);
+    if (this->glyph_buffer_ != nullptr) {
+      this->glyph_buffer_width_ = glyph_width;
+      this->glyph_buffer_height_ = glyph_height;
+    } else {
+      this->glyph_buffer_width_ = 0;
+      this->glyph_buffer_height_ = 0;
+    }
+  }
+
+  if (this->activation_patch_required_capacity_ != 0 &&
+      (this->activation_patch_ == nullptr || this->activation_patch_capacity_ < this->activation_patch_required_capacity_)) {
+#ifdef USE_ESP32
+    if (this->activation_patch_ != nullptr)
+      heap_caps_free(this->activation_patch_);
+    this->activation_patch_ = static_cast<lv_color_t *>(heap_caps_malloc(
+        this->activation_patch_required_capacity_ * sizeof(lv_color_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+#else
+    std::free(this->activation_patch_);
+    this->activation_patch_ = static_cast<lv_color_t *>(
+        std::malloc(this->activation_patch_required_capacity_ * sizeof(lv_color_t)));
+#endif
+    this->activation_patch_capacity_ =
+        this->activation_patch_ == nullptr ? 0 : this->activation_patch_required_capacity_;
+  }
+
+  return this->scratch_ != nullptr && this->glyph_buffer_ != nullptr &&
+         (this->activation_patch_required_capacity_ == 0 || this->activation_patch_ != nullptr);
+}
+
+void MaterialDirectVolumeOverlay::release_persistent_resources_() {
   if (this->glyph_buffer_ != nullptr)
     lv_draw_buf_destroy(this->glyph_buffer_);
 #ifdef USE_ESP32
-  if (this->original_ != nullptr && this->original_owned_)
-    heap_caps_free(const_cast<lv_color_t *>(this->original_));
-  if (this->background_ != nullptr)
-    heap_caps_free(this->background_);
   if (this->scratch_ != nullptr)
     heap_caps_free(this->scratch_);
+  if (this->activation_patch_ != nullptr)
+    heap_caps_free(this->activation_patch_);
+#else
+  std::free(this->scratch_);
+  std::free(this->activation_patch_);
+#endif
+  this->glyph_buffer_ = nullptr;
+  this->glyph_buffer_width_ = 0;
+  this->glyph_buffer_height_ = 0;
+  this->scratch_ = nullptr;
+  this->scratch_allocated_capacity_ = 0;
+  this->activation_patch_ = nullptr;
+  this->activation_patch_capacity_ = 0;
+  this->activation_patch_required_capacity_ = 0;
+}
+
+void MaterialDirectVolumeOverlay::release_() {
+  if (this->background_lease_)
+    this->lvgl_component_->release_presentation_frame(&this->background_lease_);
+  if (this->reserved_original_frame_ != nullptr)
+    this->lvgl_component_->release_reserved_presentation_frame(this->reserved_original_frame_);
+#ifdef USE_ESP32
+  if (this->original_ != nullptr && this->original_owned_)
+    heap_caps_free(const_cast<lv_color_t *>(this->original_));
 #else
   if (this->original_owned_)
     std::free(const_cast<lv_color_t *>(this->original_));
-  std::free(this->background_);
-  std::free(this->scratch_);
 #endif
   this->original_ = nullptr;
   this->original_owned_ = false;
   this->background_ = nullptr;
-  this->scratch_ = nullptr;
-  this->glyph_buffer_ = nullptr;
+  this->background_lease_ = {};
+  this->reserved_original_frame_ = nullptr;
+  this->stable_background_ = false;
   this->font_ = nullptr;
-  this->scratch_capacity_ = 0;
+  this->activation_patch_valid_ = false;
   this->prepared_ = false;
-  this->active_ = false;
+  this->active_.store(false, std::memory_order_release);
   this->presented_ = false;
   this->visual_pct_ = -1;
   this->value_pct_ = -1;
   this->reset_visual_cache_();
+#ifdef USE_ESP32
+  this->pending_update_.store(NO_PENDING_UPDATE, std::memory_order_release);
+  this->last_requested_update_.store(NO_PENDING_UPDATE, std::memory_order_release);
+  this->pending_requested_us_.store(0, std::memory_order_release);
+#endif
 }
 
 bool MaterialDirectVolumeOverlay::suspend_scene_controllers_() {
@@ -192,10 +317,26 @@ bool MaterialDirectVolumeOverlay::borrow_scene_frame_() {
 }
 
 void MaterialDirectVolumeOverlay::end(bool restore_screen) {
+#ifdef USE_ESP32
+  this->quiesce_worker_();
+  const uint32_t requests = this->stat_requests_.load(std::memory_order_relaxed);
+  const uint32_t renders = this->stat_renders_.load(std::memory_order_relaxed);
+  if (requests != 0 && renders != 0) {
+    ESP_LOGI(TAG, "gesture perf: requests=%u renders=%u coalesced=%u age=%uus max_age=%uus render=%uus max_render=%uus",
+             static_cast<unsigned>(requests), static_cast<unsigned>(renders),
+             static_cast<unsigned>(this->stat_coalesced_.load(std::memory_order_relaxed)),
+             static_cast<unsigned>(this->stat_total_age_us_.load(std::memory_order_relaxed) / renders),
+             static_cast<unsigned>(this->stat_max_age_us_.load(std::memory_order_relaxed)),
+             static_cast<unsigned>(this->stat_total_render_us_.load(std::memory_order_relaxed) / renders),
+             static_cast<unsigned>(this->stat_max_render_us_.load(std::memory_order_relaxed)));
+  }
+#else
+  this->active_ = false;
+#endif
   if (restore_screen && this->presented_ && this->original_ != nullptr) {
-    this->lvgl_component_->direct_blit_rgb888(reinterpret_cast<const uint8_t *>(this->original_),
-                                              this->screen_width_ * static_cast<int>(sizeof(lv_color_t)), 0, 0,
-                                              this->screen_width_, this->screen_height_);
+    this->lvgl_component_->direct_blit_rgb888_ppa(reinterpret_cast<const uint8_t *>(this->original_),
+                                                  this->screen_width_ * static_cast<int>(sizeof(lv_color_t)), 0, 0,
+                                                  this->screen_width_, this->screen_height_);
   }
   if (this->arc_ != nullptr)
     lv_obj_clear_flag(this->arc_, LV_OBJ_FLAG_HIDDEN);
@@ -332,8 +473,7 @@ bool MaterialDirectVolumeOverlay::rebuild_background_() {
     set_hidden_without_invalidation(this->activation_widget_, true);
     std::array<bool, MAX_SCENE_CONTROLLERS> background_render_active{};
     for (size_t index = 0; index < this->scene_controller_count_; index++) {
-      background_render_active[index] =
-          this->scene_controllers_[index]->begin_direct_overlay_background_render();
+      background_render_active[index] = this->scene_controllers_[index]->begin_direct_overlay_background_render();
     }
     const int max_rows = std::max(1, static_cast<int>(this->scratch_capacity_ / patch_width));
     for (int row_offset = 0; this->display_ != nullptr && row_offset < patch_height; row_offset += max_rows) {
@@ -359,6 +499,19 @@ bool MaterialDirectVolumeOverlay::rebuild_background_() {
       if (background_render_active[index - 1])
         this->scene_controllers_[index - 1]->end_direct_overlay_background_render();
     }
+    const size_t patch_pixels = static_cast<size_t>(patch_width) * patch_height;
+    if (this->activation_patch_ != nullptr && this->activation_patch_capacity_ >= patch_pixels) {
+      for (int row = 0; row < patch_height; row++) {
+        std::memcpy(this->activation_patch_ + static_cast<size_t>(row) * patch_width,
+                    this->background_ + static_cast<size_t>(patch_y + row) * this->screen_width_ + patch_x,
+                    static_cast<size_t>(patch_width) * sizeof(lv_color_t));
+      }
+      this->activation_patch_x_ = patch_x;
+      this->activation_patch_y_ = patch_y;
+      this->activation_patch_width_ = patch_width;
+      this->activation_patch_height_ = patch_height;
+      this->activation_patch_valid_ = true;
+    }
     set_hidden_without_invalidation(this->activation_widget_, false);
   }
   this->redraw_track_in_region_(this->background_, this->screen_width_, 0, 0, this->screen_width_,
@@ -366,76 +519,174 @@ bool MaterialDirectVolumeOverlay::rebuild_background_() {
   return true;
 }
 
+bool MaterialDirectVolumeOverlay::compose_region_(lv_color_t *buffer, int stride, int origin_x, int origin_y,
+                                                   int width, int height, int visual_pct, int value_pct) {
+  if (buffer == nullptr || this->original_ == nullptr || stride < width || origin_x < 0 || origin_y < 0 ||
+      width <= 0 || height <= 0 || origin_x + width > this->screen_width_ ||
+      origin_y + height > this->capture_height_)
+    return false;
+
+  if (this->stable_background_ && this->background_ != nullptr) {
+    for (int row = 0; row < height; row++) {
+      const size_t source_offset = static_cast<size_t>(origin_y + row) * this->screen_width_ + origin_x;
+      std::memcpy(buffer + static_cast<size_t>(row) * stride, this->background_ + source_offset,
+                  static_cast<size_t>(width) * sizeof(lv_color_t));
+    }
+  } else {
+    const int retained_opacity = 255 - this->scrim_opacity_;
+    for (int row = 0; row < height; row++) {
+      const size_t offset = static_cast<size_t>(origin_y + row) * this->screen_width_ + origin_x;
+      auto *target = buffer + static_cast<size_t>(row) * stride;
+      for (int column = 0; column < width; column++) {
+        const auto &source = this->original_[offset + column];
+        target[column].red = static_cast<uint8_t>((static_cast<int>(source.red) * retained_opacity + 127) / 255);
+        target[column].green = static_cast<uint8_t>((static_cast<int>(source.green) * retained_opacity + 127) / 255);
+        target[column].blue = static_cast<uint8_t>((static_cast<int>(source.blue) * retained_opacity + 127) / 255);
+      }
+    }
+  }
+
+  if (!this->stable_background_ && this->activation_patch_valid_ && this->activation_patch_ != nullptr) {
+    const int patch_x1 = std::max(origin_x, this->activation_patch_x_);
+    const int patch_y1 = std::max(origin_y, this->activation_patch_y_);
+    const int patch_x2 = std::min(origin_x + width, this->activation_patch_x_ + this->activation_patch_width_);
+    const int patch_y2 = std::min(origin_y + height, this->activation_patch_y_ + this->activation_patch_height_);
+    for (int screen_y = patch_y1; screen_y < patch_y2; screen_y++) {
+      const int source_y = screen_y - this->activation_patch_y_;
+      const int source_x = patch_x1 - this->activation_patch_x_;
+      std::memcpy(buffer + static_cast<size_t>(screen_y - origin_y) * stride + patch_x1 - origin_x,
+                  this->activation_patch_ + static_cast<size_t>(source_y) * this->activation_patch_width_ + source_x,
+                  static_cast<size_t>(patch_x2 - patch_x1) * sizeof(lv_color_t));
+    }
+  }
+
+  if (!this->stable_background_)
+    this->redraw_track_in_region_(buffer, stride, origin_x, origin_y, width, height, 0, 100, this->inactive_color_);
+  if (visual_pct >= 0) {
+    visual_pct = clamp_pct(visual_pct);
+    this->redraw_track_in_region_(buffer, stride, origin_x, origin_y, width, height, 0, visual_pct,
+                                  this->active_color_);
+    draw_disc_(buffer, stride, origin_x, origin_y, width, height, this->point_x_[visual_pct],
+               this->point_y_[visual_pct], this->knob_radius_, this->knob_color_);
+  }
+  return value_pct < 0 ||
+         this->draw_value_into_region_(buffer, stride, origin_x, origin_y, width, height, value_pct);
+}
+
+bool MaterialDirectVolumeOverlay::present_composed_region_(int x, int y, int width, int height, int visual_pct,
+                                                             int value_pct) {
+  if (this->scratch_ == nullptr || this->lvgl_component_ == nullptr || width <= 0 || height <= 0)
+    return false;
+  x = std::clamp(x, 0, this->screen_width_);
+  y = std::clamp(y, 0, this->capture_height_);
+  width = std::min(width, this->screen_width_ - x);
+  height = std::min(height, this->capture_height_ - y);
+  if (width <= 0 || height <= 0)
+    return false;
+
+  const int band_rows = std::max(1, static_cast<int>(this->scratch_capacity_ / static_cast<size_t>(width)));
+  for (int row = 0; row < height; row += band_rows) {
+    const int rows = std::min(band_rows, height - row);
+    if (!this->compose_region_(this->scratch_, width, x, y + row, width, rows, visual_pct, value_pct) ||
+        !this->lvgl_component_->direct_blit_rgb888_ppa_dma_target(
+            reinterpret_cast<const uint8_t *>(this->scratch_), width * static_cast<int>(sizeof(lv_color_t)), x,
+            y + row, width, rows)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool MaterialDirectVolumeOverlay::restore_background_region_(int x, int y, int width, int height) {
+  if (this->background_ == nullptr || this->scratch_ == nullptr || width <= 0 || height <= 0)
+    return false;
+  x = std::clamp(x, 0, this->screen_width_);
+  y = std::clamp(y, 0, this->capture_height_);
+  width = std::min(width, this->screen_width_ - x);
+  height = std::min(height, this->capture_height_ - y);
+  if (width <= 0 || height <= 0)
+    return false;
+
+  const int band_rows = std::max(1, static_cast<int>(this->scratch_capacity_ / static_cast<size_t>(width)));
+  for (int row = 0; row < height; row += band_rows) {
+    const int rows = std::min(band_rows, height - row);
+    if (!this->compose_region_(this->scratch_, width, x, y + row, width, rows, -1, -1))
+      return false;
+    for (int local_y = 0; local_y < rows; local_y++) {
+      std::memcpy(this->background_ + static_cast<size_t>(y + row + local_y) * this->screen_width_ + x,
+                  this->scratch_ + static_cast<size_t>(local_y) * width,
+                  static_cast<size_t>(width) * sizeof(lv_color_t));
+    }
+  }
+  return true;
+}
+
 bool MaterialDirectVolumeOverlay::prepare() {
   // Some touch controllers can report the same uninterrupted contact as a new
   // touch after a direct-scene handoff. Preparing twice must not tear down an
   // overlay that is already visible or discard its captured scene.
-  if (this->active_ || this->prepared_)
+  if (this->active_.load(std::memory_order_acquire) || this->prepared_)
     return true;
   this->end();
   static_assert(sizeof(lv_color_t) == 3, "The direct volume overlay requires RGB888");
   if (!this->update_geometry_())
     return false;
 
-  // A moving full-screen scene may need one final RGB888 capture while it
-  // relinquishes the DSI framebuffers. Give it the contiguous PSRAM window
-  // before this overlay allocates its own full-screen working surfaces.
+  // Quiesce full-screen direct producers before leasing an idle DSI buffer.
+  // The currently scanned buffer then remains a stable, allocation-free copy
+  // of the original scene for the complete gesture.
   if (!this->suspend_scene_controllers_()) {
     ESP_LOGW(TAG, "Unable to suspend the active direct scene");
     return false;
   }
 
-  const size_t screen_pixel_count = static_cast<size_t>(this->screen_width_) * this->screen_height_;
-  const size_t screen_byte_count = screen_pixel_count * sizeof(lv_color_t);
+  if (!this->lvgl_component_->begin_frame_buffer_presentation(100)) {
+    ESP_LOGW(TAG, "Unable to acquire the direct overlay framebuffer session");
+    this->resume_scene_controllers_();
+    return false;
+  }
+  this->frame_buffer_presentation_active_ = true;
+
+  display::FrameBufferView active_frame{};
+  if (!this->lvgl_component_->get_presentation_active_frame(&active_frame, BufferReader::CPU) ||
+      active_frame.data == nullptr || active_frame.width != static_cast<size_t>(this->screen_width_) ||
+      active_frame.height != static_cast<size_t>(this->screen_height_) ||
+      active_frame.stride != static_cast<size_t>(this->screen_width_) * sizeof(lv_color_t) ||
+      active_frame.size < active_frame.stride * active_frame.height ||
+      !this->lvgl_component_->acquire_presentation_frame(&this->background_lease_, BufferWriter::CPU, 100) ||
+      this->background_lease_.width != active_frame.width || this->background_lease_.height != active_frame.height ||
+      this->background_lease_.stride != active_frame.stride || this->background_lease_.size < active_frame.size) {
+    ESP_LOGW(TAG, "Unable to lease compatible RGB888 presentation buffers");
+    this->release_();
+    this->lvgl_component_->end_frame_buffer_presentation(100);
+    this->frame_buffer_presentation_active_ = false;
+    this->resume_scene_controllers_();
+    return false;
+  }
+
+  this->original_ = reinterpret_cast<const lv_color_t *>(active_frame.data);
+  this->original_owned_ = false;
+  this->background_ = reinterpret_cast<lv_color_t *>(this->background_lease_.data);
   const size_t scratch_byte_count = this->scratch_capacity_ * sizeof(lv_color_t);
-  const bool borrowed_scene_frame = this->borrow_scene_frame_();
-#ifdef USE_ESP32
-  if (!borrowed_scene_frame) {
-    this->original_ =
-        static_cast<lv_color_t *>(heap_caps_malloc(screen_byte_count, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    this->original_owned_ = this->original_ != nullptr;
-  }
-  this->background_ =
-      static_cast<lv_color_t *>(heap_caps_malloc(screen_byte_count, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  this->scratch_ = static_cast<lv_color_t *>(heap_caps_malloc(scratch_byte_count, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-#else
-  if (!borrowed_scene_frame) {
-    this->original_ = static_cast<lv_color_t *>(std::malloc(screen_byte_count));
-    this->original_owned_ = this->original_ != nullptr;
-  }
-  this->background_ = static_cast<lv_color_t *>(std::malloc(screen_byte_count));
-  this->scratch_ = static_cast<lv_color_t *>(std::malloc(scratch_byte_count));
-#endif
-  const int glyph_width = std::max(64, static_cast<int>(this->font_->line_height) * 2);
-  const int glyph_height = std::max(64, static_cast<int>(this->font_->line_height) + 48);
-  this->glyph_buffer_ = lv_draw_buf_create(glyph_width, glyph_height, LV_COLOR_FORMAT_A8, LV_STRIDE_AUTO);
-  if (this->original_ == nullptr || this->background_ == nullptr || this->scratch_ == nullptr ||
-      this->glyph_buffer_ == nullptr) {
-    ESP_LOGW(TAG, "Unable to allocate direct overlay buffers (screen=%uB scratch=%uB borrowed=%s)",
-             static_cast<unsigned>(screen_byte_count), static_cast<unsigned>(scratch_byte_count),
-             YESNO(borrowed_scene_frame));
+  if (!this->ensure_persistent_resources_()) {
+    ESP_LOGW(TAG, "Unable to allocate direct overlay scratch buffer (%uB)",
+             static_cast<unsigned>(scratch_byte_count));
 #ifdef USE_ESP32
     ESP_LOGW(TAG, "PSRAM after overlay allocation failure: free=%uB largest=%uB",
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
              static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
 #endif
     this->release_();
-    this->resume_scene_controllers_();
-    return false;
-  }
-
-  if (!borrowed_scene_frame && !this->lvgl_component_->direct_capture_rgb888(
-                                   reinterpret_cast<uint8_t *>(const_cast<lv_color_t *>(this->original_)),
-                                   this->screen_width_ * static_cast<int>(sizeof(lv_color_t)), 0, 0,
-                                   this->screen_width_, this->screen_height_)) {
-    ESP_LOGW(TAG, "Unable to capture the presented frame for the direct overlay");
-    this->release_();
+    this->lvgl_component_->end_frame_buffer_presentation(100);
+    this->frame_buffer_presentation_active_ = false;
     this->resume_scene_controllers_();
     return false;
   }
 
   if (!this->rebuild_background_()) {
     this->release_();
+    this->lvgl_component_->end_frame_buffer_presentation(100);
+    this->frame_buffer_presentation_active_ = false;
     this->resume_scene_controllers_();
     return false;
   }
@@ -444,26 +695,91 @@ bool MaterialDirectVolumeOverlay::prepare() {
   this->visual_pct_ = -1;
   this->value_pct_ = -1;
   this->reset_visual_cache_();
-  ESP_LOGD(TAG, "Prepared direct overlay: borrowed=%s scratch=%uB", YESNO(borrowed_scene_frame),
-           static_cast<unsigned>(scratch_byte_count));
+  ESP_LOGD(TAG, "Prepared direct overlay from DSI pool: source=%p target=%p scratch=%uB", this->original_,
+           this->background_, static_cast<unsigned>(scratch_byte_count));
   return true;
 }
 
-bool MaterialDirectVolumeOverlay::begin() {
+bool MaterialDirectVolumeOverlay::begin(int value_pct, int visual_pct) {
+#ifdef USE_ESP32
+  if (!this->ensure_worker_()) {
+    ESP_LOGW(TAG, "Unable to start direct volume worker");
+    return false;
+  }
+#endif
   if (!this->prepared_ && !this->prepare())
     return false;
 
-  // Invalidation suppression only prevents new dirty areas. A refresh already
-  // queued by the clock or by a direct scene handoff can still present an
-  // undimmed LVGL framebuffer over this overlay. Own the framebuffer session
-  // for the complete gesture so the full scrim remains the base for every
-  // regional arc/knob update.
-  if (!this->lvgl_component_->begin_frame_buffer_presentation(100)) {
-    ESP_LOGW(TAG, "Unable to acquire the direct overlay framebuffer session");
+  lv_color_t *prepared_background = this->background_;
+  const bool has_initial_state = value_pct >= 0 && visual_pct >= 0;
+  if (has_initial_state) {
+    value_pct = clamp_pct(value_pct);
+    visual_pct = clamp_pct(visual_pct);
+    this->redraw_track_in_region_(prepared_background, this->screen_width_, 0, 0, this->screen_width_,
+                                  this->capture_height_, 0, visual_pct, this->active_color_);
+    draw_disc_(prepared_background, this->screen_width_, 0, 0, this->screen_width_, this->capture_height_,
+               this->point_x_[visual_pct], this->point_y_[visual_pct], this->knob_radius_, this->knob_color_);
+    if (!this->draw_value_into_region_(prepared_background, this->screen_width_, 0, 0, this->screen_width_,
+                                       this->capture_height_, value_pct)) {
+      ESP_LOGW(TAG, "Unable to compose the initial volume value");
+      this->end(false);
+      return false;
+    }
+  }
+  if (!this->frame_buffer_presentation_active_ || prepared_background == nullptr || !this->background_lease_ ||
+      !this->lvgl_component_->present_presentation_frame(&this->background_lease_, 100)) {
+    ESP_LOGW(TAG, "Unable to present the prepared direct overlay framebuffer");
     this->end(false);
     return false;
   }
-  this->frame_buffer_presentation_active_ = true;
+
+  // Preserve the prepared scrim and inactive arc in the third DSI buffer.
+  // Touch updates then restore only their damaged rectangle from this stable
+  // frame instead of re-dimming pixels and rasterizing the inactive arc.
+  this->background_ = nullptr;
+  const auto *original_frame = reinterpret_cast<const uint8_t *>(this->original_);
+  if (this->lvgl_component_->reserve_presentation_frame(original_frame)) {
+    this->reserved_original_frame_ = original_frame;
+    if (this->lvgl_component_->acquire_presentation_frame(&this->background_lease_, BufferWriter::DMA, 100) &&
+      this->lvgl_component_->copy_presentation_frame_rgb888(
+            reinterpret_cast<const uint8_t *>(prepared_background), this->background_lease_.data,
+            this->screen_width_, this->screen_height_)) {
+      this->background_ = reinterpret_cast<lv_color_t *>(this->background_lease_.data);
+      bool background_ready = true;
+      if (has_initial_state) {
+        int damage_x1 = this->label_x_;
+        int damage_y1 = this->label_y_;
+        int damage_x2 = this->label_x_ + this->label_width_ - 1;
+        int damage_y2 = this->label_y_ + this->label_height_ - 1;
+        const float track_damage_radius = std::max(this->track_radius_, this->knob_radius_) + 2.0f;
+        for (int pct = 0; pct <= visual_pct; pct++) {
+          damage_x1 = std::min(damage_x1,
+                               static_cast<int>(std::floor(this->point_x_[pct] - track_damage_radius)));
+          damage_y1 = std::min(damage_y1,
+                               static_cast<int>(std::floor(this->point_y_[pct] - track_damage_radius)));
+          damage_x2 = std::max(damage_x2,
+                               static_cast<int>(std::ceil(this->point_x_[pct] + track_damage_radius)));
+          damage_y2 = std::max(damage_y2,
+                               static_cast<int>(std::ceil(this->point_y_[pct] + track_damage_radius)));
+        }
+        damage_x1 = std::clamp(damage_x1, 0, this->screen_width_ - 1);
+        damage_y1 = std::clamp(damage_y1, 0, this->capture_height_ - 1);
+        damage_x2 = std::clamp(damage_x2, damage_x1, this->screen_width_ - 1);
+        damage_y2 = std::clamp(damage_y2, damage_y1, this->capture_height_ - 1);
+        background_ready = this->restore_background_region_(damage_x1, damage_y1, damage_x2 - damage_x1 + 1,
+                                                             damage_y2 - damage_y1 + 1);
+      }
+      if (!background_ready)
+        background_ready = this->rebuild_background_();
+      this->stable_background_ = background_ready;
+    } else {
+      if (this->background_lease_)
+        this->lvgl_component_->release_presentation_frame(&this->background_lease_);
+      this->lvgl_component_->release_reserved_presentation_frame(this->reserved_original_frame_);
+      this->reserved_original_frame_ = nullptr;
+      ESP_LOGW(TAG, "Unable to retain the prepared DSI background; using the compatible raster fallback");
+    }
+  }
 
   lv_obj_add_flag(this->arc_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(this->knob_, LV_OBJ_FLAG_HIDDEN);
@@ -477,16 +793,25 @@ bool MaterialDirectVolumeOverlay::begin() {
     this->invalidation_suspended_ = true;
   }
 
-  this->active_ = true;
-  this->visual_pct_ = -1;
-  this->value_pct_ = -1;
-  this->reset_visual_cache_();
-  if (!this->lvgl_component_->direct_blit_rgb888(reinterpret_cast<const uint8_t *>(this->background_),
-                                                 this->screen_width_ * static_cast<int>(sizeof(lv_color_t)), 0, 0,
-                                                 this->screen_width_, this->screen_height_)) {
-    this->end(false);
-    return false;
-  }
+  this->active_.store(true, std::memory_order_release);
+#ifdef USE_ESP32
+  this->pending_update_.store(NO_PENDING_UPDATE, std::memory_order_release);
+  this->last_requested_update_.store(
+      has_initial_state ? ((value_pct << 8) | visual_pct) : NO_PENDING_UPDATE, std::memory_order_release);
+  this->worker_failed_.store(false, std::memory_order_release);
+  this->pending_requested_us_.store(0, std::memory_order_release);
+  this->stat_requests_.store(0, std::memory_order_release);
+  this->stat_renders_.store(0, std::memory_order_release);
+  this->stat_coalesced_.store(0, std::memory_order_release);
+  this->stat_total_age_us_.store(0, std::memory_order_release);
+  this->stat_max_age_us_.store(0, std::memory_order_release);
+  this->stat_total_render_us_.store(0, std::memory_order_release);
+  this->stat_max_render_us_.store(0, std::memory_order_release);
+  this->ensure_worker_();
+#endif
+  this->visual_pct_ = has_initial_state ? visual_pct : -1;
+  this->value_pct_ = has_initial_state ? value_pct : -1;
+  this->visual_cache_ = has_initial_state ? VisualCache{value_pct, visual_pct} : VisualCache{};
   this->presented_ = true;
   return true;
 }
@@ -496,18 +821,12 @@ void MaterialDirectVolumeOverlay::cancel_prepare() {
     this->end(false);
 }
 
-bool MaterialDirectVolumeOverlay::direct_draw_value_(int value_pct) {
-  if (!this->active_ || this->font_ == nullptr || this->glyph_buffer_ == nullptr)
+bool MaterialDirectVolumeOverlay::draw_value_into_region_(lv_color_t *buffer, int stride, int origin_x, int origin_y,
+                                                           int width, int height, int value_pct) {
+  if (buffer == nullptr || stride < width || width <= 0 || height <= 0 || this->font_ == nullptr ||
+      this->glyph_buffer_ == nullptr)
     return false;
   value_pct = clamp_pct(value_pct);
-  if (value_pct == this->value_pct_)
-    return true;
-
-  for (int y = 0; y < this->label_height_; y++) {
-    std::memcpy(this->scratch_ + static_cast<size_t>(y) * this->label_width_,
-                this->background_ + static_cast<size_t>(this->label_y_ + y) * this->screen_width_ + this->label_x_,
-                static_cast<size_t>(this->label_width_) * sizeof(lv_color_t));
-  }
 
   char text[8];
   std::snprintf(text, sizeof(text), "%d%%", value_pct);
@@ -535,84 +854,104 @@ bool MaterialDirectVolumeOverlay::direct_draw_value_(int value_pct) {
       const int glyph_stride = lv_draw_buf_width_to_stride(glyph.box_w, LV_COLOR_FORMAT_A8);
       for (int gy = 0; gy < glyph.box_h; gy++) {
         const int screen_y = glyph_y + gy;
-        if (screen_y < this->label_y_ || screen_y >= this->label_y_ + this->label_height_)
+        if (screen_y < origin_y || screen_y >= origin_y + height)
           continue;
         const uint8_t *alpha_row = draw_buf->data + static_cast<size_t>(gy) * glyph_stride;
-        lv_color_t *dest_row = this->scratch_ + static_cast<size_t>(screen_y - this->label_y_) * this->label_width_;
+        lv_color_t *dest_row = buffer + static_cast<size_t>(screen_y - origin_y) * stride;
         for (int gx = 0; gx < glyph.box_w; gx++) {
           const int screen_x = glyph_x + gx;
-          if (screen_x < this->label_x_ || screen_x >= this->label_x_ + this->label_width_)
+          if (screen_x < origin_x || screen_x >= origin_x + width)
             continue;
-          blend_(dest_row[screen_x - this->label_x_], this->active_color_, static_cast<float>(alpha_row[gx]) / 255.0f);
+          blend_(dest_row[screen_x - origin_x], this->active_color_, static_cast<float>(alpha_row[gx]) / 255.0f);
         }
       }
     }
     pen_x += glyph.adv_w + this->letter_space_;
     lv_font_glyph_release_draw_data(&glyph);
   }
+  return true;
+}
 
-  if (!this->lvgl_component_->direct_blit_rgb888(
-          reinterpret_cast<const uint8_t *>(this->scratch_), this->label_width_ * static_cast<int>(sizeof(lv_color_t)),
-          this->label_x_, this->label_y_, this->label_width_, this->label_height_)) {
-    this->end();
+bool MaterialDirectVolumeOverlay::render_frame_(int visual_pct, int value_pct) {
+  if (!this->active_.load(std::memory_order_acquire) || this->original_ == nullptr || this->scratch_ == nullptr)
     return false;
+  visual_pct = clamp_pct(visual_pct);
+  value_pct = clamp_pct(value_pct);
+
+  // Recompose only the pixels damaged by the old knob and the changed track
+  // segment. The stable scanout buffer retained at prepare() is the source,
+  // so this path needs no full-screen heap allocation and never accumulates
+  // rounding or stale-pixel errors between touch samples.
+  int damage_x1 = this->screen_width_;
+  int damage_y1 = this->capture_height_;
+  int damage_x2 = -1;
+  int damage_y2 = -1;
+  auto include_point = [&](float x, float y, float radius) {
+    damage_x1 = std::min(damage_x1, static_cast<int>(std::floor(x - radius)));
+    damage_y1 = std::min(damage_y1, static_cast<int>(std::floor(y - radius)));
+    damage_x2 = std::max(damage_x2, static_cast<int>(std::ceil(x + radius)));
+    damage_y2 = std::max(damage_y2, static_cast<int>(std::ceil(y + radius)));
+  };
+
+  const bool visual_changed = this->visual_pct_ != visual_pct;
+  const bool value_changed = this->value_pct_ != value_pct;
+  if (visual_changed) {
+    const int first = this->visual_pct_ < 0 ? 0 : std::min(this->visual_pct_, visual_pct);
+    const int last = this->visual_pct_ < 0 ? visual_pct : std::max(this->visual_pct_, visual_pct);
+    const float track_damage_radius = this->track_radius_ + 2.0f;
+    for (int pct = first; pct <= last; pct++) {
+      include_point(this->point_x_[pct], this->point_y_[pct], track_damage_radius);
+    }
+    if (this->visual_pct_ >= 0)
+      include_point(this->point_x_[this->visual_pct_], this->point_y_[this->visual_pct_], this->knob_radius_ + 2.0f);
+    include_point(this->point_x_[visual_pct], this->point_y_[visual_pct], this->knob_radius_ + 2.0f);
   }
+
+  bool presented = true;
+  if (visual_changed && damage_x2 >= damage_x1 && damage_y2 >= damage_y1) {
+    damage_x1 = std::clamp(damage_x1, 0, this->screen_width_ - 1);
+    damage_y1 = std::clamp(damage_y1, 0, this->capture_height_ - 1);
+    damage_x2 = std::clamp(damage_x2, damage_x1, this->screen_width_ - 1);
+    damage_y2 = std::clamp(damage_y2, damage_y1, this->capture_height_ - 1);
+    const int label_x2 = this->label_x_ + this->label_width_ - 1;
+    const int label_y2 = this->label_y_ + this->label_height_ - 1;
+    const int union_x1 = std::min(damage_x1, this->label_x_);
+    const int union_y1 = std::min(damage_y1, this->label_y_);
+    const int union_x2 = std::max(damage_x2, label_x2);
+    const int union_y2 = std::max(damage_y2, label_y2);
+    const int64_t union_area = static_cast<int64_t>(union_x2 - union_x1 + 1) * (union_y2 - union_y1 + 1);
+    const int64_t separate_area =
+        static_cast<int64_t>(damage_x2 - damage_x1 + 1) * (damage_y2 - damage_y1 + 1) +
+        static_cast<int64_t>(this->label_width_) * this->label_height_;
+    if (value_changed && union_area * 4 <= separate_area * 5) {
+      presented = this->present_composed_region_(union_x1, union_y1, union_x2 - union_x1 + 1,
+                                                 union_y2 - union_y1 + 1, visual_pct, value_pct);
+    } else {
+      presented = this->present_composed_region_(damage_x1, damage_y1, damage_x2 - damage_x1 + 1,
+                                                 damage_y2 - damage_y1 + 1, visual_pct, value_pct);
+      if (presented && value_changed)
+        presented = this->present_composed_region_(this->label_x_, this->label_y_, this->label_width_,
+                                                   this->label_height_, visual_pct, value_pct);
+    }
+  } else if (value_changed) {
+    presented = this->present_composed_region_(this->label_x_, this->label_y_, this->label_width_,
+                                               this->label_height_, visual_pct, value_pct);
+  }
+  if (!presented)
+    return false;
+  this->visual_pct_ = visual_pct;
   this->value_pct_ = value_pct;
   return true;
 }
 
 bool MaterialDirectVolumeOverlay::direct_update_(int visual_pct, int value_pct) {
-  if (!this->active_ || this->background_ == nullptr || this->scratch_ == nullptr)
+  if (!this->active_.load(std::memory_order_acquire))
     return false;
   visual_pct = clamp_pct(visual_pct);
   value_pct = clamp_pct(value_pct);
-  if (visual_pct == this->visual_pct_)
-    return this->direct_draw_value_(value_pct);
-
-  const int old_pct = this->visual_pct_ < 0 ? 0 : this->visual_pct_;
-  const float old_x = this->point_x_[old_pct];
-  const float old_y = this->point_y_[old_pct];
-  const float new_x = this->point_x_[visual_pct];
-  const float new_y = this->point_y_[visual_pct];
-  const int margin = static_cast<int>(
-      std::ceil(this->knob_radius_ + this->track_radius_ + std::max(2.0f, this->track_radius_ / 3.0f)));
-  int x1 = static_cast<int>(std::floor(std::min(old_x, new_x))) - margin;
-  int y1 = static_cast<int>(std::floor(std::min(old_y, new_y))) - margin;
-  int x2 = static_cast<int>(std::ceil(std::max(old_x, new_x))) + margin;
-  int y2 = static_cast<int>(std::ceil(std::max(old_y, new_y))) + margin;
-  if (std::min(old_pct, visual_pct) <= 50 && std::max(old_pct, visual_pct) >= 50) {
-    x1 = std::min(x1, static_cast<int>(std::floor(this->center_x_)) - margin);
-    x2 = std::max(x2, static_cast<int>(std::ceil(this->center_x_)) + margin);
-    y1 = std::min(y1, static_cast<int>(std::floor(this->center_y_ - this->arc_radius_)) - margin);
-  }
-  x1 = std::clamp(x1, 0, this->screen_width_ - 1);
-  y1 = std::clamp(y1, 0, this->capture_height_ - 1);
-  x2 = std::clamp(x2, x1, this->screen_width_ - 1);
-  y2 = std::clamp(y2, y1, this->capture_height_ - 1);
-  const int width = x2 - x1 + 1;
-  const int height = y2 - y1 + 1;
-
-  const int max_rows = std::max(1, static_cast<int>(this->scratch_capacity_ / width));
-  for (int row_offset = 0; row_offset < height; row_offset += max_rows) {
-    const int rows = std::min(max_rows, height - row_offset);
-    const int band_y = y1 + row_offset;
-    for (int local_y = 0; local_y < rows; local_y++) {
-      std::memcpy(this->scratch_ + static_cast<size_t>(local_y) * width,
-                  this->background_ + static_cast<size_t>(band_y + local_y) * this->screen_width_ + x1,
-                  static_cast<size_t>(width) * sizeof(lv_color_t));
-    }
-    this->redraw_track_in_region_(this->scratch_, width, x1, band_y, width, rows, 0, visual_pct, this->active_color_);
-    draw_disc_(this->scratch_, width, x1, band_y, width, rows, new_x, new_y, this->knob_radius_, this->knob_color_);
-
-    if (!this->lvgl_component_->direct_blit_rgb888(reinterpret_cast<const uint8_t *>(this->scratch_),
-                                                   width * static_cast<int>(sizeof(lv_color_t)), x1, band_y, width,
-                                                   rows)) {
-      this->end();
-      return false;
-    }
-  }
-  this->visual_pct_ = visual_pct;
-  return this->direct_draw_value_(value_pct);
+  if (visual_pct == this->visual_pct_ && value_pct == this->value_pct_)
+    return true;
+  return this->render_frame_(visual_pct, value_pct);
 }
 
 void MaterialDirectVolumeOverlay::update_native_(int value_pct, int visual_pct) {
@@ -630,6 +969,20 @@ void MaterialDirectVolumeOverlay::update_native_(int value_pct, int visual_pct) 
 void MaterialDirectVolumeOverlay::update(int value_pct, int visual_pct) {
   value_pct = clamp_pct(value_pct);
   visual_pct = clamp_pct(visual_pct);
+#ifdef USE_ESP32
+  if (this->active_.load(std::memory_order_acquire) && this->worker_handle_ != nullptr) {
+    const int packed = (value_pct << 8) | visual_pct;
+    if (packed == this->last_requested_update_.exchange(packed, std::memory_order_acq_rel))
+      return;
+    this->stat_requests_.fetch_add(1, std::memory_order_relaxed);
+    const int replaced = this->pending_update_.exchange(packed, std::memory_order_acq_rel);
+    if (replaced != NO_PENDING_UPDATE)
+      this->stat_coalesced_.fetch_add(1, std::memory_order_relaxed);
+    this->pending_requested_us_.store(micros(), std::memory_order_release);
+    xTaskNotifyGive(this->worker_handle_);
+    return;
+  }
+#endif
   if (value_pct == this->visual_cache_.value_pct && visual_pct == this->visual_cache_.visual_pct)
     return;
   this->visual_cache_.value_pct = value_pct;
@@ -637,6 +990,77 @@ void MaterialDirectVolumeOverlay::update(int value_pct, int visual_pct) {
   if (!this->direct_update_(visual_pct, value_pct))
     this->update_native_(value_pct, visual_pct);
 }
+
+#ifdef USE_ESP32
+void MaterialDirectVolumeOverlay::worker_(void *arg) {
+  auto *overlay = static_cast<MaterialDirectVolumeOverlay *>(arg);
+  if (overlay == nullptr) {
+    vTaskDelete(nullptr);
+    return;
+  }
+  while (true) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    while (overlay->active_.load(std::memory_order_acquire)) {
+      const int packed = overlay->pending_update_.exchange(NO_PENDING_UPDATE, std::memory_order_acq_rel);
+      if (packed == NO_PENDING_UPDATE)
+        break;
+      overlay->worker_busy_.store(true, std::memory_order_release);
+      const uint32_t started_us = micros();
+      const uint32_t requested_us = overlay->pending_requested_us_.load(std::memory_order_acquire);
+      const uint32_t age_us = started_us - requested_us;
+      const bool rendered = overlay->direct_update_(packed & 0xFF, (packed >> 8) & 0xFF);
+      const uint32_t render_us = micros() - started_us;
+      overlay->stat_renders_.fetch_add(1, std::memory_order_relaxed);
+      overlay->stat_total_age_us_.fetch_add(age_us, std::memory_order_relaxed);
+      overlay->stat_total_render_us_.fetch_add(render_us, std::memory_order_relaxed);
+      update_atomic_max(overlay->stat_max_age_us_, age_us);
+      update_atomic_max(overlay->stat_max_render_us_, render_us);
+      overlay->worker_busy_.store(false, std::memory_order_release);
+      if (!rendered) {
+        overlay->worker_failed_.store(true, std::memory_order_release);
+        break;
+      }
+    }
+  }
+}
+
+bool MaterialDirectVolumeOverlay::ensure_worker_() {
+  if (this->worker_handle_ != nullptr)
+    return true;
+#if CONFIG_FREERTOS_UNICORE
+  constexpr BaseType_t worker_core = tskNO_AFFINITY;
+#else
+  const BaseType_t worker_core = esp32::background_task_core(-1);
+#endif
+  constexpr uint32_t WORKER_STACK_SIZE = 4096;
+  this->worker_stack_ =
+      static_cast<StackType_t *>(heap_caps_aligned_alloc(16, WORKER_STACK_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (this->worker_stack_ == nullptr) {
+    this->worker_stack_ =
+        static_cast<StackType_t *>(heap_caps_aligned_alloc(16, WORKER_STACK_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  }
+  if (this->worker_stack_ == nullptr)
+    return false;
+  this->worker_handle_ = xTaskCreateStaticPinnedToCore(worker_, "material_volume", WORKER_STACK_SIZE, this, 3,
+                                                       this->worker_stack_, &this->worker_storage_, worker_core);
+  if (this->worker_handle_ == nullptr) {
+    heap_caps_free(this->worker_stack_);
+    this->worker_stack_ = nullptr;
+    return false;
+  }
+  return true;
+}
+
+void MaterialDirectVolumeOverlay::quiesce_worker_() {
+  this->active_.store(false, std::memory_order_release);
+  this->pending_update_.store(NO_PENDING_UPDATE, std::memory_order_release);
+  if (this->worker_handle_ != nullptr)
+    xTaskNotifyGive(this->worker_handle_);
+  const uint32_t started = millis();
+  while (this->worker_busy_.load(std::memory_order_acquire) && millis() - started < 100U)
+    delay(1);
+}
+#endif
 
 void MaterialDirectVolumeOverlay::update_drag_point(int value_pct, int visual_pct, int touch_x, int touch_y) {
   (void) touch_x;

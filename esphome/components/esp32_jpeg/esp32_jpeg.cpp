@@ -29,6 +29,7 @@
 #endif
 
 #if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
+static volatile bool g_esphome_esp32_jpeg_skip_input_cache_msync = false;
 static volatile bool g_esphome_esp32_jpeg_skip_output_cache_msync = false;
 static volatile uint32_t g_esphome_esp32_jpeg_last_status = 0;
 #ifdef CONFIG_ESPHOME_JPEG_DMA2D_BURST_LENGTH
@@ -59,6 +60,8 @@ static std::atomic<bool> g_esphome_esp32_jpeg_encoder_dma2d_desc_burst{false};
 static std::atomic<bool> g_esphome_esp32_jpeg_encoder_dma2d_desc_burst{true};
 #endif
 static std::atomic<uint16_t> g_esphome_esp32_jpeg_encoder_dma2d_burst_length{JPEG_ENCODER_DMA2D_BURST_LENGTH};
+
+extern "C" bool esphome_esp32_jpeg_skip_input_cache_msync(void) { return g_esphome_esp32_jpeg_skip_input_cache_msync; }
 
 extern "C" bool esphome_esp32_jpeg_skip_output_cache_msync(void) {
   return g_esphome_esp32_jpeg_skip_output_cache_msync;
@@ -435,6 +438,24 @@ class Dma2dJpegOutputCacheSyncGuard {
   bool previous_{false};
   bool active_{false};
 };
+
+class Dma2dJpegInputCacheSyncGuard {
+ public:
+  explicit Dma2dJpegInputCacheSyncGuard(bool skip)
+      : previous_(g_esphome_esp32_jpeg_skip_input_cache_msync), active_(skip) {
+    if (this->active_)
+      g_esphome_esp32_jpeg_skip_input_cache_msync = true;
+  }
+
+  ~Dma2dJpegInputCacheSyncGuard() {
+    if (this->active_)
+      g_esphome_esp32_jpeg_skip_input_cache_msync = this->previous_;
+  }
+
+ protected:
+  bool previous_{false};
+  bool active_{false};
+};
 #else
 class Dma2dJpegBurstGuard {
  public:
@@ -449,6 +470,11 @@ class Dma2dJpegTransferAbilityGuard {
 class Dma2dJpegOutputCacheSyncGuard {
  public:
   explicit Dma2dJpegOutputCacheSyncGuard(bool skip) {}
+};
+
+class Dma2dJpegInputCacheSyncGuard {
+ public:
+  explicit Dma2dJpegInputCacheSyncGuard(bool skip) {}
 };
 #endif
 
@@ -822,6 +848,15 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   if (!lock.locked())
     return ESP_ERR_TIMEOUT;
 
+  // A DMA/PPA producer bypasses the CPU cache. Discard stale CPU lines before
+  // either the CPU copies this source or the JPEG peripheral reads it.
+  if (config.input_dma_owned && esp_ptr_external_ram(input)) {
+    esp_err_t sync_err =
+        sync_external_cache_(input, expected_input_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
+    if (sync_err != ESP_OK)
+      return sync_err;
+  }
+
   jpeg_encoder_handle_t encoder = preallocated_encoder;
   bool owns_encoder = false;
   esp_err_t err = ESP_OK;
@@ -866,8 +901,9 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
 
   size_t output_capacity = 0;
   uint8_t *output_data = nullptr;
+  const size_t requested_output_size = config.output_buffer_size == 0 ? expected_input_size : config.output_buffer_size;
   const bool retain_output = config.retain_output_buffer && !owns_encoder && encoder == preallocated_encoder;
-  if (retain_output && preallocated_encoder_output_capacity >= expected_input_size) {
+  if (retain_output && preallocated_encoder_output_capacity >= requested_output_size) {
     output_data = preallocated_encoder_output;
     output_capacity = preallocated_encoder_output_capacity;
   } else {
@@ -875,7 +911,7 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
         .buffer_direction = JPEG_ENC_ALLOC_OUTPUT_BUFFER,
     };
     output_data =
-        static_cast<uint8_t *>(jpeg_alloc_encoder_mem(expected_input_size, &output_mem_cfg, &output_capacity));
+        static_cast<uint8_t *>(jpeg_alloc_encoder_mem(requested_output_size, &output_mem_cfg, &output_capacity));
     if (output_data != nullptr && retain_output) {
       if (preallocated_encoder_output != nullptr)
         heap_caps_free(preallocated_encoder_output);
@@ -903,12 +939,11 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
 #endif
   };
   uint32_t encoded_size = 0;
-  // lv_snapshot_take_to_draw_buf() renders through the CPU into cached PSRAM.
-  // The JPEG encoder then reads that allocation through DMA2D. Clean the
-  // complete source before handing ownership to the peripheral; otherwise a
-  // first-use snapshot can be encoded from stale PSRAM while later captures
-  // happen to work after unrelated cache writebacks.
-  if (esp_ptr_external_ram(input_data)) {
+  const bool direct_dma_owned_input = config.input_dma_owned && input_data == input && esp_ptr_external_ram(input_data);
+  // CPU-rendered snapshot buffers must be cleaned before DMA reads them. A
+  // direct DMA-owned framebuffer needs the opposite contract: its stale CPU
+  // lines were invalidated above and must not be written back over fresh data.
+  if (esp_ptr_external_ram(input_data) && !direct_dma_owned_input) {
     esp_err_t sync_err = sync_external_cache_(input_data, expected_input_size,
                                               ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
     if (sync_err != ESP_OK) {
@@ -924,6 +959,7 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   {
     Dma2dJpegBurstGuard qos_guard;
     Dma2dJpegTransferAbilityGuard transfer_guard(true, config.dma2d_burst_length, config.dma2d_descriptor_burst);
+    Dma2dJpegInputCacheSyncGuard input_cache_sync_guard(direct_dma_owned_input);
     err = jpeg_encoder_process(encoder, &encode_cfg, input_data, expected_input_size, output_data, output_capacity,
                                &encoded_size);
   }

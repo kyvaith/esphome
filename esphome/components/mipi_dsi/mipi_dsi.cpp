@@ -1039,9 +1039,10 @@ uint8_t *MipiDsi::get_direct_render_frame_buffer(const uint8_t *exclude_a, const
   auto *queued = this->queued_frame_buffer_.load(std::memory_order_acquire);
   auto *staged = this->staged_frame_buffer_.load(std::memory_order_acquire);
   auto *reserved = this->reserved_render_frame_buffer_.load(std::memory_order_acquire);
+  auto *source = this->source_frame_buffer_.load(std::memory_order_acquire);
   for (auto *candidate : this->frame_buffers_) {
     if (candidate != nullptr && candidate != active && candidate != queued && candidate != staged &&
-        candidate != reserved && candidate != exclude_a && candidate != exclude_b)
+        candidate != reserved && candidate != source && candidate != exclude_a && candidate != exclude_b)
       return candidate;
   }
   return nullptr;
@@ -1050,7 +1051,8 @@ uint8_t *MipiDsi::get_direct_render_frame_buffer(const uint8_t *exclude_a, const
 bool MipiDsi::reserve_direct_render_frame_buffer(uint8_t *frame_buffer) {
   if (!this->is_frame_buffer_(frame_buffer) || frame_buffer == this->active_frame_buffer_.load(std::memory_order_acquire) ||
       frame_buffer == this->queued_frame_buffer_.load(std::memory_order_acquire) ||
-      frame_buffer == this->staged_frame_buffer_.load(std::memory_order_acquire))
+      frame_buffer == this->staged_frame_buffer_.load(std::memory_order_acquire) ||
+      frame_buffer == this->source_frame_buffer_.load(std::memory_order_acquire))
     return false;
 
   uint8_t *expected = nullptr;
@@ -1063,6 +1065,36 @@ void MipiDsi::release_direct_render_frame_buffer(uint8_t *frame_buffer) {
     return;
   auto *expected = frame_buffer;
   this->reserved_render_frame_buffer_.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
+}
+
+uint8_t *MipiDsi::acquire_direct_source_frame_buffer(uint32_t timeout_ms) {
+  const TickType_t started = xTaskGetTickCount();
+  const TickType_t timeout = std::max<TickType_t>(1, pdMS_TO_TICKS(timeout_ms));
+  while (true) {
+    auto *candidate = this->get_direct_render_frame_buffer(nullptr, nullptr);
+    if (candidate != nullptr && this->reserve_direct_render_frame_buffer(candidate)) {
+      uint8_t *expected = nullptr;
+      if (this->source_frame_buffer_.compare_exchange_strong(expected, candidate, std::memory_order_acq_rel)) {
+        this->release_direct_render_frame_buffer(candidate);
+        return candidate;
+      }
+      this->release_direct_render_frame_buffer(candidate);
+    }
+
+    if (this->frame_active_lock_ == nullptr)
+      return nullptr;
+    const TickType_t elapsed = xTaskGetTickCount() - started;
+    if (elapsed >= timeout)
+      return nullptr;
+    xSemaphoreTake(this->frame_active_lock_, timeout - elapsed);
+  }
+}
+
+void MipiDsi::release_direct_source_frame_buffer(uint8_t *frame_buffer) {
+  if (frame_buffer == nullptr)
+    return;
+  auto *expected = frame_buffer;
+  this->source_frame_buffer_.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
 }
 
 uint8_t *MipiDsi::wait_for_direct_render_frame_buffer(const uint8_t *exclude_a, const uint8_t *exclude_b,
@@ -1079,6 +1111,34 @@ uint8_t *MipiDsi::wait_for_direct_render_frame_buffer(const uint8_t *exclude_a, 
       return nullptr;
     // A full-frame handoff changes active/staged/queued ownership. Recheck all
     // owners after the ISR signal instead of estimating the display period.
+    xSemaphoreTake(this->frame_active_lock_, timeout - elapsed);
+  }
+}
+
+uint8_t *MipiDsi::acquire_direct_render_frame_buffer(const uint8_t *exclude_a, const uint8_t *exclude_b,
+                                                     uint32_t timeout_ms) {
+  const TickType_t started = xTaskGetTickCount();
+  const TickType_t timeout = std::max<TickType_t>(1, pdMS_TO_TICKS(timeout_ms));
+  while (true) {
+    auto *candidate = this->get_direct_render_frame_buffer(exclude_a, exclude_b);
+    if (candidate != nullptr && this->reserve_direct_render_frame_buffer(candidate)) {
+      // Ownership can change between the candidate lookup and the reservation
+      // CAS. Validate once more after acquiring the reservation; subsequent
+      // renderers will now exclude this buffer until queueing consumes it.
+      if (candidate != this->active_frame_buffer_.load(std::memory_order_acquire) &&
+          candidate != this->queued_frame_buffer_.load(std::memory_order_acquire) &&
+          candidate != this->staged_frame_buffer_.load(std::memory_order_acquire) && candidate != exclude_a &&
+          candidate != exclude_b) {
+        return candidate;
+      }
+      this->release_direct_render_frame_buffer(candidate);
+    }
+
+    if (this->frame_active_lock_ == nullptr)
+      return nullptr;
+    const TickType_t elapsed = xTaskGetTickCount() - started;
+    if (elapsed >= timeout)
+      return nullptr;
     xSemaphoreTake(this->frame_active_lock_, timeout - elapsed);
   }
 }
@@ -1263,7 +1323,8 @@ bool MipiDsi::get_active_frame_buffer(display::FrameBufferView *view, BufferRead
   return true;
 }
 
-bool MipiDsi::present_frame_buffer_lease(display::FrameBufferLease *lease, uint32_t timeout_ms) {
+bool MipiDsi::present_frame_buffer_lease(display::FrameBufferLease *lease, uint32_t timeout_ms,
+                                         bool wait_for_active) {
   if (!this->validate_frame_buffer_lease_(lease))
     return false;
 
@@ -1276,7 +1337,7 @@ bool MipiDsi::present_frame_buffer_lease(display::FrameBufferLease *lease, uint3
     }
   }
 
-  if (!this->queue_direct_frame_buffer(lease->data, timeout_ms, true, true))
+  if (!this->queue_direct_frame_buffer(lease->data, timeout_ms, wait_for_active, true))
     return false;
   this->frame_buffer_writers_[lease->index] = lease->writer;
   this->session_leased_frame_buffer_ = nullptr;
@@ -1329,7 +1390,8 @@ bool MipiDsi::queue_direct_frame_buffer(uint8_t *frame_buffer, uint32_t timeout_
     return false;
   }
   if (!this->is_frame_buffer_(frame_buffer) ||
-      frame_buffer == this->active_frame_buffer_.load(std::memory_order_acquire)) {
+      frame_buffer == this->active_frame_buffer_.load(std::memory_order_acquire) ||
+      frame_buffer == this->source_frame_buffer_.load(std::memory_order_acquire)) {
     this->direct_frame_trace_rejected_.fetch_add(1, std::memory_order_relaxed);
     this->record_direct_frame_trace_('X', frame_buffer);
     return false;
@@ -1383,6 +1445,10 @@ bool MipiDsi::queue_direct_frame_buffer(uint8_t *frame_buffer, uint32_t timeout_
     ESP_LOGW(TAG, "Queueing direct framebuffer failed: %s", esp_err_to_name(err));
     return false;
   }
+  // A reserved render target becomes DSI-owned only after the queue helper has
+  // accepted it. Keeping the reservation through submission closes the window
+  // in which another compositor could select the same physical framebuffer.
+  this->release_direct_render_frame_buffer(frame_buffer);
   this->direct_frame_trace_queued_.fetch_add(1, std::memory_order_relaxed);
   this->record_direct_frame_trace_('Q', frame_buffer);
   // The DMA callback can make this buffer active between the initial check
@@ -1394,9 +1460,14 @@ bool MipiDsi::queue_direct_frame_buffer(uint8_t *frame_buffer, uint32_t timeout_
   }
   if (wait_for_active && this->io_lock_ != nullptr &&
       xSemaphoreTake(this->io_lock_, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
-    this->queued_frame_buffer_.store(nullptr, std::memory_order_release);
-    ESP_LOGW(TAG, "Timed out waiting for direct framebuffer submission");
-    return false;
+    // The queue helper already accepted the framebuffer. A timeout here only
+    // means that the submission-completion semaphore was not observed within
+    // the budget; the panel may still latch this buffer at the next frame
+    // boundary. Keep queued_frame_buffer_ owned by DSI until the ISR clears it
+    // when the buffer becomes active. Clearing it here lets another producer
+    // reuse a buffer that is still in scanout and causes partial stale rows.
+    ESP_LOGW(TAG, "Timed out waiting for direct framebuffer submission; retaining queued buffer");
+    return true;
   }
   return true;
 }

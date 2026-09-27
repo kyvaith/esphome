@@ -73,6 +73,7 @@ void MaterialVoiceAssistant::setup() {
   lv_obj_update_layout(this->root_);
   if (!this->allocate_buffers_()) {
     ESP_LOGE(TAG, "Unable to allocate voice presenter buffers");
+    this->native_fallback_ = true;
     this->mark_failed();
     return;
   }
@@ -80,23 +81,27 @@ void MaterialVoiceAssistant::setup() {
   this->label_animations_[0].label = this->user_label_;
   this->label_animations_[1].label = this->assistant_label_;
 
-  // These labels remain as declarative geometry/font sources, but their
-  // pixels are presented by the direct text regions below. Updating native
-  // labels forced a full LVGL layout/refresh and stalled the waveform for
-  // 100-160 ms whenever another transcript fragment arrived.
-  lv_obj_add_flag(this->status_label_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(this->user_label_, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(this->assistant_label_, LV_OBJ_FLAG_HIDDEN);
+  // Keep the text in the LVGL scene. The direct waveform region is independent
+  // and does not overlap these labels; hiding the labels made the transcript
+  // dependent on a second asynchronous blit path and allowed stale app pixels
+  // to remain visible around it.
+  lv_obj_clear_flag(this->status_label_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(this->user_label_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(this->assistant_label_, LV_OBJ_FLAG_HIDDEN);
 
 #ifdef USE_ESP32
   this->worker_stack_ = static_cast<StackType_t *>(
-      heap_caps_aligned_alloc(16, WORKER_STACK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+      heap_caps_aligned_alloc(16, WORKER_STACK_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (this->worker_stack_ == nullptr) {
     this->worker_stack_ = static_cast<StackType_t *>(
-        heap_caps_aligned_alloc(16, WORKER_STACK_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        heap_caps_aligned_alloc(16, WORKER_STACK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   }
   if (this->worker_stack_ == nullptr) {
     ESP_LOGE(TAG, "Unable to allocate voice waveform worker stack");
+    this->native_fallback_ = true;
+    lv_obj_clear_flag(this->status_label_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(this->user_label_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(this->assistant_label_, LV_OBJ_FLAG_HIDDEN);
     this->mark_failed();
     return;
   }
@@ -112,6 +117,10 @@ void MaterialVoiceAssistant::setup() {
     heap_caps_free(this->worker_stack_);
     this->worker_stack_ = nullptr;
     this->release_buffers_();
+    this->native_fallback_ = true;
+    lv_obj_clear_flag(this->status_label_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(this->user_label_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(this->assistant_label_, LV_OBJ_FLAG_HIDDEN);
     this->mark_failed();
   }
 #endif
@@ -232,6 +241,10 @@ void MaterialVoiceAssistant::set_active(bool active) {
 }
 
 void MaterialVoiceAssistant::set_phase(const std::string &phase) {
+  if (this->status_label_ != nullptr && lv_obj_is_valid(this->status_label_)) {
+    lv_label_set_text(this->status_label_, phase.c_str());
+    lv_obj_invalidate(this->status_label_);
+  }
   if (phase != this->phase_text_) {
     this->phase_text_ = phase;
     this->status_region_.pending.store(true, std::memory_order_release);
@@ -256,6 +269,10 @@ void MaterialVoiceAssistant::set_phase(const std::string &phase) {
 
 void MaterialVoiceAssistant::set_transcripts(const std::string &user, const std::string &assistant) {
   const std::string sanitized_user = user == "..." ? "" : user;
+  if (this->user_label_ != nullptr && lv_obj_is_valid(this->user_label_))
+    lv_label_set_text(this->user_label_, sanitized_user.c_str());
+  if (this->assistant_label_ != nullptr && lv_obj_is_valid(this->assistant_label_))
+    lv_label_set_text(this->assistant_label_, assistant.c_str());
   if (sanitized_user.empty() && assistant.empty()) {
     if (!this->requested_previous_assistant_text_.empty() || !this->requested_user_text_.empty() ||
         !this->requested_assistant_text_.empty()) {
@@ -729,7 +746,12 @@ int MaterialVoiceAssistant::transcript_content_height_(const std::string &previo
 void MaterialVoiceAssistant::fill_text_region_(TextRegion &region) {
   if (region.pixels == nullptr || region.width <= 0 || region.height <= 0)
     return;
-  std::fill_n(region.pixels, static_cast<size_t>(region.width) * region.height, this->text_background_color_);
+  const size_t pixel_count = static_cast<size_t>(region.width) * region.height;
+  if (lv_color_to_u32(this->text_background_color_) == 0) {
+    std::memset(region.pixels, 0, pixel_count * sizeof(lv_color_t));
+  } else {
+    std::fill_n(region.pixels, pixel_count, this->text_background_color_);
+  }
 }
 
 int MaterialVoiceAssistant::layout_lines_(const std::string &text, const TextStyle &style, int max_width,
@@ -948,6 +970,7 @@ bool MaterialVoiceAssistant::render_transcript_region_() {
                            this->transcript_panel_x_, content_y, this->transcript_panel_width_, assistant_height,
                            assistant_animation.opacity, assistant_animation.translate_y);
   }
+
   return true;
 }
 
@@ -966,9 +989,12 @@ bool MaterialVoiceAssistant::submit_text_region_(TextRegion &region) {
     region.in_flight.store(false, std::memory_order_release);
     return false;
   }
+  const bool transcript_animation_active = this->label_animations_[0].active ||
+                                           this->label_animations_[1].active || this->content_animation_.active;
+  const bool stable_boundary = &region == &this->transcript_region_ && !transcript_animation_active;
   const uint8_t result = this->lvgl_component_->direct_blit_rgb888_async(
       reinterpret_cast<const uint8_t *>(region.pixels), region.width * static_cast<int>(sizeof(lv_color_t)), region.x,
-      region.y, region.width, region.height, text_present_done_, &region);
+      region.y, region.width, region.height, text_present_done_, &region, stable_boundary, false);
   if (result != LVGL_DIRECT_BLIT_SUBMITTED) {
     region.in_flight.store(false, std::memory_order_release);
     region.pending.store(true, std::memory_order_release);
@@ -980,21 +1006,11 @@ bool MaterialVoiceAssistant::submit_text_region_(TextRegion &region) {
 }
 
 void MaterialVoiceAssistant::service_text_regions_() {
-  if (!this->active_.load(std::memory_order_acquire) || this->glyph_buffer_ == nullptr)
-    return;
-#ifdef USE_ESP32
-  const int64_t started_us = esp_timer_get_time();
-#endif
-  bool rendered = this->submit_text_region_(this->status_region_);
-  rendered = this->submit_text_region_(this->transcript_region_) || rendered;
-  if (!rendered)
-    return;
-#ifdef USE_ESP32
-  const uint32_t elapsed_us = static_cast<uint32_t>(esp_timer_get_time() - started_us);
-  this->perf_text_rendered_++;
-  this->perf_text_render_total_us_ += elapsed_us;
-  this->perf_text_render_max_us_ = std::max(this->perf_text_render_max_us_, elapsed_us);
-#endif
+  // Text is now rendered by the native LVGL labels. Keeping a second direct
+  // text surface here caused partial old-frame blits to race the full-screen
+  // assistant scene and was the source of clipped status/transcript regions.
+  this->status_region_.pending.store(false, std::memory_order_release);
+  this->transcript_region_.pending.store(false, std::memory_order_release);
 }
 
 void MaterialVoiceAssistant::log_performance_(uint32_t now) {

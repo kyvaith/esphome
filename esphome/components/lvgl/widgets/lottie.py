@@ -38,6 +38,11 @@ Usage in ESPHome YAML:
         loop: true
         auto_start: true
 
+    Optional optimized radial scene:
+        fast_radial: true
+        fast_radial_fill_color: 0x46B1E1
+        fast_radial_outline_color: 0x0D0D0D
+
 Actions:
     - lvgl.lottie.start: my_animation
     - lvgl.lottie.stop: my_animation
@@ -66,9 +71,16 @@ _lottie_include_added = False
 
 CONF_LOTTIE = "lottie"
 CONF_LOOP = "loop"
+CONF_PLAY_COUNT = "play_count"
 CONF_LOTTIE_WIDTH = "lottie_width"
 CONF_LOTTIE_HEIGHT = "lottie_height"
+CONF_RENDER_WIDTH = "render_width"
+CONF_RENDER_HEIGHT = "render_height"
 CONF_OPAQUE_BACKGROUND = "opaque_background"
+CONF_RETAIN_ON_UNLOAD = "retain_on_unload"
+CONF_FAST_RADIAL = "fast_radial"
+CONF_FAST_RADIAL_FILL_COLOR = "fast_radial_fill_color"
+CONF_FAST_RADIAL_OUTLINE_COLOR = "fast_radial_outline_color"
 
 lv_lottie_t = LvType("lv_lottie_t")
 
@@ -108,6 +120,9 @@ def validate_lottie_source(config):
     if not has_src and not has_file:
         raise cv.Invalid("Must specify either 'src' (filesystem path) or 'file' (embedded in firmware).")
 
+    if (CONF_RENDER_WIDTH in config) != (CONF_RENDER_HEIGHT in config):
+        raise cv.Invalid("'render_width' and 'render_height' must be specified together.")
+
     # For src method, width and height are required
     if has_src and (CONF_WIDTH not in config or CONF_HEIGHT not in config):
         raise cv.Invalid("'width' and 'height' are required when using 'src' (filesystem path). Cannot auto-detect dimensions at compile time.")
@@ -140,11 +155,18 @@ LOTTIE_SCHEMA = cv.Schema(
     {
         cv.Optional(CONF_WIDTH): size,
         cv.Optional(CONF_HEIGHT): size,
+        cv.Optional(CONF_RENDER_WIDTH): cv.int_range(min=1, max=4096),
+        cv.Optional(CONF_RENDER_HEIGHT): cv.int_range(min=1, max=4096),
         cv.Optional(CONF_SRC): lottie_path_validator,
         cv.Optional(CONF_FILE): lottie_file_validator,
         cv.Optional(CONF_LOOP, default=True): cv.boolean,
+        cv.Optional(CONF_PLAY_COUNT, default=0): cv.int_range(min=0, max=1000),
         cv.Optional(CONF_AUTO_START, default=True): cv.boolean,
+        cv.Optional(CONF_RETAIN_ON_UNLOAD, default=False): cv.boolean,
         cv.Optional(CONF_OPAQUE_BACKGROUND): lv_color,
+        cv.Optional(CONF_FAST_RADIAL, default=False): cv.boolean,
+        cv.Optional(CONF_FAST_RADIAL_FILL_COLOR, default=0x46B1E1): lv_color,
+        cv.Optional(CONF_FAST_RADIAL_OUTLINE_COLOR, default=0x0D0D0D): lv_color,
         cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
     }
 ).add_extra(validate_lottie_source)
@@ -187,6 +209,8 @@ class LottieType(WidgetType):
         else:
             width = config[CONF_WIDTH]
             height = config[CONF_HEIGHT]
+        render_width = config.get(CONF_RENDER_WIDTH, width)
+        render_height = config.get(CONF_RENDER_HEIGHT, height)
 
         # Set widget size
         lv_obj.set_size(w.obj, width, height)
@@ -201,12 +225,20 @@ class LottieType(WidgetType):
 
         # Get loop, auto_start, and hidden config
         do_loop = "true" if config.get(CONF_LOOP, True) else "false"
+        play_count = config.get(CONF_PLAY_COUNT, 0)
         do_auto_start = "true" if config.get(CONF_AUTO_START, True) else "false"
+        retain_on_unload = "true" if config.get(CONF_RETAIN_ON_UNLOAD, False) else "false"
         user_wants_hidden = "true" if config.get("hidden", False) else "false"
-        opaque_args = ""
+        fast_radial = "true" if config.get(CONF_FAST_RADIAL, False) else "false"
+        fast_radial_fill_color = await lv_color.process(config.get(CONF_FAST_RADIAL_FILL_COLOR, 0x46B1E1))
+        fast_radial_outline_color = await lv_color.process(config.get(CONF_FAST_RADIAL_OUTLINE_COLOR, 0x0D0D0D))
+        opaque_args = f", {retain_on_unload}"
         if CONF_OPAQUE_BACKGROUND in config:
             background = await lv_color.process(config[CONF_OPAQUE_BACKGROUND])
-            opaque_args = f", true, {background}"
+            opaque_args += f", true, {background}"
+        else:
+            opaque_args += ", false, lv_color_hex(0x000000)"
+        opaque_args += f", {play_count}, {render_width}, {render_height}, {fast_radial}, {fast_radial_fill_color}, {fast_radial_outline_color}"
 
         # Use lottie_init() which handles PSRAM allocation, screen events, and task launch
         if src := config.get(CONF_SRC):

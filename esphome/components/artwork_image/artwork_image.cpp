@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <utility>
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
 #include "esphome/core/version.h"
@@ -46,41 +47,49 @@ static constexpr int LOCAL_ARTWORK_HTTP_TX_BUFFER_SIZE = 512;
 static constexpr uint32_t SLOW_ARTWORK_STAGE_MS = 30;
 static constexpr uint32_t ARTWORK_READ_STRESS_PERIOD_MS = 250;
 static constexpr uint32_t SENDSPIN_ARTWORK_PROCESS_DELAY_MS = 100;
+static constexpr uint32_t RETIRED_BUFFER_PIN_WAIT_MS = 120;
+static constexpr uint32_t RETIRED_BUFFER_PIN_POLL_MS = 2;
 #if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
 static constexpr uint32_t HTTP_JPEG_DECODE_TASK_STACK_SIZE = 8192;
-static constexpr UBaseType_t HTTP_JPEG_DECODE_TASK_PRIORITY = 1;
+// A full-screen image decode is a short producer transaction for the direct
+// presenter.  It must outrank the priority-1 slideshow consumer or an active
+// pan can keep the next frame waiting long after the JPEG engine is available.
+static constexpr UBaseType_t HTTP_JPEG_DECODE_TASK_PRIORITY = 2;
 #endif
 #if defined(USE_SENDSPIN_ARTWORK) && defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
 static constexpr uint32_t SENDSPIN_JPEG_DECODE_TASK_STACK_SIZE = 8192;
-static constexpr UBaseType_t SENDSPIN_JPEG_DECODE_TASK_PRIORITY = 1;
+// The media wave is a continuously runnable priority-2 task on the same core.
+// Keeping artwork decode below it can starve a queued cover for tens of
+// seconds while playback is active.  Decode is hardware-backed and bounded,
+// so priority 3 lets the one-shot producer finish without disabling the wave.
+static constexpr UBaseType_t SENDSPIN_JPEG_DECODE_TASK_PRIORITY = 3;
 #endif
 
 #if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
-static StackType_t *allocate_artwork_task_stack(size_t size) {
+static StackType_t *allocate_artwork_task_stack(size_t size, bool prefer_internal) {
 #ifdef USE_ESP32
-  auto *stack = static_cast<StackType_t *>(
-      heap_caps_aligned_alloc(16, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (stack != nullptr)
+  const uint32_t first_caps = prefer_internal ? MALLOC_CAP_INTERNAL : MALLOC_CAP_SPIRAM;
+  const uint32_t fallback_caps = prefer_internal ? MALLOC_CAP_SPIRAM : MALLOC_CAP_INTERNAL;
+  auto *stack = static_cast<StackType_t *>(heap_caps_aligned_alloc(16, size, first_caps | MALLOC_CAP_8BIT));
+  if (stack != nullptr) {
     return stack;
-  return static_cast<StackType_t *>(
-      heap_caps_aligned_alloc(16, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  }
+  return static_cast<StackType_t *>(heap_caps_aligned_alloc(16, size, fallback_caps | MALLOC_CAP_8BIT));
 #else
+  (void) prefer_internal;
   return static_cast<StackType_t *>(malloc(size));
 #endif
 }
 
 static StaticTask_t *allocate_artwork_task_storage() {
 #ifdef USE_ESP32
-  return static_cast<StaticTask_t *>(
-      heap_caps_calloc(1, sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  return static_cast<StaticTask_t *>(heap_caps_calloc(1, sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 #else
   return static_cast<StaticTask_t *>(calloc(1, sizeof(StaticTask_t)));
 #endif
 }
 
-static void free_artwork_task_memory(void *memory) {
-  free(memory);
-}
+static void free_artwork_task_memory(void *memory) { free(memory); }
 
 static const char *artwork_task_stack_location(const void *stack) {
 #ifdef USE_ESP32
@@ -253,11 +262,14 @@ bool ensure_artwork_ppa_blend_resources(int width, int height) {
       ESP_LOGW(TAG, "Artwork PPA blend client registration failed: %s", esp_err_to_name(ret));
       return false;
     }
-    ESP_LOGI(TAG, "Artwork PPA blend client registered (burst=%d)",
-             static_cast<int>(ARTWORK_PPA_SRM_BURST_LENGTH));
+    ESP_LOGI(TAG, "Artwork PPA blend client registered (burst=%d)", static_cast<int>(ARTWORK_PPA_SRM_BURST_LENGTH));
   }
 
-  const size_t required = (static_cast<size_t>(width) * height + 63U) & ~size_t{63U};
+  // The scrim is submitted in horizontal bands. PPA only needs an A8 source
+  // for the current band, so retaining an 800x800 all-opaque mask wastes
+  // 600 KiB and increases cache traffic without changing the result.
+  const int mask_height = std::min(height, std::max(1, static_cast<int>(CONFIG_ESPHOME_ARTWORK_PPA_BLEND_BAND_HEIGHT)));
+  const size_t required = (static_cast<size_t>(width) * mask_height + 63U) & ~size_t{63U};
   if (artwork_ppa_alpha_mask != nullptr && artwork_ppa_alpha_mask_size >= required) {
     return true;
   }
@@ -266,8 +278,8 @@ bool ensure_artwork_ppa_blend_resources(int width, int height) {
     artwork_ppa_alpha_mask = nullptr;
     artwork_ppa_alpha_mask_size = 0;
   }
-  artwork_ppa_alpha_mask = static_cast<uint8_t *>(
-      heap_caps_aligned_alloc(64, required, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  artwork_ppa_alpha_mask =
+      static_cast<uint8_t *>(heap_caps_aligned_alloc(64, required, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (artwork_ppa_alpha_mask == nullptr) {
     ESP_LOGW(TAG, "Artwork PPA alpha mask allocation failed: %zu bytes", required);
     return false;
@@ -278,7 +290,7 @@ bool ensure_artwork_ppa_blend_resources(int width, int height) {
   memset(artwork_ppa_alpha_mask, 0xFF, required);
   esp_cache_msync(artwork_ppa_alpha_mask, required, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   artwork_ppa_alpha_mask_size = required;
-  ESP_LOGI(TAG, "Artwork PPA alpha mask ready: %dx%d (%zu bytes)", width, height, required);
+  ESP_LOGI(TAG, "Artwork PPA alpha mask ready: %dx%d (%zu bytes)", width, mask_height, required);
   return true;
 }
 #endif
@@ -423,10 +435,6 @@ static void log_slow_artwork_stage(const char *stage, uint32_t start_ms) {
   }
 }
 
-static bool should_keep_spare_buffer(size_t size, bool jpeg_allocator) {
-  return jpeg_allocator && size <= MAX_SPARE_BUFFER_SIZE;
-}
-
 static uint64_t artwork_trace_now_us() {
 #ifdef USE_ESP32
   return esp_timer_get_time();
@@ -468,16 +476,17 @@ static const char *sendspin_format_to_string(sendspin::SendspinImageFormat forma
 #endif
 
 void ArtworkImage::log_memory_summary_(const char *stage) const {
+  const size_t retired_count = this->retired_buffer_count_();
 #ifdef USE_ESP32
   ESP_LOGW(TAG, "Artwork memory %s: image=%dx%d buffer=%uKB retired=%zu psram=%uK/%uK internal=%uK/%uK", stage,
            this->buffer_width_, this->buffer_height_, (unsigned) (this->get_buffer_size_() / 1024),
-           this->retired_buffers_.size(), (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+           retired_count, (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
            (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024),
            (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
            (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
 #else
   ESP_LOGW(TAG, "Artwork memory %s: image=%dx%d buffer=%uKB retired=%zu", stage, this->buffer_width_,
-           this->buffer_height_, (unsigned) (this->get_buffer_size_() / 1024), this->retired_buffers_.size());
+           this->buffer_height_, (unsigned) (this->get_buffer_size_() / 1024), retired_count);
 #endif
 }
 
@@ -498,13 +507,14 @@ void ArtworkImage::trace_event_(const char *stage, size_t bytes) const {
   }
   const uint64_t now_us = artwork_trace_now_us();
   const uint64_t elapsed_us = this->trace_start_us_ == 0 ? 0 : now_us - this->trace_start_us_;
+  const size_t retired_count = this->retired_buffer_count_();
 #ifdef USE_ESP32
   ESP_LOGW(TAG,
            "artwork trace #%u +%lluus %s bytes=%zu active=%p image=%dx%d decode=%p %dx%d retired=%zu psram=%uK/%uK "
            "internal=%uK/%uK",
            this->trace_id_, (unsigned long long) elapsed_us, stage, bytes, this->buffer_, this->buffer_width_,
            this->buffer_height_, this->decode_buffer_, this->decode_buffer_width_, this->decode_buffer_height_,
-           this->retired_buffers_.size(), (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+           retired_count, (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
            (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024),
            (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
            (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
@@ -512,7 +522,7 @@ void ArtworkImage::trace_event_(const char *stage, size_t bytes) const {
   ESP_LOGW(TAG, "artwork trace #%u +%lluus %s bytes=%zu active=%p image=%dx%d decode=%p %dx%d retired=%zu",
            this->trace_id_, (unsigned long long) elapsed_us, stage, bytes, this->buffer_, this->buffer_width_,
            this->buffer_height_, this->decode_buffer_, this->decode_buffer_width_, this->decode_buffer_height_,
-           this->retired_buffers_.size());
+           retired_count);
 #endif
 }
 
@@ -659,6 +669,9 @@ class LocalHttpContainer : public http_request::HttpContainer {
     this->set_secure(secure);
     this->set_chunked(false);
     this->response_headers_.clear();
+    this->response_content_type_.clear();
+    this->response_location_.clear();
+    this->redirect_count_ = 0;
     this->headers_ready_ = false;
     this->staged_size_ = 0;
 
@@ -669,6 +682,11 @@ class LocalHttpContainer : public http_request::HttpContainer {
 
   void add_response_header(const std::string &name, const std::string &value) {
     this->response_headers_.push_back({name, value});
+    if (name == CONTENT_TYPE_HEADER_NAME) {
+      this->response_content_type_ = value;
+    } else if (name == "location") {
+      this->response_location_ = value;
+    }
   }
 
   bool headers_ready() const { return this->headers_ready_; }
@@ -685,6 +703,11 @@ class LocalHttpContainer : public http_request::HttpContainer {
     esp_err_t result = esp_http_client_set_url(this->client_, this->pending_url_.c_str());
     if (result != ESP_OK)
       return result;
+
+    // Reused clients retain request headers. Explicitly remove auth that may
+    // have been installed by an earlier request or ESP-IDF's 401 handler;
+    // authenticated local image endpoints supply their own header below.
+    esp_http_client_delete_header(this->client_, "Authorization");
     for (const auto &header : this->pending_headers_) {
       result = esp_http_client_set_header(this->client_, header.name.c_str(), header.value.c_str());
       if (result != ESP_OK)
@@ -704,8 +727,8 @@ class LocalHttpContainer : public http_request::HttpContainer {
       }
 
       const int socket_errno = esp_http_client_get_errno(this->client_);
-      ESP_LOGW(TAG, "Local artwork connect attempt %u failed: %s errno=%d", attempt + 1,
-               esp_err_to_name(result), socket_errno);
+      ESP_LOGW(TAG, "Local artwork connect attempt %u failed: %s errno=%d", attempt + 1, esp_err_to_name(result),
+               socket_errno);
       // A failed connect can leave the transport partly initialized even
       // though transport_open_ was never set. Close it unconditionally before
       // retrying so the reusable handle returns to HTTP_STATE_INIT.
@@ -739,9 +762,66 @@ class LocalHttpContainer : public http_request::HttpContainer {
     this->content_length = content_length > 0 ? static_cast<size_t>(content_length) : 0;
     this->set_chunked(esp_http_client_is_chunked_response(this->client_));
     this->status_code = esp_http_client_get_status_code(this->client_);
+    ESP_LOGI(TAG, "Local artwork response: status=%d length=%zu chunked=%s content_type=%s redirect=%s",
+             this->status_code, this->content_length, YESNO(this->is_chunked_),
+             this->response_content_type_.empty() ? "<missing>" : this->response_content_type_.c_str(),
+             YESNO(!this->response_location_.empty()));
+
+    if (this->status_code >= 300 && this->status_code < 400 && !this->response_location_.empty()) {
+      if (this->redirect_count_ >= 3) {
+        ESP_LOGE(TAG, "Local artwork redirect limit exceeded");
+        return HeaderResult::ERROR;
+      }
+
+      const std::string redirect_url = this->resolve_redirect_url_(this->response_location_);
+      if (redirect_url.empty()) {
+        ESP_LOGE(TAG, "Local artwork returned an invalid redirect location");
+        return HeaderResult::ERROR;
+      }
+
+      this->redirect_count_++;
+      ESP_LOGI(TAG, "Following local artwork redirect %u/3", this->redirect_count_);
+      this->pending_url_ = redirect_url;
+      this->content_length = 0;
+      this->status_code = -1;
+      this->set_chunked(false);
+      this->response_headers_.clear();
+      this->response_content_type_.clear();
+      this->response_location_.clear();
+      this->headers_ready_ = false;
+      if (this->open() != ESP_OK) {
+        ESP_LOGE(TAG, "Unable to open redirected local artwork request");
+        return HeaderResult::ERROR;
+      }
+      return HeaderResult::PENDING;
+    }
+
     this->headers_ready_ = true;
     esp_http_client_set_timeout_ms(this->client_, LOCAL_ARTWORK_HTTP_READ_TIMEOUT_MS);
     return HeaderResult::READY;
+  }
+
+  std::string resolve_redirect_url_(const std::string &location) const {
+    if (location.rfind("http://", 0) == 0 || location.rfind("https://", 0) == 0)
+      return location;
+    if (this->pending_url_.empty() || location.empty())
+      return {};
+
+    const size_t scheme_end = this->pending_url_.find("://");
+    if (scheme_end == std::string::npos)
+      return {};
+    const size_t authority_end = this->pending_url_.find('/', scheme_end + 3);
+    const std::string origin = authority_end == std::string::npos ? this->pending_url_
+                                                                  : this->pending_url_.substr(0, authority_end);
+    if (location.front() == '/')
+      return origin + location;
+
+    const size_t query = this->pending_url_.find_first_of("?#");
+    const std::string path = this->pending_url_.substr(0, query);
+    const size_t slash = path.rfind('/');
+    if (slash == std::string::npos || slash < scheme_end + 3)
+      return origin + "/" + location;
+    return path.substr(0, slash + 1) + location;
   }
 
   int read_staged(size_t max_len) {
@@ -815,6 +895,8 @@ class LocalHttpContainer : public http_request::HttpContainer {
     this->staged_size_ = 0;
   }
 
+  void close_transport() { this->close_transport_(); }
+
  protected:
   void close_transport_() {
     if (this->client_ != nullptr && (this->transport_open_ || this->close_pending_))
@@ -831,15 +913,19 @@ class LocalHttpContainer : public http_request::HttpContainer {
   bool close_pending_{false};
   std::string pending_url_;
   std::vector<http_request::Header> pending_headers_;
+  std::string response_content_type_;
+  std::string response_location_;
+  uint8_t redirect_count_{0};
 };
 
 static esp_err_t insecure_local_http_event_handler(esp_http_client_event_t *evt) {
   auto *container = static_cast<LocalHttpContainer *>(evt->user_data);
-  if (container == nullptr || evt->event_id != HTTP_EVENT_ON_HEADER) {
+  if (container == nullptr || evt->event_id != HTTP_EVENT_ON_HEADER || evt->header_key == nullptr ||
+      evt->header_value == nullptr) {
     return ESP_OK;
   }
   const std::string header_name = str_lower_case(evt->header_key);
-  if (header_name == CONTENT_TYPE_HEADER_NAME) {
+  if (header_name == CONTENT_TYPE_HEADER_NAME || header_name == "location") {
     container->add_response_header(header_name, evt->header_value);
   }
   return ESP_OK;
@@ -881,11 +967,15 @@ size_t ArtworkImage::memory_usage_bytes() const {
   if (this->spare_buffer_ != nullptr && this->spare_buffer_ != this->buffer_ &&
       this->spare_buffer_ != this->decode_buffer_)
     decoded_bytes += this->spare_buffer_size_;
+  if (this->secondary_spare_buffer_ != nullptr && this->secondary_spare_buffer_ != this->buffer_ &&
+      this->secondary_spare_buffer_ != this->decode_buffer_ &&
+      this->secondary_spare_buffer_ != this->spare_buffer_)
+    decoded_bytes += this->secondary_spare_buffer_size_;
   if (this->darkened_buffer_ != nullptr && this->darkened_buffer_ != this->buffer_ &&
-      this->darkened_buffer_ != this->decode_buffer_ && this->darkened_buffer_ != this->spare_buffer_)
+      this->darkened_buffer_ != this->decode_buffer_ && this->darkened_buffer_ != this->spare_buffer_ &&
+      this->darkened_buffer_ != this->secondary_spare_buffer_)
     decoded_bytes += this->get_buffer_size_();
-  for (const auto &entry : this->retired_buffers_)
-    decoded_bytes += entry.size;
+  decoded_bytes += this->retired_buffer_bytes_();
 
   size_t encoded_bytes = this->download_buffer_.size();
 #ifdef USE_SENDSPIN_ARTWORK
@@ -915,8 +1005,11 @@ void ArtworkImage::log_memory_usage(const char *phase) const {
   if (this->spare_buffer_ != nullptr && this->spare_buffer_ != this->buffer_ &&
       this->spare_buffer_ != this->decode_buffer_)
     spare_retired_bytes += this->spare_buffer_size_;
-  for (const auto &entry : this->retired_buffers_)
-    spare_retired_bytes += entry.size;
+  if (this->secondary_spare_buffer_ != nullptr && this->secondary_spare_buffer_ != this->buffer_ &&
+      this->secondary_spare_buffer_ != this->decode_buffer_ &&
+      this->secondary_spare_buffer_ != this->spare_buffer_)
+    spare_retired_bytes += this->secondary_spare_buffer_size_;
+  spare_retired_bytes += this->retired_buffer_bytes_();
 
   size_t encoded_bytes = this->download_buffer_.size();
 #ifdef USE_SENDSPIN_ARTWORK
@@ -936,9 +1029,8 @@ void ArtworkImage::log_memory_usage(const char *phase) const {
 #endif
   ESP_LOGW("memory.artwork", "%s total=%uK active=%uK staging=%uK spare_retired=%uK encoded=%uK tasks=%uK",
            phase == nullptr ? "runtime" : phase, (unsigned) (this->memory_usage_bytes() / 1024),
-           (unsigned) (active_bytes / 1024), (unsigned) (staging_bytes / 1024),
-           (unsigned) (spare_retired_bytes / 1024), (unsigned) (encoded_bytes / 1024),
-           (unsigned) (task_bytes / 1024));
+           (unsigned) (active_bytes / 1024), (unsigned) (staging_bytes / 1024), (unsigned) (spare_retired_bytes / 1024),
+           (unsigned) (encoded_bytes / 1024), (unsigned) (task_bytes / 1024));
 }
 
 void ArtworkImage::setup() {
@@ -1020,12 +1112,15 @@ void ArtworkImage::setup() {
     {
       LockGuard guard(this->sendspin_pending_lock_);
       if (this->sendspin_paused_) {
-        this->pending_sendspin_data_.clear();
-        this->pending_sendspin_image_ = false;
+        // A stream boundary is not an instruction to erase the player's
+        // current cover. Keep the latest encoded frame (if any) until the
+        // player is opened; otherwise a radio reconnect can leave the player
+        // with only its placeholder and force it to wait for the next track.
         this->pending_sendspin_display_ = false;
-        this->pending_sendspin_clear_ = true;
+        this->pending_sendspin_clear_ = false;
         if constexpr (CONFIG_ESPHOME_ARTWORK_TRACE_VERBOSE) {
-          ESP_LOGW(TAG, "sendspin clear queued while paused slot=%u", slot);
+          ESP_LOGW(TAG, "sendspin clear retained while paused slot=%u pending_image=%s", slot,
+                   YESNO(this->pending_sendspin_image_));
         }
         return;
       }
@@ -1072,6 +1167,81 @@ void ArtworkImage::setup() {
 #endif
 }
 
+bool ArtworkImage::acquire_buffer(image::ImageBufferLease *lease) const {
+  if (lease == nullptr)
+    return false;
+
+  LockGuard guard(this->buffer_pin_mutex_);
+  if (this->data_start_ == nullptr || this->width_ <= 0 || this->height_ <= 0)
+    return false;
+
+  BufferPin *slot = nullptr;
+  for (auto &pin : this->buffer_pins_) {
+    if (pin.data == this->data_start_) {
+      slot = &pin;
+      break;
+    }
+    if (slot == nullptr && pin.references == 0)
+      slot = &pin;
+  }
+  if (slot == nullptr) {
+    ESP_LOGW(TAG, "All artwork buffer lease slots are occupied");
+    return false;
+  }
+  slot->data = this->data_start_;
+  slot->references++;
+
+  const size_t stride = this->get_width_stride();
+  size_t size = stride * static_cast<size_t>(this->height_);
+  if (this->type_ == image::IMAGE_TYPE_RGB565 && this->transparency_ == image::TRANSPARENCY_ALPHA_CHANNEL)
+    size += static_cast<size_t>(this->width_) * this->height_;
+  *lease = {
+      .owner = this,
+      .data = this->data_start_,
+      .size = size,
+      .stride = stride,
+      .width = this->width_,
+      .height = this->height_,
+      .type = this->type_,
+      .transparency = this->transparency_,
+      .writer = this->get_buffer_writer(),
+      .generation = this->buffer_generation_.load(std::memory_order_acquire),
+  };
+  return true;
+}
+
+bool ArtworkImage::release_buffer(image::ImageBufferLease *lease) const {
+  if (lease == nullptr || lease->owner != this)
+    return false;
+
+  {
+    LockGuard guard(this->buffer_pin_mutex_);
+    for (auto &pin : this->buffer_pins_) {
+      if (pin.data != lease->data || pin.references == 0)
+        continue;
+      pin.references--;
+      if (pin.references == 0)
+        pin.data = nullptr;
+      *lease = {};
+      return true;
+    }
+  }
+  ESP_LOGW(TAG, "Artwork buffer lease was released after its pin disappeared");
+  *lease = {};
+  return false;
+}
+
+bool ArtworkImage::buffer_is_pinned_(const uint8_t *data) const {
+  if (data == nullptr)
+    return false;
+  LockGuard guard(this->buffer_pin_mutex_);
+  for (const auto &pin : this->buffer_pins_) {
+    if (pin.data == data && pin.references > 0)
+      return true;
+  }
+  return false;
+}
+
 bool ArtworkImage::reserve_download_buffer() {
   if (!this->hardware_jpeg_) {
     return true;
@@ -1103,7 +1273,12 @@ bool ArtworkImage::reserve_local_http_client(const std::string &url) {
   config.timeout_ms = std::min<int>(this->parent_->get_timeout(), LOCAL_ARTWORK_HTTP_CONNECT_TIMEOUT_MS);
   config.disable_auto_redirect = false;
   config.max_redirection_count = 3;
-  config.auth_type = HTTP_AUTH_TYPE_BASIC;
+  // Authentication for local image endpoints is supplied explicitly through
+  // request_headers_. Enabling Basic auth without credentials adds an empty
+  // Authorization header; Immich then redirects an otherwise valid x-api-key
+  // request to its login route and the decoder receives the 31-byte redirect
+  // body instead of a JPEG.
+  config.auth_type = HTTP_AUTH_TYPE_NONE;
   config.event_handler = insecure_local_http_event_handler;
   config.buffer_size = CONFIG_ESPHOME_ARTWORK_LOCAL_HTTP_RX_BUFFER_SIZE;
   config.buffer_size_tx = LOCAL_ARTWORK_HTTP_TX_BUFFER_SIZE;
@@ -1126,6 +1301,15 @@ bool ArtworkImage::reserve_local_http_client(const std::string &url) {
 #endif
 }
 
+void ArtworkImage::release_local_http_transport() {
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  if (this->local_http_cache_ == nullptr)
+    return;
+  this->local_http_close_pending_ = true;
+  this->enable_loop();
+#endif
+}
+
 #if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
 bool ArtworkImage::start_http_jpeg_decode_worker_() {
   if (this->http_jpeg_decode_task_ != nullptr) {
@@ -1134,14 +1318,11 @@ bool ArtworkImage::start_http_jpeg_decode_worker_() {
 
 #if CONFIG_FREERTOS_UNICORE
   constexpr BaseType_t decode_core = tskNO_AFFINITY;
-#elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0) && CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0
-  constexpr BaseType_t decode_core = 1;
-#elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1) && CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1
-  constexpr BaseType_t decode_core = 0;
 #else
-  constexpr BaseType_t decode_core = 1;
+  const BaseType_t decode_core = xPortGetCoreID() == 0 ? 1 : 0;
 #endif
-  this->http_jpeg_decode_task_stack_ = allocate_artwork_task_stack(HTTP_JPEG_DECODE_TASK_STACK_SIZE);
+  this->http_jpeg_decode_task_stack_ =
+      allocate_artwork_task_stack(HTTP_JPEG_DECODE_TASK_STACK_SIZE, this->prefer_internal_task_stack_);
   this->http_jpeg_decode_task_storage_ = allocate_artwork_task_storage();
   if (this->http_jpeg_decode_task_stack_ == nullptr || this->http_jpeg_decode_task_storage_ == nullptr) {
     free_artwork_task_memory(this->http_jpeg_decode_task_stack_);
@@ -1171,8 +1352,8 @@ bool ArtworkImage::start_http_jpeg_decode_worker_() {
 }
 
 bool ArtworkImage::queue_http_jpeg_decode_() {
-  if (this->http_jpeg_decode_task_ == nullptr || this->active_format_ != ImageFormat::JPEG ||
-      !this->hardware_jpeg_ || this->decoder_ == nullptr || this->decoder_->has_unknown_download_size() ||
+  if (this->http_jpeg_decode_task_ == nullptr || this->active_format_ != ImageFormat::JPEG || !this->hardware_jpeg_ ||
+      this->decoder_ == nullptr || this->decoder_->has_unknown_download_size() ||
       this->download_buffer_.unread() < this->decoder_->get_download_size()) {
     return false;
   }
@@ -1202,10 +1383,12 @@ bool ArtworkImage::queue_local_http_open_() {
 }
 
 bool ArtworkImage::process_local_http_open_result_() {
-  if (!this->local_http_open_done_.exchange(false, std::memory_order_acq_rel)) return false;
+  if (!this->local_http_open_done_.exchange(false, std::memory_order_acq_rel))
+    return false;
   const esp_err_t result = static_cast<esp_err_t>(this->local_http_open_result_.load(std::memory_order_acquire));
   this->trace_event_("local-open-worker-result", result == ESP_OK ? 1 : 0);
-  if (result == ESP_OK) return false;
+  if (result == ESP_OK)
+    return false;
 
   ESP_LOGE(TAG, "Local artwork request failed: %s", esp_err_to_name(result));
   this->fail_download_();
@@ -1262,6 +1445,17 @@ bool ArtworkImage::process_local_http_read_result_(int &result) {
   return true;
 }
 
+bool ArtworkImage::queue_local_http_close_() {
+  if (this->http_jpeg_decode_task_ == nullptr || this->local_http_cache_ == nullptr ||
+      this->local_http_close_busy_.exchange(true, std::memory_order_acq_rel)) {
+    return false;
+  }
+  this->local_http_close_done_.store(false, std::memory_order_release);
+  this->trace_event_("local-close-worker-queued");
+  xTaskNotifyGive(this->http_jpeg_decode_task_);
+  return true;
+}
+
 void ArtworkImage::http_jpeg_decode_worker_task_(void *arg) {
   auto *image = static_cast<ArtworkImage *>(arg);
   while (true) {
@@ -1269,8 +1463,8 @@ void ArtworkImage::http_jpeg_decode_worker_task_(void *arg) {
     if (image->local_http_open_busy_.load(std::memory_order_acquire)) {
       image->trace_event_("local-open-worker-start");
       mark_display_stress("artwork-local-open", 2000);
-      const esp_err_t result = image->local_downloader_ == nullptr ? ESP_ERR_INVALID_STATE
-                                                                   : image->local_downloader_->open();
+      const esp_err_t result =
+          image->local_downloader_ == nullptr ? ESP_ERR_INVALID_STATE : image->local_downloader_->open();
       image->local_http_open_result_.store(result, std::memory_order_release);
       image->local_http_open_done_.store(true, std::memory_order_release);
       image->local_http_open_busy_.store(false, std::memory_order_release);
@@ -1280,7 +1474,7 @@ void ArtworkImage::http_jpeg_decode_worker_task_(void *arg) {
       image->trace_event_("local-headers-worker-start");
       mark_display_stress("artwork-local-headers", 2000);
       const auto result = image->local_downloader_ == nullptr ? LocalHttpContainer::HeaderResult::ERROR
-                                                               : image->local_downloader_->fetch_headers_step();
+                                                              : image->local_downloader_->fetch_headers_step();
       image->local_http_headers_result_.store(static_cast<int>(result), std::memory_order_release);
       image->local_http_headers_done_.store(true, std::memory_order_release);
       image->local_http_headers_busy_.store(false, std::memory_order_release);
@@ -1291,10 +1485,18 @@ void ArtworkImage::http_jpeg_decode_worker_task_(void *arg) {
       image->trace_event_("local-read-worker-start", read_size);
       mark_display_stress("artwork-local-read", 2000);
       const int result = image->local_downloader_ == nullptr ? -ESP_ERR_INVALID_STATE
-                                                              : image->local_downloader_->read_staged(read_size);
+                                                             : image->local_downloader_->read_staged(read_size);
       image->local_http_read_result_.store(result, std::memory_order_release);
       image->local_http_read_done_.store(true, std::memory_order_release);
       image->local_http_read_busy_.store(false, std::memory_order_release);
+      continue;
+    }
+    if (image->local_http_close_busy_.load(std::memory_order_acquire)) {
+      image->trace_event_("local-close-worker-start");
+      if (image->local_http_cache_ != nullptr)
+        image->local_http_cache_->close_transport();
+      image->local_http_close_done_.store(true, std::memory_order_release);
+      image->local_http_close_busy_.store(false, std::memory_order_release);
       continue;
     }
     const size_t input_size = image->http_jpeg_decode_input_size_;
@@ -1349,9 +1551,26 @@ bool ArtworkImage::process_http_jpeg_decode_result_() {
 
 void ArtworkImage::finish_deferred_release_() {
   const bool immediate = this->release_after_http_decode_immediate_;
+  const bool preserve_capacity = this->release_after_http_decode_preserve_capacity_;
+  // A page can be reopened while the previous HTTP worker is still winding
+  // down. request_update_url() then queues the new URL behind that worker.
+  // release() normally clears pending work because an explicit release means
+  // "stop", but doing that here would silently discard the reopen request and
+  // leave the image widget on its loading state forever.
+  const bool restart_pending = this->update_pending_;
+  std::string pending_url;
+  if (restart_pending) {
+    pending_url = this->pending_url_;
+  }
   this->release_after_http_decode_ = false;
   this->release_after_http_decode_immediate_ = false;
-  this->release(immediate);
+  this->release_after_http_decode_preserve_capacity_ = false;
+  this->release(immediate, preserve_capacity);
+  if (restart_pending) {
+    this->pending_url_ = std::move(pending_url);
+    this->update_pending_ = true;
+    this->start_pending_update_();
+  }
 }
 #endif
 
@@ -1364,14 +1583,11 @@ bool ArtworkImage::start_sendspin_decode_worker_() {
 
 #if CONFIG_FREERTOS_UNICORE
   constexpr BaseType_t decode_core = tskNO_AFFINITY;
-#elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0) && CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0
-  constexpr BaseType_t decode_core = 1;
-#elif defined(CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1) && CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1
-  constexpr BaseType_t decode_core = 0;
 #else
-  constexpr BaseType_t decode_core = 1;
+  const BaseType_t decode_core = xPortGetCoreID() == 0 ? 1 : 0;
 #endif
-  this->sendspin_decode_task_stack_ = allocate_artwork_task_stack(SENDSPIN_JPEG_DECODE_TASK_STACK_SIZE);
+  this->sendspin_decode_task_stack_ =
+      allocate_artwork_task_stack(SENDSPIN_JPEG_DECODE_TASK_STACK_SIZE, this->prefer_internal_task_stack_);
   this->sendspin_decode_task_storage_ = allocate_artwork_task_storage();
   if (this->sendspin_decode_task_stack_ == nullptr || this->sendspin_decode_task_storage_ == nullptr) {
     free_artwork_task_memory(this->sendspin_decode_task_stack_);
@@ -1697,8 +1913,7 @@ bool ArtworkImage::apply_decode_buffer_scrim_() {
 
 #if defined(USE_ESP_IDF) && defined(CONFIG_SOC_PPA_SUPPORTED) && defined(USE_ESP32_JPEG)
   const size_t buffer_size = this->get_decode_buffer_size_();
-  if (this->type_ == image::IMAGE_TYPE_RGB565 &&
-      this->transparency_ != image::TRANSPARENCY_ALPHA_CHANNEL &&
+  if (this->type_ == image::IMAGE_TYPE_RGB565 && this->transparency_ != image::TRANSPARENCY_ALPHA_CHANNEL &&
       (reinterpret_cast<uintptr_t>(this->decode_buffer_) & 63U) == 0 && (buffer_size & 63U) == 0 &&
       ensure_artwork_ppa_blend_resources(this->decode_buffer_width_, this->decode_buffer_height_)) {
     ppa_blend_oper_config_t cfg = {};
@@ -1712,7 +1927,8 @@ bool ArtworkImage::apply_decode_buffer_scrim_() {
     cfg.in_bg.blend_cm = PPA_BLEND_COLOR_MODE_RGB565;
     cfg.in_fg.buffer = artwork_ppa_alpha_mask;
     cfg.in_fg.pic_w = this->decode_buffer_width_;
-    cfg.in_fg.pic_h = this->decode_buffer_height_;
+    cfg.in_fg.pic_h = std::min(this->decode_buffer_height_,
+                               std::max(1, static_cast<int>(CONFIG_ESPHOME_ARTWORK_PPA_BLEND_BAND_HEIGHT)));
     cfg.in_fg.block_w = this->decode_buffer_width_;
     cfg.in_fg.block_h = 0;
     cfg.in_fg.block_offset_x = 0;
@@ -1748,8 +1964,9 @@ bool ArtworkImage::apply_decode_buffer_scrim_() {
         const int rows = std::min(ppa_band_height, this->decode_buffer_height_ - y);
         cfg.in_bg.block_h = rows;
         cfg.in_bg.block_offset_y = y;
+        cfg.in_fg.pic_h = rows;
         cfg.in_fg.block_h = rows;
-        cfg.in_fg.block_offset_y = y;
+        cfg.in_fg.block_offset_y = 0;
         cfg.out.block_offset_y = y;
         wait_for_display_fifo_margin("artwork-scrim-ppa");
         result = ppa_do_blend(artwork_ppa_blend_client, &cfg);
@@ -1890,7 +2107,7 @@ lv_image_dsc_t *ArtworkImage::get_lv_image_dsc() {
 }
 #endif
 
-void ArtworkImage::release(bool immediate) {
+void ArtworkImage::release(bool immediate, bool preserve_capacity) {
   this->update_pending_ = false;
   this->pending_url_.clear();
 #if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
@@ -1900,18 +2117,53 @@ void ArtworkImage::release(bool immediate) {
       this->local_http_read_busy_.load(std::memory_order_acquire)) {
     this->release_after_http_decode_ = true;
     this->release_after_http_decode_immediate_ = this->release_after_http_decode_immediate_ || immediate;
+    this->release_after_http_decode_preserve_capacity_ =
+        this->release_after_http_decode_preserve_capacity_ || preserve_capacity;
     return;
   }
 #endif
   this->end_connection_();
-  this->retire_active_buffer_();
-  this->cleanup_retired_buffers_(immediate);
-  if (immediate) {
-    this->release_spare_buffer_();
+
+  RetiredBuffer preserved{};
+  bool preserve_active = false;
+  if (preserve_capacity && this->buffer_ != nullptr && this->buffer_uses_jpeg_allocator_) {
+    uint8_t *active = this->buffer_;
+    this->retire_active_buffer_();
+    {
+      LockGuard guard(this->retired_buffer_mutex_);
+      if (!this->retired_buffers_.empty() && this->retired_buffers_.back().data == active) {
+        preserved = this->retired_buffers_.back();
+        this->retired_buffers_.pop_back();
+        preserve_active = true;
+      }
+    }
+  } else {
+    this->retire_active_buffer_();
   }
-  if (!this->retired_buffers_.empty()) {
+
+  // An immediate gallery close can release stale render generations while
+  // retaining one exact hardware-JPEG output allocation. Reusing that block
+  // avoids relying on a new multi-megabyte contiguous PSRAM allocation after
+  // Home/app snapshot caches have fragmented the heap.
+  this->cleanup_retired_buffers_(immediate, preserve_capacity && !preserve_active);
+  if (preserve_active) {
+    if (this->store_spare_buffer_(preserved.data, preserved.size, preserved.jpeg_allocator)) {
+      ESP_LOGD(TAG, "Preserved decoded-image capacity across release: %zu bytes", preserved.size);
+    } else {
+      this->release_buffer_(preserved.data, preserved.size, preserved.jpeg_allocator);
+    }
+  }
+  if (this->retired_buffer_count_() != 0) {
     this->enable_loop();
   }
+}
+
+void ArtworkImage::release_unused_decode_capacity() {
+  // Retired buffers still leased by a presenter are deliberately skipped by
+  // cleanup_retired_buffers_(). The active image and an in-progress decode are
+  // independent, so another full-screen image client can reclaim only idle
+  // capacity without blanking the currently retained artwork.
+  this->cleanup_retired_buffers_(true, false);
 }
 
 bool ArtworkImage::begin_decode_callbacks() {
@@ -1930,7 +2182,9 @@ void ArtworkImage::complete_decode_callbacks(bool successful) {
 }
 
 uint8_t *ArtworkImage::try_reuse_active_buffer_for_decode(int width, int height, int content_width,
-                                                           int content_height) {
+                                                          int content_height) {
+  if (!this->reuse_active_buffer_)
+    return nullptr;
   if (this->decode_buffer_ != nullptr || this->buffer_ == nullptr || !this->buffer_uses_jpeg_allocator_) {
     return nullptr;
   }
@@ -1984,22 +2238,66 @@ uint8_t *ArtworkImage::try_get_staging_buffer_for_decode(int width, int height, 
   if (this->decode_buffer_ != nullptr) {
     return nullptr;
   }
-  if (width <= 0 || height <= 0 || content_width != width || content_height != height) {
+  if (width <= 0 || height <= 0 || content_width <= 0 || content_height <= 0 || content_width > width ||
+      content_height > height) {
     return nullptr;
   }
   const size_t size = this->get_buffer_size_(width, height);
-  if (this->spare_buffer_ != nullptr && this->spare_buffer_size_ >= size) {
-    if (this->spare_buffer_uses_jpeg_allocator_) {
-      this->decode_buffer_ = this->spare_buffer_;
-      this->decode_buffer_capacity_ = this->spare_buffer_size_;
-      this->decode_buffer_uses_jpeg_allocator_ = true;
-      this->spare_buffer_ = nullptr;
-      this->spare_buffer_size_ = 0;
-      this->spare_buffer_uses_jpeg_allocator_ = false;
-    } else {
-      this->release_spare_buffer_();
+  // A scene crossfade deliberately keeps the displayed generation immutable.
+  // Once that transition releases its lease, the previous JPEG allocation is
+  // the ideal target for the next decode. Recycle it before asking PSRAM for a
+  // third 800x800 block; rapid station-art -> track-art updates otherwise fail
+  // while the unpinned generation is still inside the normal grace period.
+  auto recycle_retired_buffer = [this, size, width, height](bool *matching_buffer_exists) {
+    if (matching_buffer_exists != nullptr)
+      *matching_buffer_exists = false;
+    LockGuard guard(this->retired_buffer_mutex_);
+    auto best = this->retired_buffers_.end();
+    for (auto it = this->retired_buffers_.begin(); it != this->retired_buffers_.end(); ++it) {
+      if (!it->jpeg_allocator || it->size < size)
+        continue;
+      if (matching_buffer_exists != nullptr)
+        *matching_buffer_exists = true;
+      if (this->buffer_is_pinned_(it->data))
+        continue;
+      if (best == this->retired_buffers_.end() || it->size < best->size)
+        best = it;
     }
+    if (best == this->retired_buffers_.end())
+      return false;
+    this->decode_buffer_ = best->data;
+    this->decode_buffer_capacity_ = best->size;
+    this->decode_buffer_uses_jpeg_allocator_ = true;
+    ESP_LOGD(TAG, "Recycling unpinned artwork generation for %dx%d hardware decode (%zu bytes)", width, height,
+             best->size);
+    this->retired_buffers_.erase(best);
+    return true;
+  };
+
+  bool matching_retired_buffer = false;
+  recycle_retired_buffer(&matching_retired_buffer);
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
+  bool background_decode_task = current_task != nullptr && current_task == this->http_jpeg_decode_task_;
+#ifdef USE_SENDSPIN_ARTWORK
+  background_decode_task =
+      background_decode_task || (current_task != nullptr && current_task == this->sendspin_decode_task_);
+#endif
+  if (this->decode_buffer_ == nullptr && matching_retired_buffer && background_decode_task) {
+    const uint32_t wait_started_ms = millis();
+    do {
+      vTaskDelay(std::max<TickType_t>(1, pdMS_TO_TICKS(RETIRED_BUFFER_PIN_POLL_MS)));
+      matching_retired_buffer = false;
+      if (recycle_retired_buffer(&matching_retired_buffer)) {
+        ESP_LOGD(TAG, "Artwork decode waited %ums for the displayed generation lease",
+                 static_cast<unsigned>(millis() - wait_started_ms));
+        break;
+      }
+    } while (matching_retired_buffer && millis() - wait_started_ms < RETIRED_BUFFER_PIN_WAIT_MS);
   }
+#endif
+  if (this->decode_buffer_ == nullptr)
+    this->take_spare_buffer_(size);
   if (this->decode_buffer_ == nullptr) {
 #ifdef USE_ESP32_JPEG
     size_t capacity = 0;
@@ -2050,12 +2348,8 @@ void ArtworkImage::cancel_staging_buffer_decode() {
     return;
   }
   const size_t size = this->decode_buffer_capacity_;
-  if (!this->decode_buffer_reuses_active_ && this->spare_buffer_ == nullptr &&
-      should_keep_spare_buffer(size, this->decode_buffer_uses_jpeg_allocator_)) {
-    this->spare_buffer_ = this->decode_buffer_;
-    this->spare_buffer_size_ = size;
-    this->spare_buffer_uses_jpeg_allocator_ = this->decode_buffer_uses_jpeg_allocator_;
-  } else if (!this->decode_buffer_reuses_active_) {
+  if (!this->decode_buffer_reuses_active_ &&
+      !this->store_spare_buffer_(this->decode_buffer_, size, this->decode_buffer_uses_jpeg_allocator_)) {
     this->release_buffer_(this->decode_buffer_, size, this->decode_buffer_uses_jpeg_allocator_);
   }
   this->decode_buffer_ = nullptr;
@@ -2073,36 +2367,87 @@ void ArtworkImage::cancel_staging_buffer_decode() {
   this->decode_buffer_scrim_applied_ = false;
 }
 
-bool ArtworkImage::reserve_decode_buffer_capacity(size_t size) {
-  if (size == 0 || (this->buffer_ != nullptr && this->buffer_capacity_ >= size) ||
-      (this->spare_buffer_ != nullptr && this->spare_buffer_size_ >= size)) {
+bool ArtworkImage::reserve_decode_buffer_capacity(size_t size, uint8_t desired_buffers) {
+  if (size == 0) {
+    return false;
+  }
+  desired_buffers = std::max<uint8_t>(1, std::min<uint8_t>(desired_buffers, 2));
+  this->reserved_decode_buffer_capacity_ = std::max(this->reserved_decode_buffer_capacity_, size);
+  this->reserved_decode_buffer_count_ = std::max(this->reserved_decode_buffer_count_, desired_buffers);
+  while (this->compatible_decode_buffer_count_(size) < desired_buffers) {
+#ifdef USE_ESP32_JPEG
+    size_t capacity = 0;
+    uint8_t *buffer = esp32_jpeg::allocate_decode_output(size, &capacity);
+    if (buffer == nullptr || capacity < size) {
+      if (buffer != nullptr)
+        esp32_jpeg::release_decode_output(buffer);
+      ESP_LOGW(TAG, "Unable to reserve JPEG output buffer: requested=%zu capacity=%zu count=%u/%u", size, capacity,
+               static_cast<unsigned>(this->compatible_decode_buffer_count_(size)),
+               static_cast<unsigned>(desired_buffers));
+      return false;
+    }
+    if (!this->store_spare_buffer_(buffer, capacity, true)) {
+      esp32_jpeg::release_decode_output(buffer);
+      return false;
+    }
+#else
+    uint8_t *buffer = this->allocator_.allocate(size);
+    if (buffer == nullptr)
+      return false;
+    if (!this->store_spare_buffer_(buffer, size, false)) {
+      this->allocator_.deallocate(buffer, size);
+      return false;
+    }
+#endif
+  }
+  ESP_LOGI(TAG, "Reserved decoded-image pool: %u x at least %zu bytes",
+           static_cast<unsigned>(desired_buffers), size);
+  return true;
+}
+
+uint8_t *ArtworkImage::loan_decode_buffer_capacity(size_t minimum_size, size_t *capacity) {
+  if (capacity != nullptr)
+    *capacity = 0;
+  if (minimum_size == 0 || this->decode_buffer_ != nullptr || this->is_busy_())
+    return nullptr;
+
+  uint8_t **selected = nullptr;
+  size_t *selected_size = nullptr;
+  bool *selected_jpeg_allocator = nullptr;
+  auto consider = [&](uint8_t **buffer, size_t *size, bool *jpeg_allocator) {
+    if (*buffer == nullptr || *size < minimum_size || !*jpeg_allocator)
+      return;
+    if (selected == nullptr || *size < *selected_size) {
+      selected = buffer;
+      selected_size = size;
+      selected_jpeg_allocator = jpeg_allocator;
+    }
+  };
+  consider(&this->spare_buffer_, &this->spare_buffer_size_, &this->spare_buffer_uses_jpeg_allocator_);
+  consider(&this->secondary_spare_buffer_, &this->secondary_spare_buffer_size_,
+           &this->secondary_spare_buffer_uses_jpeg_allocator_);
+  if (selected == nullptr)
+    return nullptr;
+
+  uint8_t *result = *selected;
+  if (capacity != nullptr)
+    *capacity = *selected_size;
+  *selected = nullptr;
+  *selected_size = 0;
+  *selected_jpeg_allocator = false;
+  ESP_LOGD(TAG, "Loaned idle decoded-image buffer: %zu bytes", capacity == nullptr ? minimum_size : *capacity);
+  return result;
+}
+
+bool ArtworkImage::return_decode_buffer_capacity(uint8_t *buffer, size_t capacity) {
+  if (buffer == nullptr || capacity == 0)
+    return false;
+  if (this->store_spare_buffer_(buffer, capacity, true)) {
+    ESP_LOGD(TAG, "Returned idle decoded-image buffer: %zu bytes", capacity);
     return true;
   }
-  if (this->decode_buffer_ != nullptr || this->spare_buffer_ != nullptr) {
-    return false;
-  }
-#ifdef USE_ESP32_JPEG
-  size_t capacity = 0;
-  uint8_t *buffer = esp32_jpeg::allocate_decode_output(size, &capacity);
-  if (buffer == nullptr || capacity < size) {
-    if (buffer != nullptr)
-      esp32_jpeg::release_decode_output(buffer);
-    ESP_LOGW(TAG, "Unable to reserve JPEG output buffer: requested=%zu capacity=%zu", size, capacity);
-    return false;
-  }
-  this->spare_buffer_ = buffer;
-  this->spare_buffer_size_ = capacity;
-  this->spare_buffer_uses_jpeg_allocator_ = true;
-#else
-  uint8_t *buffer = this->allocator_.allocate(size);
-  if (buffer == nullptr)
-    return false;
-  this->spare_buffer_ = buffer;
-  this->spare_buffer_size_ = size;
-  this->spare_buffer_uses_jpeg_allocator_ = false;
-#endif
-  ESP_LOGI(TAG, "Reserved reusable decoded-image buffer: %zu bytes", this->spare_buffer_size_);
-  return true;
+  this->release_buffer_(buffer, capacity, true);
+  return false;
 }
 
 size_t ArtworkImage::resize_(int width_in, int height_in) {
@@ -2511,8 +2856,8 @@ bool ArtworkImage::start_response_download_() {
   // The hardware JPEG decoder needs the complete encoded image. Reserve its
   // known payload once, before receiving any bytes, instead of repeatedly
   // reallocating and copying an ever-growing buffer through PSRAM.
-  if (this->hardware_jpeg_ && total_size > this->download_buffer_.size() &&
-      total_size <= MAX_DOWNLOAD_BUFFER_SIZE && this->download_buffer_.unread() == 0) {
+  if (this->hardware_jpeg_ && total_size > this->download_buffer_.size() && total_size <= MAX_DOWNLOAD_BUFFER_SIZE &&
+      this->download_buffer_.unread() == 0) {
     // Grow geometrically in 64 KiB steps and retain the high-water mark. This
     // avoids a second realloc when consecutive images differ only slightly.
     constexpr size_t GROWTH_GRANULARITY = 64 * 1024;
@@ -2664,10 +3009,38 @@ void ArtworkImage::loop() {
   }
 #endif
 #if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+  if (this->local_http_close_done_.exchange(false, std::memory_order_acq_rel)) {
+    this->local_http_close_pending_ = false;
+    ESP_LOGD(TAG, "Released reusable local artwork HTTP transport");
+  }
   if (this->process_local_http_open_result_()) {
     return;
   }
   if (this->local_http_open_busy_.load(std::memory_order_acquire)) {
+    const uint32_t now = millis();
+    if (now - this->last_data_millis_ >= 3000 &&
+        now - this->last_local_http_worker_diagnostic_millis_ >= 1000) {
+      this->last_local_http_worker_diagnostic_millis_ = now;
+      const int task_state = this->http_jpeg_decode_task_ == nullptr
+                                 ? -1
+                                 : static_cast<int>(eTaskGetState(this->http_jpeg_decode_task_));
+      const uint32_t stack_free = this->http_jpeg_decode_task_ == nullptr
+                                      ? 0
+                                      : static_cast<uint32_t>(uxTaskGetStackHighWaterMark(this->http_jpeg_decode_task_));
+      ESP_LOGW(TAG,
+               "Local artwork open worker stalled for %ums task=%p state=%d stack_free=%u open=%s headers=%s "
+               "read=%s decode=%s",
+               static_cast<unsigned>(now - this->last_data_millis_), this->http_jpeg_decode_task_, task_state,
+               static_cast<unsigned>(stack_free), YESNO(this->local_http_open_busy_.load(std::memory_order_acquire)),
+               YESNO(this->local_http_headers_busy_.load(std::memory_order_acquire)),
+               YESNO(this->local_http_read_busy_.load(std::memory_order_acquire)),
+               YESNO(this->http_jpeg_decode_busy_.load(std::memory_order_acquire)));
+      // A notification can be consumed by an operation that was finishing as
+      // the next one was queued. Re-notifying is harmless while open() is
+      // blocked and lets a ready worker service the still-owned request.
+      if (this->http_jpeg_decode_task_ != nullptr)
+        xTaskNotifyGive(this->http_jpeg_decode_task_);
+    }
     return;
   }
   if (this->local_http_headers_busy_.load(std::memory_order_acquire) ||
@@ -2680,10 +3053,22 @@ void ArtworkImage::loop() {
   if (this->http_jpeg_decode_busy_.load(std::memory_order_acquire)) {
     return;
   }
+  if (this->local_http_close_busy_.load(std::memory_order_acquire)) {
+    return;
+  }
   if (this->release_after_http_decode_) {
     this->local_http_headers_done_.store(false, std::memory_order_release);
     this->local_http_read_done_.store(false, std::memory_order_release);
     this->finish_deferred_release_();
+    return;
+  }
+  if (this->local_http_close_pending_ && this->downloader_ == nullptr && this->local_downloader_ == nullptr) {
+    if (this->http_jpeg_decode_task_ != nullptr) {
+      this->queue_local_http_close_();
+    } else if (this->local_http_cache_ != nullptr) {
+      this->local_http_cache_->close_transport();
+      this->local_http_close_pending_ = false;
+    }
     return;
   }
 #endif
@@ -2700,7 +3085,7 @@ void ArtworkImage::loop() {
     return;
   }
   if (!this->decoder_ && !this->downloader_) {
-    if (this->retired_buffers_.empty()) {
+    if (this->retired_buffer_count_() == 0) {
       this->disable_loop();
     }
     return;
@@ -3197,11 +3582,7 @@ void ArtworkImage::discard_decode_buffer_() {
   if (this->decode_buffer_) {
     if (!this->decode_buffer_reuses_active_) {
       const size_t size = this->decode_buffer_capacity_;
-      if (this->spare_buffer_ == nullptr && should_keep_spare_buffer(size, this->decode_buffer_uses_jpeg_allocator_)) {
-        this->spare_buffer_ = this->decode_buffer_;
-        this->spare_buffer_size_ = size;
-        this->spare_buffer_uses_jpeg_allocator_ = this->decode_buffer_uses_jpeg_allocator_;
-      } else {
+      if (!this->store_spare_buffer_(this->decode_buffer_, size, this->decode_buffer_uses_jpeg_allocator_)) {
         this->release_buffer_(this->decode_buffer_, size, this->decode_buffer_uses_jpeg_allocator_);
       }
     }
@@ -3221,6 +3602,73 @@ void ArtworkImage::discard_decode_buffer_() {
   this->decode_buffer_scrim_applied_ = false;
 }
 
+size_t ArtworkImage::compatible_decode_buffer_count_(size_t size, const uint8_t *exclude) const {
+  size_t count = 0;
+  if (this->buffer_ != nullptr && this->buffer_ != exclude && this->buffer_capacity_ >= size &&
+      this->buffer_uses_jpeg_allocator_)
+    count++;
+  if (this->decode_buffer_ != nullptr && this->decode_buffer_ != exclude && this->decode_buffer_ != this->buffer_ &&
+      this->decode_buffer_capacity_ >= size && this->decode_buffer_uses_jpeg_allocator_)
+    count++;
+  if (this->spare_buffer_ != nullptr && this->spare_buffer_ != exclude && this->spare_buffer_size_ >= size &&
+      this->spare_buffer_uses_jpeg_allocator_)
+    count++;
+  if (this->secondary_spare_buffer_ != nullptr && this->secondary_spare_buffer_ != exclude &&
+      this->secondary_spare_buffer_size_ >= size &&
+      this->secondary_spare_buffer_uses_jpeg_allocator_)
+    count++;
+  return count;
+}
+
+bool ArtworkImage::take_spare_buffer_(size_t size) {
+  uint8_t **selected = nullptr;
+  size_t *selected_size = nullptr;
+  bool *selected_jpeg_allocator = nullptr;
+  if (this->spare_buffer_ != nullptr && this->spare_buffer_size_ >= size &&
+      this->spare_buffer_uses_jpeg_allocator_) {
+    selected = &this->spare_buffer_;
+    selected_size = &this->spare_buffer_size_;
+    selected_jpeg_allocator = &this->spare_buffer_uses_jpeg_allocator_;
+  }
+  if (this->secondary_spare_buffer_ != nullptr && this->secondary_spare_buffer_size_ >= size &&
+      this->secondary_spare_buffer_uses_jpeg_allocator_ &&
+      (selected == nullptr || this->secondary_spare_buffer_size_ < *selected_size)) {
+    selected = &this->secondary_spare_buffer_;
+    selected_size = &this->secondary_spare_buffer_size_;
+    selected_jpeg_allocator = &this->secondary_spare_buffer_uses_jpeg_allocator_;
+  }
+  if (selected == nullptr)
+    return false;
+  this->decode_buffer_ = *selected;
+  this->decode_buffer_capacity_ = *selected_size;
+  this->decode_buffer_uses_jpeg_allocator_ = *selected_jpeg_allocator;
+  *selected = nullptr;
+  *selected_size = 0;
+  *selected_jpeg_allocator = false;
+  return true;
+}
+
+bool ArtworkImage::store_spare_buffer_(uint8_t *buffer, size_t size, bool jpeg_allocator) {
+  if (buffer == nullptr || !this->should_keep_spare_buffer_(size, jpeg_allocator) ||
+      this->compatible_decode_buffer_count_(this->reserved_decode_buffer_capacity_, buffer) >=
+          this->reserved_decode_buffer_count_) {
+    return false;
+  }
+  if (this->spare_buffer_ == nullptr) {
+    this->spare_buffer_ = buffer;
+    this->spare_buffer_size_ = size;
+    this->spare_buffer_uses_jpeg_allocator_ = jpeg_allocator;
+    return true;
+  }
+  if (this->secondary_spare_buffer_ == nullptr) {
+    this->secondary_spare_buffer_ = buffer;
+    this->secondary_spare_buffer_size_ = size;
+    this->secondary_spare_buffer_uses_jpeg_allocator_ = jpeg_allocator;
+    return true;
+  }
+  return false;
+}
+
 void ArtworkImage::release_spare_buffer_() {
   if (this->spare_buffer_ != nullptr) {
     this->release_buffer_(this->spare_buffer_, this->spare_buffer_size_, this->spare_buffer_uses_jpeg_allocator_);
@@ -3228,6 +3676,19 @@ void ArtworkImage::release_spare_buffer_() {
     this->spare_buffer_size_ = 0;
     this->spare_buffer_uses_jpeg_allocator_ = false;
   }
+  if (this->secondary_spare_buffer_ != nullptr) {
+    this->release_buffer_(this->secondary_spare_buffer_, this->secondary_spare_buffer_size_,
+                          this->secondary_spare_buffer_uses_jpeg_allocator_);
+    this->secondary_spare_buffer_ = nullptr;
+    this->secondary_spare_buffer_size_ = 0;
+    this->secondary_spare_buffer_uses_jpeg_allocator_ = false;
+  }
+}
+
+bool ArtworkImage::should_keep_spare_buffer_(size_t size, bool jpeg_allocator) const {
+  return jpeg_allocator &&
+         (size <= MAX_SPARE_BUFFER_SIZE ||
+          (this->reserved_decode_buffer_capacity_ > 0 && size >= this->reserved_decode_buffer_capacity_));
 }
 
 void ArtworkImage::release_buffer_(uint8_t *buffer, size_t size, bool jpeg_allocator) {
@@ -3299,6 +3760,7 @@ bool ArtworkImage::promote_decode_buffer_() {
   this->data_start_ = this->buffer_;
   this->width_ = this->buffer_width_;
   this->height_ = this->buffer_height_;
+  this->buffer_generation_.fetch_add(1, std::memory_order_release);
   const uint32_t sync_start = millis();
   sync_artwork_buffer_for_dma(this->buffer_, this->get_buffer_size_(), written_by_dma);
   log_slow_artwork_stage(written_by_dma ? "finish-dma-cache-sync" : "finish-cache-sync", sync_start);
@@ -3321,8 +3783,11 @@ void ArtworkImage::retire_active_buffer_() {
     return;
   }
   auto *retired = this->buffer_;
-  this->retired_buffers_.push_back(
-      RetiredBuffer{retired, this->buffer_capacity_, millis(), this->buffer_uses_jpeg_allocator_});
+  {
+    LockGuard guard(this->retired_buffer_mutex_);
+    this->retired_buffers_.push_back(
+        RetiredBuffer{retired, this->buffer_capacity_, millis(), this->buffer_uses_jpeg_allocator_});
+  }
   this->buffer_ = nullptr;
   this->buffer_capacity_ = 0;
   this->buffer_uses_jpeg_allocator_ = false;
@@ -3342,17 +3807,18 @@ void ArtworkImage::retire_active_buffer_() {
   this->enable_loop();
 }
 
-void ArtworkImage::cleanup_retired_buffers_(bool force) {
+void ArtworkImage::cleanup_retired_buffers_(bool force, bool preserve_spare) {
+  LockGuard guard(this->retired_buffer_mutex_);
   uint32_t now = millis();
   auto it = this->retired_buffers_.begin();
   while (it != this->retired_buffers_.end()) {
+    if (this->buffer_is_pinned_(it->data)) {
+      ++it;
+      continue;
+    }
     if (force || now - it->retired_at >= RETIRED_BUFFER_GRACE_MS ||
         this->retired_buffers_.size() > MAX_RETIRED_BUFFERS) {
-      if (!force && this->spare_buffer_ == nullptr && should_keep_spare_buffer(it->size, it->jpeg_allocator)) {
-        this->spare_buffer_ = it->data;
-        this->spare_buffer_size_ = it->size;
-        this->spare_buffer_uses_jpeg_allocator_ = it->jpeg_allocator;
-      } else {
+      if (force || !this->store_spare_buffer_(it->data, it->size, it->jpeg_allocator)) {
         this->release_buffer_(it->data, it->size, it->jpeg_allocator);
       }
       it = this->retired_buffers_.erase(it);
@@ -3360,9 +3826,22 @@ void ArtworkImage::cleanup_retired_buffers_(bool force) {
       ++it;
     }
   }
-  if (force) {
+  if (force && !preserve_spare) {
     this->release_spare_buffer_();
   }
+}
+
+size_t ArtworkImage::retired_buffer_count_() const {
+  LockGuard guard(this->retired_buffer_mutex_);
+  return this->retired_buffers_.size();
+}
+
+size_t ArtworkImage::retired_buffer_bytes_() const {
+  LockGuard guard(this->retired_buffer_mutex_);
+  size_t bytes = 0;
+  for (const auto &entry : this->retired_buffers_)
+    bytes += entry.size;
+  return bytes;
 }
 
 bool ArtworkImage::ensure_download_buffer_capacity_() {
@@ -3502,8 +3981,7 @@ bool ArtworkImage::decode_buffered_data_() {
   }
 
 #if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
-  if (this->active_format_ == ImageFormat::JPEG && this->hardware_jpeg_ &&
-      this->http_jpeg_decode_task_ != nullptr) {
+  if (this->active_format_ == ImageFormat::JPEG && this->hardware_jpeg_ && this->http_jpeg_decode_task_ != nullptr) {
     if (this->decoder_->has_unknown_download_size() ||
         this->download_buffer_.unread() < this->decoder_->get_download_size()) {
       return true;
@@ -3546,6 +4024,12 @@ void ArtworkImage::finish_download_() {
     this->fail_download_();
     return;
   }
+  // The decoder has finished writing, but the active image still references
+  // the previous generation. Scene presenters can freeze that generation in
+  // this short hook immediately before the pointer swap. Doing this from
+  // on_decode_start held the DSI presentation pipeline throughout the whole
+  // network/JPEG transaction.
+  this->before_image_swap_callback_.call();
   uint32_t stage_start = millis();
   if (!this->promote_decode_buffer_()) {
     this->fail_download_();
@@ -3660,6 +4144,7 @@ void ArtworkImage::log_state_(const char *stage) {
 #endif
   size_t bytes_read = this->downloader_ ? this->downloader_->get_bytes_read() : 0;
   size_t content_length = this->downloader_ ? this->downloader_->content_length : 0;
+  const size_t retired_count = this->retired_buffer_count_();
   ESP_LOGD(TAG,
            "State %-24s url_len=%zu http=%zu/%zu dl_buf=%zu/%zu image=%dx%d content=%dx%d@%d,%d decode=%dx%d "
            "content=%dx%d@%d,%d retired=%zu heap_free=%zu heap_largest=%zu pending=%s",
@@ -3667,7 +4152,7 @@ void ArtworkImage::log_state_(const char *stage) {
            this->download_buffer_.size(), this->buffer_width_, this->buffer_height_, this->buffer_content_width_,
            this->buffer_content_height_, this->buffer_offset_x_, this->buffer_offset_y_, this->decode_buffer_width_,
            this->decode_buffer_height_, this->decode_content_width_, this->decode_content_height_,
-           this->decode_offset_x_, this->decode_offset_y_, this->retired_buffers_.size(), heap_free, heap_largest,
+           this->decode_offset_x_, this->decode_offset_y_, retired_count, heap_free, heap_largest,
            this->update_pending_ ? "yes" : "no");
 }
 

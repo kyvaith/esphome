@@ -41,6 +41,7 @@ class LvglScrollSnapshotController {
   void finish(int32_t finger_velocity_y);
   void cancel();
   bool is_active() const { return this->active_; }
+  bool is_prepared() const { return this->prepared_; }
   uint16_t get_start_distance() const { return this->start_distance_; }
   uint16_t get_axis_bias() const { return this->axis_bias_; }
 

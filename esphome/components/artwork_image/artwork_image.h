@@ -9,8 +9,10 @@
 #include "artwork_url.h"
 #include "image_decoder.h"
 
-#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
+#include <array>
 #include <atomic>
+
+#if defined(USE_ESP_IDF) && defined(USE_ARTWORK_IMAGE_JPEG_SUPPORT)
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #endif
@@ -55,8 +57,8 @@ enum ImageFormat {
  * need to re-download or re-decode.
  */
 class ArtworkImage : public PollingComponent,
-                    public image::Image,
-                    public Parented<esphome::http_request::HttpRequestComponent> {
+                     public image::Image,
+                     public Parented<esphome::http_request::HttpRequestComponent> {
  public:
   /**
    * @brief Construct a new ArtworkImage object.
@@ -68,11 +70,13 @@ class ArtworkImage : public PollingComponent,
    * @param buffer_size Size of the buffer used to download the image.
    */
   ArtworkImage(const std::string &url, int width, int height, ImageFormat format, image::ImageType type,
-              image::Transparency transparency, uint32_t buffer_size, bool is_big_endian,
-              bool allow_insecure_local_urls);
+               image::Transparency transparency, uint32_t buffer_size, bool is_big_endian,
+               bool allow_insecure_local_urls);
 
   void setup() override;
   void draw(int x, int y, display::Display *display, Color color_on, Color color_off) override;
+  bool acquire_buffer(image::ImageBufferLease *lease) const override;
+  bool release_buffer(image::ImageBufferLease *lease) const override;
 #ifdef USE_LVGL
   lv_image_dsc_t *get_lv_image_dsc();
 #endif
@@ -119,6 +123,9 @@ class ArtworkImage : public PollingComponent,
   /** Reserve the ESP-IDF HTTP client used for local artwork without starting a request. */
   bool reserve_local_http_client(const std::string &url);
 
+  /** Close the reusable local HTTP transport on the decoder worker while retaining the client for later reuse. */
+  void release_local_http_transport();
+
   /** Decode a complete encoded image retained by defer_decode. */
   void request_decode();
 
@@ -126,7 +133,10 @@ class ArtworkImage : public PollingComponent,
    * Release the buffer storing the image. The image will need to be downloaded again
    * to be able to be displayed.
    */
-  void release(bool immediate = false);
+  void release(bool immediate = false, bool preserve_capacity = false);
+
+  /** Release reusable and retired decode capacity without touching the active image. */
+  void release_unused_decode_capacity();
 
   /**
    * Reuse the current full-size hardware-JPEG buffer as the next decode target.
@@ -158,6 +168,9 @@ class ArtworkImage : public PollingComponent,
   template<typename F> void add_on_decode_start_callback(F &&callback) {
     this->decode_start_callback_.add(std::forward<F>(callback));
   }
+  template<typename F> void add_on_before_image_swap_callback(F &&callback) {
+    this->before_image_swap_callback_.add(std::forward<F>(callback));
+  }
   template<typename F> void add_on_decode_finished_callback(F &&callback) {
     this->decode_finished_callback_.add(std::forward<F>(callback));
   }
@@ -169,6 +182,7 @@ class ArtworkImage : public PollingComponent,
 
   bool is_big_endian() const { return this->is_big_endian_; }
   uint32_t get_trace_id() const { return this->trace_id_; }
+  uint32_t get_buffer_generation() const { return this->buffer_generation_.load(std::memory_order_acquire); }
   int get_fixed_width() const { return this->fixed_width_; }
   int get_fixed_height() const { return this->fixed_height_; }
   int get_content_width() const { return this->buffer_content_width_; }
@@ -179,11 +193,15 @@ class ArtworkImage : public PollingComponent,
   void apply_rgb_darken_once(uint8_t percent);
   void set_darken_percent(uint8_t percent) { this->darken_percent_ = percent; }
   void set_hardware_jpeg(bool hardware_jpeg) { this->hardware_jpeg_ = hardware_jpeg; }
+  void set_prefer_internal_task_stack(bool prefer_internal) { this->prefer_internal_task_stack_ = prefer_internal; }
+  void set_reuse_active_buffer(bool reuse) { this->reuse_active_buffer_ = reuse; }
   void set_reuse_active_buffer_capacity(bool reuse) { this->reuse_active_buffer_capacity_ = reuse; }
   void set_scrim_color(uint32_t color) { this->scrim_color_ = color; }
   void set_scrim_opacity(uint8_t opacity) { this->scrim_opacity_ = opacity; }
   bool use_hardware_jpeg() const { return this->hardware_jpeg_; }
-  bool reserve_decode_buffer_capacity(size_t size);
+  bool reserve_decode_buffer_capacity(size_t size, uint8_t desired_buffers = 1);
+  uint8_t *loan_decode_buffer_capacity(size_t minimum_size, size_t *capacity);
+  bool return_decode_buffer_capacity(uint8_t *buffer, size_t capacity);
   size_t get_active_buffer_capacity() const { return this->buffer_capacity_; }
   uint8_t get_darken_percent() const { return this->darken_percent_; }
   void mark_decode_buffer_darkened(uint8_t percent) { this->decode_buffer_darkened_percent_ = percent; }
@@ -239,15 +257,23 @@ class ArtworkImage : public PollingComponent,
    * @return 0 if no memory could be allocated, the size of the new buffer otherwise.
    */
   size_t resize_(int width, int height);
-  size_t get_decode_buffer_size_() const { return get_buffer_size_(this->decode_buffer_width_, this->decode_buffer_height_); }
+  size_t get_decode_buffer_size_() const {
+    return get_buffer_size_(this->decode_buffer_width_, this->decode_buffer_height_);
+  }
   bool fit_rgb565_decode_buffer_with_ppa_(uint8_t *buffer, int buffer_width, int buffer_height, int content_width,
                                           int content_height, bool buffer_uses_jpeg_allocator);
+  bool take_spare_buffer_(size_t size);
+  bool store_spare_buffer_(uint8_t *buffer, size_t size, bool jpeg_allocator);
+  size_t compatible_decode_buffer_count_(size_t size, const uint8_t *exclude = nullptr) const;
   void release_spare_buffer_();
   void release_buffer_(uint8_t *buffer, size_t size, bool jpeg_allocator);
   void discard_decode_buffer_();
   bool promote_decode_buffer_();
   void retire_active_buffer_();
-  void cleanup_retired_buffers_(bool force);
+  void cleanup_retired_buffers_(bool force, bool preserve_spare = false);
+  bool should_keep_spare_buffer_(size_t size, bool jpeg_allocator) const;
+  size_t retired_buffer_count_() const;
+  size_t retired_buffer_bytes_() const;
 #ifdef USE_LVGL
   void prepare_lvgl_dsc_();
 #endif
@@ -268,6 +294,7 @@ class ArtworkImage : public PollingComponent,
   bool process_local_http_headers_result_(int &result);
   bool queue_local_http_read_(size_t size);
   bool process_local_http_read_result_(int &result);
+  bool queue_local_http_close_();
   bool queue_http_jpeg_decode_();
   bool process_http_jpeg_decode_result_();
   void finish_deferred_release_();
@@ -299,6 +326,7 @@ class ArtworkImage : public PollingComponent,
   void end_connection_();
 
   CallbackManager<void()> decode_start_callback_{};
+  CallbackManager<void()> before_image_swap_callback_{};
   CallbackManager<void(bool)> decode_finished_callback_{};
   std::atomic<bool> decode_callbacks_active_{false};
   CallbackManager<void(bool)> download_finished_callback_{};
@@ -325,8 +353,15 @@ class ArtworkImage : public PollingComponent,
   uint8_t *spare_buffer_{nullptr};
   size_t spare_buffer_size_{0};
   bool spare_buffer_uses_jpeg_allocator_{false};
+  uint8_t *secondary_spare_buffer_{nullptr};
+  size_t secondary_spare_buffer_size_{0};
+  bool secondary_spare_buffer_uses_jpeg_allocator_{false};
   bool hardware_jpeg_{true};
+  bool prefer_internal_task_stack_{false};
+  bool reuse_active_buffer_{true};
   bool reuse_active_buffer_capacity_{false};
+  size_t reserved_decode_buffer_capacity_{0};
+  uint8_t reserved_decode_buffer_count_{1};
   bool defer_decode_{false};
   bool decode_requested_{true};
   bool encoded_download_ready_{false};
@@ -400,13 +435,24 @@ class ArtworkImage : public PollingComponent,
     uint32_t retired_at;
     bool jpeg_allocator;
   };
+  struct BufferPin {
+    const uint8_t *data{nullptr};
+    uint16_t references{0};
+  };
+
+  bool buffer_is_pinned_(const uint8_t *data) const;
   std::vector<RetiredBuffer> retired_buffers_{};
+  mutable Mutex retired_buffer_mutex_{};
+  mutable Mutex buffer_pin_mutex_{};
+  mutable std::array<BufferPin, 4> buffer_pins_{};
+  std::atomic<uint32_t> buffer_generation_{0};
 #ifdef USE_LVGL
   lv_image_dsc_t lvgl_dsc_slots_[2]{};
   uint8_t lvgl_dsc_slot_{0};
 #endif
   time_t start_time_;
   uint32_t last_data_millis_{0};
+  uint32_t last_local_http_worker_diagnostic_millis_{0};
   uint32_t last_download_read_stress_ms_{0};
   bool update_pending_{false};
   std::string pending_url_{""};
@@ -420,6 +466,7 @@ class ArtworkImage : public PollingComponent,
   size_t http_jpeg_decode_input_size_{0};
   bool release_after_http_decode_{false};
   bool release_after_http_decode_immediate_{false};
+  bool release_after_http_decode_preserve_capacity_{false};
   std::atomic<bool> local_http_open_busy_{false};
   std::atomic<bool> local_http_open_done_{false};
   std::atomic<int> local_http_open_result_{ESP_FAIL};
@@ -430,6 +477,9 @@ class ArtworkImage : public PollingComponent,
   std::atomic<bool> local_http_read_done_{false};
   std::atomic<int> local_http_read_result_{0};
   size_t local_http_read_size_{0};
+  bool local_http_close_pending_{false};
+  std::atomic<bool> local_http_close_busy_{false};
+  std::atomic<bool> local_http_close_done_{false};
 #endif
 #ifdef USE_SENDSPIN_ARTWORK
   sendspin_::SendspinHub *sendspin_hub_{nullptr};
@@ -459,12 +509,10 @@ class ArtworkImage : public PollingComponent,
   friend bool ImageDecoder::set_size(int width, int height);
   friend void ImageDecoder::draw(int x, int y, int w, int h, const Color &color);
   friend void ImageDecoder::draw_rgb565_block(int x, int y, int w, int h, const uint8_t *data);
-  friend bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int buffer_height,
-                                                int content_width, int content_height,
-                                                bool buffer_uses_jpeg_allocator);
-  friend bool ImageDecoder::adopt_rgb_buffer(uint8_t *buffer, int buffer_width, int buffer_height,
-                                             int content_width, int content_height,
-                                             bool buffer_uses_jpeg_allocator);
+  friend bool ImageDecoder::adopt_rgb565_buffer(uint8_t *buffer, int buffer_width, int buffer_height, int content_width,
+                                                int content_height, bool buffer_uses_jpeg_allocator);
+  friend bool ImageDecoder::adopt_rgb_buffer(uint8_t *buffer, int buffer_width, int buffer_height, int content_width,
+                                             int content_height, bool buffer_uses_jpeg_allocator);
 };
 
 template<typename... Ts> class ArtworkImageSetUrlAction : public Action<Ts...> {
@@ -489,7 +537,10 @@ template<typename... Ts> class ArtworkImageReleaseAction : public Action<Ts...> 
  public:
   ArtworkImageReleaseAction(ArtworkImage *parent) : parent_(parent) {}
   TEMPLATABLE_VALUE(bool, immediate)
-  void play(const Ts &...x) override { this->parent_->release(this->immediate_.value(x...)); }
+  TEMPLATABLE_VALUE(bool, preserve_capacity)
+  void play(const Ts &...x) override {
+    this->parent_->release(this->immediate_.value(x...), this->preserve_capacity_.value(x...));
+  }
 
  protected:
   ArtworkImage *parent_;

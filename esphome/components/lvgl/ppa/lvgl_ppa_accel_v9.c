@@ -250,6 +250,29 @@ static void ppa_fill(void *bg_buf, lv_color_format_t color_format, uint32_t px_s
     }
 }
 
+bool lvgl_port_ppa_v9_fill_argb8888(void *buffer, size_t buffer_size, uint32_t width, uint32_t height,
+                                    uint32_t argb_color)
+{
+    if (s_fill_handle == NULL || buffer == NULL || width == 0 || height == 0 ||
+        buffer_size < (size_t)width * height * 4U) {
+        return false;
+    }
+
+    ppa_fill_oper_config_t cfg = {};
+    cfg.out.buffer = buffer;
+    cfg.out.buffer_size = buffer_size;
+    cfg.out.pic_w = width;
+    cfg.out.pic_h = height;
+    cfg.out.block_offset_x = 0;
+    cfg.out.block_offset_y = 0;
+    cfg.out.fill_cm = PPA_FILL_COLOR_MODE_ARGB8888;
+    cfg.fill_argb_color.val = argb_color;
+    cfg.fill_block_w = width;
+    cfg.fill_block_h = height;
+    cfg.mode = PPA_TRANS_MODE_BLOCKING;
+    return ppa_do_fill(s_fill_handle, &cfg) == ESP_OK;
+}
+
 static void lv_draw_ppa_v9_sw_fallback(lv_draw_task_t *t, const lv_draw_sw_blend_dsc_t *dsc)
 {
     lv_layer_t *layer = t->target_layer;

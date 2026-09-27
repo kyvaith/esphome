@@ -110,6 +110,44 @@ lvgl:
         id: material_volume_label
         align: CENTER
         text: "50%"
+    - button:
+        id: material_tile_button
+        width: 180
+        height: 80
+        y: 180
+        widgets:
+          - label:
+              id: material_tile_icon
+              text: "*"
+          - label:
+              id: material_tile_title
+              text: "Light"
+          - label:
+              id: material_tile_subtitle
+              text: "Off"
+    - obj:
+        id: material_notification_root
+        width: 100%
+        height: 100%
+        bg_color: black
+        bg_opa: 68%
+        hidden: true
+        widgets:
+          - obj:
+              id: material_notification_panel
+              width: 100%
+              height: 50%
+              align: BOTTOM_MID
+              widgets:
+                - label:
+                    id: material_notification_icon
+                    text: "!"
+                - label:
+                    id: material_notification_title
+                    text: "Title"
+                - label:
+                    id: material_notification_message
+                    text: "Message"
 
 lvgl_material:
   wavy_progress:
@@ -156,6 +194,27 @@ lvgl_material:
       active_color: white
       inactive_color: 0x777777
       transition_duration: 160ms
+  tile_surfaces:
+    - id: test_tile_surface
+      tiles:
+        - slot: 0
+          widget: material_tile_button
+          icon_label: material_tile_icon
+          title_label: material_tile_title
+          subtitle_label: material_tile_subtitle
+      on_press:
+        - logger.log:
+            format: "Pressed tile %u"
+            args: [slot]
+  notification_overlays:
+    - id: test_notification_overlay
+      root: material_notification_root
+      container: material_notification_panel
+      icon_label: material_notification_icon
+      title_label: material_notification_title
+      subtitle_label: material_notification_message
+      scrim_opacity: 68%
+      duration: 6s
 
 interval:
   - interval: 5s
@@ -163,6 +222,15 @@ interval:
       - lvgl_material.page_indicator.set:
           id: test_page_indicator
           value: 1
+      - lvgl_material.tiles.configure:
+          id: test_tile_surface
+          payload: '{"version":1,"cards":[{"slot":0,"visible":true,"icon":"*","title":"Light","subtitle":"On","background":3354172,"foreground":16185083}]}'
+      - lvgl_material.notification.show:
+          id: test_notification_overlay
+          title: "Doorbell"
+          message: "Someone is at the front door"
+          icon: "!"
+          duration: 2500
 
 psram:
 

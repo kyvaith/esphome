@@ -19,6 +19,7 @@ from esphome.components.font import (
     FONT_CACHE,
     flatten,
     glyph_comparator,
+    glyph_to_glyphinfo,
     to_code,
     validate_font_config,
 )
@@ -35,6 +36,37 @@ from esphome.const import (
 
 FONT_DIR = Path(__file__).parent
 FONT_PATH = FONT_DIR / "NotoSans-Regular.ttf"
+
+
+@pytest.mark.parametrize("bpp", [1, 2, 4, 8])
+@pytest.mark.parametrize("digit", ["0", "3", "5", "8"])
+def test_outline_keeps_glyph_advance_and_baseline(digit, bpp):
+    """The contour expands around the glyph, not around its text box."""
+    face = FONT_CACHE[_file_conf()]
+    normal = glyph_to_glyphinfo(digit, face, 80, bpp)
+    outlined = glyph_to_glyphinfo(digit, face, 80, bpp, 6)
+    assert outlined.advance == normal.advance
+    assert 5 <= normal.offset_x - outlined.offset_x <= 7
+    assert 5 <= normal.offset_y - outlined.offset_y <= 7
+    assert 10 <= outlined.width - normal.width <= 14
+    assert 10 <= outlined.height - normal.height <= 14
+    assert any(outlined.bitmap_data)
+
+
+def test_zero_outline_preserves_bitmap():
+    face = FONT_CACHE[_file_conf()]
+    normal = glyph_to_glyphinfo("8", face, 80, 4)
+    explicit_zero = glyph_to_glyphinfo("8", face, 80, 4, 0)
+    assert vars(normal) == vars(explicit_zero)
+
+
+def test_outline_rejects_bitmap_font():
+    from freetype import Face
+
+    face = Face(str(FONT_DIR.parents[1] / "components/font/Tamzen5x9b.bdf"))
+    with pytest.raises(cv.Invalid, match="requires a scalable font"):
+        glyph_to_glyphinfo("8", face, 9, 1, 2)
+
 
 # 200 unique CJK Unified Ideograph characters (U+4E00..U+4EC7)
 CHINESE_200 = "".join(chr(cp) for cp in range(0x4E00, 0x4EC8))

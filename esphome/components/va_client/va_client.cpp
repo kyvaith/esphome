@@ -1297,6 +1297,12 @@ void VaClient::set_phase_(const std::string &phase) {
 }
 
 void VaClient::start_session() {
+  // Drop deferred transcript events from the previous conversation before
+  // opening this one. These strings are only touched on the main loop.
+  this->transcript_generation_.fetch_add(1, std::memory_order_acq_rel);
+  this->last_user_transcript_.clear();
+  this->last_assistant_transcript_.clear();
+
   // Open the streaming window. on_mic_data_ will start forwarding frames to
   // the server until "phase":"idle" comes back (response.done). Without this
   // gate, OpenAI Realtime's server VAD would respond to any speech in the
@@ -1512,9 +1518,22 @@ void VaClient::fire_phase_led_(const std::string &phase) {
 }
 
 void VaClient::fire_transcript_(const std::string &role, const std::string &text) {
+  const uint32_t generation = this->transcript_generation_.load(std::memory_order_acquire);
   std::string role_copy = role;
   std::string text_copy = text;
-  this->defer([this, role_copy, text_copy]() {
+  this->defer([this, generation, role_copy, text_copy]() {
+    if (generation != this->transcript_generation_.load(std::memory_order_acquire))
+      return;
+    std::string *last = nullptr;
+    if (role_copy == "user")
+      last = &this->last_user_transcript_;
+    else if (role_copy == "assistant")
+      last = &this->last_assistant_transcript_;
+    if (last != nullptr) {
+      if (*last == text_copy)
+        return;
+      *last = text_copy;
+    }
     for (auto *t : this->transcript_triggers_) {
       t->trigger(role_copy, text_copy);
     }
@@ -1617,6 +1636,9 @@ void VaClient::send_interrupt() {
 }
 
 void VaClient::end_session() {
+  this->transcript_generation_.fetch_add(1, std::memory_order_acq_rel);
+  this->last_user_transcript_.clear();
+  this->last_assistant_transcript_.clear();
   this->send_interrupt();
   this->set_streaming_(false);
   this->followup_pending_ = false;

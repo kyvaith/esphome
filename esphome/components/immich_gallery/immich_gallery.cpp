@@ -10,7 +10,10 @@ namespace esphome::immich_gallery {
 
 static const char *const TAG = "immich_gallery";
 
-void ImmichGallery::dump_config() { ESP_LOGCONFIG(TAG, "Immich Gallery"); }
+void ImmichGallery::dump_config() {
+  ESP_LOGCONFIG(TAG, "Immich Gallery:");
+  ESP_LOGCONFIG(TAG, "  Image size: %s", this->image_size_.c_str());
+}
 
 std::string ImmichGallery::trim_url(std::string url) const {
   while (!url.empty() && (url.back() == '/' || url.back() == ' '))
@@ -136,11 +139,19 @@ std::string ImmichGallery::parse_date_(const std::string &raw) {
   return raw.substr(0, 10);
 }
 
-std::string ImmichGallery::parse_asset_object_(JsonObject asset, const std::string &base_url, ImmichPhoto *out) {
+std::string ImmichGallery::parse_asset_object_(JsonObject asset, const std::string &base_url, ImmichPhoto *out) const {
   if (out == nullptr || asset.isNull() || !asset["id"].is<const char *>())
     return "";
   out->asset_id = asset["id"].as<std::string>();
-  out->image_url = base_url + "/api/assets/" + out->asset_id + "/original";
+  // Current Immich releases implement `thumbnail?size=fullsize` as a relative
+  // redirect to the original asset. Use the final endpoint directly: the
+  // lightweight ESP-IDF artwork client does not need a second request and the
+  // selected full-resolution semantics stay unchanged.
+  if (this->image_size_ == "original" || this->image_size_ == "fullsize") {
+    out->image_url = base_url + "/api/assets/" + out->asset_id + "/original";
+  } else {
+    out->image_url = base_url + "/api/assets/" + out->asset_id + "/thumbnail?size=" + this->image_size_;
+  }
   if (asset["originalFileName"].is<const char *>()) {
     out->title = asset["originalFileName"].as<std::string>();
     const size_t slash = out->title.find_last_of("/\\");

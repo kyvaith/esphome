@@ -77,3 +77,12 @@ text_sensor:
             return {x.substr(0, 10) + "..."};
           }
           return {x};
+
+  - platform: template
+    name: "Test Sanitize HTML"
+    id: test_sanitize_html
+    filters:
+      - sanitize_html:
+          decode_entities: true
+          strip_tags: true
+          collapse_whitespace: true

@@ -33,6 +33,8 @@ class LvglSnapshotCompositor {
   }
 
   virtual bool begin_home(int page_index);
+  virtual bool prime_home(int page_index) { return false; }
+  virtual void cancel_home_prime() {}
   virtual bool take_over_home(int *page_index, int32_t *offset_x);
   virtual bool update_home(int32_t delta_x);
   virtual bool settle_home(int target_index, int32_t release_velocity_px_s = 0);
@@ -68,7 +70,9 @@ class LvglSnapshotCompositor {
   void complete_home_();
   void release_home_();
   bool bind_application_(LvglApplication *application, bool force_capture, bool opening);
+  bool ensure_application_transition_buffer_();
   bool ensure_black_application_buffer_();
+  void release_external_application_transition_buffer_();
   void set_application_progress_(int32_t progress);
   bool animate_application_to_(int32_t progress, uint32_t duration);
   void complete_application_();
@@ -93,6 +97,9 @@ class LvglSnapshotCompositor {
   LvglApplication *application_{};
   lv_draw_buf_t *application_buffer_{};
   lv_draw_buf_t *black_application_buffer_{};
+  lv_draw_buf_t external_application_transition_view_{};
+  bool external_application_transition_active_{};
+  bool black_application_buffer_is_black_{};
   bool application_buffer_from_store_{};
   int application_home_index_{-1};
   int32_t application_progress_{};

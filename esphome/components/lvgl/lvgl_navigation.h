@@ -134,12 +134,25 @@ class LvglNavigation {
   template<typename F> void add_on_home_changed_callback(F &&callback) {
     this->home_changed_callbacks_.add(std::forward<F>(callback));
   }
+  template<typename F> void add_on_home_swipe_start_callback(F &&callback) {
+    this->home_swipe_start_callbacks_.add(std::forward<F>(callback));
+  }
+  template<typename F> void add_on_home_touch_start_callback(F &&callback) {
+    this->home_touch_start_callbacks_.add(std::forward<F>(callback));
+  }
+  template<typename F> void add_on_home_touch_end_callback(F &&callback) {
+    this->home_touch_end_callbacks_.add(std::forward<F>(callback));
+  }
+  template<typename F> void add_on_home_presented_callback(F &&callback) {
+    this->home_presented_callbacks_.add(std::forward<F>(callback));
+  }
 
   void touch_begin(int32_t x, int32_t y);
   bool touch_update(int32_t x, int32_t y);
   bool touch_end();
   bool should_defer_press(lv_obj_t *target) const;
   void touch_cancel();
+  void set_external_touch_capture(bool capture);
   void loop();
 
   void open_application(LvglApplication *application);
@@ -151,13 +164,15 @@ class LvglNavigation {
 
   bool is_application_open(const LvglApplication *application) const;
   LvglApplication *get_active_application() const;
-  void activate_home_view(int index);
+  void activate_home_view(int index, bool preserve_scanout = false);
+  void notify_home_presented(int index);
   void prepare_application_transition(LvglApplication *application, bool opening, bool close_committed);
   void complete_application_transition(LvglApplication *application, bool opening, bool close_committed);
 
  protected:
   enum class TouchContext : uint8_t {
     NONE,
+    BLOCKED,
     HOME,
     APPLICATION_CLOSE,
     APPLICATION_SCROLL,
@@ -171,6 +186,10 @@ class LvglNavigation {
   bool is_blocked_() const;
   void update_home_indicators_(int index);
   void notify_home_changed_(int index);
+  void notify_home_swipe_start_(int index);
+  void notify_home_touch_start_(int index);
+  void notify_home_touch_end_(int index);
+  void clear_external_touch_capture_();
   void reset_touch_();
   void schedule_application_close_();
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
@@ -193,9 +212,15 @@ class LvglNavigation {
   int last_home_page_index_{};
   int gesture_home_page_index_{-1};
   int32_t home_touch_base_offset_{};
+  uint32_t touch_started_at_{};
   bool home_touch_takeover_{};
+  bool home_touch_primed_{};
   int last_notified_home_index_{-1};
   LazyCallbackManager<void(uint16_t)> home_changed_callbacks_{};
+  LazyCallbackManager<void(uint16_t)> home_swipe_start_callbacks_{};
+  LazyCallbackManager<void(uint16_t)> home_touch_start_callbacks_{};
+  LazyCallbackManager<void(uint16_t)> home_touch_end_callbacks_{};
+  LazyCallbackManager<void(uint16_t)> home_presented_callbacks_{};
   float home_commit_ratio_{0.25f};
   float close_edge_ratio_{0.0625f};
   float close_commit_ratio_{0.25f};
@@ -203,6 +228,10 @@ class LvglNavigation {
   int32_t close_edge_pixels_{-1};
   int32_t close_commit_pixels_{-1};
   bool close_deferred_{};
+  bool home_swipe_active_{};
+  bool external_touch_capture_{};
+  bool external_touch_release_pending_{};
+  uint32_t external_touch_release_at_{};
 };
 
 template<typename... Ts> class NavigationOpenAction final : public Action<Ts...> {

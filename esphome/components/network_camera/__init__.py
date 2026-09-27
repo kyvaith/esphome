@@ -1,11 +1,17 @@
 from esphome import automation
 import esphome.codegen as cg
-from esphome.components import esp32, select, socket
+from esphome.components import esp32, psram, select, socket
 from esphome.components.const import CONF_REQUEST_HEADERS
 from esphome.components.esp32 import VARIANT_ESP32P4, only_on_variant
 from esphome.components.image import CONF_OPAQUE, Image_, add_metadata
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_NAME, CONF_URL, ENTITY_CATEGORY_CONFIG
+from esphome.const import (
+    CONF_ID,
+    CONF_NAME,
+    CONF_TASK_STACK_IN_PSRAM,
+    CONF_URL,
+    ENTITY_CATEGORY_CONFIG,
+)
 
 CODEOWNERS = ["@kyvaith"]
 AUTO_LOAD = ["esp32_jpeg", "image", "select"]
@@ -111,10 +117,13 @@ CONFIG_SCHEMA = cv.All(
             ): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_RELEASE_BUFFER_ON_STOP, default=True): cv.boolean,
             cv.Optional(CONF_TASK_CORE, default=-1): cv.int_range(min=-1, max=1),
-            cv.Optional(CONF_TASK_PRIORITY, default=5): cv.int_range(min=1, max=20),
+            cv.Optional(CONF_TASK_PRIORITY, default=1): cv.int_range(min=1, max=20),
             cv.Optional(CONF_TASK_STACK_SIZE, default=8192): cv.int_range(
                 min=4096, max=32768
             ),
+            cv.Optional(
+                CONF_TASK_STACK_IN_PSRAM, default=False
+            ): psram.validate_task_stack_in_psram,
             cv.Optional(CONF_SOURCE_SELECT): select.select_schema(
                 NetworkCameraSourceSelect,
                 entity_category=ENTITY_CATEGORY_CONFIG,
@@ -172,6 +181,7 @@ async def to_code(config):
     cg.add(var.set_task_core(config[CONF_TASK_CORE]))
     cg.add(var.set_task_priority(config[CONF_TASK_PRIORITY]))
     cg.add(var.set_task_stack_size(config[CONF_TASK_STACK_SIZE]))
+    cg.add(var.set_task_stack_in_psram(config[CONF_TASK_STACK_IN_PSRAM]))
 
     if source_select_config := config.get(CONF_SOURCE_SELECT):
         source_select = await select.new_select(

@@ -35,6 +35,10 @@ CONF_ON_CLOSED = "on_closed"
 CONF_ON_BEFORE_REVEAL = "on_before_reveal"
 CONF_ON_OPENED = "on_opened"
 CONF_ON_HOME_CHANGED = "on_home_changed"
+CONF_ON_HOME_PRESENTED = "on_home_presented"
+CONF_ON_HOME_SWIPE_START = "on_home_swipe_start"
+CONF_ON_HOME_TOUCH_START = "on_home_touch_start"
+CONF_ON_HOME_TOUCH_END = "on_home_touch_end"
 CONF_ON_PREPARE_CLOSE = "on_prepare_close"
 CONF_ON_PREPARE_OPEN = "on_prepare_open"
 CONF_PAGE = "page"
@@ -72,6 +76,26 @@ NAVIGATION_CALLBACK_AUTOMATIONS = (
     automation.CallbackAutomation(
         CONF_ON_HOME_CHANGED,
         "add_on_home_changed_callback",
+        [(cg.uint16, "page")],
+    ),
+    automation.CallbackAutomation(
+        CONF_ON_HOME_SWIPE_START,
+        "add_on_home_swipe_start_callback",
+        [(cg.uint16, "page")],
+    ),
+    automation.CallbackAutomation(
+        CONF_ON_HOME_TOUCH_START,
+        "add_on_home_touch_start_callback",
+        [(cg.uint16, "page")],
+    ),
+    automation.CallbackAutomation(
+        CONF_ON_HOME_TOUCH_END,
+        "add_on_home_touch_end_callback",
+        [(cg.uint16, "page")],
+    ),
+    automation.CallbackAutomation(
+        CONF_ON_HOME_PRESENTED,
+        "add_on_home_presented_callback",
         [(cg.uint16, "page")],
     ),
 )
@@ -190,6 +214,10 @@ NAVIGATION_SCHEMA = cv.All(
                 APPLICATION_SCHEMA
             ),
             cv.Optional(CONF_ON_HOME_CHANGED): automation.validate_automation({}),
+            cv.Optional(CONF_ON_HOME_SWIPE_START): automation.validate_automation({}),
+            cv.Optional(CONF_ON_HOME_TOUCH_START): automation.validate_automation({}),
+            cv.Optional(CONF_ON_HOME_TOUCH_END): automation.validate_automation({}),
+            cv.Optional(CONF_ON_HOME_PRESENTED): automation.validate_automation({}),
             cv.Optional(CONF_SWIPE_START_DISTANCE, default=10): cv.int_range(
                 min=0, max=1000
             ),

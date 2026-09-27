@@ -2,8 +2,12 @@
 
 #include "esphome/components/lvgl/lvgl_esphome.h"
 #include "esphome/components/lvgl_material/material_direct_marquee.h"
+#include "esphome/components/lvgl_material/material_direct_spinner.h"
 #include "esphome/components/lvgl_material/material_direct_volume_overlay.h"
+#include "esphome/components/lvgl_material/material_notification.h"
+#include "esphome/components/lvgl_material/material_tile_surface.h"
 #include "esphome/components/lvgl_material/material_voice_assistant.h"
+#include "esphome/components/lvgl_material/material_weather_presenter.h"
 #include "esphome/components/lvgl_material/material_wavy_progress.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
@@ -46,6 +50,10 @@ class MaterialDirectStateLayer : public Component {
   bool press(lv_obj_t *target);
   bool release();
   void abandon();
+  bool is_idle() const {
+    return !this->press_in_flight_.load(std::memory_order_acquire) &&
+           !this->restore_in_flight_.load(std::memory_order_acquire);
+  }
 
  protected:
   static void press_ready_cb_(void *arg);

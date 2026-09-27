@@ -61,6 +61,9 @@ enum LvglDirectBlitAsyncResult : uint8_t {
 extern "C" uint8_t lvgl_esphome_direct_blit_rgb888_async(const uint8_t *src, int src_stride, int x, int y, int width,
                                                          int height, LvglDirectBlitReadyCallback ready_callback,
                                                          void *ready_arg);
+extern "C" uint8_t lvgl_esphome_direct_blit_xrgb8888_async(const uint8_t *src, int src_stride, int x, int y, int width,
+                                                           int height, LvglDirectBlitReadyCallback ready_callback,
+                                                           void *ready_arg);
 extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_async(const uint8_t *background, int background_stride,
                                                             const uint8_t *foreground, int foreground_stride,
                                                             int foreground_width, int foreground_height,
@@ -75,6 +78,24 @@ extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_stable_async(
     const uint8_t *background, int background_stride, const uint8_t *foreground, int foreground_stride,
     int foreground_width, int foreground_height, int foreground_x, int foreground_y, int x, int y, int width,
     int height, LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
+extern "C" uint8_t lvgl_esphome_direct_overlay_argb8888_async(
+    const uint8_t *foreground, int foreground_stride, int foreground_width, int foreground_height, int foreground_x,
+    int foreground_y, int x, int y, int width, int height, LvglDirectBlitReadyCallback ready_callback,
+    void *ready_arg);
+extern "C" uint8_t lvgl_esphome_direct_overlay_argb8888_stable_async(
+    const uint8_t *foreground, int foreground_stride, int foreground_width, int foreground_height, int foreground_x,
+    int foreground_y, int x, int y, int width, int height, LvglDirectBlitReadyCallback ready_callback,
+    void *ready_arg);
+extern "C" uint8_t lvgl_esphome_direct_scale_blend_argb8888_async(
+    const uint8_t *foreground, int foreground_stride, int foreground_width, int foreground_height, int foreground_x,
+    int foreground_y, int foreground_crop_width, int foreground_crop_height, int integer_scale, int x, int y,
+    uint8_t *scale_target, size_t scale_target_size, int scale_target_width, int scale_target_height,
+    const uint8_t *background, int background_stride, LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
+extern "C" bool lvgl_esphome_render_background_rgb888(lv_obj_t *exclude, uint8_t *dst, int dst_stride,
+                                                        int x, int y, int width, int height);
+extern "C" bool lvgl_esphome_ppa_crop_rgb888_to_rgb565(const lv_image_dsc_t *source, int source_x, int source_y,
+                                                        int width, int height, uint8_t *target,
+                                                        size_t target_capacity);
 extern "C" void lvgl_esphome_direct_blit_rgb888_release(int x, int y, int width, int height);
 extern "C" bool lvgl_esphome_direct_regions_pause(bool paused, uint32_t timeout_ms);
 extern "C" uint32_t lvgl_esphome_get_direct_region_base_generation();
@@ -84,6 +105,14 @@ extern "C" bool lvgl_esphome_direct_blit_xrgb8888(const uint8_t *src, int src_st
                                                   int height);
 extern "C" bool lvgl_esphome_direct_blit_xrgb8888_coherent(const uint8_t *src, int src_stride, int x, int y, int width,
                                                            int height);
+extern "C" bool lvgl_esphome_direct_handoff_to_lvgl(uint32_t timeout_ms);
+extern "C" bool lvgl_esphome_copy_argb8888(const uint8_t *src, uint8_t *dst, int width, int height);
+extern "C" bool lvgl_esphome_scale_argb8888(const uint8_t *src, int src_width, int src_height, uint8_t *dst,
+                                              int dst_width, int dst_height);
+extern "C" bool lvgl_esphome_scale_argb8888_dma_chain(const uint8_t *src, int src_width, int src_height,
+                                                        uint8_t *dst, int dst_width, int dst_height);
+extern "C" void lvgl_esphome_release_dma_image_buffer(const void *buffer);
+extern "C" bool lvgl_esphome_copy_xrgb8888_to_rgb888(const uint8_t *src, uint8_t *dst, int width, int height);
 extern "C" bool lvgl_esphome_direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, int y, int width, int height);
 extern "C" bool lvgl_esphome_compose_argb8888_over_rgb888(const uint8_t *background, int background_stride,
                                                           const uint8_t *foreground, int foreground_stride,
@@ -97,6 +126,7 @@ extern "C" bool lvgl_esphome_snapshot_app_release_work_buffer(void);
 extern "C" bool lvgl_esphome_snapshot_cache_raw_page(lv_obj_t *obj);
 extern "C" bool lvgl_esphome_snapshot_cache_current_frame_raw_page(lv_obj_t *obj);
 extern "C" bool lvgl_esphome_snapshot_cache_current_frame_compressed_page(lv_obj_t *obj);
+extern "C" bool lvgl_esphome_snapshot_cache_has_raw_page(lv_obj_t *obj);
 extern "C" void lvgl_esphome_snapshot_dsi_quiet_ms(uint32_t quiet_ms);
 extern "C" void lvgl_esphome_dsi_mark_stress(const char *label, uint32_t duration_ms);
 extern "C" bool lvgl_esphome_snapshot_cache_pair(lv_obj_t *left, lv_obj_t *right, int width);
@@ -104,38 +134,59 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int pa
 extern "C" bool lvgl_esphome_snapshot_cache_prefetch_tile_window(lv_obj_t **pages, int page_count, int current_page,
                                                                  int width);
 extern "C" bool lvgl_esphome_snapshot_cache_complete_tile_prefetch(uint32_t timeout_ms);
+extern "C" bool lvgl_esphome_snapshot_trim_tile_window(lv_obj_t *retained_page);
+extern "C" bool lvgl_esphome_snapshot_tile_buffers_ready(void);
 extern "C" bool lvgl_esphome_snapshot_refresh_tile_page(lv_obj_t *page, int width);
+extern "C" bool lvgl_esphome_snapshot_refresh_tile_backing(lv_obj_t *page, int width);
+extern "C" bool lvgl_esphome_snapshot_refresh_tile_region(lv_obj_t *page, lv_obj_t *region, int width,
+                                                           bool persist_compressed = true,
+                                                           bool force_widget_render = false);
+extern "C" bool lvgl_esphome_snapshot_refresh_tile_regions(lv_obj_t *page, lv_obj_t **regions, size_t region_count,
+                                                            int width, bool persist_compressed = true);
+extern "C" bool lvgl_esphome_snapshot_invalidate_tile_page(lv_obj_t *page, int width);
 extern "C" bool lvgl_esphome_snapshot_is_active(void);
 extern "C" bool lvgl_esphome_snapshot_app_open(lv_obj_t *app, lv_obj_t *background, int width, uint32_t duration_ms);
 extern "C" bool lvgl_esphome_snapshot_app_open_with_buffer(lv_obj_t *app, lv_obj_t *background,
-                                                            lv_draw_buf_t *app_buffer, int width,
-                                                            uint32_t duration_ms);
+                                                           lv_draw_buf_t *app_buffer, int width, uint32_t duration_ms);
+extern "C" bool lvgl_esphome_snapshot_app_open_cached_with_buffer(lv_obj_t *app, lv_obj_t *background,
+                                                                  lv_draw_buf_t *app_buffer, int width,
+                                                                  uint32_t duration_ms);
 extern "C" void lvgl_esphome_snapshot_app_release_open_hold(void);
 extern "C" bool lvgl_esphome_snapshot_app_cancel(void);
+extern "C" void lvgl_esphome_snapshot_app_log_state(const char *label);
 extern "C" bool lvgl_esphome_snapshot_app_close(lv_obj_t *app, lv_obj_t *background, int width, int target_center_x,
                                                 int target_center_y, uint32_t duration_ms);
 extern "C" bool lvgl_esphome_snapshot_app_prepare_close(lv_obj_t *app);
 extern "C" bool lvgl_esphome_snapshot_app_prepare_close_with_buffer(lv_obj_t *app, lv_draw_buf_t *app_buffer);
 extern "C" void lvgl_esphome_snapshot_app_clear_prepared_close(void);
-extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *next, int width, int next_x);
-extern "C" bool lvgl_esphome_snapshot_swipe_edge_begin(lv_obj_t *current, int width);
+extern "C" bool lvgl_esphome_snapshot_swipe_begin(lv_obj_t *current, lv_obj_t *next, int width, int next_x,
+                                                    bool direct_regions_prepaused = false);
+extern "C" bool lvgl_esphome_snapshot_swipe_edge_begin(lv_obj_t *current, int width,
+                                                         bool direct_regions_prepaused = false);
 extern "C" bool lvgl_esphome_snapshot_swipe_pause(int *current_x, int *next_x);
 extern "C" bool lvgl_esphome_snapshot_swipe_rebase(lv_obj_t *current, lv_obj_t *next, int width, int next_origin,
                                                    int current_x);
 extern "C" bool lvgl_esphome_snapshot_swipe_rebase_edge(lv_obj_t *current, int width, int current_x);
 extern "C" void lvgl_esphome_snapshot_swipe_set_page_indicator(int page, int page_count);
+extern "C" void lvgl_esphome_snapshot_swipe_set_page_indicator_geometry(lv_obj_t *row);
 extern "C" void lvgl_esphome_snapshot_set_clock_text(const char *text);
 extern "C" void lvgl_esphome_snapshot_set_clock_font(const lv_font_t *font);
 extern "C" void lvgl_esphome_snapshot_sync_clock_widget(lv_obj_t *label);
+extern "C" void lvgl_esphome_snapshot_sync_status_widgets(lv_obj_t *volume, lv_obj_t *wifi);
+extern "C" void lvgl_esphome_snapshot_set_status_icons_visible(bool visible);
 extern "C" void lvgl_esphome_snapshot_swipe_update(int current_x, int next_x);
 extern "C" void lvgl_esphome_snapshot_swipe_request_update(int current_x, int next_x);
 extern "C" void lvgl_esphome_snapshot_swipe_finish(int current_x, int next_x, uint32_t duration_ms, bool commit);
 extern "C" void lvgl_esphome_snapshot_swipe_request_finish(int current_x, int next_x, uint32_t duration_ms, bool commit,
                                                            bool soft = false);
 extern "C" void lvgl_esphome_snapshot_swipe_end(void);
+extern "C" void lvgl_esphome_snapshot_discard_pending_refresh(void);
 extern "C" void lvgl_esphome_snapshot_scroll_configure(float overscroll_ratio, uint32_t momentum_duration_ms,
                                                        uint32_t bounce_duration_ms, uint32_t max_inertia_duration_ms,
                                                        size_t max_content_bytes);
+extern "C" size_t lvgl_esphome_snapshot_scroll_required_bytes(lv_obj_t *obj);
+extern "C" bool lvgl_esphome_snapshot_scroll_set_external_buffer(uint8_t *data, size_t capacity);
+extern "C" uint8_t *lvgl_esphome_snapshot_scroll_take_external_buffer(size_t *capacity);
 extern "C" bool lvgl_esphome_snapshot_scroll_prepare(lv_obj_t *obj, int viewport_w, int viewport_h);
 extern "C" bool lvgl_esphome_snapshot_scroll_refresh(lv_obj_t *obj, int viewport_w, int viewport_h);
 extern "C" bool lvgl_esphome_snapshot_scroll_begin(lv_obj_t *obj, int viewport_w, int viewport_h);
@@ -301,6 +352,8 @@ void lv_animimg_stop(lv_obj_t *obj);
 #endif  // USE_LVGL_ANIMIMG
 
 class LvglComponent : public PollingComponent {
+  friend class LVTouchListener;
+
   constexpr static const char *const TAG = "lvgl";
 
  public:
@@ -323,6 +376,7 @@ class LvglComponent : public PollingComponent {
   static void render_end_cb(lv_event_t *event);
   static void render_start_cb(lv_event_t *event);
   static void direct_region_refresh_start_cb(lv_event_t *event);
+  static void direct_region_flush_start_cb(lv_event_t *event);
   static void direct_region_refresh_end_cb(lv_event_t *event);
   void dump_config() override;
   lv_display_t *get_disp() { return this->disp_; }
@@ -339,10 +393,16 @@ class LvglComponent : public PollingComponent {
    * owns framebuffer synchronization and rejects unsupported sessions.
    */
   bool begin_frame_buffer_presentation(uint32_t timeout_ms = 50);
+  const char *frame_buffer_presentation_failure_reason() const;
+  bool get_presentation_active_frame(display::FrameBufferView *view, BufferReader reader = BufferReader::CPU);
   bool acquire_presentation_frame(display::FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
                                   uint32_t timeout_ms = 50);
-  bool present_presentation_frame(display::FrameBufferLease *lease, uint32_t timeout_ms = 50);
+  bool present_presentation_frame(display::FrameBufferLease *lease, uint32_t timeout_ms = 50,
+                                  bool wait_for_active = true);
   bool release_presentation_frame(display::FrameBufferLease *lease);
+  bool reserve_presentation_frame(const uint8_t *frame);
+  void release_reserved_presentation_frame(const uint8_t *frame);
+  bool copy_presentation_frame_rgb888(const uint8_t *source, uint8_t *target, int width, int height);
   bool end_frame_buffer_presentation(uint32_t timeout_ms = 50);
   bool is_frame_buffer_presentation_active() const {
     return this->frame_buffer_presentation_active_.load(std::memory_order_acquire);
@@ -446,7 +506,8 @@ class LvglComponent : public PollingComponent {
   bool wait_for_direct_frame_presented(uint32_t timeout_ms);
   void reset_direct_frame_trace();
   void log_direct_frame_trace(const char *label);
-  void realign_direct_buffer_after_manual_present(bool synchronize = true);
+  void log_direct_buffer_state(const char *label);
+  bool realign_direct_buffer_after_manual_present(bool synchronize = true);
   void synchronize_direct_framebuffer_area(int x, int y, int width, int height);
   void synchronize_direct_framebuffer_rows(int y, int height);
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
@@ -458,19 +519,21 @@ class LvglComponent : public PollingComponent {
                                  int source_height, ppa_client_handle_t srm_client);
   bool direct_present_rgb888_crop_dma2d(const lv_image_dsc_t *source, int source_x, int source_y, int source_width,
                                         int source_height);
-  bool direct_present_rgb888_crop_subpixel(const lv_image_dsc_t *source, int source_x, int source_y, int source_width,
-                                           int source_height, uint8_t subpixel_alpha, bool subpixel_vertical,
-                                           ppa_client_handle_t blend_client);
-  bool direct_present_scaled_rgb888_crop_subpixel(const lv_image_dsc_t *source, int source_x, int source_y,
-                                                  int source_width, int source_height, uint8_t subpixel_alpha,
-                                                  bool subpixel_vertical, uint8_t *scratch, size_t scratch_size,
-                                                  ppa_client_handle_t blend_client, ppa_client_handle_t srm_client);
+  bool direct_present_unscaled_crop_subpixel(const lv_image_dsc_t *source, int source_x, int source_y,
+                                              int source_width, int source_height, uint8_t subpixel_alpha,
+                                              bool subpixel_vertical, ppa_client_handle_t blend_client);
+  bool direct_present_scaled_crop_subpixel(const lv_image_dsc_t *source, int source_x, int source_y,
+                                           int source_width, int source_height, uint8_t subpixel_alpha,
+                                           bool subpixel_vertical, uint8_t *scratch, size_t scratch_size,
+                                           ppa_client_handle_t blend_client, ppa_client_handle_t srm_client);
   bool direct_render_image_crop_rgb888(const lv_image_dsc_t *source, int source_x, int source_y, int source_width,
                                        int source_height, uint8_t *target, size_t target_size,
                                        ppa_client_handle_t srm_client);
   bool direct_render_image_crop_rgb565(const lv_image_dsc_t *source, int source_x, int source_y, int source_width,
                                        int source_height, uint8_t *target, size_t target_size,
                                        ppa_client_handle_t srm_client);
+  bool direct_convert_rgb888_crop_to_rgb565(const lv_image_dsc_t *source, int source_x, int source_y, int width,
+                                            int height, uint8_t *target, size_t target_capacity);
   bool direct_render_image_crop_rgb888_bands(const lv_image_dsc_t *source, int source_x, int source_y, int source_width,
                                              int source_height, uint8_t *const *targets, const size_t *target_sizes,
                                              size_t target_count, size_t band_rows, ppa_client_handle_t srm_client);
@@ -494,26 +557,73 @@ class LvglComponent : public PollingComponent {
   const uint8_t *direct_get_stable_presented_frame(uint32_t timeout_ms = 50);
   bool direct_present_rgb565_software(const uint8_t *source, size_t source_size);
 #endif
+  /** Reserve one idle DSI framebuffer as a temporary full-screen transition source.
+   *
+   * The view does not allocate storage. The caller must release it after the
+   * transition so the framebuffer can return to the normal scanout rotation.
+   */
+  bool acquire_direct_transition_frame(lv_draw_buf_t *view, uint32_t timeout_ms = 120);
+  void release_direct_transition_frame(lv_draw_buf_t *view);
+  /** Lease one idle DSI framebuffer as immutable input for a direct animation.
+   *
+   * Unlike acquire_presentation_frame(), this keeps LVGL's direct-region
+   * producers alive and only reserves the selected buffer against use as a
+   * render target. The caller must release the lease before ending the direct
+   * image animation.
+   */
+  bool acquire_direct_animation_frame(display::FrameBufferLease *lease,
+                                      BufferWriter writer = BufferWriter::CPU,
+                                      uint32_t timeout_ms = 50);
+  void release_direct_animation_frame(display::FrameBufferLease *lease);
   bool begin_direct_image_animation(bool allow_direct_regions = false);
   bool end_direct_image_animation(uint32_t timeout_ms = 300);
   bool direct_blit_rgb888(const uint8_t *src, int src_stride, int x, int y, int width, int height);
+  // Force the PPA regional path instead of the display driver's DMA2D staging
+  // path. This is useful for persistent PSRAM surfaces whose RGB888 row size
+  // is not DMA2D-aligned and would otherwise be copied to staging first.
+  bool direct_blit_rgb888_ppa(const uint8_t *src, int src_stride, int x, int y, int width, int height);
+  // Update the currently presented framebuffer while its cache ownership is
+  // retained by a direct DMA/PPA presenter. The caller must prevent all CPU
+  // access to the target until the ordinary handoff path synchronizes it.
+  bool direct_blit_rgb888_ppa_dma_target(const uint8_t *src, int src_stride, int x, int y, int width, int height);
   uint8_t direct_blit_rgb888_async(const uint8_t *src, int src_stride, int x, int y, int width, int height,
-                                   LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
+                                   LvglDirectBlitReadyCallback ready_callback, void *ready_arg,
+                                   bool stable_carry = false, bool persistent_carry = false);
+  uint8_t direct_blit_xrgb8888_async(const uint8_t *src, int src_stride, int x, int y, int width, int height,
+                                     LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
   uint8_t direct_blend_argb8888_async(const uint8_t *background, int background_stride, const uint8_t *foreground,
-                                       int foreground_stride, int foreground_width, int foreground_height,
-                                       int foreground_x, int foreground_y, int x, int y, int width, int height,
-                                       LvglDirectBlitReadyCallback ready_callback, void *ready_arg,
-                                       bool background_rgb565 = false, bool stable_carry = false);
+                                      int foreground_stride, int foreground_width, int foreground_height,
+                                      int foreground_x, int foreground_y, int x, int y, int width, int height,
+                                      LvglDirectBlitReadyCallback ready_callback, void *ready_arg,
+                                      bool background_rgb565 = false, bool stable_carry = false);
+  uint8_t direct_overlay_argb8888_async(const uint8_t *foreground, int foreground_stride, int foreground_width,
+                                        int foreground_height, int foreground_x, int foreground_y, int x, int y,
+                                        int width, int height, LvglDirectBlitReadyCallback ready_callback,
+                                        void *ready_arg, bool stable_carry = false);
+  uint8_t direct_scale_blend_argb8888_async(
+      const uint8_t *foreground, int foreground_stride, int foreground_width, int foreground_height,
+      int foreground_x, int foreground_y, int foreground_crop_width, int foreground_crop_height, int integer_scale,
+      int x, int y, uint8_t *scale_target, size_t scale_target_size, int scale_target_width, int scale_target_height,
+      const uint8_t *background, int background_stride, LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
   void direct_blit_rgb888_release(int x, int y, int width, int height);
   bool direct_blit_rgb888_region_active(int x, int y, int width, int height);
+  bool direct_regions_pause_start();
+  bool direct_regions_pause_wait(uint32_t timeout_ms);
   bool direct_regions_pause(bool paused, uint32_t timeout_ms);
   uint32_t get_direct_region_base_generation() const;
   bool direct_blit_xrgb8888(const uint8_t *src, int src_stride, int x, int y, int width, int height);
   bool direct_blit_xrgb8888_coherent(const uint8_t *src, int src_stride, int x, int y, int width, int height);
+  bool direct_handoff_to_lvgl(uint32_t timeout_ms);
+  bool copy_argb8888(const uint8_t *src, uint8_t *dst, int width, int height);
+  bool scale_argb8888(const uint8_t *src, int src_width, int src_height, uint8_t *dst, int dst_width, int dst_height,
+                      bool keep_dma_owned = false);
+  bool copy_xrgb8888_to_rgb888(const uint8_t *src, uint8_t *dst, int width, int height);
   bool direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, int y, int width, int height);
   bool render_area_rgb888(lv_obj_t *root, uint8_t *dst, int dst_stride, int x, int y, int width, int height);
   bool render_display_area_rgb888(lv_display_t *display, uint8_t *dst, int dst_stride, int x, int y, int width,
                                   int height);
+  bool render_display_above_object_rgb888(lv_obj_t *anchor, uint8_t *dst, int dst_stride, int x, int y, int width,
+                                          int height);
 
  protected:
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
@@ -524,7 +634,7 @@ class LvglComponent : public PollingComponent {
                                                bool render_source);
 #endif
   bool direct_blit_(const uint8_t *src, int src_stride, int x, int y, int width, int height, bool xrgb8888,
-                    bool skip_dma2d = false, bool source_coherent = false);
+                    bool skip_dma2d = false, bool source_coherent = false, bool target_dma_owned = false);
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   struct DirectRegionSlot {
     int x{};
@@ -537,6 +647,10 @@ class LvglComponent : public PollingComponent {
     size_t animation_overlay_size{};
     bool animation_overlay_valid{};
     bool stable_carry{};
+    uint8_t *persistent_copy{};
+    size_t persistent_copy_size{};
+    bool persistent_copy_valid{};
+    bool persistent_carry{};
     const uint8_t *latest_background{};
     int latest_background_stride{};
     bool latest_background_rgb565{};
@@ -545,9 +659,19 @@ class LvglComponent : public PollingComponent {
     int transition_background_stride{};
     bool transition_background_rgb565{};
     bool transition_background_valid{};
+    uint8_t *scaled_background{};
+    size_t scaled_background_size{};
+    bool scaled_background_valid{};
   };
   struct DirectRegionRequest {
-    enum class Operation : uint8_t{COPY_RGB888, BLEND_ARGB8888, BARRIER};
+    enum class Operation : uint8_t {
+      COPY_RGB888,
+      COPY_XRGB8888,
+      BLEND_ARGB8888,
+      OVERLAY_ARGB8888,
+      SCALE_BLEND_ARGB8888,
+      BARRIER
+    };
 
     Operation operation{Operation::COPY_RGB888};
     const uint8_t *source{};
@@ -563,7 +687,16 @@ class LvglComponent : public PollingComponent {
     int y{};
     int width{};
     int height{};
+    int integer_scale{};
+    // Optional compact ARGB destination for the SRM step. The fast radial
+    // weather path already owns this canvas, so it can replace the per-frame
+    // band scratch without allocating another surface.
+    uint8_t *scale_target{};
+    size_t scale_target_size{};
+    int scale_target_width{};
+    int scale_target_height{};
     bool stable_carry{};
+    bool persistent_carry{};
     LvglDirectBlitReadyCallback ready_callback{};
     void *ready_arg{};
   };
@@ -572,6 +705,14 @@ class LvglComponent : public PollingComponent {
   bool direct_region_ppa_copy_(const uint8_t *source, int source_width, int source_height, int source_x, int source_y,
                                int copy_width, int copy_height, uint8_t *target, size_t target_size, int target_width,
                                int target_height, int target_x, int target_y, bool sync_source, bool invalidate_target);
+  bool direct_region_ppa_copy_xrgb8888_(const uint8_t *source, int source_width, int source_height, int source_x,
+                                        int source_y, int copy_width, int copy_height, uint8_t *target,
+                                        size_t target_size, int target_width, int target_height, int target_x,
+                                        int target_y, bool sync_source);
+  bool direct_region_ensure_blend_scratch_(size_t size);
+  bool direct_region_copy_compact_rgb888_to_target_(const uint8_t *source, int width, int height, uint8_t *target,
+                                                    size_t target_size, int target_width, int target_height,
+                                                    int target_x, int target_y);
   bool direct_region_ppa_blend_argb8888_(const uint8_t *background, int background_stride, bool background_rgb565,
                                          const uint8_t *foreground, int foreground_stride, int foreground_width,
                                          int foreground_height, int foreground_x, int foreground_y, int blend_width,
@@ -581,6 +722,12 @@ class LvglComponent : public PollingComponent {
                                            int foreground_height, int foreground_x, int foreground_y, int blend_width,
                                            int blend_height, uint8_t *target, size_t target_size, int target_width,
                                            int target_height, int target_x, int target_y);
+  bool direct_region_ensure_scale_scratch_(size_t size);
+  bool direct_region_capture_scaled_background_(DirectRegionSlot *slot, const uint8_t *active, size_t active_size,
+                                                int active_width, int active_height);
+  bool direct_region_ppa_scale_blend_argb8888_(DirectRegionSlot *slot, const DirectRegionRequest &request,
+                                               uint8_t *active, size_t active_size, uint8_t *target,
+                                               size_t target_size, int target_width, int target_height);
   bool direct_region_ppa_crossfade_background_(const uint8_t *background, int background_stride, bool background_rgb565,
                                                const uint8_t *foreground, int foreground_stride, int foreground_width,
                                                int foreground_height, int foreground_x, int foreground_y,
@@ -588,11 +735,13 @@ class LvglComponent : public PollingComponent {
                                                size_t target_size, int target_width, int target_height, int target_x,
                                                int target_y);
   bool direct_region_cache_animation_overlay_(DirectRegionSlot *slot, const DirectRegionRequest &request);
+  bool direct_region_cache_persistent_copy_(DirectRegionSlot *slot, const DirectRegionRequest &request);
   bool direct_region_capture_transition_background_(DirectRegionSlot *slot);
   bool start_direct_region_compositor_();
   static void direct_region_task_trampoline_(void *arg);
   void direct_region_task_();
-  bool direct_region_prepare_target_(uint32_t generation, uint8_t **active, uint8_t **target);
+  bool direct_region_prepare_target_(uint32_t generation, uint8_t **active, uint8_t **target,
+                                     uint32_t target_wait_ms = 0);
   bool direct_region_compose_to_(const DirectRegionRequest *requests, size_t request_count, uint8_t *active,
                                  uint8_t *target);
   DirectRegionSlot *direct_region_find_slot_(int x, int y, int width, int height, bool create);
@@ -600,6 +749,7 @@ class LvglComponent : public PollingComponent {
   void direct_region_refresh_allow_compositor_();
   void direct_region_refresh_relock_();
   void direct_region_sync_to_lvgl_target_();
+  void direct_region_sync_persistent_to_lvgl_target_();
   void direct_region_refresh_end_();
 #endif
   void draw_end_();
@@ -608,7 +758,7 @@ class LvglComponent : public PollingComponent {
   void draw_start_() const { this->draw_start_callback_->trigger(); }
 
   void write_random_();
-  void draw_buffer_(const lv_area_t *area, lv_color_data *ptr);
+  bool draw_buffer_(const lv_area_t *area, lv_color_data *ptr);
   void sync_direct_framebuffer_area_(const lv_area_t *area, uint8_t *color_p);
   bool sync_direct_other_buffer_(const lv_area_t *area, uint8_t *color_p, bool sync_source = true);
   void direct_dirty_record_(const lv_area_t *area);
@@ -617,7 +767,7 @@ class LvglComponent : public PollingComponent {
   uint8_t *next_direct_render_buffer_() const;
   void present_direct_render_buffer_(uint8_t *buffer);
   uint8_t *next_snapshot_render_buffer_(const uint8_t *exclude_a = nullptr, const uint8_t *exclude_b = nullptr,
-                                        uint32_t wait_ms = 0);
+                                        uint32_t wait_ms = 0, bool reserve = false);
   bool present_snapshot_render_buffer_(uint8_t *buffer, bool wait_for_active = true);
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   bool direct_render_image_crop_(const lv_image_dsc_t *source, int source_x, int source_y, int source_width,
@@ -683,8 +833,17 @@ class LvglComponent : public PollingComponent {
   std::atomic<uint32_t> direct_region_refresh_fallbacks_{0};
   std::atomic<uint32_t> direct_region_refresh_relock_us_{0};
   std::atomic<uint32_t> direct_region_refresh_relock_max_us_{0};
+  std::atomic<uint32_t> direct_region_full_rebases_{0};
+  std::atomic<uint32_t> direct_region_full_rebase_us_{0};
+  std::atomic<uint32_t> direct_region_full_rebase_max_us_{0};
+  std::atomic<uint32_t> direct_region_pause_depth_{0};
   std::atomic<bool> direct_region_paused_{false};
+  std::atomic<bool> direct_region_pause_ready_{false};
   uint32_t direct_region_buffer_generation_[3]{};
+  uint8_t *direct_region_blend_scratch_{nullptr};
+  size_t direct_region_blend_scratch_size_{};
+  uint8_t *direct_region_scale_scratch_{nullptr};
+  size_t direct_region_scale_scratch_size_{};
   bool direct_region_refresh_locked_{false};
   uint8_t *direct_region_refresh_reserved_buffer_{nullptr};
 #endif
@@ -716,6 +875,16 @@ class LvglComponent : public PollingComponent {
   LvglNavigation *navigation_{};
   bool big_endian_{};
   std::atomic<bool> frame_buffer_presentation_active_{false};
+  enum class FrameBufferPresentationFailure : uint8_t {
+    NONE,
+    COMPONENT_UNAVAILABLE,
+    ALREADY_ACTIVE,
+    REFRESH_TIMER_UNAVAILABLE,
+    REGION_BARRIER_TIMEOUT,
+    DISPLAY_SESSION_REJECTED,
+  };
+  std::atomic<FrameBufferPresentationFailure> frame_buffer_presentation_failure_{
+      FrameBufferPresentationFailure::NONE};
   bool frame_buffer_presentation_paused_regions_{false};
   lv_timer_t *frame_buffer_presentation_refr_timer_{};
   uint32_t frame_buffer_presentation_refr_period_{LV_DEF_REFR_PERIOD};
@@ -785,10 +954,12 @@ class LVTouchListener : public touchscreen::TouchListener, public Parented<LvglC
   lv_obj_t *find_touch_target_(int32_t x, int32_t y) const;
   void replay_deferred_tap_();
   void finish_synthetic_tap_();
+  void finish_release_();
 
   lv_indev_t *drv_{};
   touchscreen::TouchPoint touch_point_{};
   lv_timer_t *synthetic_tap_timer_{};
+  bool navigation_release_pending_{};
   bool touch_pressed_{};
   bool raw_touch_active_{};
   bool navigation_touch_captured_{};
@@ -796,6 +967,11 @@ class LVTouchListener : public touchscreen::TouchListener, public Parented<LvglC
   bool synthetic_tap_active_{};
   lv_obj_t *navigation_deferred_target_{};
   lv_obj_t *synthetic_tap_target_{};
+  uint32_t raw_touch_started_ms_{};
+  uint32_t raw_touch_last_sample_ms_{};
+  int32_t raw_touch_last_x_{};
+  int32_t raw_touch_last_y_{};
+  uint16_t raw_touch_sample_count_{};
 };
 #endif  // USE_LVGL_TOUCHSCREEN
 

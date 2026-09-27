@@ -144,8 +144,12 @@ class MipiDsi : public display::Display {
   uint8_t *get_direct_render_frame_buffer(const uint8_t *exclude_a = nullptr, const uint8_t *exclude_b = nullptr) const;
   uint8_t *wait_for_direct_render_frame_buffer(const uint8_t *exclude_a = nullptr, const uint8_t *exclude_b = nullptr,
                                                uint32_t timeout_ms = 50);
+  uint8_t *acquire_direct_render_frame_buffer(const uint8_t *exclude_a = nullptr,
+                                              const uint8_t *exclude_b = nullptr, uint32_t timeout_ms = 50);
   bool reserve_direct_render_frame_buffer(uint8_t *frame_buffer);
   void release_direct_render_frame_buffer(uint8_t *frame_buffer);
+  uint8_t *acquire_direct_source_frame_buffer(uint32_t timeout_ms = 50);
+  void release_direct_source_frame_buffer(uint8_t *frame_buffer);
   bool queue_direct_frame_buffer(uint8_t *frame_buffer, uint32_t timeout_ms = 50, bool wait_for_active = true,
                                  bool frame_buffer_session_owner = false,
                                  const uint8_t *expected_active_frame_buffer = nullptr);
@@ -156,7 +160,8 @@ class MipiDsi : public display::Display {
   bool acquire_frame_buffer(display::FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
                             uint32_t timeout_ms = 50) override;
   bool get_active_frame_buffer(display::FrameBufferView *view, BufferReader reader = BufferReader::CPU) const override;
-  bool present_frame_buffer_lease(display::FrameBufferLease *lease, uint32_t timeout_ms = 50) override;
+  bool present_frame_buffer_lease(display::FrameBufferLease *lease, uint32_t timeout_ms = 50,
+                                  bool wait_for_active = true) override;
   bool release_frame_buffer(display::FrameBufferLease *lease) override;
   bool end_frame_buffer_session(uint32_t timeout_ms = 50) override;
   bool IRAM_ATTR on_frame_buffer_staged_from_isr(esp_lcd_panel_handle_t panel, uint8_t *frame_buffer);
@@ -343,6 +348,7 @@ class MipiDsi : public display::Display {
   std::atomic<uint8_t *> queued_frame_buffer_{nullptr};
   std::atomic<uint8_t *> staged_frame_buffer_{nullptr};
   std::atomic<uint8_t *> reserved_render_frame_buffer_{nullptr};
+  std::atomic<uint8_t *> source_frame_buffer_{nullptr};
   BufferWriter frame_buffer_writers_[MIPI_DSI_FRAME_BUFFER_COUNT]{BufferWriter::CPU, BufferWriter::CPU,
                                                                   BufferWriter::CPU};
   uint8_t *session_leased_frame_buffer_{nullptr};
