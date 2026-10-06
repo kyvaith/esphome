@@ -64,12 +64,19 @@ extern "C" uint8_t lvgl_esphome_direct_blit_rgb888_async(const uint8_t *src, int
 extern "C" uint8_t lvgl_esphome_direct_blit_xrgb8888_async(const uint8_t *src, int src_stride, int x, int y, int width,
                                                            int height, LvglDirectBlitReadyCallback ready_callback,
                                                            void *ready_arg);
+extern "C" uint8_t lvgl_esphome_direct_blit_xrgb8888_region_async(
+    const uint8_t *src, int src_stride, int source_width, int source_height, int source_x, int source_y, int x, int y,
+    int width, int height, LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
 extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_async(const uint8_t *background, int background_stride,
                                                             const uint8_t *foreground, int foreground_stride,
                                                             int foreground_width, int foreground_height,
                                                             int foreground_x, int foreground_y, int x, int y, int width,
                                                             int height, LvglDirectBlitReadyCallback ready_callback,
                                                             void *ready_arg);
+extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_stable_async(
+    const uint8_t *background, int background_stride, const uint8_t *foreground, int foreground_stride,
+    int foreground_width, int foreground_height, int foreground_x, int foreground_y, int x, int y, int width,
+    int height, LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
 extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_async(
     const uint8_t *background, int background_stride, const uint8_t *foreground, int foreground_stride,
     int foreground_width, int foreground_height, int foreground_x, int foreground_y, int x, int y, int width,
@@ -591,6 +598,9 @@ class LvglComponent : public PollingComponent {
                                    bool stable_carry = false, bool persistent_carry = false);
   uint8_t direct_blit_xrgb8888_async(const uint8_t *src, int src_stride, int x, int y, int width, int height,
                                      LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
+  uint8_t direct_blit_xrgb8888_region_async(const uint8_t *src, int src_stride, int source_width, int source_height,
+                                            int source_x, int source_y, int x, int y, int width, int height,
+                                            LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
   uint8_t direct_blend_argb8888_async(const uint8_t *background, int background_stride, const uint8_t *foreground,
                                       int foreground_stride, int foreground_width, int foreground_height,
                                       int foreground_x, int foreground_y, int x, int y, int width, int height,

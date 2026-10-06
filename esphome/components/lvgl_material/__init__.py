@@ -96,6 +96,8 @@ CONF_WEATHER_PRESENTERS = "weather_presenters"
 CONF_WAVEFORM = "waveform"
 CONF_WAVY_PROGRESS = "wavy_progress"
 CONF_WIDGET = "widget"
+CONF_THEMES = "themes"
+CONF_ROOTS = "roots"
 
 lvgl_material_ns = cg.esphome_ns.namespace("lvgl_material")
 MaterialStateLayer = lvgl_material_ns.class_("MaterialStateLayer", cg.Component)
@@ -114,6 +116,7 @@ MaterialVoiceAssistant = lvgl_material_ns.class_(
 MaterialPressedStyle = lvgl_material_ns.class_("MaterialPressedStyle", cg.Component)
 MaterialPageIndicator = lvgl_material_ns.class_("MaterialPageIndicator", cg.Component)
 MaterialTileSurface = lvgl_material_ns.class_("MaterialTileSurface", cg.Component)
+MaterialTheme = lvgl_material_ns.class_("MaterialTheme", cg.Component)
 MaterialNotificationOverlay = lvgl_material_ns.class_(
     "MaterialNotificationOverlay", cg.Component
 )
@@ -127,6 +130,9 @@ MaterialPageIndicatorSetAction = lvgl_material_ns.class_(
 )
 MaterialTileSurfaceConfigureAction = lvgl_material_ns.class_(
     "MaterialTileSurfaceConfigureAction", automation.Action
+)
+MaterialTileSurfaceSetAccentAction = lvgl_material_ns.class_(
+    "MaterialTileSurfaceSetAccentAction", automation.Action
 )
 MaterialNotificationShowAction = lvgl_material_ns.class_(
     "MaterialNotificationShowAction", automation.Action
@@ -149,6 +155,21 @@ MaterialDirectSpinnerStartAction = lvgl_material_ns.class_(
 MaterialDirectSpinnerStopAction = lvgl_material_ns.class_(
     "MaterialDirectSpinnerStopAction", automation.Action
 )
+MaterialThemeApplyAction = lvgl_material_ns.class_(
+    "MaterialThemeApplyAction", automation.Action
+)
+
+THEME_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MaterialTheme),
+        cv.Required(CONF_ROOTS): cv.All(
+            cv.ensure_list(cv.use_id(lv_obj_t)), cv.Length(min=1, max=32)
+        ),
+        # The theme stores a 24-bit RGB seed, not an LVGL colour struct.  A
+        # runtime action supplies the same uint32_t type below.
+        cv.Optional(CONF_COLOR, default=0x36BCF0): cv.hex_uint32_t,
+    }
+).extend(cv.COMPONENT_SCHEMA)
 
 STATE_LAYER_SCHEMA = cv.Schema(
     {
@@ -355,6 +376,7 @@ def _validate_config(config):
         and not config.get(CONF_TILE_SURFACES)
         and not config.get(CONF_NOTIFICATION_OVERLAYS)
         and not config.get(CONF_WEATHER_PRESENTERS)
+        and not config.get(CONF_THEMES)
     ):
         raise cv.Invalid(
             f"At least one of {CONF_STATE_LAYERS}, {CONF_DIRECT_STATE_LAYERS}, "
@@ -363,7 +385,7 @@ def _validate_config(config):
             f"{CONF_WAVY_PROGRESS}, {CONF_VOICE_ASSISTANTS}, "
             f"{CONF_PRESSED_STYLES}, "
             f"{CONF_PAGE_INDICATORS}, {CONF_TILE_SURFACES}, "
-            f"{CONF_NOTIFICATION_OVERLAYS}, or {CONF_WEATHER_PRESENTERS} is required"
+            f"{CONF_NOTIFICATION_OVERLAYS}, {CONF_WEATHER_PRESENTERS}, or {CONF_THEMES} is required"
         )
     for indicator in config.get(CONF_PAGE_INDICATORS, []):
         if indicator[CONF_INITIAL_PAGE] >= indicator[CONF_COUNT]:
@@ -410,6 +432,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_WEATHER_PRESENTERS, default=list): cv.ensure_list(
                 WEATHER_PRESENTER_SCHEMA
             ),
+            cv.Optional(CONF_THEMES, default=list): cv.ensure_list(THEME_SCHEMA),
         }
     ),
     _validate_config,
@@ -417,6 +440,11 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
+    theme_bindings = []
+    for conf in config[CONF_THEMES]:
+        var = cg.new_Pvariable(conf[CONF_ID])
+        await cg.register_component(var, conf)
+        theme_bindings.append((var, conf[CONF_ROOTS], conf[CONF_COLOR]))
     weather_presenter_bindings = []
     for conf in config[CONF_WEATHER_PRESENTERS]:
         var = cg.new_Pvariable(conf[CONF_ID])
@@ -645,6 +673,11 @@ async def to_code(config):
 
     await wait_for_widgets()
     async with LvContext() as ctx:
+        for var, roots, accent in theme_bindings:
+            ctx.add(var.set_accent(accent))
+            for root in roots:
+                widget = await cg.get_variable(root)
+                ctx.add(var.add_root(widget))
         for (
             var,
             root,
@@ -787,6 +820,28 @@ async def tile_surface_configure_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg, parent)
     payload = await cg.templatable(config[CONF_PAYLOAD], args, cg.std_string)
     cg.add(var.set_payload(payload))
+    return var
+
+
+THEME_APPLY_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.use_id(MaterialTheme),
+        cv.Required(CONF_COLOR): cv.templatable(cv.uint32_t),
+    }
+)
+
+
+@automation.register_action(
+    "lvgl_material.theme.apply",
+    MaterialThemeApplyAction,
+    THEME_APPLY_SCHEMA,
+    synchronous=True,
+)
+async def theme_apply_to_code(config, action_id, template_arg, args):
+    parent = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, parent)
+    accent = await cg.templatable(config[CONF_COLOR], args, cg.uint32)
+    cg.add(var.set_accent(accent))
     return var
 
 

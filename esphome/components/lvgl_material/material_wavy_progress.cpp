@@ -21,11 +21,12 @@ extern "C" bool lvgl_esphome_direct_blit_rgb888(const uint8_t *src, int src_stri
                                                 int height);
 extern "C" uint8_t lvgl_esphome_direct_blit_rgb888_async(const uint8_t *src, int src_stride, int x, int y, int width,
                                                          int height, void (*ready_callback)(void *), void *ready_arg);
-extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_async(
+
+extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_async(
     const uint8_t *background, int background_stride, const uint8_t *foreground, int foreground_stride,
     int foreground_width, int foreground_height, int foreground_x, int foreground_y, int x, int y, int width,
     int height, void (*ready_callback)(void *), void *ready_arg);
-extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_stable_async(
+extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_stable_async(
     const uint8_t *background, int background_stride, const uint8_t *foreground, int foreground_stride,
     int foreground_width, int foreground_height, int foreground_x, int foreground_y, int x, int y, int width,
     int height, void (*ready_callback)(void *), void *ready_arg);
@@ -52,7 +53,10 @@ constexpr UBaseType_t WAVE_CONTROL_TASK_PRIORITY = 3;
 constexpr int WAVE_SIZE = 244;
 constexpr int WAVE_PIXELS = WAVE_SIZE * WAVE_SIZE;
 constexpr int WAVE_BYTES = WAVE_PIXELS * static_cast<int>(sizeof(lv_color32_t));
-constexpr int WAVE_BACKDROP_BYTES = WAVE_PIXELS * static_cast<int>(sizeof(lv_color16_t));
+// Keep the compact direct backdrop in the panel's native RGB888 format. An
+// RGB565 backdrop makes the 244 px crop quantize the otherwise smooth LVGL
+// gradient, exposing a visible rectangle around the control.
+constexpr int WAVE_BACKDROP_BYTES = WAVE_PIXELS * static_cast<int>(sizeof(lv_color_t));
 constexpr size_t WAVE_BACKDROP_BUFFER_COUNT = 3;
 constexpr int WAVE_CACHE_ALIGN = 128;
 constexpr int WAVE_CENTER = (WAVE_SIZE - 1) / 2;
@@ -84,7 +88,7 @@ struct WavePresentSlot {
   std::atomic<bool> in_flight{false};
   std::atomic<bool> complete{false};
   lv_color32_t *pixels{nullptr};
-  lv_color16_t *backdrop_pixels{nullptr};
+  lv_color_t *backdrop_pixels{nullptr};
   uint32_t generation{0};
   uint32_t sequence{0};
   uint32_t interaction_sequence{0};
@@ -132,8 +136,8 @@ struct WavyArcState {
   bool icon_buffer_pressed[3]{};
   bool blob_buffer_valid[3]{};
   bool blob_buffer_pressed[3]{};
-  lv_color16_t *backdrop_buffers[WAVE_BACKDROP_BUFFER_COUNT]{};
-  lv_color16_t *backdrop_pixels{nullptr};
+  lv_color_t *backdrop_buffers[WAVE_BACKDROP_BUFFER_COUNT]{};
+  lv_color_t *backdrop_pixels{nullptr};
   WavePolarPixel *dynamic_pixels{nullptr};
   WavePixelSpan *dynamic_spans{nullptr};
   void *geometry_storage{nullptr};
@@ -153,6 +157,16 @@ struct WavyArcState {
   // hundreds of milliseconds walking PSRAM pixel-by-pixel.
   const lv_image_dsc_t *pending_background_source{nullptr};
   bool pending_background_scrim{false};
+  bool background_gradient{false};
+  lv_color_t gradient_top{};
+  lv_color_t gradient_bottom{};
+  lv_color32_t blob_color{};
+  lv_color32_t blob_pressed_color{};
+  lv_color32_t track_loading_color{};
+  lv_color32_t track_played_color{};
+  lv_color32_t track_remaining_color{};
+  lv_color32_t icon_color{};
+  bool accent_initialized{false};
 #ifdef ESP_PLATFORM
   SemaphoreHandle_t render_mutex{nullptr};
   StaticSemaphore_t render_mutex_storage{};
@@ -325,6 +339,26 @@ static lv_color_t blend_rgb(const lv_color_t &background, uint8_t red, uint8_t g
                     static_cast<uint8_t>((blue * alpha + background.blue * inverse + 127U) / 255U));
 }
 
+// LVGL's two-stop vertical gradient cache uses a 256-unit stop range and
+// LV_UDIV255 (rounded integer division) for each channel. Match that path for
+// the compact direct backdrop instead of using a height-1/255 interpolation;
+// otherwise the crop can differ by one or two RGB888 values at its edges.
+static uint8_t lvgl_div255(uint32_t value) {
+  return static_cast<uint8_t>((value * 0x8081U) >> 23);
+}
+
+static uint8_t lvgl_gradient_channel(uint8_t top, uint8_t bottom, int display_y, int display_height) {
+  const int range = std::max(1, display_height);
+  const int end = (255 * range) >> 8;
+  if (display_y <= 0)
+    return top;
+  if (display_y >= end)
+    return bottom;
+  const uint32_t mix = static_cast<uint32_t>(display_y * 255 / std::max(1, end));
+  const uint32_t inverse = 255U - mix;
+  return lvgl_div255(static_cast<uint32_t>(bottom) * mix + static_cast<uint32_t>(top) * inverse);
+}
+
 static lv_color32_t make_overlay(uint8_t red, uint8_t green, uint8_t blue, uint8_t alpha) {
   lv_color32_t color{};
   color.red = red;
@@ -332,6 +366,30 @@ static lv_color32_t make_overlay(uint8_t red, uint8_t green, uint8_t blue, uint8
   color.blue = blue;
   color.alpha = alpha;
   return color;
+}
+
+static uint8_t mix_channel(uint8_t from, uint8_t to, uint8_t amount) {
+  return static_cast<uint8_t>((static_cast<uint16_t>(from) * (255U - amount) +
+                               static_cast<uint16_t>(to) * amount + 127U) /
+                              255U);
+}
+
+static void apply_accent_colors(WavyArcState *state, uint32_t accent) {
+  const uint8_t red = static_cast<uint8_t>((accent >> 16) & 0xFFU);
+  const uint8_t green = static_cast<uint8_t>((accent >> 8) & 0xFFU);
+  const uint8_t blue = static_cast<uint8_t>(accent & 0xFFU);
+  state->blob_color = make_overlay(red, green, blue, 255);
+  state->blob_pressed_color = make_overlay(static_cast<uint8_t>((red * 3U) / 4U),
+                                           static_cast<uint8_t>((green * 3U) / 4U),
+                                           static_cast<uint8_t>((blue * 3U) / 4U), 255);
+  state->track_loading_color = make_overlay(mix_channel(red, 255, 220), mix_channel(green, 255, 220),
+                                            mix_channel(blue, 255, 220), 232);
+  state->track_played_color = make_overlay(mix_channel(red, 255, 190), mix_channel(green, 255, 190),
+                                           mix_channel(blue, 255, 190), 224);
+  state->track_remaining_color = make_overlay(mix_channel(red, 255, 170), mix_channel(green, 255, 170),
+                                              mix_channel(blue, 255, 170), 152);
+  state->icon_color = make_overlay(static_cast<uint8_t>(red / 4U), static_cast<uint8_t>(green / 4U),
+                                   static_cast<uint8_t>(blue / 4U), 255);
 }
 
 static lv_color32_t blend_overlay(const lv_color32_t &background, uint8_t red, uint8_t green, uint8_t blue,
@@ -376,6 +434,8 @@ static bool ensure_buffers(WavyArcState *state) {
   if (state->buffers_ready) {
     return true;
   }
+  if (!state->accent_initialized)
+    apply_accent_colors(state, 0x4FC3F7);
 
 #ifdef ESP_PLATFORM
   const int aligned_bytes = align_up(WAVE_BYTES, WAVE_CACHE_ALIGN);
@@ -386,7 +446,7 @@ static bool ensure_buffers(WavyArcState *state) {
   state->spare_pixels = static_cast<lv_color32_t *>(
       heap_caps_aligned_alloc(WAVE_CACHE_ALIGN, aligned_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   for (auto &buffer : state->backdrop_buffers) {
-    buffer = static_cast<lv_color16_t *>(heap_caps_aligned_alloc(
+    buffer = static_cast<lv_color_t *>(heap_caps_aligned_alloc(
         WAVE_CACHE_ALIGN, align_up(WAVE_BACKDROP_BYTES, WAVE_CACHE_ALIGN), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   }
 #else
@@ -394,7 +454,7 @@ static bool ensure_buffers(WavyArcState *state) {
   state->worker_pixels = static_cast<lv_color32_t *>(malloc(WAVE_BYTES));
   state->spare_pixels = static_cast<lv_color32_t *>(malloc(WAVE_BYTES));
   for (auto &buffer : state->backdrop_buffers)
-    buffer = static_cast<lv_color16_t *>(malloc(WAVE_BACKDROP_BYTES));
+    buffer = static_cast<lv_color_t *>(malloc(WAVE_BACKDROP_BYTES));
 #endif
 
   bool backdrop_buffers_ready = true;
@@ -438,7 +498,7 @@ static bool ensure_buffers(WavyArcState *state) {
       const int dx = pixel_x - WAVE_CENTER;
       const int radius_sq = dx * dx + dy * dy;
       if (radius_sq <= static_blob_radius_sq) {
-        state->pixels[pixel_y * WAVE_SIZE + pixel_x] = make_overlay(0xE4, 0xC2, 0xFF, 255);
+        state->pixels[pixel_y * WAVE_SIZE + pixel_x] = state->blob_color;
         in_span = false;
       } else if (radius_sq <= blob_candidate_radius_sq ||
                  (radius_sq >= ring_candidate_min_radius_sq && radius_sq <= ring_candidate_max_radius_sq)) {
@@ -580,7 +640,7 @@ static lv_color_t read_source_pixel(const lv_image_dsc_t *source, int x, int y) 
   }
 }
 
-static bool capture_backdrop(WavyArcState *state, lv_color16_t *target, const lv_image_dsc_t *source,
+static bool capture_backdrop(WavyArcState *state, lv_color_t *target, const lv_image_dsc_t *source,
                              bool apply_scrim) {
   if (!ensure_buffers(state) || target == nullptr)
     return false;
@@ -610,9 +670,13 @@ static bool capture_backdrop(WavyArcState *state, lv_color16_t *target, const lv
     }
   }
 
-  constexpr uint8_t scrim_red = 0x21;
-  constexpr uint8_t scrim_green = 0x0F;
-  constexpr uint8_t scrim_blue = 0x48;
+  // Keep the private direct backdrop in lockstep with the LVGL artwork_scrim
+  // (0x071018 at 60% opacity).  The old purple scrim was inherited from the
+  // placeholder artwork and made the 244 px direct crop visibly different
+  // from the full-screen player surface whenever the crop was presented.
+  constexpr uint8_t scrim_red = 0x07;
+  constexpr uint8_t scrim_green = 0x10;
+  constexpr uint8_t scrim_blue = 0x18;
   constexpr uint8_t scrim_alpha = 153;
   const bool direct_rgb565_crop =
       source != nullptr && source->data != nullptr && source->header.cf == LV_COLOR_FORMAT_RGB565 &&
@@ -629,7 +693,11 @@ static bool capture_backdrop(WavyArcState *state, lv_color16_t *target, const lv
                                           static_cast<size_t>(origin_x) * sizeof(uint16_t)
                                     : nullptr;
     if (direct_row != nullptr && !apply_scrim) {
-      memcpy(target + static_cast<size_t>(y) * WAVE_SIZE, direct_row, WAVE_SIZE * sizeof(lv_color16_t));
+      for (int x = 0; x < WAVE_SIZE; x++) {
+        lv_color16_t color16;
+        memcpy(&color16, direct_row + static_cast<size_t>(x) * sizeof(color16), sizeof(color16));
+        target[static_cast<size_t>(y) * WAVE_SIZE + x] = lv_color16_to_color(color16);
+      }
       continue;
     }
     for (int x = 0; x < WAVE_SIZE; x++) {
@@ -638,7 +706,19 @@ static bool capture_backdrop(WavyArcState *state, lv_color16_t *target, const lv
                                ? (display_x * static_cast<int>(source->header.w)) / display_width
                                : 0;
       lv_color_t color;
-      if (direct_row != nullptr) {
+      if (state->background_gradient && source == nullptr) {
+        // The missing-artwork backdrop is the same vertical gradient as the
+        // full-screen player surface.  The direct region is only a 244 px
+        // crop; using its local y coordinate restarted the gradient at the
+        // top of that crop and exposed a visible square around the play
+        // control.  Interpolate in display coordinates so the crop and the
+        // LVGL panel have identical pixels at every edge.
+        const int gradient_y = std::clamp(display_y, 0, std::max(0, display_height - 1));
+        color = make_color(
+            lvgl_gradient_channel(state->gradient_top.red, state->gradient_bottom.red, gradient_y, display_height),
+            lvgl_gradient_channel(state->gradient_top.green, state->gradient_bottom.green, gradient_y, display_height),
+            lvgl_gradient_channel(state->gradient_top.blue, state->gradient_bottom.blue, gradient_y, display_height));
+      } else if (direct_row != nullptr) {
         lv_color16_t color16;
         memcpy(&color16, direct_row + static_cast<size_t>(x) * sizeof(color16), sizeof(color16));
         color = lv_color16_to_color(color16);
@@ -647,14 +727,13 @@ static bool capture_backdrop(WavyArcState *state, lv_color16_t *target, const lv
       }
       if (apply_scrim)
         color = blend_rgb(color, scrim_red, scrim_green, scrim_blue, scrim_alpha);
-      const uint16_t color16 = lv_color_to_u16(color);
-      memcpy(&target[static_cast<size_t>(y) * WAVE_SIZE + x], &color16, sizeof(color16));
+      target[static_cast<size_t>(y) * WAVE_SIZE + x] = color;
     }
   }
   return true;
 }
 
-static lv_color16_t *find_free_backdrop(WavyArcState *state) {
+static lv_color_t *find_free_backdrop(WavyArcState *state) {
   if (state == nullptr)
     return nullptr;
   for (auto *buffer : state->backdrop_buffers) {
@@ -680,7 +759,7 @@ static void reset_control_icon_area(WavyArcState *state) {
   constexpr int x2 = WAVE_CENTER + 33;
   constexpr int y1 = WAVE_CENTER - 32;
   constexpr int y2 = WAVE_CENTER + 32;
-  const lv_color32_t fill = state->pressed ? make_overlay(0xC4, 0xA7, 0xDB, 255) : make_overlay(0xE4, 0xC2, 0xFF, 255);
+  const lv_color32_t fill = state->pressed ? state->blob_pressed_color : state->blob_color;
   for (int y = y1; y <= y2; y++) {
     lv_color32_t *row = state->pixels + y * WAVE_SIZE;
     for (int x = x1; x <= x2; x++) {
@@ -697,8 +776,7 @@ static void update_static_blob_if_needed(WavyArcState *state) {
       continue;
     if (state->blob_buffer_valid[i] && state->blob_buffer_pressed[i] == state->pressed)
       return;
-    const lv_color32_t fill =
-        state->pressed ? make_overlay(0xC4, 0xA7, 0xDB, 255) : make_overlay(0xE4, 0xC2, 0xFF, 255);
+    const lv_color32_t fill = state->pressed ? state->blob_pressed_color : state->blob_color;
     for (int y = WAVE_CENTER - static_blob_radius; y <= WAVE_CENTER + static_blob_radius; y++) {
       const int dy = y - WAVE_CENTER;
       lv_color32_t *row = state->pixels + y * WAVE_SIZE;
@@ -767,15 +845,18 @@ static void draw_play_icon(WavyArcState *state) {
       if (inside == 0)
         continue;
       const int index = y * WAVE_SIZE + x;
-      state->pixels[index] = blend_overlay(state->pixels[index], 0x40, 0x00, 0x60, inside * 255U / 4U);
+      state->pixels[index] = blend_overlay(state->pixels[index], state->icon_color.red, state->icon_color.green,
+                                           state->icon_color.blue, inside * 255U / 4U);
     }
   }
 }
 
 static void draw_control_icon(WavyArcState *state) {
   if (state->playing) {
-    draw_capsule(state, WAVE_CENTER - 14, WAVE_CENTER, 20, 8, 0x40, 0x00, 0x60);
-    draw_capsule(state, WAVE_CENTER + 14, WAVE_CENTER, 20, 8, 0x40, 0x00, 0x60);
+    draw_capsule(state, WAVE_CENTER - 14, WAVE_CENTER, 20, 8, state->icon_color.red, state->icon_color.green,
+                 state->icon_color.blue);
+    draw_capsule(state, WAVE_CENTER + 14, WAVE_CENTER, 20, 8, state->icon_color.red, state->icon_color.green,
+                 state->icon_color.blue);
   } else {
     draw_play_icon(state);
   }
@@ -910,8 +991,8 @@ static void render_bitmap(WavyArcState *state) {
 
       if (radius <= blob_possible_max_q4) {
         const uint8_t fill_alpha = edge_coverage(state->blob_boundary_by_angle[angle] - radius);
-        state->pixels[pixel_index] =
-            state->pressed ? make_overlay(0xC4, 0xA7, 0xDB, fill_alpha) : make_overlay(0xE4, 0xC2, 0xFF, fill_alpha);
+        const auto &blob = state->pressed ? state->blob_pressed_color : state->blob_color;
+        state->pixels[pixel_index] = make_overlay(blob.red, blob.green, blob.blue, fill_alpha);
         continue;
       }
 
@@ -984,11 +1065,18 @@ static void render_bitmap(WavyArcState *state) {
       }
 
       if (loading_coverage > 0) {
-        state->pixels[pixel_index] = make_overlay(0xF8, 0xEC, 0xFF, scaled_alpha(loading_coverage, 232));
+        state->pixels[pixel_index] = make_overlay(state->track_loading_color.red, state->track_loading_color.green,
+                                                  state->track_loading_color.blue,
+                                                  scaled_alpha(loading_coverage, state->track_loading_color.alpha));
       } else if (played_coverage >= remaining_coverage && played_coverage > 0) {
-        state->pixels[pixel_index] = make_overlay(0xF1, 0xDC, 0xFF, scaled_alpha(played_coverage, 224));
+        state->pixels[pixel_index] = make_overlay(state->track_played_color.red, state->track_played_color.green,
+                                                  state->track_played_color.blue,
+                                                  scaled_alpha(played_coverage, state->track_played_color.alpha));
       } else if (remaining_coverage > 0) {
-        state->pixels[pixel_index] = make_overlay(0xF1, 0xDC, 0xFF, scaled_alpha(remaining_coverage, 152));
+        state->pixels[pixel_index] = make_overlay(state->track_remaining_color.red,
+                                                  state->track_remaining_color.green,
+                                                  state->track_remaining_color.blue,
+                                                  scaled_alpha(remaining_coverage, state->track_remaining_color.alpha));
       } else {
         state->pixels[pixel_index] = make_overlay(0, 0, 0, 0);
       }
@@ -1120,7 +1208,7 @@ static void render_worker_task(void *arg) {
       const bool apply_scrim = state->pending_background_scrim;
       const uint32_t background_generation =
           state->background_request_generation.load(std::memory_order_acquire);
-      lv_color16_t *target = find_free_backdrop(state);
+      lv_color_t *target = find_free_backdrop(state);
       if (target != nullptr) {
         const bool captured = capture_backdrop(state, target, source, apply_scrim);
         if (captured && background_generation ==
@@ -1407,6 +1495,7 @@ inline void media_wavy_arc_set_background(const lv_image_dsc_t *source, bool app
 #ifdef ESP_PLATFORM
   state.pending_background_source = source;
   state.pending_background_scrim = apply_scrim;
+  state.background_gradient = false;
   state.background_pending.store(true, std::memory_order_release);
   state.dirty = true;
   const bool use_worker = state.render_task != nullptr;
@@ -1449,6 +1538,85 @@ inline void media_wavy_arc_set_background(const lv_image_dsc_t *source, bool app
   }
   if (captured && state.arc != nullptr)
     invalidate_bitmap(&state);
+#endif
+}
+
+inline void media_wavy_arc_set_background_gradient(uint32_t top_color, uint32_t bottom_color,
+                                                   bool apply_scrim) {
+  auto &state = media_wavy_arc;
+#ifdef ESP_PLATFORM
+  if (state.render_mutex != nullptr && xSemaphoreTake(state.render_mutex, portMAX_DELAY) != pdTRUE)
+    return;
+#endif
+  const uint32_t background_generation = state.background_request_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+  state.gradient_top = make_color(static_cast<uint8_t>((top_color >> 16) & 0xFFU),
+                                   static_cast<uint8_t>((top_color >> 8) & 0xFFU),
+                                   static_cast<uint8_t>(top_color & 0xFFU));
+  state.gradient_bottom = make_color(static_cast<uint8_t>((bottom_color >> 16) & 0xFFU),
+                                      static_cast<uint8_t>((bottom_color >> 8) & 0xFFU),
+                                      static_cast<uint8_t>(bottom_color & 0xFFU));
+  state.pending_background_source = nullptr;
+  state.pending_background_scrim = apply_scrim;
+  state.background_gradient = true;
+  state.background_pending.store(true, std::memory_order_release);
+  state.dirty = true;
+#ifdef ESP_PLATFORM
+  const bool use_worker = state.render_task != nullptr;
+  unlock_render_state(&state);
+  if (use_worker)
+    notify_render_worker(&state);
+  else {
+    bool locked = state.render_mutex == nullptr || xSemaphoreTake(state.render_mutex, portMAX_DELAY) == pdTRUE;
+    if (locked) {
+      auto *next_backdrop = find_free_backdrop(&state);
+      const bool captured = capture_backdrop(&state, next_backdrop, nullptr, apply_scrim);
+      state.background_pending.store(false, std::memory_order_release);
+      if (captured) {
+        state.backdrop_pixels = next_backdrop;
+        state.background_ready_generation.store(background_generation, std::memory_order_release);
+        state.render_generation++;
+        state.dirty = true;
+      }
+      unlock_render_state(&state);
+      if (captured && state.arc != nullptr)
+        invalidate_bitmap(&state);
+    }
+  }
+#else
+  auto *next_backdrop = find_free_backdrop(&state);
+  const bool captured = capture_backdrop(&state, next_backdrop, nullptr, apply_scrim);
+  state.background_pending.store(false, std::memory_order_release);
+  if (captured) {
+    state.backdrop_pixels = next_backdrop;
+    state.background_ready_generation.store(background_generation, std::memory_order_release);
+    state.dirty = true;
+  }
+  if (captured && state.arc != nullptr)
+    invalidate_bitmap(&state);
+#endif
+}
+
+inline void media_wavy_arc_set_accent(uint32_t accent_color) {
+  auto &state = media_wavy_arc;
+#ifdef ESP_PLATFORM
+  if (state.render_mutex != nullptr && xSemaphoreTake(state.render_mutex, portMAX_DELAY) != pdTRUE)
+    return;
+#endif
+  apply_accent_colors(&state, accent_color);
+  state.accent_initialized = true;
+  // A palette change is a visual generation boundary.  Any frame already
+  // queued for direct presentation was rasterized with the previous accent;
+  // reject it before the player is revealed again and let the worker publish
+  // a fresh wave/play icon from the selected palette.
+  state.render_generation++;
+  for (size_t index = 0; index < 3; index++) {
+    state.blob_buffer_valid[index] = false;
+    state.icon_buffer_valid[index] = false;
+  }
+  state.dirty = true;
+#ifdef ESP_PLATFORM
+  unlock_render_state(&state);
+  notify_render_worker(&state);
 #endif
 }
 
@@ -1920,7 +2088,7 @@ inline bool media_wavy_arc_present_ready(bool worker_context) {
   }
 
   lv_color32_t *rendered = nullptr;
-  lv_color16_t *present_backdrop = nullptr;
+  lv_color_t *present_backdrop = nullptr;
   uint32_t ready_generation = 0;
   bool present_stable = false;
   if (state.frame_ready) {
@@ -1983,13 +2151,13 @@ inline bool media_wavy_arc_present_ready(bool worker_context) {
   const int64_t present_start_us = perf_enabled ? esp_timer_get_time() : 0;
   const uint8_t async_result =
       present_stable
-          ? lvgl_esphome_direct_blend_rgb565_argb8888_stable_async(
-                reinterpret_cast<const uint8_t *>(present_backdrop), WAVE_SIZE * static_cast<int>(sizeof(lv_color16_t)),
+          ? lvgl_esphome_direct_blend_argb8888_stable_async(
+                reinterpret_cast<const uint8_t *>(present_backdrop), WAVE_SIZE * static_cast<int>(sizeof(lv_color_t)),
                 reinterpret_cast<const uint8_t *>(rendered), WAVE_SIZE * static_cast<int>(sizeof(lv_color32_t)),
                 WAVE_SIZE, WAVE_SIZE, 0, 0, state.direct_x, state.direct_y, WAVE_SIZE, WAVE_SIZE, direct_present_ready,
                 present_slot)
-          : lvgl_esphome_direct_blend_rgb565_argb8888_async(
-                reinterpret_cast<const uint8_t *>(present_backdrop), WAVE_SIZE * static_cast<int>(sizeof(lv_color16_t)),
+          : lvgl_esphome_direct_blend_argb8888_async(
+                reinterpret_cast<const uint8_t *>(present_backdrop), WAVE_SIZE * static_cast<int>(sizeof(lv_color_t)),
                 reinterpret_cast<const uint8_t *>(rendered), WAVE_SIZE * static_cast<int>(sizeof(lv_color32_t)),
                 WAVE_SIZE, WAVE_SIZE, 0, 0, state.direct_x, state.direct_y, WAVE_SIZE, WAVE_SIZE, direct_present_ready,
                 present_slot);
@@ -2155,6 +2323,14 @@ void MaterialWavyProgress::initialize() { wavy_progress_internal::media_wavy_arc
 
 void MaterialWavyProgress::set_background(const lv_image_dsc_t *source, bool apply_scrim) {
   wavy_progress_internal::media_wavy_arc_set_background(source, apply_scrim);
+}
+
+void MaterialWavyProgress::set_background_gradient(uint32_t top_color, uint32_t bottom_color, bool apply_scrim) {
+  wavy_progress_internal::media_wavy_arc_set_background_gradient(top_color, bottom_color, apply_scrim);
+}
+
+void MaterialWavyProgress::set_accent(uint32_t accent_color) {
+  wavy_progress_internal::media_wavy_arc_set_accent(accent_color);
 }
 
 void MaterialWavyProgress::log_state(const char *reason) { wavy_progress_internal::media_wavy_arc_log_state(reason); }

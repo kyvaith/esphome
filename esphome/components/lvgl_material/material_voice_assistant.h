@@ -29,10 +29,18 @@ class MaterialVoiceAssistant : public Component {
     this->primary_color_ = primary;
     this->secondary_color_ = secondary;
     this->tertiary_color_ = tertiary;
+    this->primary_color_rgb_.store(pack_color_(primary), std::memory_order_relaxed);
+    this->secondary_color_rgb_.store(pack_color_(secondary), std::memory_order_relaxed);
+    this->tertiary_color_rgb_.store(pack_color_(tertiary), std::memory_order_relaxed);
   }
+  // Derive the assistant waveform from the same user-selected accent used by
+  // the rest of the product.  The packed colors are atomic because the
+  // waveform worker can render concurrently with a settings/HA theme update.
+  void set_accent(uint32_t accent);
   void set_gradient(lv_color_t bottom, float start) {
     this->gradient_bottom_color_ = bottom;
     this->gradient_start_ = start;
+    this->gradient_bottom_rgb_.store(pack_color_(bottom), std::memory_order_relaxed);
   }
 
   void setup() override;
@@ -108,6 +116,7 @@ class MaterialVoiceAssistant : public Component {
   bool allocate_buffers_();
   void release_buffers_();
   void build_backdrop_();
+  void refresh_backdrop_();
   void schedule_frame_();
   bool render_frame_();
   void draw_wave_(lv_color_t *pixels, int phase, int amplitude, int cycles_q10, int secondary_cycles_q10, uint8_t red,
@@ -136,6 +145,11 @@ class MaterialVoiceAssistant : public Component {
   int transcript_content_height_(const std::string &previous_assistant, const std::string &user,
                                  const std::string &assistant) const;
   static bool is_continuation_(const std::string &previous, const std::string &next);
+  static uint32_t pack_color_(lv_color_t color) {
+    return (static_cast<uint32_t>(color.red) << 16) |
+           (static_cast<uint32_t>(color.green) << 8) |
+           static_cast<uint32_t>(color.blue);
+  }
 
   lvgl::LvglComponent *lvgl_component_{nullptr};
   lv_obj_t *root_{nullptr};
@@ -180,6 +194,11 @@ class MaterialVoiceAssistant : public Component {
   lv_color_t primary_color_{lv_color_hex(0xE4C2FF)};
   lv_color_t secondary_color_{lv_color_hex(0xD9C2FF)};
   lv_color_t tertiary_color_{lv_color_hex(0x735E9A)};
+  std::atomic<uint32_t> primary_color_rgb_{0xE4C2FF};
+  std::atomic<uint32_t> secondary_color_rgb_{0xD9C2FF};
+  std::atomic<uint32_t> tertiary_color_rgb_{0x735E9A};
+  std::atomic<uint32_t> gradient_bottom_rgb_{0x071018};
+  std::atomic<bool> backdrop_refresh_pending_{false};
   size_t pixel_count_{0};
   size_t buffer_bytes_{0};
   lv_color_t *backdrop_{nullptr};

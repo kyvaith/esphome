@@ -343,6 +343,33 @@ void MaterialVoiceAssistant::set_audio_levels(float input_level, float output_le
   this->output_level_q15_.store(static_cast<uint16_t>(output_level * 32767.0f), std::memory_order_relaxed);
 }
 
+void MaterialVoiceAssistant::set_accent(uint32_t accent) {
+  accent &= 0xFFFFFFU;
+  const auto mix = [](uint32_t a, uint32_t b, uint8_t amount) -> uint32_t {
+    const uint8_t ar = (a >> 16) & 0xFFU, ag = (a >> 8) & 0xFFU, ab = a & 0xFFU;
+    const uint8_t br = (b >> 16) & 0xFFU, bg = (b >> 8) & 0xFFU, bb = b & 0xFFU;
+    return (static_cast<uint32_t>(ar + ((static_cast<int>(br) - ar) * amount) / 255) << 16) |
+           (static_cast<uint32_t>(ag + ((static_cast<int>(bg) - ag) * amount) / 255) << 8) |
+           static_cast<uint32_t>(ab + ((static_cast<int>(bb) - ab) * amount) / 255);
+  };
+  // Keep the three waveform strands on the selected accent family while
+  // retaining enough separation for the animation to remain readable.
+  this->set_wave_colors(lv_color_hex(accent), lv_color_hex(mix(accent, 0xFFFFFFU, 72)),
+                        lv_color_hex(mix(accent, 0x000000U, 160)));
+  // The direct waveform owns a bounded backdrop below the LVGL gradient.
+  // Keep that surface in the same accent family (the product dark token is
+  // one fifth of the selected RGB channels) and rebuild it in the worker so
+  // an in-flight DSI frame is never written from the settings task.
+  const uint32_t dark = ((accent >> 16) / 5U) << 16 | (((accent >> 8) & 0xFFU) / 5U) << 8 | (accent & 0xFFU) / 5U;
+  this->gradient_bottom_rgb_.store(dark, std::memory_order_release);
+  this->backdrop_refresh_pending_.store(true, std::memory_order_release);
+  this->frame_pending_.store(true, std::memory_order_release);
+#ifdef USE_ESP32
+  if (this->worker_handle_ != nullptr)
+    xTaskNotifyGive(this->worker_handle_);
+#endif
+}
+
 bool MaterialVoiceAssistant::allocate_buffers_() {
   lv_area_t waveform_area{};
   lv_area_t status_area{};
@@ -477,6 +504,17 @@ void MaterialVoiceAssistant::release_buffers_() {
 }
 
 void MaterialVoiceAssistant::build_backdrop_() {
+  this->refresh_backdrop_();
+  for (auto &slot : this->slots_) {
+    std::memcpy(slot.pixels, this->backdrop_, this->buffer_bytes_);
+    slot.dirty_y1 = 1;
+    slot.dirty_y2 = 0;
+  }
+}
+
+void MaterialVoiceAssistant::refresh_backdrop_() {
+  const lv_color_t gradient_bottom =
+      lv_color_hex(this->gradient_bottom_rgb_.load(std::memory_order_acquire));
   const int gradient_start_y =
       std::clamp(static_cast<int>(this->display_height_ * this->gradient_start_), 0, this->display_height_ - 1);
   const int gradient_span = std::max(1, this->display_height_ - 1 - gradient_start_y);
@@ -485,15 +523,14 @@ void MaterialVoiceAssistant::build_backdrop_() {
     const int strength = std::clamp((absolute_y - gradient_start_y) * 255 / gradient_span, 0, 255);
     for (int x = 0; x < this->width_; x++) {
       lv_color_t &pixel = this->backdrop_[static_cast<size_t>(y) * this->width_ + x];
-      pixel.red = static_cast<uint8_t>(this->gradient_bottom_color_.red * strength / 255);
-      pixel.green = static_cast<uint8_t>(this->gradient_bottom_color_.green * strength / 255);
-      pixel.blue = static_cast<uint8_t>(this->gradient_bottom_color_.blue * strength / 255);
+      pixel.red = static_cast<uint8_t>(gradient_bottom.red * strength / 255);
+      pixel.green = static_cast<uint8_t>(gradient_bottom.green * strength / 255);
+      pixel.blue = static_cast<uint8_t>(gradient_bottom.blue * strength / 255);
     }
   }
   for (auto &slot : this->slots_) {
-    std::memcpy(slot.pixels, this->backdrop_, this->buffer_bytes_);
-    slot.dirty_y1 = 1;
-    slot.dirty_y2 = 0;
+    slot.dirty_y1 = 0;
+    slot.dirty_y2 = this->height_ - 1;
   }
 }
 
@@ -512,6 +549,9 @@ void MaterialVoiceAssistant::schedule_frame_() {
 bool MaterialVoiceAssistant::render_frame_() {
   if (!this->active_.load(std::memory_order_acquire) || this->backdrop_ == nullptr)
     return false;
+
+  if (this->backdrop_refresh_pending_.exchange(false, std::memory_order_acq_rel))
+    this->refresh_backdrop_();
 
   const bool perf_enabled = lvgl_esphome_get_perf_logging_enabled() != 0;
 #ifdef USE_ESP32
@@ -546,14 +586,17 @@ bool MaterialVoiceAssistant::render_frame_() {
   const int energetic_amplitude = energy * std::max(1, this->height_ / 4) / 32767;
   const int base = std::max(4, this->height_ / 28) + breathe;
   const int phase = static_cast<int>(this->wave_phase_.load(std::memory_order_relaxed));
-  this->draw_wave_(slot->pixels, phase, base + energetic_amplitude, 2355, 4710, this->primary_color_.red,
-                   this->primary_color_.green, this->primary_color_.blue,
+  const lv_color_t primary = lv_color_hex(this->primary_color_rgb_.load(std::memory_order_relaxed));
+  const lv_color_t secondary = lv_color_hex(this->secondary_color_rgb_.load(std::memory_order_relaxed));
+  const lv_color_t tertiary = lv_color_hex(this->tertiary_color_rgb_.load(std::memory_order_relaxed));
+  this->draw_wave_(slot->pixels, phase, base + energetic_amplitude, 2355, 4710, primary.red,
+                   primary.green, primary.blue,
                    static_cast<uint8_t>(150 + energy * 90 / 32767), 2, dirty_y1, dirty_y2);
   this->draw_wave_(slot->pixels, phase + 174, base + 5 + energetic_amplitude * 5 / 4, 2050, 4096,
-                   this->secondary_color_.red, this->secondary_color_.green, this->secondary_color_.blue,
+                   secondary.red, secondary.green, secondary.blue,
                    static_cast<uint8_t>(112 + energy * 74 / 32767), 2, dirty_y1, dirty_y2);
   this->draw_wave_(slot->pixels, phase + 318, base + 9 + energetic_amplitude * 3 / 2, 1843, 3686,
-                   this->tertiary_color_.red, this->tertiary_color_.green, this->tertiary_color_.blue,
+                   tertiary.red, tertiary.green, tertiary.blue,
                    static_cast<uint8_t>(72 + energy * 58 / 32767), 1, dirty_y1, dirty_y2);
   slot->dirty_y1 = dirty_y1;
   slot->dirty_y2 = dirty_y2;

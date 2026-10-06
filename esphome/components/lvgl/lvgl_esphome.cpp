@@ -5499,12 +5499,21 @@ uint8_t LvglComponent::direct_blit_rgb888_async(const uint8_t *src, int src_stri
 uint8_t LvglComponent::direct_blit_xrgb8888_async(const uint8_t *src, int src_stride, int x, int y, int width,
                                                   int height, LvglDirectBlitReadyCallback ready_callback,
                                                   void *ready_arg) {
+  return this->direct_blit_xrgb8888_region_async(src, src_stride, width, height, 0, 0, x, y, width, height,
+                                                 ready_callback, ready_arg);
+}
+
+uint8_t LvglComponent::direct_blit_xrgb8888_region_async(const uint8_t *src, int src_stride, int source_width,
+                                                        int source_height, int source_x, int source_y, int x, int y,
+                                                        int width, int height, LvglDirectBlitReadyCallback ready_callback,
+                                                        void *ready_arg) {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
   if (!this->direct_mode_active_ || this->rotation != display::DISPLAY_ROTATION_0_DEGREES ||
       this->displays_.size() != 1 || src == nullptr || ready_callback == nullptr || s_snapshot_direct_active ||
       s_snapshot_swipe_active || this->direct_image_animation_active_ || width <= 0 || height <= 0 ||
-      this->direct_region_paused_.load(std::memory_order_acquire) || src_stride != width * 4 || x < 0 || y < 0 ||
-      x + width > this->width_ || y + height > this->height_) {
+      this->direct_region_paused_.load(std::memory_order_acquire) || source_width <= 0 || source_height <= 0 ||
+      source_x < 0 || source_y < 0 || source_x + width > source_width || source_y + height > source_height ||
+      src_stride != source_width * 4 || x < 0 || y < 0 || x + width > this->width_ || y + height > this->height_) {
     return LVGL_DIRECT_BLIT_REJECTED;
   }
 
@@ -5518,8 +5527,10 @@ uint8_t LvglComponent::direct_blit_xrgb8888_async(const uint8_t *src, int src_st
   request.operation = DirectRegionRequest::Operation::COPY_XRGB8888;
   request.source = src;
   request.source_stride = src_stride;
-  request.source_width = width;
-  request.source_height = height;
+  request.source_width = source_width;
+  request.source_height = source_height;
+  request.source_x = source_x;
+  request.source_y = source_y;
   request.x = x;
   request.y = y;
   request.width = width;
@@ -5535,6 +5546,10 @@ uint8_t LvglComponent::direct_blit_xrgb8888_async(const uint8_t *src, int src_st
 #else
   (void) src;
   (void) src_stride;
+  (void) source_width;
+  (void) source_height;
+  (void) source_x;
+  (void) source_y;
   (void) x;
   (void) y;
   (void) width;
@@ -6376,8 +6391,19 @@ extern "C" uint8_t lvgl_esphome_direct_blit_xrgb8888_async(const uint8_t *src, i
   auto *disp = lv_display_get_default();
   auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
   return component == nullptr
+              ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
+              : component->direct_blit_xrgb8888_async(src, src_stride, x, y, width, height, ready_callback, ready_arg);
+}
+
+extern "C" uint8_t lvgl_esphome_direct_blit_xrgb8888_region_async(
+    const uint8_t *src, int src_stride, int source_width, int source_height, int source_x, int source_y, int x, int y,
+    int width, int height, LvglDirectBlitReadyCallback ready_callback, void *ready_arg) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component == nullptr
              ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
-             : component->direct_blit_xrgb8888_async(src, src_stride, x, y, width, height, ready_callback, ready_arg);
+             : component->direct_blit_xrgb8888_region_async(src, src_stride, source_width, source_height, source_x,
+                                                            source_y, x, y, width, height, ready_callback, ready_arg);
 }
 
 extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_async(const uint8_t *background, int background_stride,
@@ -6393,6 +6419,19 @@ extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_async(const uint8_t *backg
              : component->direct_blend_argb8888_async(background, background_stride, foreground, foreground_stride,
                                                       foreground_width, foreground_height, foreground_x, foreground_y,
                                                       x, y, width, height, ready_callback, ready_arg);
+}
+
+extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_stable_async(
+    const uint8_t *background, int background_stride, const uint8_t *foreground, int foreground_stride,
+    int foreground_width, int foreground_height, int foreground_x, int foreground_y, int x, int y, int width,
+    int height, LvglDirectBlitReadyCallback ready_callback, void *ready_arg) {
+  auto *disp = lv_display_get_default();
+  auto *component = disp == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(disp));
+  return component == nullptr
+             ? static_cast<uint8_t>(LVGL_DIRECT_BLIT_REJECTED)
+             : component->direct_blend_argb8888_async(background, background_stride, foreground, foreground_stride,
+                                                      foreground_width, foreground_height, foreground_x, foreground_y,
+                                                      x, y, width, height, ready_callback, ready_arg, false, true);
 }
 
 extern "C" uint8_t lvgl_esphome_direct_blend_rgb565_argb8888_async(
@@ -16234,6 +16273,29 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int pa
       scratch = tile_cache_scratch;
       if (scratch == nullptr || scratch->data == nullptr)
         return false;
+      // The fixed three-slot window can be full while this loop is creating
+      // the JPEG backing for an off-window page.  In that case the scratch
+      // buffer is still labelled as one of the resident pages.  Detach that
+      // label before overwriting it; otherwise a later page in this loop can
+      // mistake the overwritten pixels for its own raw slot.  With the
+      // 2-4 window this used to encode page 1 into page 4, so the last
+      // carousel page displayed the first page's clock and weather snapshot.
+      for (size_t scratch_index = 0; scratch_index < SNAPSHOT_TILE_SLOT_COUNT; scratch_index++) {
+        if (snapshot_tile_window_cache.slots[scratch_index] != scratch)
+          continue;
+        if (snapshot_tile_window_cache.pages[scratch_index] != nullptr &&
+            snapshot_tile_window_cache.pages[scratch_index] != pages[page_index]) {
+          // Preserve a resident page that received a live update before its
+          // raw slot becomes encoder scratch.  Otherwise the later restore
+          // from JPEG could silently discard that update (and, after an
+          // accent invalidation, leave no valid backing at all).
+          if (!snapshot_tile_window_flush_slot(scratch_index))
+            return false;
+          snapshot_tile_window_cache.pages[scratch_index] = nullptr;
+          snapshot_tile_window_cache.dirty[scratch_index] = false;
+        }
+        break;
+      }
       if (!snapshot_take_centered_to(pages[page_index], scratch))
         return false;
     }

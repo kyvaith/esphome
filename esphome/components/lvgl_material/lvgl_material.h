@@ -6,6 +6,7 @@
 #include "esphome/components/lvgl_material/material_direct_volume_overlay.h"
 #include "esphome/components/lvgl_material/material_notification.h"
 #include "esphome/components/lvgl_material/material_tile_surface.h"
+#include "esphome/components/lvgl_material/material_theme.h"
 #include "esphome/components/lvgl_material/material_voice_assistant.h"
 #include "esphome/components/lvgl_material/material_weather_presenter.h"
 #include "esphome/components/lvgl_material/material_wavy_progress.h"

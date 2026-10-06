@@ -17,6 +17,8 @@ class MaterialWavyProgress : public Component {
 
   void initialize();
   void set_background(const lv_image_dsc_t *source, bool apply_scrim);
+  void set_background_gradient(uint32_t top_color, uint32_t bottom_color, bool apply_scrim);
+  void set_accent(uint32_t accent_color);
   void log_state(const char *reason);
   void reset_trace();
   void log_trace(const char *reason);

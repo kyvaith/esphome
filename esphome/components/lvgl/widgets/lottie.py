@@ -81,6 +81,7 @@ CONF_RETAIN_ON_UNLOAD = "retain_on_unload"
 CONF_FAST_RADIAL = "fast_radial"
 CONF_FAST_RADIAL_FILL_COLOR = "fast_radial_fill_color"
 CONF_FAST_RADIAL_OUTLINE_COLOR = "fast_radial_outline_color"
+CONF_COLOR_SLOT = "color_slot"
 
 lv_lottie_t = LvType("lv_lottie_t")
 
@@ -167,6 +168,10 @@ LOTTIE_SCHEMA = cv.Schema(
         cv.Optional(CONF_FAST_RADIAL, default=False): cv.boolean,
         cv.Optional(CONF_FAST_RADIAL_FILL_COLOR, default=0x46B1E1): lv_color,
         cv.Optional(CONF_FAST_RADIAL_OUTLINE_COLOR, default=0x0D0D0D): lv_color,
+        # ThorVG slot name used for runtime palette overrides.  The slot is
+        # declared by the embedded Lottie document; the reusable widget does
+        # not assume a product-specific name when this is omitted.
+        cv.Optional(CONF_COLOR_SLOT): cv.string,
         cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
     }
 ).add_extra(validate_lottie_source)
@@ -232,13 +237,15 @@ class LottieType(WidgetType):
         fast_radial = "true" if config.get(CONF_FAST_RADIAL, False) else "false"
         fast_radial_fill_color = await lv_color.process(config.get(CONF_FAST_RADIAL_FILL_COLOR, 0x46B1E1))
         fast_radial_outline_color = await lv_color.process(config.get(CONF_FAST_RADIAL_OUTLINE_COLOR, 0x0D0D0D))
+        color_slot = config.get(CONF_COLOR_SLOT)
+        color_slot_args = f', "{color_slot}"' if color_slot is not None else ", nullptr"
         opaque_args = f", {retain_on_unload}"
         if CONF_OPAQUE_BACKGROUND in config:
             background = await lv_color.process(config[CONF_OPAQUE_BACKGROUND])
             opaque_args += f", true, {background}"
         else:
             opaque_args += ", false, lv_color_hex(0x000000)"
-        opaque_args += f", {play_count}, {render_width}, {render_height}, {fast_radial}, {fast_radial_fill_color}, {fast_radial_outline_color}"
+        opaque_args += f", {play_count}, {render_width}, {render_height}, {fast_radial}, {fast_radial_fill_color}, {fast_radial_outline_color}{color_slot_args}"
 
         # Use lottie_init() which handles PSRAM allocation, screen events, and task launch
         if src := config.get(CONF_SRC):
@@ -324,3 +331,25 @@ async def lottie_pause(config, action_id, template_arg, args):
         lv.anim_delete(w.obj, literal("NULL"))
 
     return await action_to_code(widget, do_pause, action_id, template_arg, args)
+
+
+@automation.register_action(
+    "lvgl.lottie.set_color",
+    ObjUpdateAction,
+    cv.Schema(
+        {
+            cv.GenerateID(CONF_ID): cv.use_id(lv_lottie_t),
+            cv.Required("color"): lv_color,
+        }
+    ),
+    synchronous=True,
+)
+async def lottie_set_color(config, action_id, template_arg, args):
+    """Queue a ThorVG color-slot update without resetting animation phase."""
+    widget = await get_widgets(config)
+    color = await lv_color.process(config["color"])
+
+    async def do_set_color(w: Widget):
+        lv_add(cg.RawStatement(f"esphome::lvgl::lottie_set_color({w.obj}, {color});"))
+
+    return await action_to_code(widget, do_set_color, action_id, template_arg, args)
