@@ -719,6 +719,7 @@ bool LvglImagePresenter::ensure_direct_session_() {
   }
   this->direct_session_failures_ = 0;
   this->direct_session_active_ = true;
+  this->direct_session_generation_ = this->lvgl_component_->get_frame_buffer_presentation_generation();
   this->direct_target_width_ = 0;
   this->direct_target_height_ = 0;
   this->reset_direct_frame_cache_();
@@ -799,7 +800,8 @@ bool LvglImagePresenter::stop_direct_session_(uint32_t timeout_ms) {
       delay(1);
       continue;
     }
-    if (this->lvgl_component_->end_frame_buffer_presentation(std::min<uint32_t>(timeout_ms, 50))) {
+    if (this->lvgl_component_->end_frame_buffer_presentation(std::min<uint32_t>(timeout_ms, 50),
+                                                            this->direct_session_generation_)) {
       this->direct_session_active_ = false;
       this->direct_target_width_ = 0;
       this->direct_target_height_ = 0;
@@ -873,7 +875,7 @@ image::JpegFrameResult LvglImagePresenter::present_direct_jpeg_frame_(const uint
     return image::JpegFrameResult::UNSUPPORTED;
 
   display::FrameBufferLease target;
-  if (!this->lvgl_component_->acquire_presentation_frame(&target, BufferWriter::DMA, 20))
+  if (!this->lvgl_component_->acquire_presentation_frame(&target, BufferWriter::DMA, 20, this->direct_session_generation_))
     return image::JpegFrameResult::DROPPED;
 
   auto release_target = [&]() {
@@ -1565,7 +1567,8 @@ bool LvglImagePresenter::render_direct_frame_(uint32_t elapsed_ms) {
   }
 
   if (this->direct_target_width_ == 0 || this->direct_target_height_ == 0) {
-    if (!this->lvgl_component_->acquire_presentation_frame(&this->direct_target_lease_, BufferWriter::DMA, 50)) {
+    if (!this->lvgl_component_->acquire_presentation_frame(&this->direct_target_lease_, BufferWriter::DMA, 50,
+                                                             this->direct_session_generation_)) {
       release_source();
       return true;
     }
@@ -1616,7 +1619,8 @@ bool LvglImagePresenter::render_direct_frame_(uint32_t elapsed_ms) {
   }
 
   if (!this->direct_target_lease_ &&
-      !this->lvgl_component_->acquire_presentation_frame(&this->direct_target_lease_, BufferWriter::DMA, 50)) {
+      !this->lvgl_component_->acquire_presentation_frame(&this->direct_target_lease_, BufferWriter::DMA, 50,
+                                                             this->direct_session_generation_)) {
     release_source();
     return true;
   }

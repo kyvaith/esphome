@@ -48,6 +48,10 @@ class LvglSnapshotCompositor {
   virtual bool settle_application_close(bool close);
   virtual void cancel_application();
   virtual bool is_application_active() const { return this->application_active_; }
+  bool is_application_opening() const { return this->application_active_ && this->application_opening_; }
+  bool is_application_closing() const {
+    return this->application_active_ && !this->application_opening_ && this->application_close_committed_;
+  }
 
  protected:
   struct Surface {

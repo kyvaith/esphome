@@ -15,6 +15,7 @@ Communication from ESPHome (__init__.py) via build flags:
 from contextlib import suppress
 from pathlib import Path
 import re
+import sys
 
 env = None
 with suppress(NameError):
@@ -233,12 +234,39 @@ def patch_piolibdeps_lvgl_sources():
     if not libdeps_dir or not pioenv:
         return
     lvgl_src = Path(libdeps_dir) / pioenv / "lvgl" / "src"
+    ppa_img_src = lvgl_src / "draw" / "espressif" / "ppa" / "lv_draw_ppa_img.c"
+    if ppa_img_src.exists():
+        patch_ppa_blocking_user_data_source(ppa_img_src)
     patch_profiler_builtin_source(lvgl_src / "misc" / "lv_profiler_builtin.c")
     patch_sw_rgb888_artwork_throttle_source(
         lvgl_src / "draw" / "sw" / "blend" / "lv_draw_sw_blend_to_rgb888.c"
     )
     patch_thorvg_renderer_source(lvgl_src / "libs" / "thorvg" / "tvgSwRenderer.cpp")
     patch_thorvg_raster_source(lvgl_src / "libs" / "thorvg" / "tvgSwRaster.cpp")
+
+
+def patch_ppa_blocking_user_data_source(src):
+    """Keep LVGL's synchronous PPA image blend compatible with ESP-IDF."""
+    src = Path(src)
+    text = src.read_text(encoding="utf-8")
+    pattern = (
+        r"(\.mode\s*=\s*PPA_TRANS_MODE_BLOCKING,\s*\n\s*"
+        r"\.user_data\s*=\s*)u(\s*,)"
+    )
+    patched, count = re.subn(pattern, r"\g<1>NULL\2", text)
+    if count == 1:
+        # LVGL registers no PPA completion callback. Blocking callers consume
+        # completion on return, so the draw-unit pointer was never used here.
+        src.write_text(patched, encoding="utf-8")
+        print("Patched LVGL blocking PPA image user_data:", src)
+        return
+    null_pattern = pattern.replace("u(\\s*,)", r"(?:NULL|0)(\s*,)")
+    if count == 0 and (
+        re.search(null_pattern, text)
+        or (".user_data" not in text and "PPA_TRANS_MODE_BLOCKING" in text)
+    ):
+        return
+    raise RuntimeError(f"Unsupported LVGL blocking PPA image source: {src}")
 
 
 def patch_profiler_builtin_source(src):
@@ -674,6 +702,9 @@ def lvgl_src_filter(build_env, node):
     if path.endswith("/misc/lv_profiler_builtin.c"):
         patch_profiler_builtin_source(node.get_path())
 
+    if path.endswith("/draw/espressif/ppa/lv_draw_ppa_img.c"):
+        patch_ppa_blocking_user_data_source(node.get_path())
+
     if path.endswith("/draw/sw/blend/lv_draw_sw_blend_to_rgb888.c"):
         patch_sw_rgb888_artwork_throttle_source(node.get_path())
 
@@ -831,3 +862,9 @@ def lvgl_src_filter(build_env, node):
 
 if env is not None:
     env.AddBuildMiddleware(lvgl_src_filter)
+elif __name__ == "__main__":
+    if len(sys.argv) != 3 or sys.argv[1] != "--patch-ppa-blocking-user-data":
+        raise RuntimeError("Expected --patch-ppa-blocking-user-data LVGL_COMPONENT_DIR")
+    patch_ppa_blocking_user_data_source(
+        Path(sys.argv[2]) / "src" / "draw" / "espressif" / "ppa" / "lv_draw_ppa_img.c"
+    )

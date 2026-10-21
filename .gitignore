@@ -102,6 +102,9 @@ venv-*/
 !.vscode/tasks.json
 CMakeListsPrivate.txt
 CMakeLists.txt
+!esphome/components/esp32/cache_restart_framework_patch/CMakeLists.txt
+!esphome/components/esp32_hosted/sdmmc_framework_patch/CMakeLists.txt
+!esphome/components/lvgl/lvgl_source_patch/CMakeLists.txt
 !esphome/components/mipi_dsi/mipi_dsi_framework_patch/CMakeLists.txt
 
 # User-specific stuff:

@@ -136,6 +136,7 @@ class LvglRegionPresenter : public Component {
   lvgl::LvglComponent *lvgl_component_{nullptr};
   uint32_t frame_interval_ms_{16};
   std::atomic<bool> session_active_{false};
+  uint32_t session_generation_{};
   std::atomic<bool> accepting_requests_{false};
 };
 

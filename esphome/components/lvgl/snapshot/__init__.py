@@ -43,11 +43,13 @@ CONF_CLOSE_TARGET_X = "close_target_x"
 CONF_CLOSE_TARGET_Y = "close_target_y"
 CONF_HOME_VIEWS = "home_views"
 CONF_INTERNAL_COMPOSITOR_ID = "internal_compositor_id"
+CONF_JPEG_INITIAL_OUTPUT_BUFFER_SIZE = "jpeg_initial_output_buffer_size"
 CONF_MAX_ENTRIES = "max_entries"
 CONF_PRELOAD = "preload"
 CONF_QUALITY = "quality"
 CONF_SETTLE_DURATION = "settle_duration"
 CONF_SNAPSHOT_COMPOSITOR = "snapshot_compositor"
+CONF_USE_DISPLAY_BUFFERS_FOR_PREPARATION = "use_display_buffers_for_preparation"
 CONF_SCROLL_REGIONS = "scroll_regions"
 CONF_START_SIZE = "start_size"
 CONF_WIDGET = "widget"
@@ -108,6 +110,10 @@ SCROLL_REGION_SCHEMA = cv.Schema(
 
 
 def _validate_scroll_regions(config):
+    if config[CONF_USE_DISPLAY_BUFFERS_FOR_PREPARATION] and config[CONF_BACKEND] != BACKEND_DIRECT:
+        raise cv.Invalid(
+            "Display-buffer preparation requires snapshot_compositor.backend: direct"
+        )
     applications = [region[CONF_APPLICATION] for region in config[CONF_SCROLL_REGIONS]]
     widgets = [region[CONF_WIDGET] for region in config[CONF_SCROLL_REGIONS]]
     if len(applications) != len(set(applications)):
@@ -151,9 +157,14 @@ SNAPSHOT_SCHEMA = cv.All(
                 CONF_COMPRESSION, default=COMPRESSION_NONE
             ): _validate_compression,
             cv.Optional(CONF_QUALITY, default=90): cv.int_range(min=1, max=100),
+            cv.Optional(CONF_JPEG_INITIAL_OUTPUT_BUFFER_SIZE, default=0): cv.All(
+                cv.validate_bytes,
+                cv.Any(0, cv.int_range(min=65536, max=64 * 1024 * 1024)),
+            ),
             cv.Optional(CONF_MAX_ENTRIES, default=16): cv.int_range(min=1, max=64),
             cv.Optional(CONF_DECODED_SLOTS, default=3): cv.int_range(min=1, max=8),
             cv.Optional(CONF_PRELOAD, default=False): cv.boolean,
+            cv.Optional(CONF_USE_DISPLAY_BUFFERS_FOR_PREPARATION, default=False): cv.boolean,
             cv.Optional(
                 CONF_SETTLE_DURATION, default="220ms"
             ): cv.positive_time_period_milliseconds,
@@ -285,9 +296,16 @@ async def snapshot_to_code(lv_component, config, navigation_config):
         compositor_type = (
             LvglDirectSnapshotCompositor if direct_backend else LvglSnapshotCompositor
         )
+        constructor = (
+            compositor_type.new(
+                lv_component, store, snapshot_config[CONF_USE_DISPLAY_BUFFERS_FOR_PREPARATION]
+            )
+            if direct_backend
+            else compositor_type.new(lv_component, store)
+        )
         compositor = cg.Pvariable(
             snapshot_config[CONF_INTERNAL_COMPOSITOR_ID],
-            compositor_type.new(lv_component, store),
+            constructor,
             type_=LvglSnapshotCompositor,
         )
         cg.add(

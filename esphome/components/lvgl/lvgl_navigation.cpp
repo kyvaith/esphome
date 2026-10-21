@@ -536,20 +536,28 @@ void LvglNavigation::schedule_application_close_() {
   if (this->close_deferred_)
     return;
   this->close_deferred_ = true;
+  this->deferred_close_application_ = this->active_application_;
 }
 
 void LvglNavigation::loop() {
+  bool application_was_opening = false;
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
-  if (this->snapshot_compositor_ != nullptr)
+  if (this->snapshot_compositor_ != nullptr) {
+    application_was_opening = this->snapshot_compositor_->is_application_opening();
     this->snapshot_compositor_->loop();
+  }
 #endif
   if (this->external_touch_release_pending_ &&
       static_cast<int32_t>(millis() - this->external_touch_release_at_) >= 0) {
     this->clear_external_touch_capture_();
   }
-  if (!this->close_deferred_)
+  if (!this->close_deferred_ || application_was_opening)
     return;
+  auto *application = this->deferred_close_application_;
   this->close_deferred_ = false;
+  this->deferred_close_application_ = nullptr;
+  if (application != nullptr && application != this->find_active_application_())
+    return;
   this->close_application();
 }
 
@@ -611,6 +619,19 @@ void LvglNavigation::open_application(LvglApplication *application) {
 
 void LvglNavigation::close_application() {
   this->clear_external_touch_capture_();
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+  if (this->snapshot_compositor_ != nullptr) {
+    if (this->snapshot_compositor_->is_application_opening()) {
+      // Opening preparation may hold resources until on_opened. Preserve
+      // that lifecycle before acquiring the matching close resources, and
+      // never capture a close source while the opening worker still owns DSI.
+      this->schedule_application_close_();
+      return;
+    }
+    if (this->snapshot_compositor_->is_application_closing())
+      return;
+  }
+#endif
   auto *application = this->find_active_application_();
   if (application != nullptr) {
     application->call_on_prepare_close_callbacks();
@@ -644,6 +665,16 @@ void LvglNavigation::close_application() {
 
 void LvglNavigation::show_home() {
   this->clear_external_touch_capture_();
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+  if (this->snapshot_compositor_ != nullptr) {
+    if (this->snapshot_compositor_->is_application_opening()) {
+      this->schedule_application_close_();
+      return;
+    }
+    if (this->snapshot_compositor_->is_application_closing())
+      return;
+  }
+#endif
   if (this->get_home_view_count_() == 0)
     return;
   auto *application = this->find_active_application_();
@@ -676,9 +707,11 @@ void LvglNavigation::refresh_home() {
 }
 
 void LvglNavigation::prepare_application_snapshots() {
+  this->last_application_snapshot_preparation_succeeded_ = false;
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->snapshot_compositor_ != nullptr)
-    this->snapshot_compositor_->prepare_applications(this->applications_);
+    this->last_application_snapshot_preparation_succeeded_ =
+        this->snapshot_compositor_->prepare_applications(this->applications_);
 #endif
 }
 
@@ -779,10 +812,14 @@ void LvglNavigation::activate_home_view(int index, bool preserve_scanout) {
     auto *widget = this->home_widgets_[view_index];
     if (widget == nullptr)
       continue;
-    if (view_index == static_cast<size_t>(index))
+    if (view_index == static_cast<size_t>(index)) {
+      // A failed snapshot fallback can leave this view at its neighbour offset.
+      // Stable activation uses the same centered origin as compositor settle.
+      lv_obj_align(widget, LV_ALIGN_CENTER, 0, 0);
       lv_obj_remove_flag(widget, LV_OBJ_FLAG_HIDDEN);
-    else
+    } else {
       lv_obj_add_flag(widget, LV_OBJ_FLAG_HIDDEN);
+    }
   }
   this->parent_->show_page(this->home_widget_page_->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
   if (preserve_scanout)

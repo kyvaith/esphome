@@ -156,13 +156,18 @@ class MipiDsi : public display::Display {
   bool wait_for_direct_frame_queue_idle(uint32_t timeout_ms = 50);
   void reset_direct_frame_trace();
   void log_direct_frame_trace(const char *label);
+  void log_dma_ring_state(const char *label, bool only_new_invalid = false);
   bool begin_frame_buffer_session(uint32_t timeout_ms = 50) override;
+  bool begin_frame_buffer_session(uint32_t timeout_ms, uint32_t owner_generation) override;
   bool acquire_frame_buffer(display::FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
                             uint32_t timeout_ms = 50) override;
+  bool acquire_frame_buffer(display::FrameBufferLease *lease, BufferWriter writer, uint32_t timeout_ms,
+                            uint32_t expected_generation) override;
   bool get_active_frame_buffer(display::FrameBufferView *view, BufferReader reader = BufferReader::CPU) const override;
   bool present_frame_buffer_lease(display::FrameBufferLease *lease, uint32_t timeout_ms = 50,
                                   bool wait_for_active = true) override;
   bool release_frame_buffer(display::FrameBufferLease *lease) override;
+  bool prepare_frame_buffer_session_end(uint32_t timeout_ms = 50) override;
   bool end_frame_buffer_session(uint32_t timeout_ms = 50) override;
   bool IRAM_ATTR on_frame_buffer_staged_from_isr(esp_lcd_panel_handle_t panel, uint8_t *frame_buffer);
   bool IRAM_ATTR on_frame_buffer_active_from_isr(esp_lcd_panel_handle_t panel, uint8_t *frame_buffer);
@@ -340,6 +345,10 @@ class MipiDsi : public display::Display {
   volatile uint32_t dsi_stress_or_host_status1_{0};
   uint32_t last_diag_event_count_{0};
   uint32_t last_diag_log_ms_{0};
+#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+  uint32_t last_dma_diagnostics_poll_ms_{0};
+  uint32_t last_dma_invalid_count_{0};
+#endif
   bool IRAM_ATTR is_frame_buffer_(const uint8_t *frame_buffer) const;
 
   uint8_t *frame_buffers_[MIPI_DSI_FRAME_BUFFER_COUNT]{nullptr, nullptr, nullptr};
@@ -351,9 +360,11 @@ class MipiDsi : public display::Display {
   std::atomic<uint8_t *> source_frame_buffer_{nullptr};
   BufferWriter frame_buffer_writers_[MIPI_DSI_FRAME_BUFFER_COUNT]{BufferWriter::CPU, BufferWriter::CPU,
                                                                   BufferWriter::CPU};
+  portMUX_TYPE frame_buffer_session_state_lock_ = portMUX_INITIALIZER_UNLOCKED;
+  bool frame_buffer_session_ending_{false};
   uint8_t *session_leased_frame_buffer_{nullptr};
   BufferWriter session_leased_writer_{BufferWriter::CPU};
-  uint32_t frame_buffer_session_generation_{0};
+  std::atomic<uint32_t> frame_buffer_session_generation_{0};
   std::atomic<bool> frame_buffer_session_active_{false};
   static constexpr size_t DIRECT_FRAME_TRACE_CAPACITY = 96;
   std::atomic<bool> direct_frame_trace_enabled_{false};

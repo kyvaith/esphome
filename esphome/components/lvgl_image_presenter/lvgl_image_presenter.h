@@ -206,6 +206,7 @@ class LvglImagePresenter : public Component, public image::JpegFrameConsumer, pu
   bool direct_overlay_suspended_{false};
   bool direct_backend_ready_{false};
   bool direct_session_active_{false};
+  uint32_t direct_session_generation_{};
   bool direct_backend_failed_{false};
   bool use_direct_jpeg_{false};
   bool defer_direct_session_until_frame_{false};

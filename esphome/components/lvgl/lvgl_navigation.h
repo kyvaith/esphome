@@ -160,6 +160,10 @@ class LvglNavigation {
   void show_home();
   void refresh_home();
   void prepare_application_snapshots();
+  // Result of the most recent synchronous preparation, including ownership handoff.
+  bool last_application_snapshot_preparation_succeeded() const {
+    return this->last_application_snapshot_preparation_succeeded_;
+  }
   bool is_home_snapshot_prepared() const;
 
   bool is_application_open(const LvglApplication *application) const;
@@ -199,6 +203,7 @@ class LvglNavigation {
 
   LvglComponent *parent_{};
   LvglSnapshotCompositor *snapshot_compositor_{};
+  bool last_application_snapshot_preparation_succeeded_{};
   std::vector<LvPageType *> home_pages_{};
   LvPageType *home_widget_page_{};
   std::vector<lv_obj_t *> home_widgets_{};
@@ -228,6 +233,7 @@ class LvglNavigation {
   int32_t close_edge_pixels_{-1};
   int32_t close_commit_pixels_{-1};
   bool close_deferred_{};
+  LvglApplication *deferred_close_application_{};
   bool home_swipe_active_{};
   bool external_touch_capture_{};
   bool external_touch_release_pending_{};

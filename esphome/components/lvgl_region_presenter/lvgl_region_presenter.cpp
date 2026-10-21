@@ -124,8 +124,9 @@ bool LvglRegionPresenter::begin(uint32_t timeout_ms) {
 
   bool success = false;
   if (this->lvgl_component_->begin_frame_buffer_presentation(timeout_ms)) {
+    this->session_generation_ = this->lvgl_component_->get_frame_buffer_presentation_generation();
     display::FrameBufferView active{};
-    if (this->lvgl_component_->get_active_presentation_frame(&active, BufferReader::DMA) &&
+    if (this->lvgl_component_->get_presentation_active_frame(&active, BufferReader::DMA) &&
         active.index < MAX_FRAME_BUFFERS && active.bitness == display::COLOR_BITNESS_888 &&
         active.stride >= active.width * 3U) {
       this->reset_state_();
@@ -134,7 +135,7 @@ bool LvglRegionPresenter::begin(uint32_t timeout_ms) {
       this->accepting_requests_.store(true, std::memory_order_release);
       success = true;
     } else {
-      this->lvgl_component_->end_frame_buffer_presentation(timeout_ms);
+      this->lvgl_component_->end_frame_buffer_presentation(timeout_ms, this->session_generation_);
     }
   }
   xSemaphoreGive(this->state_lock_);
@@ -159,7 +160,7 @@ bool LvglRegionPresenter::end(uint32_t timeout_ms) {
     return false;
   }
   const bool success =
-      this->lvgl_component_ != nullptr && this->lvgl_component_->end_frame_buffer_presentation(timeout_ms);
+      this->lvgl_component_ != nullptr && this->lvgl_component_->end_frame_buffer_presentation(timeout_ms, this->session_generation_);
   if (success) {
     this->session_active_.store(false, std::memory_order_release);
     this->reset_state_();
@@ -428,7 +429,7 @@ bool LvglRegionPresenter::ppa_blend_(const RegionRequest &request, display::Fram
 
 bool LvglRegionPresenter::prepare_target_(const display::FrameBufferView &active, display::FrameBufferLease *target) {
   if (this->lvgl_component_ == nullptr ||
-      !this->lvgl_component_->acquire_presentation_frame(target, BufferWriter::DMA, 50) ||
+      !this->lvgl_component_->acquire_presentation_frame(target, BufferWriter::DMA, 50, this->session_generation_) ||
       target->index >= MAX_FRAME_BUFFERS || target->width != active.width || target->height != active.height ||
       target->stride != active.stride || target->bitness != active.bitness ||
       target->color_order != active.color_order) {
@@ -497,7 +498,7 @@ bool LvglRegionPresenter::process_batch_(RegionRequest *requests, size_t request
     return true;
 
   display::FrameBufferView active{};
-  if (!this->lvgl_component_->get_active_presentation_frame(&active, BufferReader::DMA))
+  if (!this->lvgl_component_->get_presentation_active_frame(&active, BufferReader::DMA))
     return false;
   display::FrameBufferLease target{};
   if (!this->prepare_target_(active, &target))

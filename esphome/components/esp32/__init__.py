@@ -105,6 +105,7 @@ IS_TARGET_PLATFORM = True
 CONF_ASSERTION_LEVEL = "assertion_level"
 CONF_COMPILER_OPTIMIZATION = "compiler_optimization"
 CONF_ENABLE_IDF_EXPERIMENTAL_FEATURES = "enable_idf_experimental_features"
+CONF_ENABLE_CACHE_SAFE_RESTART = "enable_cache_safe_restart"
 CONF_ENGINEERING_SAMPLE = "engineering_sample"
 CONF_INCLUDE_BUILTIN_IDF_COMPONENTS = "include_builtin_idf_components"
 CONF_ENABLE_LWIP_ASSERT = "enable_lwip_assert"
@@ -1047,6 +1048,24 @@ def _check_versions(config: ConfigType) -> ConfigType:
     return _check_pio_versions(config)
 
 
+def _validate_cache_safe_restart(config: ConfigType) -> ConfigType:
+    """Restrict the reviewed restart backport to native ESP-IDF 5.5.5 on P4."""
+    framework = config[CONF_FRAMEWORK]
+    if not framework[CONF_ADVANCED][CONF_ENABLE_CACHE_SAFE_RESTART]:
+        return config
+    if (
+        config[CONF_VARIANT] != VARIANT_ESP32P4
+        or framework[CONF_TYPE] != FRAMEWORK_ESP_IDF
+        or framework[CONF_VERSION] != "5.5.5"
+        or not CORE.using_toolchain_esp_idf
+    ):
+        raise cv.Invalid(
+            "enable_cache_safe_restart requires ESP32-P4 with native ESP-IDF 5.5.5",
+            path=[CONF_FRAMEWORK, CONF_ADVANCED, CONF_ENABLE_CACHE_SAFE_RESTART],
+        )
+    return config
+
+
 def _parse_pio_platform_version(value):
     try:
         ver = cv.Version.parse(cv.version_number(value))
@@ -1673,6 +1692,7 @@ FRAMEWORK_SCHEMA = cv.Schema(
                 cv.Optional(
                     CONF_ENABLE_IDF_EXPERIMENTAL_FEATURES, default=False
                 ): cv.boolean,
+                cv.Optional(CONF_ENABLE_CACHE_SAFE_RESTART, default=False): cv.boolean,
                 cv.Optional(CONF_ENABLE_LWIP_ASSERT, default=True): cv.boolean,
                 cv.Optional(CONF_IGNORE_EFUSE_CUSTOM_MAC, default=False): cv.boolean,
                 cv.Optional(CONF_IGNORE_EFUSE_MAC_CRC, default=False): cv.boolean,
@@ -1882,6 +1902,7 @@ CONFIG_SCHEMA = cv.All(
     _detect_variant,
     _set_default_framework,
     _check_versions,
+    _validate_cache_safe_restart,
     set_core_data,
     cv.has_at_least_one_key(CONF_BOARD, CONF_VARIANT),
 )
@@ -2399,6 +2420,13 @@ async def to_code(config):
 
     # Apply LWIP optimization settings
     advanced = conf[CONF_ADVANCED]
+
+    if advanced[CONF_ENABLE_CACHE_SAFE_RESTART]:
+        add_idf_component(
+            name="cache_restart_framework_patch",
+            path=Path(__file__).with_name("cache_restart_framework_patch").as_posix(),
+        )
+        add_idf_sdkconfig_option("CONFIG_ESPHOME_ESP32P4_CACHE_SAFE_RESTART", True)
 
     # Re-include any IDF components the user explicitly requested
     for component_name in advanced.get(CONF_INCLUDE_BUILTIN_IDF_COMPONENTS, []):

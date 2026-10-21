@@ -567,6 +567,9 @@ bool mipi_dsi_dma_trans_done_cb(dw_gdma_channel_handle_t chan,
     esp_lcd_dpi_panel_t *dpi_panel = (esp_lcd_dpi_panel_t *)user_data;
     (void)chan;
     (void)event_data;
+#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+    __atomic_add_fetch(&dpi_panel->dma_diag_block_count, 1, __ATOMIC_RELAXED);
+#endif
     int current_slot = -1;
     const intptr_t current_lli_addr = dw_gdma_ll_channel_get_current_link_list_item_addr(
         DW_GDMA_LL_GET_HW(0), dpi_panel->dma_chan_id);
@@ -1062,13 +1065,30 @@ esp_err_t esphome_mipi_dsi_set_dma_flow_controller(esp_lcd_panel_handle_t panel,
         "        .on_full_trans_done = mipi_dsi_dma_trans_done_cb,\n"
         "    };\n"
     )
-    callback_mode_continuous = (
+    callback_mode_continuous_legacy = (
         "    dw_gdma_event_callbacks_t dsi_dma_cbs = {\n"
         "        .on_block_trans_done = mipi_dsi_dma_trans_done_cb,\n"
         "    };\n"
     )
+    callback_mode_continuous = (
+        "    dw_gdma_event_callbacks_t dsi_dma_cbs = {\n"
+        "        .on_block_trans_done = mipi_dsi_dma_trans_done_cb,\n"
+        "        .on_invalid_block = mipi_dsi_dma_invalid_block_cb,\n"
+        "    };\n"
+    )
+    callback_mode_diagnostic = callback_mode_continuous.replace(
+        "        .on_invalid_block = mipi_dsi_dma_invalid_block_cb,\n",
+        "#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS\n"
+        "        .on_invalid_block = mipi_dsi_dma_invalid_block_cb,\n#endif\n",
+    )
     if callback_mode_old in text:
         text = text.replace(callback_mode_old, callback_mode_continuous, 1)
+        changed = True
+    elif callback_mode_continuous_legacy in text:
+        text = text.replace(callback_mode_continuous_legacy, callback_mode_continuous, 1)
+        changed = True
+    elif callback_mode_diagnostic in text:
+        text = text.replace(callback_mode_diagnostic, callback_mode_continuous, 1)
         changed = True
     elif callback_mode_continuous not in text:
         raise RuntimeError(
@@ -1109,7 +1129,9 @@ esp_err_t esphome_mipi_dsi_set_dma_flow_controller(esp_lcd_panel_handle_t panel,
     if normalized_text != text:
         text = normalized_text
         changed = True
-    if legacy_create_link_init in text:
+    if create_link_init in text:
+        pass
+    elif legacy_create_link_init in text:
         text = text.replace(legacy_create_link_init, create_link_init, 1)
         changed = True
     elif reload_create_link_init in text:
@@ -2878,6 +2900,699 @@ esp_err_t dma2d_dequeue(dma2d_pool_handle_t dma2d_pool, dma2d_trans_t *trans);
     print("MIPI DSI patch: backported ESP-IDF DMA2D dequeue and force-end race fixes")
 
 
+def _patch_ppa_transaction_races(framework_dir: Path) -> None:
+    """Backport four official PPA queue/completion ownership fixes as one unit.
+
+    Exact source hunks from c1cec26bbd1e, 7339ee882f77, e87e0b31d96c,
+    and 54a57a735192. Keep queue-idle transitions under the engine spinlock,
+    and retain blocking transaction storage until its waiter consumes the
+    completion. These fixes do not turn DMA errors into successful images.
+    """
+    patches = {
+        "components/esp_driver_ppa/include/driver/ppa.h": r"""@@ -44,6 +44,8 @@
+ /**
+  * @brief Register a PPA client to do a specific PPA operation
+  *
++ * No two tasks should share the same PPA client.
++ *
+  * @param[in] config Pointer to a collection of configurations for the client
+  * @param[out] ret_client Returned client handle
+  *
+@@ -91,7 +93,8 @@
+  * @brief Group of supported PPA callbacks
+  */
+ typedef struct {
+-    ppa_event_callback_t on_trans_done;     /*!< Invoked when a PPA transaction finishes */
++    ppa_event_callback_t on_trans_done;     /*!< Invoked when a PPA transaction finishes
++                                                 Note that this callback will not be invoked if the PPA operation is performed with `PPA_TRANS_MODE_BLOCKING` mode. */
+ } ppa_event_callbacks_t;
+ 
+ /**
+@@ -154,8 +157,8 @@
+  * @brief Modes to perform the PPA operations
+  */
+ typedef enum {
+-    PPA_TRANS_MODE_BLOCKING,        /*!< `ppa_do_xxx` function will block until the PPA operation is finished */
+-    PPA_TRANS_MODE_NON_BLOCKING,    /*!< `ppa_do_xxx` function will return immediately after the PPA operation is pushed to the internal queue */
++    PPA_TRANS_MODE_BLOCKING,        /*!< `ppa_do_xxx` function will block until the PPA operation is finished. Registered `on_trans_done` callback function will not be invoked upon completion automatically. */
++    PPA_TRANS_MODE_NON_BLOCKING,    /*!< `ppa_do_xxx` function will return immediately after the PPA operation is pushed to the internal queue. Registered `on_trans_done` callback function will be invoked upon completion automatically. */
+ } ppa_trans_mode_t;
+ 
+ /**
+@@ -185,7 +188,8 @@
+     };
+ 
+     ppa_trans_mode_t mode;                      /*!< Determines whether to block inside the operation functions, see `ppa_trans_mode_t` */
+-    void *user_data;                            /*!< User registered data to be passed into `done_cb` callback function */
++    void *user_data;                            /*!< User registered data to be passed into `on_trans_done` callback function
++                                                     A blocking transaction should set this field to NULL, since the callback function will not be invoked upon completion for blocking mode. */
+ } ppa_srm_oper_config_t;
+ 
+ /**
+""",
+        "components/esp_driver_ppa/src/ppa_blend.c": r"""@@ -188,6 +188,7 @@
+     ESP_RETURN_ON_FALSE(ppa_client && config, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
+     ESP_RETURN_ON_FALSE(ppa_client->oper_type == PPA_OPERATION_BLEND, ESP_ERR_INVALID_ARG, TAG, "client is not for blend operations");
+     ESP_RETURN_ON_FALSE(config->mode <= PPA_TRANS_MODE_NON_BLOCKING, ESP_ERR_INVALID_ARG, TAG, "invalid mode");
++    ESP_RETURN_ON_FALSE(config->mode != PPA_TRANS_MODE_BLOCKING || config->user_data == NULL, ESP_ERR_INVALID_ARG, TAG, "user_data must be NULL for blocking mode, `on_trans_done` callback won't be invoked upon completion");
+     // in_buffer could be anywhere (ram, flash, psram), out_buffer ptr cannot in flash region
+     ESP_RETURN_ON_FALSE(esp_ptr_internal(config->out.buffer) || esp_ptr_external_ram(config->out.buffer), ESP_ERR_INVALID_ARG, TAG, "invalid out.buffer addr");
+     ESP_RETURN_ON_FALSE(ppa_ll_blend_is_color_mode_supported(config->in_bg.blend_cm) && ppa_ll_blend_is_color_mode_supported(config->in_fg.blend_cm) && ppa_ll_blend_is_color_mode_supported(config->out.blend_cm), ESP_ERR_INVALID_ARG, TAG, "unsupported color mode");
+@@ -327,7 +328,6 @@
+ 
+         trans_elm->client = ppa_client;
+         trans_elm->user_data = config->user_data;
+-        xSemaphoreTake(trans_elm->sem, 0); // Ensure no transaction semaphore before transaction starts
+ 
+         ret = ppa_do_operation(ppa_client, ppa_client->engine, trans_elm, config->mode);
+         if (ret != ESP_OK) {
+""",
+        "components/esp_driver_ppa/src/ppa_core.c": r"""@@ -77,17 +77,14 @@
+     if (config->engine == PPA_ENGINE_TYPE_SRM) {
+         if (!s_platform.srm) {
+             ppa_srm_engine_t *srm_engine = heap_caps_calloc(1, sizeof(ppa_srm_engine_t), PPA_MEM_ALLOC_CAPS);
+-            SemaphoreHandle_t srm_sem = xSemaphoreCreateBinaryWithCaps(PPA_MEM_ALLOC_CAPS);
+             dma2d_descriptor_t *srm_tx_dma_desc = (dma2d_descriptor_t *)heap_caps_aligned_calloc(alignment, 1, s_platform.dma_desc_mem_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+             dma2d_descriptor_t *srm_rx_dma_desc = (dma2d_descriptor_t *)heap_caps_aligned_calloc(alignment, 1, s_platform.dma_desc_mem_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+-            if (srm_engine && srm_sem && srm_tx_dma_desc && srm_rx_dma_desc) {
++            if (srm_engine && srm_tx_dma_desc && srm_rx_dma_desc) {
+                 srm_engine->dma_tx_desc = srm_tx_dma_desc;
+                 srm_engine->dma_rx_desc = srm_rx_dma_desc;
+                 srm_engine->base.platform = &s_platform;
+                 srm_engine->base.type = PPA_ENGINE_TYPE_SRM;
+                 srm_engine->base.spinlock = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
+-                srm_engine->base.sem = srm_sem;
+-                xSemaphoreGive(srm_engine->base.sem);
+                 STAILQ_INIT(&srm_engine->base.trans_stailq);
+                 s_platform.srm = srm_engine;
+                 s_platform.srm_engine_ref_count++;
+@@ -99,9 +96,6 @@
+                 ret = ESP_ERR_NO_MEM;
+                 ESP_LOGE(TAG, "no mem to register PPA SRM engine");
+                 free(srm_engine);
+-                if (srm_sem) {
+-                    vSemaphoreDeleteWithCaps(srm_sem);
+-                }
+                 free(srm_tx_dma_desc);
+                 free(srm_rx_dma_desc);
+             }
+@@ -122,19 +116,16 @@
+     } else if (config->engine == PPA_ENGINE_TYPE_BLEND) {
+         if (!s_platform.blending) {
+             ppa_blend_engine_t *blending_engine = heap_caps_calloc(1, sizeof(ppa_blend_engine_t), PPA_MEM_ALLOC_CAPS);
+-            SemaphoreHandle_t blending_sem = xSemaphoreCreateBinaryWithCaps(PPA_MEM_ALLOC_CAPS);
+             dma2d_descriptor_t *blending_tx_bg_dma_desc = (dma2d_descriptor_t *)heap_caps_aligned_calloc(alignment, 1, s_platform.dma_desc_mem_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+             dma2d_descriptor_t *blending_tx_fg_dma_desc = (dma2d_descriptor_t *)heap_caps_aligned_calloc(alignment, 1, s_platform.dma_desc_mem_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+             dma2d_descriptor_t *blending_rx_dma_desc = (dma2d_descriptor_t *)heap_caps_aligned_calloc(alignment, 1, s_platform.dma_desc_mem_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+-            if (blending_engine && blending_sem && blending_tx_bg_dma_desc && blending_tx_fg_dma_desc && blending_rx_dma_desc) {
++            if (blending_engine && blending_tx_bg_dma_desc && blending_tx_fg_dma_desc && blending_rx_dma_desc) {
+                 blending_engine->dma_tx_bg_desc = blending_tx_bg_dma_desc;
+                 blending_engine->dma_tx_fg_desc = blending_tx_fg_dma_desc;
+                 blending_engine->dma_rx_desc = blending_rx_dma_desc;
+                 blending_engine->base.platform = &s_platform;
+                 blending_engine->base.type = PPA_ENGINE_TYPE_BLEND;
+                 blending_engine->base.spinlock = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
+-                blending_engine->base.sem = blending_sem;
+-                xSemaphoreGive(blending_engine->base.sem);
+                 STAILQ_INIT(&blending_engine->base.trans_stailq);
+                 s_platform.blending = blending_engine;
+                 s_platform.blend_engine_ref_count++;
+@@ -143,9 +134,6 @@
+                 ret = ESP_ERR_NO_MEM;
+                 ESP_LOGE(TAG, "no mem to register PPA Blending engine");
+                 free(blending_engine);
+-                if (blending_sem) {
+-                    vSemaphoreDeleteWithCaps(blending_sem);
+-                }
+                 free(blending_tx_bg_dma_desc);
+                 free(blending_tx_fg_dma_desc);
+                 free(blending_rx_dma_desc);
+@@ -194,6 +182,7 @@
+ 
+     if (ret != ESP_OK && *ret_engine != NULL) {
+         ppa_engine_release(*ret_engine);
++        *ret_engine = NULL;
+     }
+ 
+     return ret;
+@@ -214,7 +203,6 @@
+             s_platform.srm = NULL;
+             free(srm_engine->dma_tx_desc);
+             free(srm_engine->dma_rx_desc);
+-            vSemaphoreDeleteWithCaps(srm_engine->base.sem);
+ #if CONFIG_PM_ENABLE
+             if (srm_engine->base.pm_lock) {
+                 ret = esp_pm_lock_delete(srm_engine->base.pm_lock);
+@@ -233,7 +221,6 @@
+             free(blending_engine->dma_tx_bg_desc);
+             free(blending_engine->dma_tx_fg_desc);
+             free(blending_engine->dma_rx_desc);
+-            vSemaphoreDeleteWithCaps(blending_engine->base.sem);
+ #if CONFIG_PM_ENABLE
+             if (blending_engine->base.pm_lock) {
+                 ret = esp_pm_lock_delete(blending_engine->base.pm_lock);
+@@ -416,59 +403,51 @@
+ {
+     esp_err_t ret = ESP_OK;
+     esp_err_t pm_lock_ret __attribute__((unused));
+-
++    bool start_now = false;
++
++    trans_elm->blocking = (mode == PPA_TRANS_MODE_BLOCKING);
++    if (trans_elm->blocking) {
++        // Ensure no transaction semaphore before transaction starts
++        // A recycled transaction element may still hold the give from a previous
++        // non-blocking use (the ISR gives it unconditionally and nobody took it)
++        xSemaphoreTake(trans_elm->sem, 0);
++    }
++
++    // Send transaction into PPA engine queue. Whether it starts now or is chained
++    // by the ISR is decided under the engine spinlock, together with the insert:
++    // the ISR makes the matching "queue empty -> engine idle" decision under the
++    // same lock, so a submission from another core cannot slip in between the
++    // ISR's decision and the engine becoming idle (see ppa_transaction_done_cb)
+     portENTER_CRITICAL(&ppa_client->spinlock);
+-    // Send transaction into PPA engine queue
+     portENTER_CRITICAL(&ppa_engine_base->spinlock);
+     STAILQ_INSERT_TAIL(&ppa_engine_base->trans_stailq, trans_elm, entry);
++    if (!ppa_engine_base->busy) {
++        ppa_engine_base->busy = true;
++        start_now = true;
++    }
+     portEXIT_CRITICAL(&ppa_engine_base->spinlock);
+     ppa_client->trans_cnt++;
+     portEXIT_CRITICAL(&ppa_client->spinlock);
+ 
+-    TickType_t ticks_to_wait = (mode == PPA_TRANS_MODE_NON_BLOCKING) ? 0 : portMAX_DELAY;
+-    if (xSemaphoreTake(ppa_engine_base->sem, ticks_to_wait) == pdTRUE) {
+-        // Check if the transaction has already been started from the ISR
+-        // If so, then the transaction should have been removed from queue at this moment (transaction completed)
+-        bool found = false;
+-        ppa_trans_t *temp = NULL;
+-        portENTER_CRITICAL(&ppa_engine_base->spinlock);
+-        STAILQ_FOREACH(temp, &ppa_engine_base->trans_stailq, entry) {
+-            if (temp == trans_elm) {
+-                found = true;
+-                break;
+-            }
+-        }
+-        portEXIT_CRITICAL(&ppa_engine_base->spinlock);
+-        if (found) {
++    if (start_now) {
++        // The engine was idle, so the queue held nothing but this transaction
+ #if CONFIG_PM_ENABLE
+-            pm_lock_ret = esp_pm_lock_acquire(ppa_engine_base->pm_lock);
+-            assert((pm_lock_ret == ESP_OK) && "acquire pm_lock failed");
++        pm_lock_ret = esp_pm_lock_acquire(ppa_engine_base->pm_lock);
++        assert((pm_lock_ret == ESP_OK) && "acquire pm_lock failed");
+ #endif
+-            ret = ppa_dma2d_enqueue(trans_elm);
+-            if (ret != ESP_OK) {
+-                portENTER_CRITICAL(&ppa_engine_base->spinlock);
+-                STAILQ_REMOVE(&ppa_engine_base->trans_stailq, trans_elm, ppa_trans_s, entry);
+-                portEXIT_CRITICAL(&ppa_engine_base->spinlock);
+-                xSemaphoreGive(ppa_engine_base->sem);
+-#if CONFIG_PM_ENABLE
+-                pm_lock_ret = esp_pm_lock_release(ppa_engine_base->pm_lock);
+-                assert((pm_lock_ret == ESP_OK) && "release pm_lock failed");
+-#endif
+-                portENTER_CRITICAL(&ppa_client->spinlock);
+-                ppa_client->trans_cnt--;
+-                portEXIT_CRITICAL(&ppa_client->spinlock);
+-                goto err;
+-            }
+-        } else {
+-            xSemaphoreGive(ppa_engine_base->sem);
+-        }
++        ret = ppa_dma2d_enqueue(trans_elm);
++        assert((ret == ESP_OK) && "enqueue to 2D-DMA failed");
+     }
+ 
+     if (mode == PPA_TRANS_MODE_BLOCKING) {
+         xSemaphoreTake(trans_elm->sem, portMAX_DELAY); // Given in the ISR
+-    }
+-
+-err:
++        // Recycle transaction elm after the semaphore take
++        portENTER_CRITICAL(&ppa_client->spinlock);
++        ppa_recycle_transaction(ppa_client, trans_elm);
++        ppa_client->trans_cnt--;
++        portEXIT_CRITICAL(&ppa_client->spinlock);
++    }
++
+     return ret;
+ }
+ 
+@@ -483,12 +462,18 @@
+     // Save callback contexts
+     ppa_event_callback_t done_cb = client->done_cb;
+     void *trans_elm_user_data = trans_elm->user_data;
++    bool blocking_mode = trans_elm->blocking;
+ 
+     ppa_trans_t *next_start_trans = NULL;
+     portENTER_CRITICAL_ISR(&engine_base->spinlock);
+     // Remove this transaction from transaction queue
+     STAILQ_REMOVE(&engine_base->trans_stailq, trans_elm, ppa_trans_s, entry);
+     next_start_trans = STAILQ_FIRST(&engine_base->trans_stailq);
++    if (!next_start_trans) {
++        // Nothing queued: the engine goes idle HERE, under the same lock a
++        // submitting task takes to insert and check (ppa_do_operation)
++        engine_base->busy = false;
++    }
+     portEXIT_CRITICAL_ISR(&engine_base->spinlock);
+ 
+     portENTER_CRITICAL_ISR(&client->spinlock);
+@@ -496,26 +481,27 @@
+     xSemaphoreGiveFromISR(trans_elm->sem, &HPTaskAwoken);
+     need_yield |= (HPTaskAwoken == pdTRUE);
+ 
+-    // Then recycle transaction elm
+-    need_yield |= ppa_recycle_transaction(client, trans_elm);
+-
+-    client->trans_cnt--;
++    // Non-blocking callers already returned, so recycle transaction elm here
++    // Blocking callers still wait on `sem` and recycle after that take (ppa_do_operation)
++    if (!blocking_mode) {
++        need_yield |= ppa_recycle_transaction(client, trans_elm);
++        client->trans_cnt--;
++    }
+     portEXIT_CRITICAL_ISR(&client->spinlock);
+ 
+-    // If there is next trans in PPA engine queue, send it to DMA queue; otherwise, release the engine semaphore
++    // If there is next trans in PPA engine queue, send it to DMA queue; otherwise the engine is idle (flag cleared above)
+     if (next_start_trans) {
+-        ppa_dma2d_enqueue(next_start_trans);
++        esp_err_t ret = ppa_dma2d_enqueue(next_start_trans);
++        assert(ret == ESP_OK);
+     } else {
+-        xSemaphoreGiveFromISR(engine_base->sem, &HPTaskAwoken);
+-        need_yield |= (HPTaskAwoken == pdTRUE);
+ #if CONFIG_PM_ENABLE
+         esp_err_t pm_lock_ret = esp_pm_lock_release(engine_base->pm_lock);
+         assert(pm_lock_ret == ESP_OK);
+ #endif
+     }
+ 
+-    // Process last transaction's callback
+-    if (done_cb) {
++    // Process last transaction's callback (for blocking transaction, users are able to do action after the operation returns by themselves)
++    if (!blocking_mode && done_cb) {
+         ppa_event_data_t edata = {};
+         need_yield |= done_cb(client, &edata, trans_elm_user_data);
+     }
+""",
+        "components/esp_driver_ppa/src/ppa_fill.c": r"""@@ -93,6 +93,7 @@
+     ESP_RETURN_ON_FALSE(ppa_client && config, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
+     ESP_RETURN_ON_FALSE(ppa_client->oper_type == PPA_OPERATION_FILL, ESP_ERR_INVALID_ARG, TAG, "client is not for fill operations");
+     ESP_RETURN_ON_FALSE(config->mode <= PPA_TRANS_MODE_NON_BLOCKING, ESP_ERR_INVALID_ARG, TAG, "invalid mode");
++    ESP_RETURN_ON_FALSE(config->mode != PPA_TRANS_MODE_BLOCKING || config->user_data == NULL, ESP_ERR_INVALID_ARG, TAG, "user_data must be NULL for blocking mode, `on_trans_done` callback won't be invoked upon completion");
+     // out_buffer ptr cannot in flash region
+     ESP_RETURN_ON_FALSE(esp_ptr_internal(config->out.buffer) || esp_ptr_external_ram(config->out.buffer), ESP_ERR_INVALID_ARG, TAG, "invalid out.buffer addr");
+     ESP_RETURN_ON_FALSE(ppa_ll_blend_is_color_mode_supported((ppa_blend_color_mode_t)config->out.fill_cm), ESP_ERR_INVALID_ARG, TAG, "unsupported color mode");
+@@ -153,7 +154,6 @@
+ 
+         trans_elm->client = ppa_client;
+         trans_elm->user_data = config->user_data;
+-        xSemaphoreTake(trans_elm->sem, 0); // Ensure no transaction semaphore before transaction starts
+ 
+         ret = ppa_do_operation(ppa_client, ppa_client->engine, trans_elm, config->mode);
+         if (ret != ESP_OK) {
+""",
+        "components/esp_driver_ppa/src/ppa_priv.h": r"""@@ -53,7 +53,7 @@
+     ppa_platform_t *platform;                     // PPA driver platform
+     ppa_engine_type_t type;                       // Type of the PPA engine
+     portMUX_TYPE spinlock;                        // Engine level spinlock
+-    SemaphoreHandle_t sem;                        // Semaphore for whether the engine is processing a transaction
++    bool busy;                                    // Whether the engine has a transaction running or queued; only read/written under `spinlock`
+     STAILQ_HEAD(trans, ppa_trans_s) trans_stailq; // link head of pending transactions for the PPA engine
+ #if CONFIG_PM_ENABLE
+     esp_pm_lock_handle_t pm_lock;                 // Power management lock
+@@ -201,6 +201,7 @@
+     SemaphoreHandle_t sem;                        // Semaphore to block when the transaction has not finished
+     ppa_client_t *client;                         // Pointer to the client who requested the transaction
+     void *user_data;                              // User registered event data (per transaction)
++    bool blocking;                                // Set before enqueue when the caller will wait on `sem`; ISR must not recycle until that wait returns
+ } ppa_trans_t;
+ 
+ typedef struct {
+""",
+        "components/esp_driver_ppa/src/ppa_srm.c": r"""@@ -190,6 +190,7 @@
+     ESP_RETURN_ON_FALSE(ppa_client && config, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
+     ESP_RETURN_ON_FALSE(ppa_client->oper_type == PPA_OPERATION_SRM, ESP_ERR_INVALID_ARG, TAG, "client is not for SRM operations");
+     ESP_RETURN_ON_FALSE(config->mode <= PPA_TRANS_MODE_NON_BLOCKING, ESP_ERR_INVALID_ARG, TAG, "invalid mode");
++    ESP_RETURN_ON_FALSE(config->mode != PPA_TRANS_MODE_BLOCKING || config->user_data == NULL, ESP_ERR_INVALID_ARG, TAG, "user_data must be NULL for blocking mode, `on_trans_done` callback won't be invoked upon completion");
+     // in_buffer could be anywhere (ram, flash, psram), out_buffer ptr cannot in flash region
+     ESP_RETURN_ON_FALSE(esp_ptr_internal(config->out.buffer) || esp_ptr_external_ram(config->out.buffer), ESP_ERR_INVALID_ARG, TAG, "invalid out.buffer addr");
+     ESP_RETURN_ON_FALSE(ppa_ll_srm_is_color_mode_supported(config->in.srm_cm) &&
+@@ -321,7 +322,6 @@
+ 
+         trans_elm->client = ppa_client;
+         trans_elm->user_data = config->user_data;
+-        xSemaphoreTake(trans_elm->sem, 0); // Ensure no transaction semaphore before transaction starts
+ 
+         ret = ppa_do_operation(ppa_client, ppa_client->engine, trans_elm, config->mode);
+         if (ret != ESP_OK) {
+""",
+    }
+    originals: dict[Path, str] = {}
+    changes: list[tuple[Path, str, str]] = []
+    states: set[str] = set()
+    for relative, patch in patches.items():
+        target = framework_dir / relative
+        if not target.is_file():
+            raise RuntimeError(f"ESP-IDF PPA race fix source missing: {relative}")
+        text = target.read_text(encoding="utf-8")
+        originals[target] = text
+        for hunk in re.split(r"^@@[^\n]*\n", patch, flags=re.MULTILINE)[1:]:
+            lines = hunk.splitlines(keepends=True)
+            old = "".join(line[1:] for line in lines if line.startswith((" ", "-")))
+            new = "".join(line[1:] for line in lines if line.startswith((" ", "+")))
+            old_count, new_count = text.count(old), text.count(new)
+            if old_count == 1 and new_count == 0:
+                states.add("original")
+            elif old_count == 0 and new_count == 1:
+                states.add("patched")
+            else:
+                raise RuntimeError(
+                    f"ESP-IDF PPA race fix has unsupported or ambiguous source in {relative}; "
+                    "review the framework before applying"
+                )
+            changes.append((target, old, new))
+    # Validate every file before writing any of them. A partial earlier backport
+    # must not silently combine different transaction ownership contracts.
+    if states == {"patched"}:
+        print("MIPI DSI patch: four official PPA transaction race fixes already present")
+        return
+    if states != {"original"}:
+        raise RuntimeError("ESP-IDF PPA race fixes are only partially applied; review framework sources")
+    updated = dict(originals)
+    for target, old, new in changes:
+        if updated[target].count(old) != 1:
+            raise RuntimeError(f"ESP-IDF PPA race fix hunk overlap in {target.name}")
+        updated[target] = updated[target].replace(old, new, 1)
+    for target, text in updated.items():
+        target.write_text(text, encoding="utf-8")
+    print("MIPI DSI patch: backported four official PPA queue/completion race fixes")
+
+
+def _patch_dma_ring_diagnostics(framework_dir: Path) -> None:
+    """Observe a stopped DSI ring without changing channel or buffer ownership."""
+    target = framework_dir / "components" / "esp_lcd" / "dsi" / "esp_lcd_panel_dpi.c"
+    text = target.read_text(encoding="utf-8")
+    original = text
+    fields = """#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+    volatile uint32_t dma_diag_block_count;
+    uint32_t dma_diag_invalid_count;
+    volatile uint32_t dma_diag_first_invalid[43];
+#endif
+"""
+    if "dma_diag_first_invalid[43]" not in text:
+        anchor = "    portMUX_TYPE dma_switch_lock;            // Protect descriptor switching from the frame ISR\n"
+        if anchor not in text:
+            raise RuntimeError("DSI ring lock not found for DMA diagnostics")
+        text = text.replace(anchor, anchor + fields, 1)
+    if "dma_diag_recovered_count;" not in text:
+        anchor = "    volatile uint32_t dma_diag_first_invalid[43];\n"
+        text = text.replace(anchor, anchor +
+                            "    uint32_t dma_diag_recovered_count;\n"
+                            "    uint32_t dma_diag_rejected_count;\n", 1)
+
+    # Version 1 is a fixed word-array ABI shared with MipiDsi::log_dma_ring_state.
+    # The generic ISR preserves first/last fatal status before clearing it. The
+    # invalid callback also latches descriptor state before block-done can rearm.
+    helper = r"""// ESPHome DSI invalid-block lifecycle and diagnostics.
+static DRAM_ATTR volatile uint32_t dpi_dma_error_status[DW_GDMA_LL_CHANNELS_PER_GROUP];
+#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+static DRAM_ATTR volatile uint32_t dpi_dma_first_error_raw[DW_GDMA_LL_CHANNELS_PER_GROUP];
+static DRAM_ATTR volatile uint32_t dpi_dma_last_error_raw[DW_GDMA_LL_CHANNELS_PER_GROUP];
+static void dpi_panel_read_dma_diagnostics(esp_lcd_dpi_panel_t *dpi_panel,
+                                                      volatile uint32_t *state);
+#endif
+
+void IRAM_ATTR esphome_mipi_dsi_note_dma_error_status(int channel, uint32_t raw)
+{
+    if (channel >= 0 && channel < DW_GDMA_LL_CHANNELS_PER_GROUP) {
+        dpi_dma_error_status[channel] = raw;
+#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+        if (dpi_dma_first_error_raw[channel] == 0) {
+            dpi_dma_first_error_raw[channel] = raw;
+        }
+        dpi_dma_last_error_raw[channel] = raw;
+#endif
+    }
+}
+
+static bool IRAM_ATTR mipi_dsi_dma_invalid_block_cb(dw_gdma_channel_handle_t channel,
+                                                    const dw_gdma_break_event_data_t *event_data,
+                                                    void *user_data)
+{
+    (void)channel;
+    esp_lcd_dpi_panel_t *dpi_panel = (esp_lcd_dpi_panel_t *)user_data;
+    dw_gdma_dev_t *dev = DW_GDMA_LL_GET_HW(0);
+    const int channel_id = dpi_panel->dma_chan_id;
+    portENTER_CRITICAL_ISR(&dpi_panel->dma_switch_lock);
+    if (channel_id < 0 || channel_id >= DW_GDMA_LL_CHANNELS_PER_GROUP) {
+        portEXIT_CRITICAL_ISR(&dpi_panel->dma_switch_lock);
+        return false;
+    }
+#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+    dpi_panel->dma_diag_invalid_count++;
+    if (dpi_panel->dma_diag_invalid_count == 1) {
+        dpi_panel_read_dma_diagnostics(dpi_panel, dpi_panel->dma_diag_first_invalid);
+        dpi_panel->dma_diag_first_invalid[5] = (uint32_t)(uintptr_t)event_data->invalid_lli;
+    }
+#endif
+    int blocked_slot = -1;
+    for (int slot = 0; slot < 2; slot++) {
+        if (event_data->invalid_lli == dpi_panel->frame_llis[slot]) {
+            blocked_slot = slot;
+        }
+    }
+    const uint32_t status = dpi_dma_error_status[channel_id];
+    const uint8_t top_fb = dpi_panel->frame_lli_fb_index[0];
+    const uint8_t bottom_fb = dpi_panel->frame_lli_fb_index[1];
+    const size_t total_items = dpi_panel->fb_size / 8;
+    const size_t first_half_bytes = (total_items / 2) * 8;
+    if (blocked_slot < 0 || !(status & DW_GDMA_LL_CHANNEL_EVENT_SHADOWREG_OR_LLI_INVALID_ERR) ||
+        (status & 0x5FE0U) || dev->common_int_st0.val != 0 ||
+        !(dev->chen0.val & (1U << channel_id)) || (dev->chen0.val & (1U << (16 + channel_id))) ||
+        top_fb >= dpi_panel->num_fbs || bottom_fb >= dpi_panel->num_fbs ||
+        bottom_fb != dpi_panel->active_fb_index || (blocked_slot == 0 && top_fb != bottom_fb) ||
+        total_items < 2 || dpi_panel->fb_size % 8 != 0 ||
+        dpi_panel->fbs[top_fb] == NULL || dpi_panel->fbs[bottom_fb] == NULL ||
+        (dpi_panel->pending_fb_index >= dpi_panel->num_fbs &&
+         dpi_panel->pending_fb_index != DPI_PANEL_MAX_FB_NUM)) {
+        goto rejected;
+    }
+    for (int slot = 0; slot < 2; slot++) {
+        volatile dw_gdma_link_list_item_t *lli = dpi_panel->frame_llis[slot];
+        uintptr_t next_addr = (uintptr_t)dpi_panel->frame_llis[1 - slot];
+        uintptr_t own_addr = (uintptr_t)lli;
+#if SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE && defined(CACHE_LL_L2MEM_CACHE_ADDR)
+        next_addr = CACHE_LL_L2MEM_CACHE_ADDR(next_addr);
+        own_addr = CACHE_LL_L2MEM_CACHE_ADDR(own_addr);
+#endif
+        const uint32_t expected_source = (uint32_t)(uintptr_t)dpi_panel->fbs[slot == 0 ? top_fb : bottom_fb] +
+                                         (slot == 0 ? 0 : first_half_bytes);
+        if (lli == NULL || lli->ctrl_hi.shadowreg_or_lli_valid || lli->ctrl_hi.shadowreg_or_lli_last ||
+            !lli->ctrl_hi.ioc_blktfr || lli->sar_lo.val != expected_source ||
+            ((uintptr_t)lli->llp_lo.loc0 << 6) != next_addr ||
+            (slot == blocked_slot && dw_gdma_ll_channel_get_current_link_list_item_addr(dev, channel_id) != own_addr)) {
+            goto rejected;
+        }
+    }
+    // At slot 1 the top half has already executed. Retain that source for its
+    // bottom half; at slot 0 retain the coherent completed active pair. Neither
+    // active ownership nor pending requests are acknowledged until a real
+    // subsequent bottom-half completion invokes the ordinary callback.
+    const uint8_t base_fb = blocked_slot == 0 ? bottom_fb : top_fb;
+    for (int slot = 0; slot < 2; slot++) {
+        dw_gdma_ll_lli_set_src_addr(dpi_panel->frame_llis[slot],
+            (uint32_t)(uintptr_t)dpi_panel->fbs[base_fb] + (slot == 0 ? 0 : first_half_bytes));
+        dpi_panel->frame_lli_fb_index[slot] = base_fb;
+    }
+    __sync_synchronize();
+    dw_gdma_ll_lli_set_block_markers(dpi_panel->frame_llis[0], true, false, true);
+    dw_gdma_ll_lli_set_block_markers(dpi_panel->frame_llis[1], true, false, true);
+    __sync_synchronize();
+    dw_gdma_ll_channel_resume_multi_block_transfer(dev, channel_id);
+#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+    dpi_panel->dma_diag_recovered_count++;
+#endif
+    portEXIT_CRITICAL_ISR(&dpi_panel->dma_switch_lock);
+    return false;
+rejected:
+#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+    dpi_panel->dma_diag_rejected_count++;
+#endif
+    portEXIT_CRITICAL_ISR(&dpi_panel->dma_switch_lock);
+    return false;
+}
+
+#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+static void IRAM_ATTR dpi_panel_read_dma_diagnostics(esp_lcd_dpi_panel_t *dpi_panel,
+                                                      volatile uint32_t *state)
+{
+    dw_gdma_dev_t *dev = DW_GDMA_LL_GET_HW(0);
+    const int channel = dpi_panel->dma_chan_id;
+    mipi_dsi_hal_context_t *hal = &dpi_panel->bus->hal;
+    state[0] = 1; // Layout version; 43 words, all registers read without clearing.
+    state[1] = (uint32_t)xTaskGetTickCountFromISR();
+    state[2] = __atomic_load_n(&dpi_panel->dma_diag_block_count, __ATOMIC_RELAXED);
+    state[3] = dpi_panel->dma_diag_invalid_count;
+    state[4] = dpi_dma_last_error_raw[channel]; // Exact last pre-clear fatal-event status.
+    state[5] = dpi_dma_first_error_raw[channel]; // First fatal status; invalid latch substitutes LLI below.
+    state[6] = channel;
+    state[7] = dev->chen0.val; // Includes enable and suspend bits.
+    state[8] = dev->ch[channel].int_st0.val; // Current, possibly already cleared.
+    state[9] = dev->ch[channel].int_st_ena0.val;
+    state[10] = dev->ch[channel].int_sig_ena0.val;
+    state[11] = dev->common_int_st0.val;
+    state[12] = dev->ch[channel].llp0.val;
+    state[13] = dev->ch[channel].sar0.val;
+    state[14] = dev->ch[channel].dar0.val;
+    state[15] = dev->ch[channel].ctl0.val;
+    state[16] = dev->ch[channel].ctl1.val;
+    state[17] = dev->ch[channel].cfg0.val;
+    state[18] = dev->ch[channel].cfg1.val;
+    state[19] = dev->ch[channel].status0.val;
+    state[20] = dev->ch[channel].status1.val;
+    state[21] = dev->ch[channel].block_ts0.val;
+    for (int slot = 0; slot < 2; slot++) {
+        // The driver stores noncached LLI aliases; do not sync cache in ISR.
+        volatile dw_gdma_link_list_item_t *lli = dpi_panel->frame_llis[slot];
+        const int index = 22 + slot * 5;
+        state[index] = (uint32_t)(uintptr_t)lli;
+        state[index + 1] = lli ? lli->sar_lo.val : 0;
+        state[index + 2] = lli ? lli->llp_lo.val : 0;
+        state[index + 3] = lli ? lli->ctrl_lo.val : 0;
+        state[index + 4] = lli ? lli->ctrl_hi.val : 0;
+    }
+    state[32] = dpi_panel->active_fb_index;
+    state[33] = dpi_panel->pending_fb_index;
+    state[34] = dpi_panel->frame_lli_fb_index[0];
+    state[35] = dpi_panel->frame_lli_fb_index[1];
+    state[36] = hal->bridge->fifo_flow_status.raw_buf_depth;
+    state[37] = hal->bridge->int_raw.val;
+    state[38] = hal->host->int_st0.val;
+    state[39] = hal->host->int_st1.val;
+    state[40] = hal->host->vid_mode_cfg.val;
+    state[41] = hal->host->vid_pkt_status.val;
+    state[42] = hal->host->mode_cfg.val;
+}
+
+esp_err_t esphome_mipi_dsi_poll_dma_recoveries(esp_lcd_panel_handle_t panel,
+                                             uint32_t *recovered, uint32_t *rejected)
+{
+    if (panel == NULL || recovered == NULL || rejected == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_lcd_dpi_panel_t *dpi_panel = __containerof(panel, esp_lcd_dpi_panel_t, base);
+    portENTER_CRITICAL(&dpi_panel->dma_switch_lock);
+    *recovered = dpi_panel->dma_diag_recovered_count;
+    *rejected = dpi_panel->dma_diag_rejected_count;
+    portEXIT_CRITICAL(&dpi_panel->dma_switch_lock);
+    return ESP_OK;
+}
+
+esp_err_t esphome_mipi_dsi_poll_dma_diagnostics(esp_lcd_panel_handle_t panel,
+                                                uint32_t *current, uint32_t *first_invalid,
+                                                size_t word_count)
+{
+    if (panel == NULL || current == NULL || first_invalid == NULL || word_count != 43) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_lcd_dpi_panel_t *dpi_panel = __containerof(panel, esp_lcd_dpi_panel_t, base);
+    if (dpi_panel->dma_chan == NULL || dpi_panel->frame_llis[0] == NULL || dpi_panel->frame_llis[1] == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    // Serialize the first-event latch and software descriptor edits. Hardware
+    // registers remain a read-only instantaneous sample, not an atomic bus dump.
+    portENTER_CRITICAL(&dpi_panel->dma_switch_lock);
+    dpi_panel_read_dma_diagnostics(dpi_panel, current);
+    for (size_t index = 0; index < word_count; index++) {
+        first_invalid[index] = dpi_panel->dma_diag_first_invalid[index];
+    }
+    portEXIT_CRITICAL(&dpi_panel->dma_switch_lock);
+    return ESP_OK;
+}
+#endif
+
+"""
+    if "static void IRAM_ATTR dpi_panel_read_dma_diagnostics" not in text:
+        anchor = "IRAM_ATTR\nbool mipi_dsi_dma_trans_done_cb("
+        if anchor not in text:
+            raise RuntimeError("DSI completion callback not found for DMA diagnostics")
+        text = text.replace(anchor, helper + anchor, 1)
+    else:
+        # Replace the complete helper section, retiring temporary fault-injection
+        # functions from SDKs patched during validation as well as their builders.
+        start = text.find("// ESPHome DSI invalid-block lifecycle and diagnostics.\n")
+        if start == -1:
+            start = text.find("#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS\nstatic DRAM_ATTR")
+        if start == -1:
+            start = text.find("#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS\nstatic COREDUMP_DRAM_ATTR")
+        end = text.find("IRAM_ATTR\nbool mipi_dsi_dma_trans_done_cb(", start)
+        if start == -1 or end == -1:
+            raise RuntimeError("DSI diagnostic helper boundaries not found for release cleanup")
+        text = text[:start] + helper + text[end:]
+    if '#include "freertos/task.h"' not in text:
+        text = text.replace(
+            '#include "freertos/FreeRTOS.h"\n',
+            '#include "freertos/FreeRTOS.h"\n#include "freertos/task.h"\n',
+            1,
+        )
+    if text != original:
+        target.write_text(text, encoding="utf-8")
+
+    driver = framework_dir / "components" / "esp_hw_support" / "dma" / "dw_gdma.c"
+    text = driver.read_text(encoding="utf-8")
+    original = text
+    text = text.replace("esphome_mipi_dsi_note_dma_invalid_status", "esphome_mipi_dsi_note_dma_error_status")
+    declaration = "extern void esphome_mipi_dsi_note_dma_error_status(int channel, uint32_t raw) __attribute__((weak));\n"
+    text = text.replace("#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS\n" + declaration + "#endif\n", declaration)
+    if "esphome_mipi_dsi_note_dma_error_status" not in text:
+        anchor = 'static const char *TAG = "dw-gdma";\n'
+        if anchor not in text:
+            raise RuntimeError("DW-GDMA diagnostic declaration anchor not found")
+        text = text.replace(anchor, declaration + anchor, 1)
+        anchor = "    uint32_t intr_status = dw_gdma_ll_channel_get_intr_status(hal->dev, chan_id);\n"
+        hook = """
+    // Preserve channel error bits 5..14 even when block-done shares this IRQ.
+    if ((intr_status & 0x7FE0U) && esphome_mipi_dsi_note_dma_error_status) {
+        esphome_mipi_dsi_note_dma_error_status(chan_id, intr_status);
+    }
+"""
+        if anchor not in text:
+            raise RuntimeError("DW-GDMA pre-clear diagnostic anchor not found")
+        text = text.replace(anchor, anchor + hook, 1)
+    else:
+        old = """    if ((intr_status & DW_GDMA_LL_CHANNEL_EVENT_SHADOWREG_OR_LLI_INVALID_ERR) &&
+        esphome_mipi_dsi_note_dma_error_status) {"""
+        text = text.replace(old,
+                            "    // Preserve channel error bits 5..14 even when block-done shares this IRQ.\n"
+                            "    if ((intr_status & 0x7FE0U) && esphome_mipi_dsi_note_dma_error_status) {",
+                            1)
+    hook = """    // Preserve channel error bits 5..14 even when block-done shares this IRQ.
+    if ((intr_status & 0x7FE0U) && esphome_mipi_dsi_note_dma_error_status) {
+        esphome_mipi_dsi_note_dma_error_status(chan_id, intr_status);
+    }
+"""
+    text = text.replace("#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS\n" + hook + "#endif\n", hook)
+    old = "    if (intr_status & DW_GDMA_LL_CHANNEL_EVENT_BLOCK_TFR_DONE) {\n"
+    new = """    // An invalid LLP is the stopped next block, not a completed descriptor.
+    // The invalid callback owns repair; do not replay a coalesced completion.
+    if ((intr_status & DW_GDMA_LL_CHANNEL_EVENT_BLOCK_TFR_DONE) &&
+        !(intr_status & DW_GDMA_LL_CHANNEL_EVENT_SHADOWREG_OR_LLI_INVALID_ERR)) {
+"""
+    if old in text:
+        text = text.replace(old, new, 1)
+    elif new not in text:
+        raise RuntimeError("DW-GDMA block callback dispatch not found for invalid-LLI guard")
+    if text != original:
+        driver.write_text(text, encoding="utf-8")
+
+
 def main() -> None:
     if len(sys.argv) > 1:
         framework_dir = sys.argv[1]
@@ -2895,6 +3610,7 @@ def main() -> None:
     )
     if idf_version[0] == 5:
         _patch_idf5(framework_path)
+        _patch_dma_ring_diagnostics(framework_path)
     elif idf_version[0] >= 6:
         _patch_idf6_or_newer(framework_path)
     else:
@@ -2908,6 +3624,7 @@ def main() -> None:
     _patch_jpeg_encode_dma2d_burst(framework_path)
     _patch_dma2d_yuv2rgb_full_range(framework_path)
     _patch_ppa_srm_dma_stall(framework_path)
+    _patch_ppa_transaction_races(framework_path)
     _patch_dma2d_transaction_race(framework_path)
 
 

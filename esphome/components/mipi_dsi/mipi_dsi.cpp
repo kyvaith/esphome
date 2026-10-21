@@ -154,6 +154,11 @@ extern "C" esp_err_t esphome_mipi_dsi_poll_video_status(esp_lcd_panel_handle_t p
 extern "C" esp_err_t esphome_mipi_dsi_poll_dma_ring(esp_lcd_panel_handle_t panel, uint32_t *lookup_failures,
                                                     uint8_t *active_fb_index, uint8_t *pending_fb_index)
     __attribute__((weak));
+extern "C" esp_err_t esphome_mipi_dsi_poll_dma_diagnostics(esp_lcd_panel_handle_t panel, uint32_t *current,
+                                                           uint32_t *first_invalid, size_t word_count)
+    __attribute__((weak));
+extern "C" esp_err_t esphome_mipi_dsi_poll_dma_recoveries(esp_lcd_panel_handle_t panel, uint32_t *recovered,
+                                                         uint32_t *rejected) __attribute__((weak));
 extern "C" esp_err_t esphome_mipi_dsi_set_frame_ack(esp_lcd_panel_handle_t panel, bool enable) __attribute__((weak));
 extern "C" esp_err_t esphome_mipi_dsi_queue_dma_framebuffer(esp_lcd_panel_handle_t panel, void *frame_buffer)
     __attribute__((weak));
@@ -1068,17 +1073,22 @@ void MipiDsi::release_direct_render_frame_buffer(uint8_t *frame_buffer) {
 }
 
 uint8_t *MipiDsi::acquire_direct_source_frame_buffer(uint32_t timeout_ms) {
+  if (this->frame_buffer_session_active_.load(std::memory_order_acquire))
+    return nullptr;
   const TickType_t started = xTaskGetTickCount();
   const TickType_t timeout = std::max<TickType_t>(1, pdMS_TO_TICKS(timeout_ms));
   while (true) {
     auto *candidate = this->get_direct_render_frame_buffer(nullptr, nullptr);
     if (candidate != nullptr && this->reserve_direct_render_frame_buffer(candidate)) {
       uint8_t *expected = nullptr;
-      if (this->source_frame_buffer_.compare_exchange_strong(expected, candidate, std::memory_order_acq_rel)) {
-        this->release_direct_render_frame_buffer(candidate);
-        return candidate;
-      }
+      portENTER_CRITICAL(&this->frame_buffer_session_state_lock_);
+      const bool acquired = !this->frame_buffer_session_active_.load(std::memory_order_acquire) &&
+                            this->source_frame_buffer_.compare_exchange_strong(expected, candidate,
+                                                                               std::memory_order_acq_rel);
+      portEXIT_CRITICAL(&this->frame_buffer_session_state_lock_);
       this->release_direct_render_frame_buffer(candidate);
+      if (acquired)
+        return candidate;
     }
 
     if (this->frame_active_lock_ == nullptr)
@@ -1196,7 +1206,14 @@ bool MipiDsi::wait_for_direct_frame_queue_idle(uint32_t timeout_ms) {
 }
 
 bool MipiDsi::begin_frame_buffer_session(uint32_t timeout_ms) {
-  if (this->frame_buffer_session_lock_ == nullptr ||
+  uint32_t generation = this->frame_buffer_session_generation_.load(std::memory_order_acquire) + 1U;
+  if (generation == 0)
+    generation = 1;
+  return this->begin_frame_buffer_session(timeout_ms, generation);
+}
+
+bool MipiDsi::begin_frame_buffer_session(uint32_t timeout_ms, uint32_t owner_generation) {
+  if (owner_generation == 0 || this->frame_buffer_session_lock_ == nullptr ||
       this->frame_buffer_session_active_.load(std::memory_order_acquire) ||
       this->frame_buffers_[0] == nullptr || this->frame_buffers_[1] == nullptr || this->frame_buffers_[2] == nullptr ||
       xSemaphoreTake(this->frame_buffer_session_lock_, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
@@ -1218,18 +1235,41 @@ bool MipiDsi::begin_frame_buffer_session(uint32_t timeout_ms) {
     return false;
   }
 
-  this->session_leased_frame_buffer_ = nullptr;
-  this->session_leased_writer_ = BufferWriter::CPU;
-  this->frame_buffer_session_generation_++;
-  if (this->frame_buffer_session_generation_ == 0)
-    this->frame_buffer_session_generation_++;
-  this->frame_buffer_session_active_.store(true, std::memory_order_release);
+  // Existing transition sources and native render reservations must finish
+  // before an exclusive owner can borrow and later reseed the entire pool.
+  portENTER_CRITICAL(&this->frame_buffer_session_state_lock_);
+  const bool unowned = this->source_frame_buffer_.load(std::memory_order_acquire) == nullptr &&
+                       this->reserved_render_frame_buffer_.load(std::memory_order_acquire) == nullptr;
+  if (unowned) {
+    this->session_leased_frame_buffer_ = nullptr;
+    this->session_leased_writer_ = BufferWriter::CPU;
+    this->frame_buffer_session_ending_ = false;
+    this->frame_buffer_session_generation_.store(owner_generation, std::memory_order_release);
+    this->frame_buffer_session_active_.store(true, std::memory_order_release);
+  }
+  portEXIT_CRITICAL(&this->frame_buffer_session_state_lock_);
+  if (!unowned) {
+    xSemaphoreGive(this->frame_buffer_session_lock_);
+    return false;
+  }
   return true;
 }
 
 bool MipiDsi::acquire_frame_buffer(display::FrameBufferLease *lease, BufferWriter writer, uint32_t timeout_ms) {
-  if (lease == nullptr || !this->frame_buffer_session_active_.load(std::memory_order_acquire) ||
-      this->session_leased_frame_buffer_ != nullptr)
+  return this->acquire_frame_buffer(lease, writer, timeout_ms,
+                                     this->frame_buffer_session_generation_.load(std::memory_order_acquire));
+}
+
+bool MipiDsi::acquire_frame_buffer(display::FrameBufferLease *lease, BufferWriter writer, uint32_t timeout_ms,
+                                    uint32_t expected_generation) {
+  if (lease == nullptr || expected_generation == 0)
+    return false;
+  portENTER_CRITICAL(&this->frame_buffer_session_state_lock_);
+  const bool accepting = this->frame_buffer_session_active_.load(std::memory_order_acquire) &&
+                         !this->frame_buffer_session_ending_ && this->session_leased_frame_buffer_ == nullptr &&
+                         expected_generation == this->frame_buffer_session_generation_.load(std::memory_order_acquire);
+  portEXIT_CRITICAL(&this->frame_buffer_session_state_lock_);
+  if (!accepting)
     return false;
 
   uint8_t *frame_buffer = this->wait_for_direct_render_frame_buffer(nullptr, nullptr, timeout_ms);
@@ -1246,17 +1286,25 @@ bool MipiDsi::acquire_frame_buffer(display::FrameBufferLease *lease, BufferWrite
   if (index == MIPI_DSI_FRAME_BUFFER_COUNT)
     return false;
 
-  if (writer == BufferWriter::DMA && esp_ptr_external_ram(frame_buffer)) {
-    const esp_err_t error =
-        esp_cache_msync(frame_buffer, this->get_frame_buffer_size(), ESP_CACHE_MSYNC_FLAG_DIR_M2C);
-    if (error != ESP_OK) {
-      ESP_LOGW(TAG, "Framebuffer DMA ownership transfer failed: %s", esp_err_to_name(error));
-      return false;
-    }
+  // Publish ownership before cache work. Closing the session and claiming a
+  // new lease are serialized, while existing leases remain releasable.
+  portENTER_CRITICAL(&this->frame_buffer_session_state_lock_);
+  const bool available = this->frame_buffer_session_active_.load(std::memory_order_acquire) &&
+                         expected_generation == this->frame_buffer_session_generation_.load(std::memory_order_acquire) &&
+                         !this->frame_buffer_session_ending_ && this->session_leased_frame_buffer_ == nullptr &&
+                         frame_buffer != this->active_frame_buffer_.load(std::memory_order_acquire) &&
+                         frame_buffer != this->queued_frame_buffer_.load(std::memory_order_acquire) &&
+                         frame_buffer != this->staged_frame_buffer_.load(std::memory_order_acquire) &&
+                         frame_buffer != this->reserved_render_frame_buffer_.load(std::memory_order_acquire) &&
+                         frame_buffer != this->source_frame_buffer_.load(std::memory_order_acquire);
+  if (available) {
+    this->session_leased_frame_buffer_ = frame_buffer;
+    this->session_leased_writer_ = writer;
   }
+  portEXIT_CRITICAL(&this->frame_buffer_session_state_lock_);
+  if (!available)
+    return false;
 
-  this->session_leased_frame_buffer_ = frame_buffer;
-  this->session_leased_writer_ = writer;
   *lease = {
       .owner = this,
       .data = frame_buffer,
@@ -1269,8 +1317,17 @@ bool MipiDsi::acquire_frame_buffer(display::FrameBufferLease *lease, BufferWrite
       .big_endian = false,
       .writer = writer,
       .index = index,
-      .generation = this->frame_buffer_session_generation_,
+      .generation = this->frame_buffer_session_generation_.load(std::memory_order_acquire),
   };
+  if (writer == BufferWriter::DMA && esp_ptr_external_ram(frame_buffer)) {
+    const esp_err_t error =
+        esp_cache_msync(frame_buffer, this->get_frame_buffer_size(), ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+    if (error != ESP_OK) {
+      ESP_LOGW(TAG, "Framebuffer DMA ownership transfer failed: %s", esp_err_to_name(error));
+      this->release_frame_buffer(lease);
+      return false;
+    }
+  }
   return true;
 }
 
@@ -1318,14 +1375,17 @@ bool MipiDsi::get_active_frame_buffer(display::FrameBufferView *view, BufferRead
       .big_endian = false,
       .writer = writer,
       .index = index,
-      .generation = this->frame_buffer_session_generation_,
+      .generation = this->frame_buffer_session_generation_.load(std::memory_order_acquire),
   };
   return true;
 }
 
 bool MipiDsi::present_frame_buffer_lease(display::FrameBufferLease *lease, uint32_t timeout_ms,
                                          bool wait_for_active) {
-  if (!this->validate_frame_buffer_lease_(lease))
+  portENTER_CRITICAL(&this->frame_buffer_session_state_lock_);
+  const bool valid = this->validate_frame_buffer_lease_(lease);
+  portEXIT_CRITICAL(&this->frame_buffer_session_state_lock_);
+  if (!valid)
     return false;
 
   if (lease->writer == BufferWriter::CPU && esp_ptr_external_ram(lease->data)) {
@@ -1339,36 +1399,64 @@ bool MipiDsi::present_frame_buffer_lease(display::FrameBufferLease *lease, uint3
 
   if (!this->queue_direct_frame_buffer(lease->data, timeout_ms, wait_for_active, true))
     return false;
+  portENTER_CRITICAL(&this->frame_buffer_session_state_lock_);
   this->frame_buffer_writers_[lease->index] = lease->writer;
   this->session_leased_frame_buffer_ = nullptr;
   this->session_leased_writer_ = BufferWriter::CPU;
   this->clear_frame_buffer_lease_(lease);
+  portEXIT_CRITICAL(&this->frame_buffer_session_state_lock_);
   return true;
 }
 
 bool MipiDsi::release_frame_buffer(display::FrameBufferLease *lease) {
-  if (!this->validate_frame_buffer_lease_(lease))
+  portENTER_CRITICAL(&this->frame_buffer_session_state_lock_);
+  const bool valid = this->validate_frame_buffer_lease_(lease);
+  if (valid) {
+    this->session_leased_frame_buffer_ = nullptr;
+    this->session_leased_writer_ = BufferWriter::CPU;
+    this->clear_frame_buffer_lease_(lease);
+  }
+  portEXIT_CRITICAL(&this->frame_buffer_session_state_lock_);
+  return valid;
+}
+
+bool MipiDsi::prepare_frame_buffer_session_end(uint32_t timeout_ms) {
+  portENTER_CRITICAL(&this->frame_buffer_session_state_lock_);
+  const bool active = this->frame_buffer_session_active_.load(std::memory_order_acquire);
+  if (active)
+    this->frame_buffer_session_ending_ = true;
+  const bool leased = this->session_leased_frame_buffer_ != nullptr;
+  portEXIT_CRITICAL(&this->frame_buffer_session_state_lock_);
+  // Do not wait under the metadata lock: the previous writer must be able to
+  // complete presentation or return its lease while a later loop retries.
+  if (!active || leased || !this->wait_for_direct_frame_queue_idle(timeout_ms))
     return false;
-  this->session_leased_frame_buffer_ = nullptr;
-  this->session_leased_writer_ = BufferWriter::CPU;
-  this->clear_frame_buffer_lease_(lease);
-  return true;
+
+  portENTER_CRITICAL(&this->frame_buffer_session_state_lock_);
+  const bool ready = this->frame_buffer_session_active_.load(std::memory_order_acquire) &&
+                     this->frame_buffer_session_ending_ && this->session_leased_frame_buffer_ == nullptr &&
+                     this->queued_frame_buffer_.load(std::memory_order_acquire) == nullptr &&
+                     this->staged_frame_buffer_.load(std::memory_order_acquire) == nullptr &&
+                     this->reserved_render_frame_buffer_.load(std::memory_order_acquire) == nullptr &&
+                     this->source_frame_buffer_.load(std::memory_order_acquire) == nullptr;
+  portEXIT_CRITICAL(&this->frame_buffer_session_state_lock_);
+  return ready;
 }
 
 bool MipiDsi::end_frame_buffer_session(uint32_t timeout_ms) {
-  if (!this->frame_buffer_session_active_.load(std::memory_order_acquire) ||
-      this->session_leased_frame_buffer_ != nullptr ||
-      !this->wait_for_direct_frame_queue_idle(timeout_ms)) {
+  if (!this->prepare_frame_buffer_session_end(timeout_ms))
     return false;
-  }
+  portENTER_CRITICAL(&this->frame_buffer_session_state_lock_);
   this->frame_buffer_session_active_.store(false, std::memory_order_release);
+  this->frame_buffer_session_ending_ = false;
+  portEXIT_CRITICAL(&this->frame_buffer_session_state_lock_);
   xSemaphoreGive(this->frame_buffer_session_lock_);
   return true;
 }
 
 bool MipiDsi::validate_frame_buffer_lease_(const display::FrameBufferLease *lease) const {
   return lease != nullptr && lease->owner == this && lease->data == this->session_leased_frame_buffer_ &&
-         lease->generation == this->frame_buffer_session_generation_ && lease->index < MIPI_DSI_FRAME_BUFFER_COUNT &&
+         lease->generation == this->frame_buffer_session_generation_.load(std::memory_order_acquire) && lease->index < MIPI_DSI_FRAME_BUFFER_COUNT &&
          this->frame_buffers_[lease->index] == lease->data;
 }
 
@@ -1533,7 +1621,73 @@ void MipiDsi::update() {
 
 void MipiDsi::loop() { this->log_dsi_diagnostics_(); }
 
+
+
+void MipiDsi::log_dma_ring_state(const char *label, bool only_new_invalid) {
+#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+  // Version 1 word layout is supplied by the durable ESP-IDF DSI patch. Polling
+  // never clears status, resumes DMA, or changes a descriptor or framebuffer.
+  constexpr size_t STATE_WORDS = 43;
+  uint32_t current[STATE_WORDS]{};
+  uint32_t first_invalid[STATE_WORDS]{};
+  if (this->handle_ == nullptr || esphome_mipi_dsi_poll_dma_diagnostics == nullptr ||
+      esphome_mipi_dsi_poll_dma_diagnostics(this->handle_, current, first_invalid, STATE_WORDS) != ESP_OK ||
+      current[0] != 1)
+    return;
+  if (only_new_invalid && current[3] == this->last_dma_invalid_count_)
+    return;
+  this->last_dma_invalid_count_ = current[3];
+  uint32_t recovered = 0;
+  uint32_t rejected = 0;
+  if (esphome_mipi_dsi_poll_dma_recoveries != nullptr &&
+      esphome_mipi_dsi_poll_dma_recoveries(this->handle_, &recovered, &rejected) == ESP_OK)
+    ESP_LOGW(TAG, "DSI DMA recovery %s recovered=%" PRIu32 " rejected=%" PRIu32,
+             label != nullptr ? label : "state", recovered, rejected);
+  auto log_state = [label](const uint32_t *state, const char *phase, bool invalid_snapshot) {
+    ESP_LOGW(TAG,
+             "DSI DMA %s %s tick=%" PRIu32 " blocks=%" PRIu32 " invalid=%" PRIu32 " event=0x%08" PRIx32
+             " %s=0x%08" PRIx32 " chan=%" PRIu32 " chen=0x%08" PRIx32
+             " active=%" PRIu32 " pending=%" PRIu32 " lli_fb=%" PRIu32 "/%" PRIu32,
+             label != nullptr ? label : "state", phase, state[1], state[2], state[3], state[4],
+             invalid_snapshot ? "invalid_lli" : "first_fatal", state[5], state[6], state[7], state[32],
+             state[33], state[34], state[35]);
+    ESP_LOGW(TAG,
+             "DSI DMA %s irq=0x%08" PRIx32 " enable=0x%08" PRIx32 " signal=0x%08" PRIx32
+             " common=0x%08" PRIx32 " llp=0x%08" PRIx32 " src=0x%08" PRIx32 " dst=0x%08" PRIx32
+             " ctl=%08" PRIx32 "/%08" PRIx32 " cfg=%08" PRIx32 "/%08" PRIx32
+             " status=%08" PRIx32 "/%08" PRIx32 " size=%" PRIu32,
+             phase, state[8], state[9], state[10], state[11], state[12], state[13], state[14], state[15],
+             state[16], state[17], state[18], state[19], state[20], state[21]);
+    for (size_t slot = 0; slot < 2; slot++) {
+      const size_t index = 22 + slot * 5;
+      ESP_LOGW(TAG,
+               "DSI DMA %s lli%u=0x%08" PRIx32 " src=0x%08" PRIx32 " next=0x%08" PRIx32
+               " ctl=%08" PRIx32 "/%08" PRIx32,
+               phase, static_cast<unsigned>(slot), state[index], state[index + 1], state[index + 2],
+               state[index + 3], state[index + 4]);
+    }
+    ESP_LOGW(TAG,
+             "DSI DMA %s fifo=%" PRIu32 " bridge=0x%08" PRIx32 " host=%08" PRIx32 "/%08" PRIx32
+             " video_mode=0x%08" PRIx32 " video_status=0x%08" PRIx32 " host_mode=0x%08" PRIx32,
+             phase, state[36], state[37], state[38], state[39], state[40], state[41], state[42]);
+  };
+  log_state(current, "current", false);
+  if (first_invalid[0] == 1)
+    log_state(first_invalid, "first-invalid", true);
+#else
+  (void) label;
+  (void) only_new_invalid;
+#endif
+}
+
 void MipiDsi::log_dsi_diagnostics_() {
+#if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
+  const uint32_t dma_now = millis();
+  if (this->last_dma_diagnostics_poll_ms_ == 0 || dma_now - this->last_dma_diagnostics_poll_ms_ >= 250) {
+    this->last_dma_diagnostics_poll_ms_ = dma_now;
+    this->log_dma_ring_state("invalid-lli", true);
+  }
+#endif
   const uint32_t underrun_total = dsi_underrun_total;
   if (underrun_total != this->last_underrun_total_) {
     const uint32_t now = millis();

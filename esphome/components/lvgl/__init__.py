@@ -14,6 +14,7 @@ from esphome.components.const import (
 )
 from esphome.components.display import Display, get_display_metadata
 from esphome.components.esp32 import (
+    add_idf_component,
     add_idf_sdkconfig_option,
     include_builtin_idf_component,
 )
@@ -88,6 +89,7 @@ from .schemas import (
 )
 from .snapshot import (
     COMPRESSION_JPEG,
+    CONF_JPEG_INITIAL_OUTPUT_BUFFER_SIZE,
     CONF_SNAPSHOT_COMPOSITOR,
     SNAPSHOT_SCHEMA,
     snapshot_to_code,
@@ -353,6 +355,8 @@ async def to_code(configs):
     cg.add_define("USE_LVGL")
     if snapshot_config is not None:
         cg.add_define("USE_LVGL_SNAPSHOT_STORE")
+        if initial_size := snapshot_config[CONF_JPEG_INITIAL_OUTPUT_BUFFER_SIZE]:
+            cg.add_define("LVGL_SNAPSHOT_JPEG_INITIAL_OUTPUT_BUFFER_SIZE", initial_size)
         df.add_define("LV_USE_SNAPSHOT", "1")
         add_lv_use(CONF_IMAGE)
         if snapshot_config[CONF_COMPRESSION] == COMPRESSION_JPEG:
@@ -408,6 +412,11 @@ async def to_code(configs):
         use_ppa = True
 
     if use_ppa:
+        if CORE.using_toolchain_esp_idf:
+            add_idf_component(
+                name="lvgl_source_patch",
+                path=(Path(__file__).parent / "lvgl_source_patch").as_posix(),
+            )
         # LVGL 9.5 includes the PPA fix (PR #9162) natively.
         # We keep our custom PPA files as a fallback option.
         # PPA evaluate checks buffer alignment at runtime before claiming tasks.

@@ -6,8 +6,10 @@ namespace esphome::lvgl {
 
 class LvglDirectSnapshotCompositor final : public LvglSnapshotCompositor {
  public:
-  LvglDirectSnapshotCompositor(LvglComponent *parent, LvglSnapshotStore *store)
-      : LvglSnapshotCompositor(parent, store) {}
+  LvglDirectSnapshotCompositor(LvglComponent *parent, LvglSnapshotStore *store,
+                                bool use_display_buffers_for_preparation = false)
+      : LvglSnapshotCompositor(parent, store),
+        use_display_buffers_for_preparation_(use_display_buffers_for_preparation) {}
 
   bool prepare_home(int page_index) override;
   bool prepare_applications(const std::vector<LvglApplication *> &applications) override;
@@ -34,6 +36,7 @@ class LvglDirectSnapshotCompositor final : public LvglSnapshotCompositor {
     CLOSING,
   };
 
+  bool prepare_applications_in_display_buffer_(const std::vector<LvglApplication *> &applications);
   bool can_use_direct_home_() const;
   bool can_use_direct_application_(LvglApplication *application, int home_index) const;
   bool ensure_home_transition_source_(int home_index);
@@ -55,6 +58,7 @@ class LvglDirectSnapshotCompositor final : public LvglSnapshotCompositor {
   bool home_regions_primed_{};
   DirectApplicationPhase direct_application_phase_{DirectApplicationPhase::NONE};
   bool application_fallback_{};
+  bool use_display_buffers_for_preparation_{};
 };
 
 }  // namespace esphome::lvgl

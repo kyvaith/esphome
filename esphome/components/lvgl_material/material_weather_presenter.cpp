@@ -57,6 +57,14 @@ void MaterialWeatherPresenter::loop() {
   if (!this->ensure_animation_bindings_())
     return;
   const uint32_t now = millis();
+  const auto *colored = this->find_animation_(this->selected_animation_);
+  if (colored != nullptr && colored->context != nullptr) {
+    const uint32_t revision = __atomic_load_n(&colored->context->color_frame_revision, __ATOMIC_ACQUIRE);
+    if (revision != this->color_frame_revision_) {
+      this->color_frame_revision_ = revision;
+      this->request_snapshot_refresh_();
+    }
+  }
   // Application transitions can start independently of a Home swipe (for
   // example, immediately after a previous application closes). Stop the
   // direct weather producer as soon as the full-screen compositor takes
@@ -182,8 +190,6 @@ void MaterialWeatherPresenter::set_interaction_pressed_(bool pressed) {
 
 void MaterialWeatherPresenter::finish_interaction_release_() {
   if (this->interaction_context_ != nullptr) {
-    const uint32_t paused_ms = millis() - this->interaction_pressed_at_;
-    this->interaction_context_->start_time_us += static_cast<int64_t>(paused_ms) * 1000;
     lvgl::lottie_show(this->interaction_context_, false);
   }
   this->interaction_context_ = nullptr;
@@ -312,6 +318,14 @@ void MaterialWeatherPresenter::suspend_for_navigation() {
     // invalidation for the hidden canvas; that invalidation competed with the
     // first carousel frame and could expose a transient empty rectangle.
     lvgl::lottie_pause_for_navigation(selected->context);
+    // prime_home() has stopped new regional submissions, but the last
+    // accepted frame may still be pending. Copy only this compact artwork
+    // rectangle into the resident page slot before the full-screen swipe
+    // takes ownership. The label refresh band does not include the artwork,
+    // and the canvas deliberately remains immutable during direct playback.
+    if (this->page_visible_ && this->is_root_presented_() && !::lvgl_esphome_snapshot_is_active() &&
+        lvgl::lottie_wait_direct_frame_buffer(selected->context, 80))
+      this->refresh_animation_snapshot_();
   }
 }
 
@@ -397,13 +411,13 @@ void MaterialWeatherPresenter::resume_after_navigation(bool page_visible) {
     // immediately; the allocation delay is only needed after resource release.
     this->navigation_suspended_ = false;
     this->navigation_resume_pending_ = false;
-    lvgl::lottie_reanchor_retained_frame(selected->context);
     this->navigation_suspended_at_ = 0;
     // The retained canvas is only a visual bridge for the handoff. It must
     // not become the permanent state of a one-shot weather animation: boot
     // snapshot preparation leaves the worker on its final frame, and showing
     // it with restart=false makes Home look frozen. Mark the animation as
-    // hidden for the common path so lottie_show() restarts from frame one
+    // hidden for the common path so lottie_show() starts a complete cycle
+    // from its retained phase
     // while keeping the retained canvas in place until the first new frame is
     // accepted by the direct compositor.
     this->animation_visible_ = false;
@@ -486,7 +500,6 @@ void MaterialWeatherPresenter::resume_after_direct_overlay() {
     return;
 
   const bool resume_animation = this->direct_overlay_resume_animation_;
-  const uint32_t paused_ms = millis() - this->direct_overlay_suspended_at_;
   this->direct_overlay_suspended_ = false;
   this->direct_overlay_resume_animation_ = false;
   auto *selected = this->find_animation_(this->selected_animation_);
@@ -494,7 +507,6 @@ void MaterialWeatherPresenter::resume_after_direct_overlay() {
       !this->is_root_presented_()) {
     return;
   }
-  selected->context->start_time_us += static_cast<int64_t>(paused_ms) * 1000;
   lvgl::lottie_show(selected->context, false);
 }
 
@@ -545,6 +557,9 @@ bool MaterialWeatherPresenter::prepare_snapshot_frame(uint32_t timeout_ms) {
   const uint32_t commit_started = millis();
   while (!__atomic_load_n(&context->snapshot_commit_completed, __ATOMIC_ACQUIRE) &&
          millis() - commit_started <= timeout_ms) {
+    // This wait runs on the ESPHome loop. Service its publication mailbox
+    // here so the raster worker can finish without taking over LVGL itself.
+    lvgl::lottie_process_native_publications();
     vTaskDelay(1);
   }
   if (!__atomic_load_n(&context->snapshot_commit_success, __ATOMIC_ACQUIRE))
@@ -588,11 +603,16 @@ bool MaterialWeatherPresenter::refresh_snapshot_now(bool force_widget_render) {
     lv_unlock();
   }
 
+  // A color publication may have updated the native canvas before the next
+  // DSI frame. Render that committed source for cache refreshes instead of
+  // reading an older scanout; swipe suspension still captures exact scanout.
+  const bool animation_refreshed = this->refresh_animation_snapshot_(force_widget_render);
+
   const bool refreshed = ::lvgl_esphome_snapshot_refresh_tile_region(
       this->snapshot_page_, this->snapshot_region_, lv_obj_get_width(this->snapshot_page_), true,
       force_widget_render);
-  this->snapshot_refresh_pending_ = !refreshed;
-  if (!refreshed)
+  this->snapshot_refresh_pending_ = !refreshed || !animation_refreshed;
+  if (this->snapshot_refresh_pending_)
     this->snapshot_refresh_at_ = millis() + 250U;
   // The completed frame must be part of the Home JPEG/raw snapshot before the
   // live renderer leaves the page subtree. Otherwise the carousel's cached
@@ -617,7 +637,18 @@ bool MaterialWeatherPresenter::refresh_snapshot_now(bool force_widget_render) {
       lv_unlock();
     }
   }
-  return refreshed;
+  return refreshed && animation_refreshed;
+}
+
+bool MaterialWeatherPresenter::refresh_animation_snapshot_(bool force_widget_render) {
+  if (this->snapshot_page_ == nullptr)
+    return false;
+  const auto *selected = this->find_animation_(this->selected_animation_);
+  if (selected == nullptr || selected->context == nullptr || selected->widget == nullptr ||
+      !selected->context->prepared_frame_ready || !lv_obj_is_visible(selected->widget))
+    return false;
+  return ::lvgl_esphome_snapshot_refresh_tile_region(
+      this->snapshot_page_, selected->widget, lv_obj_get_width(this->snapshot_page_), true, force_widget_render);
 }
 
 void MaterialWeatherPresenter::request_snapshot_refresh_() {

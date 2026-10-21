@@ -430,8 +430,13 @@ class Display : public PollingComponent {
    * that cannot prove framebuffer ownership leave this capability unsupported.
    */
   virtual bool begin_frame_buffer_session(uint32_t timeout_ms = 50) { return false; }
+  virtual bool begin_frame_buffer_session(uint32_t timeout_ms, uint32_t owner_generation) { return false; }
   virtual bool acquire_frame_buffer(FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
                                     uint32_t timeout_ms = 50) {
+    return false;
+  }
+  virtual bool acquire_frame_buffer(FrameBufferLease *lease, BufferWriter writer, uint32_t timeout_ms,
+                                    uint32_t expected_generation) {
     return false;
   }
   virtual bool get_active_frame_buffer(FrameBufferView *view, BufferReader reader = BufferReader::CPU) const {
@@ -442,6 +447,10 @@ class Display : public PollingComponent {
     return false;
   }
   virtual bool release_frame_buffer(FrameBufferLease *lease) { return false; }
+  // Close new lease acquisition and prove the pool is idle before its owner
+  // restores native draw buffers. A false result retains exclusive ownership;
+  // outstanding leases may still be presented or released before retrying.
+  virtual bool prepare_frame_buffer_session_end(uint32_t timeout_ms = 50) { return false; }
   virtual bool end_frame_buffer_session(uint32_t timeout_ms = 50) { return false; }
 
   /// Draw a straight line from the point [x1,y1] to [x2,y2] with the given color.

@@ -52,6 +52,7 @@ extern "C" uint8_t lvgl_esphome_direct_scale_blend_argb8888_async(
 extern "C" bool lvgl_esphome_render_background_rgb888(lv_obj_t *exclude, uint8_t *dst, int dst_stride,
                                                         int x, int y, int width, int height);
 extern "C" void lvgl_esphome_direct_blit_rgb888_release(int x, int y, int width, int height);
+extern "C" bool lvgl_esphome_direct_blit_rgb888_try_release(int x, int y, int width, int height);
 extern "C" bool lvgl_esphome_direct_handoff_to_lvgl(uint32_t timeout_ms);
 extern "C" bool lvgl_esphome_copy_argb8888(const uint8_t *src, uint8_t *dst, int width, int height);
 extern "C" bool lvgl_esphome_scale_argb8888(const uint8_t *src, int src_width, int src_height, uint8_t *dst,
@@ -60,6 +61,8 @@ extern "C" bool lvgl_esphome_scale_argb8888_dma_chain(const uint8_t *src, int sr
                                                         uint8_t *dst, int dst_width, int dst_height);
 extern "C" void lvgl_esphome_release_dma_image_buffer(const void *buffer);
 extern "C" bool lvgl_esphome_copy_xrgb8888_to_rgb888(const uint8_t *src, uint8_t *dst, int width, int height);
+extern "C" bool lvgl_esphome_copy_xrgb8888_to_rgb888_with_capacity(const uint8_t *src, uint8_t *dst, int width,
+                                                                int height, size_t dst_capacity);
 extern "C" bool lvgl_esphome_direct_regions_pause(bool paused, uint32_t timeout_ms);
 extern "C" bool lvgl_esphome_snapshot_is_active(void);
 extern "C" bool esphome_mipi_dsi_wait_fifo_margin(uint32_t min_depth, uint32_t timeout_us) __attribute__((weak));
@@ -107,6 +110,8 @@ inline bool lottie_publish_direct_scaled_frame(LottieContext *ctx);
 
 // Persistent context for each Lottie widget – tracks all PSRAM allocations,
 // the render task, and cached animation parameters for safe re-load.
+enum class LottiePublicationKind : uint8_t { SWAP, RETAIN, RETAIN_HANDOFF };
+
 struct LottieContext {
   // --- Config (set once, never freed) ---
   lv_obj_t *obj;
@@ -160,6 +165,7 @@ struct LottieContext {
   uint8_t *frame_cache;          // optional pre-rendered frames for tiny boot Lotties
   size_t frame_cache_stride;
   uint32_t frame_cache_count;
+  uint32_t frame_cache_in_flight;
   bool pixel_buffer_internal;
   bool work_buffer_internal;
   bool work_buffer_alt_internal;
@@ -173,6 +179,14 @@ struct LottieContext {
   volatile bool snapshot_commit_completed;
   volatile bool snapshot_commit_success;
   volatile bool playback_completed;
+  // Main-loop cleanup requests outlive a bounded task-stop/release attempt.
+  // Contexts stay registered until their existing callbacks can no longer use them.
+  bool resource_cleanup_pending;
+  bool scene_unload_pending;
+  bool prepare_after_cleanup;
+  bool frame_cache_release_pending;
+  bool frame_cache_preserve_peak;
+  uint32_t frame_cache_retry_at_ms;
   StackType_t *task_stack;  // PSRAM – 64 KB
   StaticTask_t *task_tcb;   // internal RAM
   TaskHandle_t task_handle;
@@ -192,11 +206,13 @@ struct LottieContext {
   // while PPA is busy, so work_buffer is not necessarily the final frame.
   uint8_t *direct_published_source;
   bool direct_region_active;
+  bool direct_region_claimed;
   int32_t direct_region_x;
   int32_t direct_region_y;
   int32_t direct_region_width;
   int32_t direct_region_height;
   int32_t retained_frame;
+  int32_t published_frame;
   uint32_t retained_coverage;
   uint32_t direct_publish_diag_last_ms;
   uint32_t direct_publish_diag_rejects;
@@ -207,11 +223,35 @@ struct LottieContext {
   bool native_publish_success;
   bool native_publish_scaled;
   uint8_t *native_publish_buffer;
+  LottiePublicationKind native_publish_kind;
+  uint32_t color_frame_revision;
   uint64_t raster_stages_us[6];
   uint32_t raster_stage_samples;
 };
 
 inline LottieContext *lottie_contexts = nullptr;
+
+// Main-loop retirement and worker publication can meet after a pause request.
+// Claim only their short pointer/queue handoff, never wait while holding LVGL.
+class LottieDirectRegionClaim {
+ public:
+  explicit LottieDirectRegionClaim(LottieContext *ctx) : ctx_(ctx) {
+    bool expected = false;
+    this->acquired_ = __atomic_compare_exchange_n(&ctx->direct_region_claimed, &expected, true, false,
+                                                 __ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
+  }
+  ~LottieDirectRegionClaim() {
+    if (this->acquired_)
+      __atomic_store_n(&this->ctx_->direct_region_claimed, false, __ATOMIC_RELEASE);
+  }
+  explicit operator bool() const { return this->acquired_; }
+  LottieDirectRegionClaim(const LottieDirectRegionClaim &) = delete;
+  LottieDirectRegionClaim &operator=(const LottieDirectRegionClaim &) = delete;
+
+ protected:
+  LottieContext *ctx_;
+  bool acquired_;
+};
 
 inline bool lottie_apply_color_slot(LottieContext *ctx) {
   if (ctx == nullptr || !ctx->color_slot_pending || ctx->color_slot == nullptr || !ctx->data_loaded ||
@@ -221,8 +261,12 @@ inline bool lottie_apply_color_slot(LottieContext *ctx) {
   // The clear-day weather scene has a bounded native radial renderer instead
   // of a ThorVG paint list. Keep that renderer on the same runtime palette;
   // its worker is the only owner of this color while a frame is being drawn.
-  if (ctx->fast_radial)
+  if (ctx->fast_radial) {
     ctx->fast_radial_fill_color = lv_color_hex(rgb);
+    // The center is normally immutable; a new palette must redraw it too.
+    ctx->fast_radial_last_frame[0] = -1;
+    ctx->fast_radial_last_frame[1] = -1;
+  }
   char slot[128];
   const int written = snprintf(slot, sizeof(slot), "{\"%s\":{\"p\":{\"k\":[%.6f,%.6f,%.6f,1]}}}",
                                ctx->color_slot, static_cast<float>((rgb >> 16) & 0xFF) / 255.0f,
@@ -267,7 +311,8 @@ inline void lottie_set_color(lv_obj_t *obj, lv_color_t color) {
 }
 
 inline bool lottie_direct_frame_in_flight(const LottieContext *ctx) {
-  return ctx != nullptr && __atomic_load_n(&ctx->direct_frame_in_flight, __ATOMIC_ACQUIRE);
+  return ctx != nullptr && (__atomic_load_n(&ctx->direct_frame_in_flight, __ATOMIC_ACQUIRE) ||
+                            __atomic_load_n(&ctx->frame_cache_in_flight, __ATOMIC_ACQUIRE) != 0);
 }
 
 inline void lottie_set_direct_frame_in_flight(LottieContext *ctx, bool in_flight) {
@@ -280,10 +325,22 @@ inline void lottie_direct_frame_ready(void *arg) {
   if (ctx == nullptr)
     return;
   __atomic_add_fetch(&ctx->direct_publish_diag_callbacks, 1U, __ATOMIC_RELAXED);
-  lottie_set_direct_frame_in_flight(ctx, false);
   TaskHandle_t task = ctx->task_handle;
   if (task != nullptr)
     xTaskNotifyGive(task);
+  // This is the callback's last context/task operation. A zero lease allows
+  // the renderer to exit and the main loop to delete its static TCB.
+  lottie_set_direct_frame_in_flight(ctx, false);
+}
+
+inline void lottie_cached_frame_ready(void *arg) {
+  auto *ctx = static_cast<LottieContext *>(arg);
+  if (ctx == nullptr)
+    return;
+  TaskHandle_t task = ctx->task_handle;
+  if (task != nullptr)
+    xTaskNotifyGive(task);
+  __atomic_sub_fetch(&ctx->frame_cache_in_flight, 1U, __ATOMIC_RELEASE);
 }
 
 inline size_t lottie_align_up(size_t value, size_t align) { return (value + align - 1) & ~(align - 1); }
@@ -1161,6 +1218,10 @@ inline void lottie_invalidate_published_frame(LottieContext *ctx) {
 // LVGL locking inside the worker alone cannot serialize with ESPHome YAML
 // actions, which run on the main loop. Only that loop may mutate the native
 // canvas. The bounded mailbox holds one frame; rasterization needs no copies.
+inline bool lottie_copy_xrgb8888_to_rgb888(LottieContext *ctx, const uint8_t *source, uint8_t *target);
+inline void lottie_flatten_opaque_frame(LottieContext *ctx, const uint8_t *src, uint8_t *dst);
+inline bool lottie_release_direct_region(LottieContext *ctx);
+
 inline void lottie_process_native_publications() {
   for (auto *ctx = lottie_contexts; ctx != nullptr; ctx = ctx->next_context) {
     if (!__atomic_load_n(&ctx->native_publish_pending, __ATOMIC_ACQUIRE))
@@ -1168,18 +1229,64 @@ inline void lottie_process_native_publications() {
     ctx->native_publish_success = false;
     auto *ready = ctx->native_publish_buffer;
     if (!ctx->stop_requested && ready != nullptr && ctx->obj != nullptr && lv_obj_is_valid(ctx->obj)) {
+      // The worker lends this immutable source until the mailbox is acknowledged.
+      // Do not replace the native canvas or hand ownership over while an old
+      // compositor slot still borrows its background. Retry outside lv_lock().
+      if (ctx->native_publish_kind == LottiePublicationKind::RETAIN_HANDOFF &&
+          !lottie_release_direct_region(ctx))
+        continue;
       lv_lock();
-      lv_canvas_set_buffer(ctx->obj, ready, ctx->width, ctx->height, lottie_argb_color_format(ctx));
+      const bool retained = ctx->native_publish_kind != LottiePublicationKind::SWAP;
+      bool copied = true;
+      lv_color_format_t color_format = lottie_argb_color_format(ctx);
+      if (retained) {
+        // Only the ESPHome/LVGL loop may replace a native canvas. The worker
+        // lends its immutable private raster buffer until this publication
+        // is acknowledged; no extra image or queue slot is allocated.
+        lvgl_esphome_release_dma_image_buffer(ctx->pixel_buffer);
+        if (ctx->flatten_to_opaque) {
+          color_format = LV_COLOR_FORMAT_RGB888;
+          if (lottie_uses_direct_xrgb(ctx)) {
+            copied = lottie_copy_xrgb8888_to_rgb888(ctx, ready, ctx->pixel_buffer);
+          } else {
+            lottie_flatten_opaque_frame(ctx, ready, ctx->pixel_buffer);
+            lottie_sync_buffer(ctx->pixel_buffer, lottie_display_buffer_bytes(ctx));
+          }
+        } else {
+          copied = lottie_copy_argb_frame(ctx, ready, ctx->pixel_buffer);
+        }
+      }
+      if (!copied) {
+        lv_unlock();
+        __atomic_store_n(&ctx->native_publish_pending, false, __ATOMIC_RELEASE);
+        if (ctx->task_handle != nullptr)
+          xTaskNotifyGive(ctx->task_handle);
+        continue;
+      }
+      lv_canvas_set_buffer(ctx->obj, retained ? ctx->pixel_buffer : ready, ctx->width, ctx->height, color_format);
       auto *draw_buf = lv_canvas_get_draw_buf(ctx->obj);
       if (draw_buf != nullptr) {
-        if (ctx->fast_radial)
+        if (ctx->fast_radial || (retained && ctx->flatten_to_opaque))
           lv_draw_buf_clear_flag(draw_buf, LV_IMAGE_FLAGS_PREMULTIPLIED);
         else
           lv_draw_buf_set_flag(draw_buf, LV_IMAGE_FLAGS_PREMULTIPLIED);
       }
       lottie_invalidate_published_frame(ctx);
       lv_unlock();
-      if (ctx->native_publish_scaled) {
+      if (ctx->native_publish_kind == LottiePublicationKind::RETAIN_HANDOFF) {
+        // Complete the direct-to-native ownership boundary on this same
+        // loop. A worker-side lv_refr_now() can otherwise leave LVGL marked
+        // as rendering while a YAML snapshot changes the object layout.
+        if (!lvgl_esphome_snapshot_is_active()) {
+          if (!lvgl_esphome_direct_handoff_to_lvgl(100))
+            ESP_LOGW(LOTTIE_PERF_TAG, "retained frame handoff timed out");
+          lv_lock();
+          lv_refr_now(lv_obj_get_display(ctx->obj));
+          lv_unlock();
+        }
+      } else if (retained) {
+        __atomic_add_fetch(&ctx->color_frame_revision, 1U, __ATOMIC_RELEASE);
+      } else if (ctx->native_publish_scaled) {
         const bool internal = ctx->display_back_buffer_internal;
         ctx->display_back_buffer = ctx->pixel_buffer;
         ctx->display_back_buffer_internal = ctx->pixel_buffer_internal;
@@ -1190,7 +1297,8 @@ inline void lottie_process_native_publications() {
         ctx->work_buffer_internal = ctx->pixel_buffer_internal;
         ctx->pixel_buffer_internal = internal;
       }
-      ctx->pixel_buffer = ready;
+      if (!retained)
+        ctx->pixel_buffer = ready;
       ctx->native_publish_success = true;
     }
     __atomic_store_n(&ctx->native_publish_pending, false, __ATOMIC_RELEASE);
@@ -1199,9 +1307,11 @@ inline void lottie_process_native_publications() {
   }
 }
 
-inline bool lottie_request_native_publication(LottieContext *ctx, uint8_t *buffer, bool scaled) {
+inline bool lottie_request_native_publication(LottieContext *ctx, uint8_t *buffer, bool scaled,
+                                              LottiePublicationKind kind = LottiePublicationKind::SWAP) {
   ctx->native_publish_buffer = buffer;
   ctx->native_publish_scaled = scaled;
+  ctx->native_publish_kind = kind;
   ctx->native_publish_success = false;
   __atomic_store_n(&ctx->native_publish_pending, true, __ATOMIC_RELEASE);
   // The renderer is a worker task and the native canvas swap is owned by the
@@ -1250,7 +1360,9 @@ inline bool lottie_publish_direct_opaque_frame(LottieContext *ctx) {
     // could never be revealed. runtime_hidden is the authoritative lifecycle
     // guard; a hidden object with it cleared is the intentional reveal path.
     hidden_but_ready_to_reveal = hidden && !ctx->runtime_hidden && ctx->auto_start;
-    presented = on_active_screen && (!hidden || hidden_but_ready_to_reveal);
+    auto *parent = lv_obj_get_parent(ctx->obj);
+    const bool parent_presented = parent == nullptr || lv_obj_is_visible(parent);
+    presented = on_active_screen && parent_presented && (!hidden || hidden_but_ready_to_reveal);
     lv_obj_get_coords(ctx->obj, &coords);
     display = lv_obj_get_display(ctx->obj);
   }
@@ -1276,6 +1388,14 @@ inline bool lottie_publish_direct_opaque_frame(LottieContext *ctx) {
   const int source_y = visible_y1 - static_cast<int>(coords.y1);
   const int visible_width = visible_x2 - visible_x1;
   const int visible_height = visible_y2 - visible_y1;
+  if (ctx->direct_region_active &&
+      (ctx->direct_region_x != visible_x1 || ctx->direct_region_y != visible_y1 ||
+       ctx->direct_region_width != visible_width || ctx->direct_region_height != visible_height) &&
+      !lottie_release_direct_region(ctx))
+    return false;
+  LottieDirectRegionClaim region_claim(ctx);
+  if (!region_claim || ctx->runtime_hidden || ctx->stop_requested || lottie_direct_frame_in_flight(ctx))
+    return false;
   const int stride = static_cast<int>(lv_draw_buf_width_to_stride(ctx->render_width, LV_COLOR_FORMAT_XRGB8888));
   auto *submitted_source = ctx->work_buffer;
   const bool submitted_internal = ctx->work_buffer_internal;
@@ -1407,8 +1527,15 @@ inline void lottie_attach_opaque_buffer(LottieContext *ctx) {
 inline bool lottie_copy_xrgb8888_to_rgb888(LottieContext *ctx, const uint8_t *source, uint8_t *target) {
   if (ctx == nullptr || source == nullptr || target == nullptr || source == target)
     return false;
-  if (lvgl_esphome_copy_xrgb8888_to_rgb888(source, target, ctx->width, ctx->height))
+  if (target == ctx->pixel_buffer) {
+    // This canvas remains allocated at its padded XRGB size after conversion
+    // to packed RGB. Give PPA that owned capacity, not only the RGB byte count.
+    const size_t capacity = lottie_align_up(lottie_display_buffer_bytes(ctx), LOTTIE_CACHE_ALIGN);
+    if (lvgl_esphome_copy_xrgb8888_to_rgb888_with_capacity(source, target, ctx->width, ctx->height, capacity))
+      return true;
+  } else if (lvgl_esphome_copy_xrgb8888_to_rgb888(source, target, ctx->width, ctx->height)) {
     return true;
+  }
 
   const uint32_t source_stride = lv_draw_buf_width_to_stride(ctx->width, LV_COLOR_FORMAT_XRGB8888);
   const uint32_t target_stride = lv_draw_buf_width_to_stride(ctx->width, LV_COLOR_FORMAT_RGB888);
@@ -1428,8 +1555,7 @@ inline bool lottie_copy_xrgb8888_to_rgb888(LottieContext *ctx, const uint8_t *so
 }
 
 inline bool lottie_wait_direct_frame_buffer(LottieContext *ctx, uint32_t timeout_ms) {
-  if (ctx == nullptr || (!lottie_renders_to_display_back_buffer(ctx) && !lottie_uses_direct_scaled_argb(ctx) &&
-                         !lottie_uses_direct_opaque_pipeline(ctx)))
+  if (ctx == nullptr)
     return true;
 
   const int64_t deadline_us = timeout_ms == 0 ? 0 : esp_timer_get_time() + static_cast<int64_t>(timeout_ms) * 1000;
@@ -1447,18 +1573,29 @@ inline bool lottie_wait_direct_frame_buffer(LottieContext *ctx, uint32_t timeout
   return true;
 }
 
-inline void lottie_release_direct_region(LottieContext *ctx) {
+inline bool lottie_release_direct_region(LottieContext *ctx) {
   if (ctx == nullptr)
-    return;
-  if (ctx->direct_region_active)
-    lvgl_esphome_direct_blit_rgb888_release(ctx->direct_region_x, ctx->direct_region_y, ctx->direct_region_width,
-                                          ctx->direct_region_height);
+    return true;
+  LottieDirectRegionClaim region_claim(ctx);
+  if (!region_claim)
+    return false;
+  if (lottie_direct_frame_in_flight(ctx))
+    return false;
+  if (ctx->direct_region_active &&
+      !lvgl_esphome_direct_blit_rgb888_try_release(ctx->direct_region_x, ctx->direct_region_y,
+                                                ctx->direct_region_width, ctx->direct_region_height)) {
+    lottie_log_direct_publish_failure(ctx, "region-release-busy", LOTTIE_DIRECT_BLIT_BUSY);
+    return false;
+  }
+  // A ready callback releases only the submitted source. The retained slot
+  // can still borrow this background until its removal has been acknowledged.
   ctx->direct_region_active = false;
   if (ctx->direct_background != nullptr) {
     heap_caps_free(ctx->direct_background);
     ctx->direct_background = nullptr;
     ctx->direct_background_size = 0;
   }
+  return true;
 }
 
 inline void lottie_log_direct_publish_failure(LottieContext *ctx, const char *reason, uint8_t result) {
@@ -1583,9 +1720,13 @@ inline bool lottie_publish_direct_scaled_frame(LottieContext *ctx) {
   if (ctx->direct_region_active &&
       (ctx->direct_region_x != x || ctx->direct_region_y != y || ctx->direct_region_width != width ||
        ctx->direct_region_height != height)) {
-    lottie_release_direct_region(ctx);
+    if (!lottie_release_direct_region(ctx))
+      return false;
   }
 
+  LottieDirectRegionClaim region_claim(ctx);
+  if (!region_claim || ctx->runtime_hidden || ctx->stop_requested || lottie_direct_frame_in_flight(ctx))
+    return false;
   uint8_t *submitted_source = ctx->work_buffer;
   const bool submitted_source_internal = ctx->work_buffer_internal;
   const int stride = static_cast<int>(lv_draw_buf_width_to_stride(ctx->render_width, LV_COLOR_FORMAT_ARGB8888));
@@ -1675,37 +1816,11 @@ inline bool lottie_commit_direct_scaled_frame_to_canvas(LottieContext *ctx) {
     return false;
   }
 
-  if (!lvgl_esphome_scale_argb8888(source, static_cast<int>(ctx->render_width),
-                                   static_cast<int>(ctx->render_height), ctx->pixel_buffer,
-                                   static_cast<int>(ctx->width), static_cast<int>(ctx->height))) {
-    ESP_LOGW(LOTTIE_PERF_TAG, "finite scaled frame retain: PPA materialization failed");
-    return false;
-  }
-
-  lv_display_t *display = nullptr;
-  lv_lock();
-  if (ctx->obj != nullptr && lv_obj_is_valid(ctx->obj)) {
-    lv_canvas_set_buffer(ctx->obj, ctx->pixel_buffer, ctx->width, ctx->height, lottie_argb_color_format(ctx));
-    lv_draw_buf_t *draw_buf = lv_canvas_get_draw_buf(ctx->obj);
-    if (draw_buf != nullptr)
-      lv_draw_buf_clear_flag(draw_buf, LV_IMAGE_FLAGS_PREMULTIPLIED);
-    lv_obj_invalidate(ctx->obj);
-    display = lv_obj_get_display(ctx->obj);
-  }
-  lv_unlock();
-
-  lottie_release_direct_region(ctx);
-  ctx->direct_published_source = nullptr;
-  if (display != nullptr && !lvgl_esphome_snapshot_is_active()) {
-    if (!lvgl_esphome_direct_handoff_to_lvgl(100))
-      ESP_LOGW(LOTTIE_PERF_TAG, "finite scaled frame handoff timed out");
-    lv_lock();
-    lv_refr_now(display);
-    lv_unlock();
-  }
-  ESP_LOGI(LOTTIE_PERF_TAG, "finite scaled frame retained: source=%p canvas=%p size=%ux%u", source,
-           ctx->pixel_buffer, static_cast<unsigned>(ctx->width), static_cast<unsigned>(ctx->height));
-  return true;
+  const bool committed =
+      lottie_request_native_publication(ctx, source, false, LottiePublicationKind::RETAIN_HANDOFF);
+  if (committed)
+    ctx->direct_published_source = nullptr;
+  return committed;
 }
 
 inline bool lottie_publish_direct_frame(LottieContext *ctx) {
@@ -1729,9 +1844,13 @@ inline bool lottie_publish_direct_frame(LottieContext *ctx) {
   }
 
   if (ctx->direct_region_active && (ctx->direct_region_x != coords.x1 || ctx->direct_region_y != coords.y1)) {
-    lottie_release_direct_region(ctx);
+    if (!lottie_release_direct_region(ctx))
+      return false;
   }
 
+  LottieDirectRegionClaim region_claim(ctx);
+  if (!region_claim || ctx->runtime_hidden || ctx->stop_requested || lottie_direct_frame_in_flight(ctx))
+    return false;
   const int stride = static_cast<int>(lv_draw_buf_width_to_stride(ctx->width, LV_COLOR_FORMAT_XRGB8888));
   lottie_set_direct_frame_in_flight(ctx, true);
   const uint8_t result = lvgl_esphome_direct_blit_xrgb8888_async(
@@ -1834,56 +1953,23 @@ inline bool lottie_commit_direct_frame_to_canvas(LottieContext *ctx) {
     return false;
   }
 
-  // Render the retained frame into the existing direct source, then promote
-  // that complete buffer to the LVGL canvas. Re-attaching the old canvas
-  // pointer allowed LVGL/PPA to reuse its stale pre-animation source state.
-  // Pointer promotion is atomic under the LVGL lock and needs no full-frame
-  // copy or additional allocation.
+  // Rasterization belongs to this large-stack worker; conversion, canvas
+  // publication, and the DSI-to-LVGL handoff belong to the ESPHome loop.
   const int32_t retained_frame = ctx->retained_frame >= lottie_first_renderable_frame(ctx)
                                      ? ctx->retained_frame
-                                     : lottie_last_renderable_frame(ctx);
+                                     : std::clamp(__atomic_load_n(&ctx->published_frame, __ATOMIC_ACQUIRE),
+                                                  lottie_first_renderable_frame(ctx), lottie_last_renderable_frame(ctx));
   uint8_t *render_target = direct_pipeline
                                ? (ctx->direct_published_source != nullptr ? ctx->direct_published_source
                                                                            : ctx->work_buffer)
                                : ctx->display_back_buffer;
-  if (render_target == nullptr)
+  if (render_target == nullptr || !lottie_render_frame(ctx, retained_frame, render_target))
     return false;
-  if (!lottie_render_frame(ctx, retained_frame, render_target) ||
-      !lottie_copy_xrgb8888_to_rgb888(ctx, render_target, ctx->pixel_buffer))
-    return false;
-  // lottie_render_frame() intentionally skips cache maintenance for opaque
-  // direct-XRGB playback because the PPA presentation path owns that sync.
-  // This buffer is about to become an ordinary LVGL canvas source instead,
-  // so publish the CPU-written final frame before LVGL/PPA can read it.
-  ESP_LOGW(LOTTIE_PERF_TAG, "finite frame retain: frame=%d coverage=%u final=%d target=%p canvas=%p",
-           (int) retained_frame, (unsigned) ctx->retained_coverage, (int) lottie_last_renderable_frame(ctx),
-           render_target, ctx->pixel_buffer);
-
-  lv_display_t *display = nullptr;
-  lv_lock();
-  if (ctx->obj != nullptr && lv_obj_is_valid(ctx->obj)) {
-    lv_canvas_set_buffer(ctx->obj, ctx->pixel_buffer, ctx->width, ctx->height, LV_COLOR_FORMAT_RGB888);
-    lv_draw_buf_t *draw_buf = lv_canvas_get_draw_buf(ctx->obj);
-    if (draw_buf != nullptr)
-      lv_draw_buf_clear_flag(draw_buf, LV_IMAGE_FLAGS_PREMULTIPLIED);
-    lv_obj_invalidate(ctx->obj);
-    display = lv_obj_get_display(ctx->obj);
-  }
-  lv_unlock();
-
-  lottie_release_direct_region(ctx);
-  // A full-screen snapshot transition already owns presentation and the DSI
-  // framebuffer set. Keep the retained Lottie canvas current, but do not let
-  // finite-playback cleanup perform a second handoff or refresh while the
-  // transition worker is composing a frame with DMA2D.
-  if (display != nullptr && !lvgl_esphome_snapshot_is_active()) {
-    if (!lvgl_esphome_direct_handoff_to_lvgl(100))
-      ESP_LOGW(LOTTIE_PERF_TAG, "final direct frame handoff timed out");
-    lv_lock();
-    lv_refr_now(display);
-    lv_unlock();
-  }
-  return true;
+  __atomic_store_n(&ctx->published_frame, retained_frame, __ATOMIC_RELEASE);
+  ESP_LOGI(LOTTIE_PERF_TAG, "finite frame retain: frame=%d coverage=%u target=%p canvas=%p",
+           static_cast<int>(retained_frame), static_cast<unsigned>(ctx->retained_coverage), render_target,
+           ctx->pixel_buffer);
+  return lottie_request_native_publication(ctx, render_target, false, LottiePublicationKind::RETAIN_HANDOFF);
 }
 
 inline uint8_t *lottie_alloc_pixel_buffer(size_t alloc_bytes, bool *internal) {
@@ -2003,9 +2089,30 @@ inline void lottie_publish_cached_frame(LottieContext *ctx, uint32_t index) {
   bool presented_direct = false;
   if (visible && lv_area_get_width(&coords) == static_cast<int32_t>(ctx->width) &&
       lv_area_get_height(&coords) == static_cast<int32_t>(ctx->height)) {
+    if (ctx->direct_region_active &&
+        (ctx->direct_region_x != coords.x1 || ctx->direct_region_y != coords.y1 ||
+         ctx->direct_region_width != static_cast<int32_t>(ctx->width) ||
+         ctx->direct_region_height != static_cast<int32_t>(ctx->height)) &&
+        !lottie_release_direct_region(ctx))
+      return;
+    LottieDirectRegionClaim region_claim(ctx);
+    if (!region_claim || ctx->runtime_hidden || ctx->stop_requested)
+      return;
     const int stride = static_cast<int>(lv_draw_buf_width_to_stride(ctx->width, LV_COLOR_FORMAT_XRGB8888));
+    // Several immutable cache frames may be queued/coalesced at once. Each
+    // accepted request owns the cache until its real completion callback.
+    __atomic_add_fetch(&ctx->frame_cache_in_flight, 1U, __ATOMIC_RELEASE);
     const uint8_t result = lvgl_esphome_direct_blit_xrgb8888_async(frame, stride, coords.x1, coords.y1, ctx->width,
-                                                                   ctx->height, lottie_direct_frame_ready, nullptr);
+                                                                   ctx->height, lottie_cached_frame_ready, ctx);
+    if (result != LOTTIE_DIRECT_BLIT_SUBMITTED) {
+      __atomic_sub_fetch(&ctx->frame_cache_in_flight, 1U, __ATOMIC_RELEASE);
+    } else {
+      ctx->direct_region_active = true;
+      ctx->direct_region_x = coords.x1;
+      ctx->direct_region_y = coords.y1;
+      ctx->direct_region_width = ctx->width;
+      ctx->direct_region_height = ctx->height;
+    }
     // A busy queue intentionally drops this immutable animation frame;
     // falling back to a native LVGL write would reintroduce concurrent
     // framebuffer ownership and costs more than waiting for the next one.
@@ -2328,8 +2435,18 @@ inline void lottie_render_task(void *param) {
         vTaskSuspend(nullptr);
         return;
       }
-      // Recreate only the native timing descriptor; the worker takes over
-      // playback immediately after loading, as on the original first load.
+    }
+    // A retained ThorVG scene can outlive the native timing descriptor. The
+    // source setters dereference that descriptor unconditionally, so recreate
+    // it independently of the scene instead of passing a null animation to
+    // lv_lottie_set_src_data() after an application releases its buffers.
+    if (lottie->anim == nullptr) {
+      if (ctx->exec_cb == nullptr) {
+        lv_unlock();
+        LV_LOG_ERROR("Lottie timing callback unavailable");
+        vTaskSuspend(nullptr);
+        return;
+      }
       lv_anim_t animation;
       lv_anim_init(&animation);
       lv_anim_set_exec_cb(&animation, ctx->exec_cb);
@@ -2451,6 +2568,7 @@ inline void lottie_render_task(void *param) {
       lv_unlock();
     }
     lottie_prepare_frame_cache(ctx);
+    __atomic_store_n(&ctx->published_frame, prepare_frame, __ATOMIC_RELEASE);
     ctx->prepared_frame_ready = true;
   } else {
     LV_LOG_WARN("Failed to render initial Lottie frame");
@@ -2471,6 +2589,8 @@ inline void lottie_render_task(void *param) {
   bool completed_frame_published = false;
   bool final_frame_committed = false;
   uint32_t phase_offset_ms = 0;
+  int64_t paused_at_us = 0;
+  bool first_publish_pending = true;
   ctx->start_time_us = esp_timer_get_time();
 
   uint32_t perf_frames = 0;
@@ -2496,11 +2616,35 @@ inline void lottie_render_task(void *param) {
       // new slot and publishes a complete replacement region.
       if (!lottie_wait_direct_frame_buffer(ctx, 100))
         continue;
-      lottie_release_direct_region(ctx);
-      lottie_apply_color_slot(ctx);
+      if (!lottie_release_direct_region(ctx)) {
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(16));
+        continue;
+      }
+      const bool color_applied = lottie_apply_color_slot(ctx);
+      if (color_applied && completed && ctx->prepared_frame_ready) {
+        // A finite scene sleeps after its last frame. Rasterize its retained
+        // phase privately, then let the ESPHome loop replace the canvas via
+        // the existing one-frame mailbox. A worker-side LVGL mutex cannot
+        // serialize against YAML actions running on that loop.
+        uint8_t *source = ctx->work_buffer != nullptr ? ctx->work_buffer : ctx->display_back_buffer;
+        if (source != nullptr && source != ctx->pixel_buffer) {
+          const int32_t retained = std::clamp(__atomic_load_n(&ctx->published_frame, __ATOMIC_ACQUIRE),
+                                             lottie_first_renderable_frame(ctx), lottie_last_renderable_frame(ctx));
+          const bool recolored = lottie_render_frame(ctx, retained, source) &&
+                                 lottie_request_native_publication(ctx, source, false, LottiePublicationKind::RETAIN);
+          if (!recolored) {
+            __atomic_store_n(&ctx->color_slot_pending, true, __ATOMIC_RELEASE);
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(16));
+            continue;
+          }
+        }
+      }
     }
+
     if (ctx->restart_requested) {
       ctx->start_time_us = esp_timer_get_time();
+      paused_at_us = 0;
+      first_publish_pending = true;
       perf_frames = perf_raster_frames = perf_publish_missed = 0;
       perf_render_us = perf_present_us = perf_raster_us = 0;
       perf_render_max_us = perf_present_max_us = perf_raster_max_us = 0;
@@ -2532,10 +2676,17 @@ inline void lottie_render_task(void *param) {
       __atomic_store_n(&ctx->snapshot_commit_completed, true, __ATOMIC_RELEASE);
     }
 
-    if (ctx->runtime_hidden && ctx->direct_region_active && lottie_wait_direct_frame_buffer(ctx, 100))
-      lottie_release_direct_region(ctx);
+    if (ctx->runtime_hidden && ctx->direct_region_active &&
+        (!lottie_wait_direct_frame_buffer(ctx, 100) || !lottie_release_direct_region(ctx))) {
+      // A paused finite renderer normally sleeps indefinitely. Keep retrying
+      // its retained slot instead of losing the only wake-up for cleanup.
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(16));
+      continue;
+    }
 
     if (!ctx->auto_start || (completed && (!lottie_uses_direct_scaled_argb(ctx) || completed_frame_published))) {
+      if (paused_at_us == 0)
+        paused_at_us = esp_timer_get_time();
       ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
       if (ctx->stop_requested)
         break;
@@ -2543,6 +2694,8 @@ inline void lottie_render_task(void *param) {
     }
 
     if (ctx->runtime_hidden) {
+      if (paused_at_us == 0)
+        paused_at_us = esp_timer_get_time();
       pending_frame = -1;
       pending_frame_ready = false;
       if (lottie_renders_to_display_back_buffer(ctx) && lottie_wait_direct_frame_buffer(ctx, 100))
@@ -2559,6 +2712,8 @@ inline void lottie_render_task(void *param) {
     const bool direct_async_pipeline =
         lottie_uses_direct_scaled_argb(ctx) || lottie_uses_direct_opaque_pipeline(ctx);
     if (direct_async_pipeline && lvgl_esphome_snapshot_is_active()) {
+      if (paused_at_us == 0)
+        paused_at_us = esp_timer_get_time();
       ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(16));
       continue;
     }
@@ -2571,22 +2726,29 @@ inline void lottie_render_task(void *param) {
 
     const bool direct_prepare_pipeline = direct_async_pipeline && ctx->work_buffer_alt != nullptr;
     const int64_t now_us = esp_timer_get_time();
-    const int64_t timeline_sample_us = now_us + (direct_prepare_pipeline ? LOTTIE_DIRECT_PIPELINE_LEAD_US : 0);
+    // Hidden preparation, a held touch, and a full-screen compositor are not
+    // visible animation time. Resume the same phase instead of sampling a
+    // wall clock that advanced while this producer could not present.
+    if (paused_at_us != 0) {
+      ctx->start_time_us += now_us - paused_at_us;
+      paused_at_us = 0;
+    }
+    if (first_publish_pending)
+      ctx->start_time_us = now_us;
+    const int64_t timeline_sample_us =
+        now_us + (direct_prepare_pipeline && !first_publish_pending ? LOTTIE_DIRECT_PIPELINE_LEAD_US : 0);
     const uint32_t elapsed_ms = static_cast<uint32_t>(
         std::max<int64_t>(0, timeline_sample_us - ctx->start_time_us) / 1000);
     uint32_t phase_ms = elapsed_ms;
     uint64_t timeline_ms = static_cast<uint64_t>(phase_offset_ms) + elapsed_ms;
-    uint64_t cycle_base_ms = 0;
     if (ctx->loop) {
       const uint64_t finite_duration_ms = static_cast<uint64_t>(ctx->duration_ms) * ctx->play_count;
       if (ctx->play_count != 0 && static_cast<uint64_t>(elapsed_ms) >= finite_duration_ms) {
         phase_ms = phase_offset_ms % ctx->duration_ms;
         timeline_ms = static_cast<uint64_t>(phase_offset_ms) + finite_duration_ms;
-        cycle_base_ms = timeline_ms - phase_ms;
         completed = true;
       } else {
         phase_ms = static_cast<uint32_t>(timeline_ms % ctx->duration_ms);
-        cycle_base_ms = timeline_ms - phase_ms;
       }
     } else if (elapsed_ms >= ctx->duration_ms) {
       phase_ms = ctx->duration_ms;
@@ -2758,7 +2920,7 @@ inline void lottie_render_task(void *param) {
             perf_present_max_us = present_us;
           previous_publish_us = present_end_us;
         }
-        last_frame = pending_frame;
+        frame = pending_frame;
         pending_frame = -1;
         pending_frame_ready = false;
         if (completed)
@@ -2780,6 +2942,17 @@ inline void lottie_render_task(void *param) {
         }
        }
       last_frame = frame;
+    }
+
+    if (last_frame >= lottie_first_renderable_frame(ctx)) {
+      __atomic_store_n(&ctx->published_frame, last_frame, __ATOMIC_RELEASE);
+      if (first_publish_pending) {
+        // The first render/background capture may be much slower than later
+        // frames. Start cadence when that frame is accepted, rather than
+        // skipping ahead by its setup cost on the following iteration.
+        ctx->start_time_us = esp_timer_get_time();
+        first_publish_pending = false;
+      }
     }
 
     // Publish completion only after the final frame has reached the
@@ -2860,12 +3033,12 @@ inline void lottie_render_task(void *param) {
     if (completed)
       continue;
 
-    const uint32_t frame_index = static_cast<uint32_t>(frame - ctx->start_frame);
-    uint32_t next_phase_ms = static_cast<uint32_t>(
-        (static_cast<uint64_t>(frame_index + 1) * ctx->duration_ms + total_frames - 1) / total_frames);
-    uint64_t target_timeline_ms = cycle_base_ms + next_phase_ms;
-    if (target_timeline_ms <= timeline_ms)
-      target_timeline_ms += ctx->duration_ms;
+    // Publication may finish an older pending frame after the clock has
+    // advanced. Pace against the sampled absolute timeline, not that frame:
+    // treating its past deadline as a cycle wrap can sleep for a whole cycle.
+    const uint64_t next_timeline_frame = timeline_ms * total_frames / ctx->duration_ms + 1U;
+    const uint64_t target_timeline_ms =
+        (next_timeline_frame * ctx->duration_ms + total_frames - 1U) / total_frames;
     const uint64_t target_elapsed_ms = target_timeline_ms - phase_offset_ms;
     const int64_t target_us = ctx->start_time_us + static_cast<int64_t>(target_elapsed_ms) * 1000 -
                               (direct_prepare_pipeline ? LOTTIE_DIRECT_PIPELINE_LEAD_US : 0);
@@ -2882,13 +3055,29 @@ inline void lottie_render_task(void *param) {
   // The compositor callback is the ownership boundary for the private render
   // buffer. Never suspend and let cleanup free it while PPA can still read it.
   lottie_wait_direct_frame_buffer(ctx, 0);
-  lottie_release_direct_region(ctx);
+  while (!lottie_release_direct_region(ctx))
+    vTaskDelay(std::max<TickType_t>(1, pdMS_TO_TICKS(16)));
   vTaskSuspend(nullptr);
 }
 
 // --------------------------------------------------------------------------
 // Free all PSRAM/internal-RAM resources for one Lottie widget.
 // --------------------------------------------------------------------------
+inline bool lottie_try_reap_task(LottieContext *ctx) {
+  if (ctx == nullptr || ctx->task_handle == nullptr)
+    return true;
+  TaskHandle_t task = ctx->task_handle;
+  if (task == xTaskGetCurrentTaskHandle() || eTaskGetState(task) != eSuspended)
+    return false;
+  for (BaseType_t core = 0; core < configNUMBER_OF_CORES; core++) {
+    if (xTaskGetCurrentTaskHandleForCore(core) == task)
+      return false;
+  }
+  vTaskDelete(task);
+  ctx->task_handle = nullptr;
+  return true;
+}
+
 inline bool lottie_stop_task(LottieContext *ctx) {
   if (ctx == nullptr || ctx->task_handle == nullptr) {
     return true;
@@ -2900,34 +3089,20 @@ inline bool lottie_stop_task(LottieContext *ctx) {
     return false;
   }
   for (uint32_t waited_ms = 0; waited_ms < 250; waited_ms += 5) {
-    eTaskState state = eTaskGetState(task);
-    if (state == eSuspended) {
-      bool running = false;
-      for (BaseType_t core = 0; core < configNUMBER_OF_CORES; core++) {
-        if (xTaskGetCurrentTaskHandleForCore(core) == task) {
-          running = true;
-          break;
-        }
-      }
-      if (running) {
-        vTaskDelay(pdMS_TO_TICKS(5));
-        continue;
-      }
-      vTaskDelete(task);
-      ctx->task_handle = nullptr;
+    if (lottie_try_reap_task(ctx))
       return true;
-    }
     vTaskDelay(pdMS_TO_TICKS(5));
   }
   LV_LOG_WARN("Lottie task did not stop in time; keeping resources allocated");
   return false;
 }
 
-inline void lottie_free_resources(LottieContext *ctx) {
-  if (!lottie_stop_task(ctx)) {
-    return;
-  }
-  lottie_release_direct_region(ctx);
+inline bool lottie_free_resources(LottieContext *ctx) {
+  if (ctx == nullptr)
+    return true;
+  ctx->resource_cleanup_pending = true;
+  if (!lottie_stop_task(ctx) || !lottie_release_direct_region(ctx))
+    return false;
   if (ctx->task_stack) {
     heap_caps_free(ctx->task_stack);
     ctx->task_stack = nullptr;
@@ -2960,15 +3135,13 @@ inline void lottie_free_resources(LottieContext *ctx) {
   }
   ctx->frame_cache_stride = 0;
   ctx->frame_cache_count = 0;
+  ctx->frame_cache_release_pending = false;
+  ctx->frame_cache_preserve_peak = false;
   ctx->stop_requested = false;
-  // A static Lottie task can suspend before it has rebound the LVGL
-  // animation callback (for example after a finite playback restart). Do not
-  // carry that half-loaded state into the next launch: the existing ThorVG
-  // scene is reusable, and the worker will bind its animation descriptor
-  // again through lv_lottie_set_src_data/file before rendering frame zero.
-  ctx->data_loaded = false;
-  ctx->exec_cb = nullptr;
-  ctx->anim_var = nullptr;
+  // Pixel/task resources have a shorter lifetime than the parsed scene and
+  // its captured timing. Keep those together: the native descriptor was
+  // deleted after parsing, and reloading an unchanged scene without one
+  // makes LVGL's source setter dereference a null animation.
   ctx->thorvg_target = nullptr;
   lottie_set_direct_frame_in_flight(ctx, false);
   ctx->direct_published_source = nullptr;
@@ -2985,6 +3158,8 @@ inline void lottie_free_resources(LottieContext *ctx) {
   ctx->work_buffer_alt_internal = false;
   ctx->display_back_buffer_internal = false;
   ctx->frame_cache_internal = false;
+  ctx->resource_cleanup_pending = false;
+  return true;
 }
 
 // --------------------------------------------------------------------------
@@ -2993,6 +3168,8 @@ inline void lottie_free_resources(LottieContext *ctx) {
 // because it triggers ThorVG rendering which needs the 64 KB stack.
 // --------------------------------------------------------------------------
 inline bool lottie_launch(LottieContext *ctx) {
+  if (ctx->resource_cleanup_pending || ctx->direct_region_active)
+    return false;
   // NOTE: Do NOT re-capture runtime_hidden here!
   // On re-loads the widget is already hidden (by lottie_screen_unload_start_cb),
   // so reading LV_OBJ_FLAG_HIDDEN would always return true, losing the real
@@ -3019,6 +3196,7 @@ inline bool lottie_launch(LottieContext *ctx) {
   }
   ctx->prepared_frame_ready = false;
   ctx->retained_frame = -1;
+  ctx->published_frame = -1;
   ctx->retained_coverage = 0;
   lottie_fill_display_buffer(ctx, ctx->pixel_buffer, display_bytes);
 
@@ -3189,74 +3367,28 @@ inline void lottie_screen_unload_start_cb(lv_event_t *e) {
 }
 
 inline void lottie_screen_unloaded_cb(lv_event_t *e) {
-  LottieContext *ctx = (LottieContext *) lv_event_get_user_data(e);
-
-  if (ctx->retain_on_unload) {
+  auto *ctx = static_cast<LottieContext *>(lv_event_get_user_data(e));
+  if (ctx->retain_on_unload)
     return;
-  }
 
-  // Now safe to free – screen is no longer visible
-  if (!lottie_stop_task(ctx)) {
-    return;
-  }
-  if (ctx->task_stack) {
-    heap_caps_free(ctx->task_stack);
-    ctx->task_stack = nullptr;
-  }
-  if (ctx->task_tcb) {
-    heap_caps_free(ctx->task_tcb);
-    ctx->task_tcb = nullptr;
-  }
-  if (ctx->pixel_buffer) {
-    lvgl_esphome_release_dma_image_buffer(ctx->pixel_buffer);
-    heap_caps_free(ctx->pixel_buffer);
-    ctx->pixel_buffer = nullptr;
-  }
-  if (ctx->work_buffer) {
-    heap_caps_free(ctx->work_buffer);
-    ctx->work_buffer = nullptr;
-  }
-  if (ctx->work_buffer_alt) {
-    heap_caps_free(ctx->work_buffer_alt);
-    ctx->work_buffer_alt = nullptr;
-  }
-  if (ctx->display_back_buffer) {
-    lvgl_esphome_release_dma_image_buffer(ctx->display_back_buffer);
-    heap_caps_free(ctx->display_back_buffer);
-    ctx->display_back_buffer = nullptr;
-  }
-  if (ctx->frame_cache) {
-    heap_caps_free(ctx->frame_cache);
-    ctx->frame_cache = nullptr;
-  }
-  ctx->frame_cache_stride = 0;
-  ctx->frame_cache_count = 0;
-  ctx->stop_requested = false;
-  ctx->data_loaded = false;
-  ctx->exec_cb = nullptr;
-  ctx->anim_var = nullptr;
-  ctx->thorvg_target = nullptr;
-  lottie_set_direct_frame_in_flight(ctx, false);
-  ctx->direct_region_active = false;
-  ctx->fast_radial_buffer_ptr[0] = nullptr;
-  ctx->fast_radial_buffer_ptr[1] = nullptr;
-  ctx->fast_radial_last_frame[0] = -1;
-  ctx->fast_radial_last_frame[1] = -1;
-
-  LV_LOG_INFO("Lottie FREED (%ux%u = %u KB %s buf + 64 KB stack) → free PSRAM: %u KB, free SRAM: %u KB",
-              (unsigned) ctx->width, (unsigned) ctx->height, (unsigned) (ctx->width * ctx->height * 4 / 1024),
-              ctx->pixel_buffer_internal ? "SRAM" : "PSRAM",
-              (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
-              (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
-  ctx->pixel_buffer_internal = false;
-  ctx->work_buffer_internal = false;
-  ctx->work_buffer_alt_internal = false;
-  ctx->display_back_buffer_internal = false;
-  ctx->frame_cache_internal = false;
+  // This event runs inside LVGL. The renderer may still need lv_lock() to
+  // leave its publication path, so request cleanup without waiting here.
+  // The main loop reaps it only after its callbacks and slot have retired.
+  ctx->resource_cleanup_pending = true;
+  ctx->stop_requested = true;
+  if (ctx->task_handle != nullptr)
+    xTaskNotifyGive(ctx->task_handle);
+  ::esphome_main_task_notify();
 }
 
 inline void lottie_screen_loaded_cb(lv_event_t *e) {
   LottieContext *ctx = (LottieContext *) lv_event_get_user_data(e);
+
+  if (ctx->resource_cleanup_pending) {
+    ctx->prepare_after_cleanup = !ctx->runtime_hidden || ctx->auto_start;
+    ::esphome_main_task_notify();
+    return;
+  }
   if (ctx->retain_on_unload && ctx->pixel_buffer != nullptr) {
     ctx->runtime_hidden = ctx->hidden_before_unload;
     if (!ctx->runtime_hidden) {
@@ -3292,11 +3424,13 @@ inline void lottie_restart(LottieContext *ctx) {
     }
     uint32_t phase_ms = 0;
     const int32_t total_frames = ctx->end_frame - ctx->start_frame;
+    const int32_t published_frame = __atomic_load_n(&ctx->published_frame, __ATOMIC_ACQUIRE);
     if (ctx->loop && ctx->play_count != 0 && ctx->duration_ms != 0 && total_frames > 0 &&
-        ctx->retained_frame >= lottie_first_renderable_frame(ctx)) {
+        published_frame >= lottie_first_renderable_frame(ctx)) {
       const int32_t frame_offset =
-          std::clamp<int32_t>(ctx->retained_frame - ctx->start_frame, int32_t{0}, total_frames - int32_t{1});
-      phase_ms = static_cast<uint32_t>(static_cast<uint64_t>(frame_offset) * ctx->duration_ms / total_frames);
+          std::clamp<int32_t>(published_frame - ctx->start_frame, int32_t{0}, total_frames - int32_t{1});
+      phase_ms = static_cast<uint32_t>((static_cast<uint64_t>(frame_offset) * ctx->duration_ms + total_frames - 1) /
+                                        total_frames);
     }
     __atomic_store_n(&ctx->restart_phase_ms, phase_ms, __ATOMIC_RELEASE);
     ctx->playback_completed = false;
@@ -3310,13 +3444,23 @@ inline void lottie_show(LottieContext *ctx, bool restart) {
   if (ctx == nullptr || ctx->obj == nullptr) {
     return;
   }
+  ctx->scene_unload_pending = false;
+  if (ctx->resource_cleanup_pending || ctx->stop_requested) {
+    // Preserve a show request that arrives while an earlier generation is
+    // still retiring. The main loop launches only after its slot is gone.
+    ctx->runtime_hidden = false;
+    ctx->auto_start = true;
+    ctx->prepare_after_cleanup = true;
+    ::esphome_main_task_notify();
+    return;
+  }
   if (restart) {
-    // A visible retained frame is a valid bridge into the restarted epoch.
-    // Hiding and immediately revealing the canvas invalidated its parent and
-    // exposed the widget's opaque black rectangle before the first direct PPA
-    // frame reached DSI. Only an object that was intentionally prepared while
-    // hidden needs the deferred first reveal.
-    ctx->reveal_after_restart = ctx->prepared_frame_ready && lv_obj_has_flag(ctx->obj, LV_OBJ_FLAG_HIDDEN);
+    // A prepared canvas is already a complete bridge frame. Reveal it before
+    // waking the direct producer: direct publication requires logical object
+    // visibility, so deferring reveal until publication deadlocks both sides.
+    // lottie_reveal_prepared_frame() suppresses native invalidation on this
+    // path and preserves the coherent snapshot until PPA replaces the region.
+    ctx->reveal_after_restart = false;
   }
   // Publish the new epoch before waking a paused producer. Otherwise it can
   // observe visibility with the previous page's clock and emit a catch-up frame.
@@ -3338,8 +3482,8 @@ inline void lottie_show(LottieContext *ctx, bool restart) {
       xTaskNotifyGive(ctx->task_handle);
     return;
   }
-  if (!ctx->reveal_after_restart)
-    lottie_reveal_prepared_frame(ctx);
+  lottie_reveal_prepared_frame(ctx);
+  ctx->reveal_after_restart = false;
   if (ctx->task_handle != nullptr) {
     xTaskNotifyGive(ctx->task_handle);
   }
@@ -3358,6 +3502,7 @@ inline void lottie_prepare(LottieContext *ctx) {
   ctx->runtime_hidden = true;
   ctx->auto_start = false;
   ctx->playback_completed = false;
+  ctx->scene_unload_pending = false;
   lv_obj_add_flag(ctx->obj, LV_OBJ_FLAG_HIDDEN);
 
   // A navigation handoff can time out while the direct-region worker is
@@ -3368,11 +3513,12 @@ inline void lottie_prepare(LottieContext *ctx) {
   // Complete that deferred stop before deciding whether a new worker is
   // needed. This path is bounded by lottie_stop_task() and is retried from
   // the presenter loop until the direct handoff is idle.
-  if (ctx->stop_requested) {
-    if (ctx->task_handle != nullptr && !lottie_stop_task(ctx)) {
+  if (ctx->stop_requested || ctx->resource_cleanup_pending) {
+    ctx->prepare_after_cleanup = true;
+    if (!lottie_free_resources(ctx)) {
       return;
     }
-    lottie_free_resources(ctx);
+    ctx->prepare_after_cleanup = false;
   }
   // A renderer that failed during scene setup or first-frame preparation
   // suspends itself while keeping the static task handle. Notifications do
@@ -3380,6 +3526,10 @@ inline void lottie_prepare(LottieContext *ctx) {
   // a warm context leaves the widget blank forever. Reclaim that failed task
   // and start a clean generation; the parsed scene is retained when valid.
   lottie_recover_stalled_prepare(ctx);
+  if (ctx->resource_cleanup_pending) {
+    ctx->prepare_after_cleanup = true;
+    return;
+  }
   if (ctx->pixel_buffer == nullptr) {
     lottie_launch(ctx);
   }
@@ -3411,14 +3561,12 @@ inline bool lottie_recover_stalled_prepare(LottieContext *ctx) {
   // FreeRTOS to delete an already-deleted task.
   if (task_gone)
     ctx->task_handle = nullptr;
-  if (!lottie_stop_task(ctx))
-    return false;
-  lottie_free_resources(ctx);
-  return true;
+  return lottie_free_resources(ctx);
 }
 
 inline bool lottie_is_ready(const LottieContext *ctx) {
-  if (ctx == nullptr || ctx->obj == nullptr || ctx->pixel_buffer == nullptr || !ctx->prepared_frame_ready) {
+  if (ctx == nullptr || ctx->obj == nullptr || ctx->pixel_buffer == nullptr || !ctx->prepared_frame_ready ||
+      ctx->stop_requested || ctx->resource_cleanup_pending) {
     return false;
   }
   return true;
@@ -3434,13 +3582,22 @@ inline bool lottie_release_completed_frame_cache(LottieContext *ctx, bool preser
   if (ctx == nullptr || !ctx->playback_completed || ctx->frame_cache == nullptr) {
     return false;
   }
+  ctx->frame_cache_release_pending = true;
+  ctx->frame_cache_preserve_peak |= preserve_peak_coverage;
+  ctx->frame_cache_retry_at_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000) + 16U;
+  preserve_peak_coverage = ctx->frame_cache_preserve_peak;
 
   // Cached frames are submitted to the asynchronous direct-region worker.
   // Drain that queue before taking ownership of the final slot; otherwise a
   // queued PPA read can outlive frame_cache and the following normal LVGL
   // refresh redraws a blank/stale canvas over the completed trace.
   if (!lvgl_esphome_direct_regions_pause(true, 200)) {
+    lvgl_esphome_direct_regions_pause(false, 0);
     ESP_LOGW(LOTTIE_PERF_TAG, "final frame handoff: direct-region barrier timed out");
+    return false;
+  }
+  if (!lottie_release_direct_region(ctx)) {
+    lvgl_esphome_direct_regions_pause(false, 0);
     return false;
   }
 
@@ -3481,8 +3638,6 @@ inline bool lottie_release_completed_frame_cache(LottieContext *ctx, bool preser
     const uint8_t *final_frame = ctx->frame_cache + ctx->frame_cache_stride * static_cast<size_t>(retained_index);
     const size_t display_bytes = lottie_display_buffer_bytes(ctx);
     lv_display_t *display = nullptr;
-    lv_area_t direct_coords{};
-    bool release_direct_region = false;
     lv_lock();
     lvgl_esphome_release_dma_image_buffer(ctx->pixel_buffer);
     memcpy(ctx->pixel_buffer, final_frame, display_bytes);
@@ -3502,18 +3657,12 @@ inline bool lottie_release_completed_frame_cache(LottieContext *ctx, bool preser
       }
       lv_obj_invalidate(ctx->obj);
       display = lv_obj_get_display(ctx->obj);
-      lv_obj_get_coords(ctx->obj, &direct_coords);
-      release_direct_region = lv_area_get_width(&direct_coords) == static_cast<int32_t>(ctx->width) &&
-                              lv_area_get_height(&direct_coords) == static_cast<int32_t>(ctx->height);
     }
     lv_unlock();
 
     // Cached frames are presented through the direct-region path. Commit the
     // canvas-owned final frame before releasing that cache so the wordmark
     // fade cannot redraw the stale pre-cache canvas over the completed trace.
-    if (release_direct_region) {
-      lvgl_esphome_direct_blit_rgb888_release(direct_coords.x1, direct_coords.y1, ctx->width, ctx->height);
-    }
     if (display != nullptr && !lvgl_esphome_snapshot_is_active()) {
       if (!lvgl_esphome_direct_handoff_to_lvgl(100)) {
         ESP_LOGW(LOTTIE_PERF_TAG, "final frame handoff: unable to seed LVGL direct buffers");
@@ -3529,6 +3678,8 @@ inline bool lottie_release_completed_frame_cache(LottieContext *ctx, bool preser
   ctx->frame_cache_stride = 0;
   ctx->frame_cache_count = 0;
   ctx->frame_cache_internal = false;
+  ctx->frame_cache_release_pending = false;
+  ctx->frame_cache_preserve_peak = false;
   lvgl_esphome_direct_regions_pause(false, 0);
   return true;
 }
@@ -3570,6 +3721,7 @@ inline void lottie_hide(LottieContext *ctx) {
   ctx->runtime_hidden = true;
   ctx->auto_start = false;
   ctx->reveal_after_restart = false;
+  ctx->prepare_after_cleanup = false;
   lv_obj_add_flag(ctx->obj, LV_OBJ_FLAG_HIDDEN);
   lv_obj_invalidate(ctx->obj);
   lottie_free_resources(ctx);
@@ -3578,7 +3730,11 @@ inline void lottie_hide(LottieContext *ctx) {
 // Hidden mutually exclusive scenes must not retain every parsed JSON tree,
 // RLE span cache and compositor surface. Call only after the worker stopped.
 inline void lottie_release_scene(LottieContext *ctx) {
-  if (ctx == nullptr || ctx->obj == nullptr || ctx->task_handle != nullptr)
+  if (ctx == nullptr)
+    return;
+  ctx->scene_unload_pending = true;
+  if (ctx->obj == nullptr || ctx->task_handle != nullptr || ctx->resource_cleanup_pending ||
+      ctx->direct_region_active)
     return;
   auto *lottie = reinterpret_cast<lv_lottie_t *>(ctx->obj);
   lv_lock();
@@ -3592,6 +3748,10 @@ inline void lottie_release_scene(LottieContext *ctx) {
   ctx->data_loaded = false;
   ctx->prepared_frame_ready = false;
   ctx->thorvg_target = nullptr;
+  // The override belongs to the discarded ThorVG scene, while the selected
+  // RGB belongs to the widget. Apply it again after the next scene parse.
+  __atomic_store_n(&ctx->color_slot_pending, ctx->color_slot != nullptr, __ATOMIC_RELEASE);
+  ctx->scene_unload_pending = false;
   lv_unlock();
 }
 
@@ -3611,10 +3771,39 @@ inline void lottie_release_resources_for_navigation(LottieContext *ctx) {
   ctx->runtime_hidden = true;
   ctx->auto_start = false;
   ctx->reveal_after_restart = false;
+  ctx->prepare_after_cleanup = false;
   lv_obj_add_flag(ctx->obj, LV_OBJ_FLAG_HIDDEN);
   if (ctx->task_handle != nullptr)
     xTaskNotifyGive(ctx->task_handle);
   lottie_free_resources(ctx);
+}
+
+// Run on the ESPHome/LVGL loop, outside lv_lock(), before visibility early
+// returns. A stopped non-selected weather scene otherwise has no later caller
+// to finish a timed-out cleanup. The static widget pool keeps these contexts
+// registered; never free one while a compositor callback can still refer to it.
+inline void lottie_process_deferred_cleanup() {
+  for (auto *ctx = lottie_contexts; ctx != nullptr; ctx = ctx->next_context) {
+    if (ctx->resource_cleanup_pending) {
+      // The bounded foreground stop attempt already requested exit. Do not
+      // repeat its 250 ms wait from every loop; reap only a completed worker.
+      if (!lottie_try_reap_task(ctx) || !lottie_free_resources(ctx))
+        continue;
+    }
+    if (ctx->frame_cache_release_pending) {
+      const uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+      if (static_cast<int32_t>(now_ms - ctx->frame_cache_retry_at_ms) >= 0)
+        lottie_release_completed_frame_cache(ctx, ctx->frame_cache_preserve_peak);
+    }
+    if (ctx->scene_unload_pending && ctx->obj != nullptr && lv_obj_is_valid(ctx->obj))
+      lottie_release_scene(ctx);
+    if (ctx->prepare_after_cleanup && !ctx->resource_cleanup_pending && !ctx->scene_unload_pending &&
+        ctx->task_handle == nullptr && ctx->pixel_buffer == nullptr && ctx->obj != nullptr &&
+        lv_obj_is_valid(ctx->obj)) {
+      ctx->prepare_after_cleanup = false;
+      lottie_launch(ctx);
+    }
+  }
 }
 
 // --------------------------------------------------------------------------

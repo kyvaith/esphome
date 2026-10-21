@@ -561,7 +561,7 @@ static void lv_draw_img_ppa_core(lv_draw_task_t *t, const lv_draw_image_dsc_t *d
   cfg.out.blend_cm = lv_color_format_to_ppa_blend(dest_cf);
 
   cfg.mode = PPA_TRANS_MODE_BLOCKING;
-  cfg.user_data = u;
+  cfg.user_data = NULL;
 
   const uint32_t pixel_count = block_w * block_h;
   const int64_t start_us = pixel_count >= 100000U ? esp_timer_get_time() : 0;
@@ -890,7 +890,7 @@ void lv_draw_ppa_img_srm(lv_draw_task_t *t, const lv_draw_image_dsc_t *dsc, cons
   cfg.byte_swap = false;
   cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
   cfg.mode = PPA_TRANS_MODE_BLOCKING;
-  cfg.user_data = u;
+  cfg.user_data = NULL;
 
   s_ppa_img_srm_tasks++;
   if (pixel_count >= 100000U) {
@@ -1311,7 +1311,7 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t *t, const lv_draw_image_dsc_t *dsc, c
   cfg.byte_swap = false;
   cfg.alpha_update_mode = PPA_ALPHA_NO_CHANGE;
   cfg.mode = PPA_TRANS_MODE_BLOCKING;
-  cfg.user_data = u;
+  cfg.user_data = NULL;
 
   esp_err_t ret = ppa_do_scale_rotate_mirror(u->srm_client, &cfg);
   if (ret != ESP_OK) {

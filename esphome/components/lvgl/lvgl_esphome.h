@@ -104,6 +104,8 @@ extern "C" bool lvgl_esphome_ppa_crop_rgb888_to_rgb565(const lv_image_dsc_t *sou
                                                         int width, int height, uint8_t *target,
                                                         size_t target_capacity);
 extern "C" void lvgl_esphome_direct_blit_rgb888_release(int x, int y, int width, int height);
+// Acknowledges removal (including an already absent region); false means busy.
+extern "C" bool lvgl_esphome_direct_blit_rgb888_try_release(int x, int y, int width, int height);
 extern "C" bool lvgl_esphome_direct_regions_pause(bool paused, uint32_t timeout_ms);
 extern "C" uint32_t lvgl_esphome_get_direct_region_base_generation();
 extern "C" void lvgl_esphome_synchronize_direct_framebuffer_area(int x, int y, int width, int height);
@@ -113,6 +115,7 @@ extern "C" bool lvgl_esphome_direct_blit_xrgb8888(const uint8_t *src, int src_st
 extern "C" bool lvgl_esphome_direct_blit_xrgb8888_coherent(const uint8_t *src, int src_stride, int x, int y, int width,
                                                            int height);
 extern "C" bool lvgl_esphome_direct_handoff_to_lvgl(uint32_t timeout_ms);
+extern "C" bool lvgl_esphome_direct_handoff_to_lvgl_and_resume(uint32_t timeout_ms);
 extern "C" bool lvgl_esphome_copy_argb8888(const uint8_t *src, uint8_t *dst, int width, int height);
 extern "C" bool lvgl_esphome_scale_argb8888(const uint8_t *src, int src_width, int src_height, uint8_t *dst,
                                               int dst_width, int dst_height);
@@ -120,6 +123,9 @@ extern "C" bool lvgl_esphome_scale_argb8888_dma_chain(const uint8_t *src, int sr
                                                         uint8_t *dst, int dst_width, int dst_height);
 extern "C" void lvgl_esphome_release_dma_image_buffer(const void *buffer);
 extern "C" bool lvgl_esphome_copy_xrgb8888_to_rgb888(const uint8_t *src, uint8_t *dst, int width, int height);
+// The caller owns a packed RGB888 destination with at least dst_capacity bytes.
+extern "C" bool lvgl_esphome_copy_xrgb8888_to_rgb888_with_capacity(const uint8_t *src, uint8_t *dst, int width,
+                                                                int height, size_t dst_capacity);
 extern "C" bool lvgl_esphome_direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, int y, int width, int height);
 extern "C" bool lvgl_esphome_compose_argb8888_over_rgb888(const uint8_t *background, int background_stride,
                                                           const uint8_t *foreground, int foreground_stride,
@@ -128,6 +134,9 @@ extern "C" bool lvgl_esphome_compose_argb8888_over_rgb888(const uint8_t *backgro
                                                           int width, int height);
 extern "C" bool lvgl_esphome_snapshot_cache_page(lv_obj_t *obj);
 extern "C" bool lvgl_esphome_snapshot_cache_compressed_page(lv_obj_t *obj);
+// Caller owns and drains the supplied external RGB888 surface through capture,
+// synchronous compression and restoration. The cache retains only the JPEG.
+extern "C" bool lvgl_esphome_snapshot_cache_compressed_page_to(lv_obj_t *obj, lv_draw_buf_t *buffer);
 extern "C" bool lvgl_esphome_snapshot_app_reserve_work_buffer(lv_obj_t *obj);
 extern "C" bool lvgl_esphome_snapshot_app_release_work_buffer(void);
 extern "C" bool lvgl_esphome_snapshot_cache_raw_page(lv_obj_t *obj);
@@ -395,15 +404,18 @@ class LvglComponent : public PollingComponent {
 
   /** Temporarily hand the display framebuffers to an external renderer.
    *
-   * LVGL input and animation timers continue running, but its display refresh
-   * timer remains dormant until the session ends. The display implementation
-   * owns framebuffer synchronization and rejects unsupported sessions.
+   * LVGL input and animation timers continue running, but native rendering is
+   * excluded, including forced refreshes, until the session ends. The display
+   * owns framebuffer synchronization and rejects unsupported sessions. A failed
+   * end retains ownership and is retried before native work in loop().
    */
   bool begin_frame_buffer_presentation(uint32_t timeout_ms = 50);
   const char *frame_buffer_presentation_failure_reason() const;
   bool get_presentation_active_frame(display::FrameBufferView *view, BufferReader reader = BufferReader::CPU);
   bool acquire_presentation_frame(display::FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
                                   uint32_t timeout_ms = 50);
+  bool acquire_presentation_frame(display::FrameBufferLease *lease, BufferWriter writer, uint32_t timeout_ms,
+                                  uint32_t expected_generation);
   bool present_presentation_frame(display::FrameBufferLease *lease, uint32_t timeout_ms = 50,
                                   bool wait_for_active = true);
   bool release_presentation_frame(display::FrameBufferLease *lease);
@@ -411,6 +423,10 @@ class LvglComponent : public PollingComponent {
   void release_reserved_presentation_frame(const uint8_t *frame);
   bool copy_presentation_frame_rgb888(const uint8_t *source, uint8_t *target, int width, int height);
   bool end_frame_buffer_presentation(uint32_t timeout_ms = 50);
+  bool end_frame_buffer_presentation(uint32_t timeout_ms, uint32_t expected_generation);
+  uint32_t get_frame_buffer_presentation_generation() const {
+    return this->frame_buffer_presentation_generation_.load(std::memory_order_acquire);
+  }
   bool is_frame_buffer_presentation_active() const {
     return this->frame_buffer_presentation_active_.load(std::memory_order_acquire);
   }
@@ -514,7 +530,7 @@ class LvglComponent : public PollingComponent {
   void reset_direct_frame_trace();
   void log_direct_frame_trace(const char *label);
   void log_direct_buffer_state(const char *label);
-  bool realign_direct_buffer_after_manual_present(bool synchronize = true);
+  bool realign_direct_buffer_after_manual_present(bool synchronize = true, bool *full_pool_seeded = nullptr);
   void synchronize_direct_framebuffer_area(int x, int y, int width, int height);
   void synchronize_direct_framebuffer_rows(int y, int height);
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
@@ -616,6 +632,7 @@ class LvglComponent : public PollingComponent {
       int x, int y, uint8_t *scale_target, size_t scale_target_size, int scale_target_width, int scale_target_height,
       const uint8_t *background, int background_stride, LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
   void direct_blit_rgb888_release(int x, int y, int width, int height);
+  bool direct_blit_rgb888_try_release(int x, int y, int width, int height);
   bool direct_blit_rgb888_region_active(int x, int y, int width, int height);
   bool direct_regions_pause_start();
   bool direct_regions_pause_wait(uint32_t timeout_ms);
@@ -623,11 +640,15 @@ class LvglComponent : public PollingComponent {
   uint32_t get_direct_region_base_generation() const;
   bool direct_blit_xrgb8888(const uint8_t *src, int src_stride, int x, int y, int width, int height);
   bool direct_blit_xrgb8888_coherent(const uint8_t *src, int src_stride, int x, int y, int width, int height);
-  bool direct_handoff_to_lvgl(uint32_t timeout_ms);
+  // Call from the LVGL owner task. Adoption consumes exactly one existing
+  // pause even on failure; a nested pause is released without seeding. The
+  // default leaves a caller-owned pause in place, as before.
+  bool direct_handoff_to_lvgl(uint32_t timeout_ms, bool release_existing_pause = false);
   bool copy_argb8888(const uint8_t *src, uint8_t *dst, int width, int height);
   bool scale_argb8888(const uint8_t *src, int src_width, int src_height, uint8_t *dst, int dst_width, int dst_height,
                       bool keep_dma_owned = false);
   bool copy_xrgb8888_to_rgb888(const uint8_t *src, uint8_t *dst, int width, int height);
+  bool copy_xrgb8888_to_rgb888(const uint8_t *src, uint8_t *dst, int width, int height, size_t dst_capacity);
   bool direct_capture_rgb888(uint8_t *dst, int dst_stride, int x, int y, int width, int height);
   bool render_area_rgb888(lv_obj_t *root, uint8_t *dst, int dst_stride, int x, int y, int width, int height);
   bool render_display_area_rgb888(lv_display_t *display, uint8_t *dst, int dst_stride, int x, int y, int width,
@@ -768,6 +789,7 @@ class LvglComponent : public PollingComponent {
   void draw_start_() const { this->draw_start_callback_->trigger(); }
 
   void write_random_();
+  bool direct_blit_rgb888_release_(int x, int y, int width, int height, uint32_t timeout_ms);
   bool draw_buffer_(const lv_area_t *area, lv_color_data *ptr);
   void sync_direct_framebuffer_area_(const lv_area_t *area, uint8_t *color_p);
   bool sync_direct_other_buffer_(const lv_area_t *area, uint8_t *color_p, bool sync_source = true);
@@ -885,6 +907,10 @@ class LvglComponent : public PollingComponent {
   LvglNavigation *navigation_{};
   bool big_endian_{};
   std::atomic<bool> frame_buffer_presentation_active_{false};
+  std::atomic<bool> frame_buffer_presentation_end_pending_{false};
+  std::atomic<uint32_t> frame_buffer_presentation_generation_{0};
+  std::atomic<uint32_t> frame_buffer_presentation_completed_generation_{0};
+  lv_draw_buf_t *frame_buffer_presentation_draw_buf_{};
   enum class FrameBufferPresentationFailure : uint8_t {
     NONE,
     COMPONENT_UNAVAILABLE,

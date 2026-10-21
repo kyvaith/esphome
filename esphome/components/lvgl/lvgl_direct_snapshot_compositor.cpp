@@ -63,6 +63,8 @@ bool LvglDirectSnapshotCompositor::prepare_home(int page_index) {
 }
 
 bool LvglDirectSnapshotCompositor::prepare_applications(const std::vector<LvglApplication *> &applications) {
+  if (this->use_display_buffers_for_preparation_)
+    return this->prepare_applications_in_display_buffer_(applications);
   bool prepared = true;
   bool needs_black_transition = false;
   for (auto *application : applications) {
@@ -83,6 +85,54 @@ bool LvglDirectSnapshotCompositor::prepare_applications(const std::vector<LvglAp
     this->release_external_application_transition_buffer_();
   }
   return prepared;
+}
+
+bool LvglDirectSnapshotCompositor::prepare_applications_in_display_buffer_(
+    const std::vector<LvglApplication *> &applications) {
+  if (this->parent_ == nullptr || this->home_active_ || this->application_active_ ||
+      lvgl_esphome_snapshot_is_active() || this->parent_->is_frame_buffer_presentation_active())
+    return false;
+
+  // One existing DSI buffer is temporary capture storage. The exclusive
+  // session withholds LVGL's draw target and drains regional producers, so
+  // neither CPU refresh nor another direct writer can touch the borrowed frame.
+  lv_lock();
+  lvgl_esphome_snapshot_app_release_work_buffer();
+  if (!this->parent_->begin_frame_buffer_presentation(150)) {
+    lv_unlock();
+    return false;
+  }
+  const uint32_t generation = this->parent_->get_frame_buffer_presentation_generation();
+  display::FrameBufferLease lease{};
+  bool prepared = this->parent_->acquire_presentation_frame(&lease, BufferWriter::CPU, 120, generation);
+  lv_draw_buf_t view{};
+  if (prepared) {
+    prepared = lease.bitness == display::COLOR_BITNESS_888 && lease.width == this->parent_->get_width() &&
+               lease.height == this->parent_->get_height() && lease.stride == lease.width * 3U &&
+               lease.size >= lease.stride * lease.height &&
+               lv_draw_buf_init(&view, lease.width, lease.height, LV_COLOR_FORMAT_RGB888, lease.stride, lease.data,
+                                lease.size) == LV_RESULT_OK;
+  }
+  if (prepared) {
+    for (auto *application : applications) {
+      if (application == nullptr || application->uses_black_open_transition_snapshot())
+        continue;  // Black sources are filled lazily by the opening transition.
+      auto *view_root = application->get_view();
+      if (view_root != nullptr)
+        prepared = lvgl_esphome_snapshot_cache_compressed_page_to(view_root, &view) && prepared;
+    }
+  }
+  if (lease)
+    prepared = this->parent_->release_presentation_frame(&lease) && prepared;
+  // The whole pool stays exclusively owned after returning the scratch lease.
+  // End first seeds every native buffer from actual scanout, even if capture or
+  // JPEG encoding failed. A failed end remains owned by the generic manager
+  // and is retried before any native work, without a compositor cleanup state.
+  const bool released = this->parent_->end_frame_buffer_presentation(150, generation);
+  lv_unlock();
+  if (!released)
+    ESP_LOGW(TAG, "Application preview preparation retained framebuffer session for coherent handoff");
+  return prepared && released;
 }
 
 bool LvglDirectSnapshotCompositor::prime_home(int page_index) {
@@ -531,6 +581,11 @@ void LvglDirectSnapshotCompositor::complete_direct_application_() {
   auto *application = this->application_;
   const int home_index = this->application_home_index_;
   const bool opening = this->direct_application_phase_ == DirectApplicationPhase::OPENING;
+  // The animation worker has retired before this completion runs. Return its
+  // source lease before lifecycle callbacks can refresh native LVGL or start
+  // another framebuffer owner. Keep the final frame and region pause held
+  // until the destination view has been prepared below.
+  this->release_external_application_transition_buffer_();
   if (this->navigation_ != nullptr) {
     this->navigation_->prepare_application_transition(application, opening, !opening);
     if (!opening)
@@ -542,12 +597,6 @@ void LvglDirectSnapshotCompositor::complete_direct_application_() {
 
   if (this->navigation_ != nullptr)
     this->navigation_->complete_application_transition(application, opening, !opening);
-  // The transition source is only needed while the animation is running. It
-  // is a real DSI framebuffer, so retaining its lease would permanently
-  // remove one of the three scanout buffers from the normal LVGL pool. That
-  // leaves later native refreshes with no idle target and causes frame-boundary
-  // timeouts after a few application transitions.
-  this->release_external_application_transition_buffer_();
   this->reset_direct_application_();
   if (!opening && home_index >= 0) {
     if (!lvgl_esphome_snapshot_tile_buffers_ready()) {

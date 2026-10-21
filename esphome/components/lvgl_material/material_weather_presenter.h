@@ -81,6 +81,7 @@ class MaterialWeatherPresenter : public Component, public lvgl::DirectSceneContr
   void finish_interaction_release_();
   void sync_interaction_layer_();
   void request_snapshot_refresh_();
+  bool refresh_animation_snapshot_(bool force_widget_render = false);
 
   lv_obj_t *root_{nullptr};
   lv_obj_t *temperature_label_{nullptr};
@@ -124,6 +125,7 @@ class MaterialWeatherPresenter : public Component, public lvgl::DirectSceneContr
   uint32_t snapshot_refresh_delay_ms_{120};
   lvgl::LottieContext *interaction_context_{nullptr};
   uint32_t last_visibility_check_{0};
+  uint32_t color_frame_revision_{0};
   CallbackManager<void()> animation_complete_callbacks_;
 };
 
