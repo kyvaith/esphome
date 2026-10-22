@@ -2899,3 +2899,7 @@ e1077748bee958f238dee33213ba1e01662b4efe,2026-10-22T01:11:09-03:00,[api][cover] 
 28013a60e138462463681f0ef2d34b041e46e376,2026-10-21T19:19:35-10:00,Bump aioesphomeapi from 46.19.0 to 46.20.0 (#21362),repository,1
 ddcc5874ed5db795f20002289358dbfaae67c54c,2026-10-21T23:17:59-07:00,[api] Let a media_player ask for a constant bitrate (#19962),api;media_player;speaker;speaker_source;tests:speaker_source,11
 f7dc2ecb51efe5c28298389ccc2de763d452e1af,2026-10-22T09:02:25+02:00,[wifi] [ethernet] Bridge the WISP access point to an ethernet upstream (#7147),ethernet;tests:ethernet;tests:unit_tests;wifi,7
+18348b87946b7b3125fb11a68da1312313327980,2026-10-22T10:14:37+03:00,[vnc] Add VNC client component (#20623),repository;tests:integration;tests:vnc;vnc,23
+619283d74adc8ba59be88d674fb4438b01708204,2026-10-22T17:26:30+10:00,[mipi_spi] Run the T-Display S3 Pro panel at 40 MHz (#21370),mipi_spi,1
+491f98f982eb9e205046a4175f7972073451de2e,2026-10-22T07:43:14Z,Bump aioesphomeapi from 46.20.0 to 46.21.0 (#21371),repository,1
+7dace44d61e73a05f71df657bbf18d82a3d45890,2026-10-22T03:48:28-05:00,[api] Add optional user-defined action variables with defaults (#18882),api;core;tests:api;tests:integration,19
