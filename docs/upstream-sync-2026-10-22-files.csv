@@ -1,0 +1,424 @@
+original_status,path,subsystem,baseline_blob,fork_blob,upstream_blob,upstream_changed_same_path,integration_policy
+M,.gitignore,repository,de3e4fa68e9c473a9d18b91547653221ea6252e7,af383ccdcb5e692c042e76d732aa4406855665b3,82b00286c712b0a72ec7a61e1a8a4b297aecfd38,True,combine downstream additions with current official policy
+M,CODEOWNERS,repository,fe09bd96cfaf832774dcf23a8b7f6f0872095c9b,2ee355aeb666d509b2784a8f9663d4e96479f1e5,a792cc6984cb1249aa4dbcdcf2401ff111036d42,True,combine downstream additions with current official policy
+M,esphome/components/api/client.py,api,7f07146dba8af17bebeda439ac09a40e78203fbf,98edfef03865fc6ae8fd1e335553fd3ac31bc8d0,5e1c88b2ca380a3717a60e0df2bb8dae34f4494d,True,subsumed: adopt current official implementation
+A,esphome/components/artwork_image/__init__.py,artwork_image,,f85234f44740ab5629a6f4c5f09a62d5a69373ed,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/artwork_image/artwork_image.cpp,artwork_image,,0d81519eac2f6ee3fd6a11817f020cb4d6c0d86f,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/artwork_image/artwork_image.h,artwork_image,,b5b0f7fdae49b97b1350898b5377a912a79b3643,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/artwork_image/artwork_url.h,artwork_image,,f351e562a4650632f3cc005d63f3bb96844927b0,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/artwork_image/bmp_image.cpp,artwork_image,,d6c244948de5b5c55e202b32cb3a46dc3223f397,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/artwork_image/bmp_image.h,artwork_image,,731b12b12683d850bfaf5be0a03db3cd47b497e2,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/artwork_image/image_decoder.cpp,artwork_image,,e034234b0351a85cad8a0f19aeadf16ebc4e9423,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/artwork_image/image_decoder.h,artwork_image,,550c245bdb16230a8bc7759da11bbc8685006ae4,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/artwork_image/jpeg_image.cpp,artwork_image,,b4df0a27f47361378cade8d7441c1baddbc11ff3,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/artwork_image/jpeg_image.h,artwork_image,,4447c4b13969bffc694ded8b20c7283b3984cfd8,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/CMakeLists.txt,artwork_image,,1adf49bfde825dc9db34e62db5058eeb2b23f3ca,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/LICENSE.md,artwork_image,,9bdbe5d77473276ddc141a1aa6b8612e9960d972,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/README.ijg,artwork_image,,830b50ba4b26f9491d332cd584ed36c0a0312093,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/cderror.h,artwork_image,,cd3e80646ff0661416f397203aabd02150676522,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/cdjpeg.h,artwork_image,,dbe54a0922e8057538f5afaa2762620293eb599a,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/cmyk.h,artwork_image,,4127b14d4eda963aec3e186c88cdb49f598ad6d2,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jaricom.c,artwork_image,,215640cc446404847d2d2f50604d30d3a27dadc7,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jccolext.c,artwork_image,,8eba36c4dffed0fceb115835b2835055cafa91f3,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jccolor.c,artwork_image,,c19f6ff4e34c8113b1588d7974eb0d8be6452060,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jchuff.h,artwork_image,,21f17b89b098742f891c431b77b7673e55ec697c,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jcmaster.h,artwork_image,,3b13289b691574b1865265c49f590cca37cbcd40,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jcomapi.c,artwork_image,,84f37e172ecee6c5b60e87cc43b0a72acaa22811,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jconfig.h,artwork_image,,6eb73c5b1e6e93052b3f8cc08201a3912e4e8c58,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jconfigint.h,artwork_image,,2658683202807b48b5bd4c1d7d4f520ca0599626,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdapimin.c,artwork_image,,f2419f8adb6555097836576732faee5b923318fe,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdapistd.c,artwork_image,,813e21268e86369c060953c66cc4ca07c4d14226,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdarith.c,artwork_image,,21575e80c722aea6628f4b9332e4b28e6770c3c8,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdatadst.c,artwork_image,,529f93b490458d35f0b9ae43b8e3a701cc771c13,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdatasrc.c,artwork_image,,dc135f43a470cbf93c6373390ef42a9c0324b4a7,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdcoefct.c,artwork_image,,194d5a5cb7b909692b9654e14e4dd9a7b84dbba5,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdcoefct.h,artwork_image,,bbe9e970515c3ab7dfa2b42a36c160e87007319d,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdcol565.c,artwork_image,,2172d98fdaa49f006122d1083771df70a539d426,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdcolext.c,artwork_image,,f22e29d7224e538252935a096de7e55a1df13ab4,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdcolor.c,artwork_image,,aecbd9dcd36ac05d28bce7330ef02cd26d79de63,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdct.h,artwork_image,,0411a79bc0b9a86294b0dd75ea27b878e2d09e74,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jddctmgr.c,artwork_image,,0bd8c2b591de85e77068ae291319815a69ba28d3,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jddiffct.c,artwork_image,,0a1ec5a9a83333dd9e0a12e0ce56416b7d0bcba3,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdhuff.c,artwork_image,,cd8c0847a22e1f1dcf4e0ec44e3e3dd859318371,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdhuff.h,artwork_image,,3eee002c020a9d3641bfce08123e17aaa87cefdf,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdicc.c,artwork_image,,50aa9a967677761b5c58aa1bc4861e0314415fe0,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdinput.c,artwork_image,,33e3a820fd28d7caed00b2c2282d78c6a2a07c6a,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdlhuff.c,artwork_image,,9964830dba07e7792b2d9faf26d70cb9bdf3880d,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdlossls.c,artwork_image,,520755adc3c008224bf5fd600802e211c8cef2db,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdmainct.c,artwork_image,,fc97073e3d80c431640bf816e0a22909dea7b9d0,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdmainct.h,artwork_image,,914ad11f694eb0cf3987c805a525f77fbd811bc9,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdmarker.c,artwork_image,,f918ee4db522e5663531556e33acd6b6350b46a1,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdmaster.c,artwork_image,,4085c2291864aba4c564b9f9751bd7988b4e90dc,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdmaster.h,artwork_image,,76897e2820f82b5812cb34ceb4bd7f458dc69653,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdmerge.c,artwork_image,,49f2006fc02abae19e4c57afb91d6e2d934cb0a7,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdmerge.h,artwork_image,,73cbd605495a2fafde6d023a40a65b182a34eebc,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdmrg565.c,artwork_image,,0c719b912ce642a4c1d1b8f34fbe371c09c961f4,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdmrgext.c,artwork_image,,8139e0a3ed65a94a6c9dbf026aa292694ea969e4,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdphuff.c,artwork_image,,bf97333a34c0fdd947947fd114461a21762699ca,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdpostct.c,artwork_image,,9bc6210d17e1312db4d15a8f0701e3b720bd6123,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdsample.c,artwork_image,,022471dc37eab76817d4d670c9656641c3dd05e8,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdsample.h,artwork_image,,a8a92980940278937287c612269c50f4f163e32c,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jdtrans.c,artwork_image,,719813f676728b95ac5f739e03791d1a874e80c2,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jerror.c,artwork_image,,2133244f8aed306cdd14aa5e77112ce730ad9637,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jerror.h,artwork_image,,71ba03e2a3ed0757c3aa78b4caf5ea2a24a31d63,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jfdctflt.c,artwork_image,,ab6f6d08253ca882f80f21cd5cd913eea47c3771,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jfdctfst.c,artwork_image,,26070d19a620824a64711ef34410564c8cce667e,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jfdctint.c,artwork_image,,974013fa409cc8eeea9bd79c44950620ce0de508,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jidctflt.c,artwork_image,,ee3a31a61682999c76a607adeedef40980fe51f4,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jidctfst.c,artwork_image,,68119b9942be3de13eba86a245f546b7dbf01bf7,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jidctint.c,artwork_image,,c58592d626d8055d423e14b9e84fe0232d1902d4,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jidctred.c,artwork_image,,6521e3ebbfc7aafea314627091a384e1ae16fa2f,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jinclude.h,artwork_image,,56e7a4b296d2ac123043dd276da84acd54f88e50,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jlossls.h,artwork_image,,ce4170413452bc54c8520b2594ce935faea9fdf7,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jmemmgr.c,artwork_image,,eb199c8b3de084882c370b6e2f7b21c9dda36842,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jmemnobs.c,artwork_image,,5963f31a1442a2459954ed9de9a26f9f36cd9803,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jmemsys.h,artwork_image,,ac09ef4c36d39563e1f20290e3f2a309825e3314,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jmorecfg.h,artwork_image,,89c7842c87169b5797b6750ba8c9d694cb2c1662,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jpeg_nbits.c,artwork_image,,752a163653ee31c0222ef6c6deaaa81c7342451c,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jpeg_nbits.h,artwork_image,,6481a1228d187c1a614149684a9545dc1c45579c,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jpegapicomp.h,artwork_image,,bb3912eb2f16e754dfc3452e70fd362f836999ad,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jpegint.h,artwork_image,,a90493f9e08b20710bcae5e3b64ff10567382b5d,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jpeglib.h,artwork_image,,f7076a18d0106f28c608ac06272dcb397916a0c1,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jquant1.c,artwork_image,,bd68dcb8c6a3e771b6430ff16af55b02c398bb90,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jquant2.c,artwork_image,,9ba51fa8872b240befc8bbd38810098839423f91,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jsamplecomp.h,artwork_image,,3a1f29602997fb90baed3337f4d72da60c91e467,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jsimd.h,artwork_image,,6ae021a651df17ce325df78506d901d4e9c68d9d,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jsimddct.h,artwork_image,,55ee8cf67f56a03a105cf46d3e7500c77c278287,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jstdhuff.c,artwork_image,,394590120550260305b25afaf5e43f2379e7ec13,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jutils.c,artwork_image,,24caac19021dae468751f9d85bda4780cee7f21e,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/jversion.h,artwork_image,,fc934606125ad58f883efedd2049d8b030ad2198,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/tjutil.h,artwork_image,,10272e98867ed4db7c6354a09835df0e95d5af3b,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/transupp.h,artwork_image,,cea1f409214a397e93b04c4656617c36905b6265,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/turbojpeg.h,artwork_image,,274eb7a364408fcb8eadaab45e9ed2507ce186f1,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdapistd-12.c,artwork_image,,3293e98f72a2532e3f87eb08e9da54db0e55fd26,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdapistd-16.c,artwork_image,,17561a30b106ebe9559fa14d4c10bf9a683b1249,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdapistd-8.c,artwork_image,,31b25693413eba2cc471a0e1a955a415a90de529,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdcoefct-12.c,artwork_image,,423dbcb2ee93d1c179686ab4becceb09446a5741,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdcoefct-8.c,artwork_image,,446cefcee91af740e7790df5d1b9a64750c5ee50,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdcolor-12.c,artwork_image,,aa469a6783b478ec4528523bde0508deea1bffd2,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdcolor-16.c,artwork_image,,5016c7b957dccd5c44ca80588caef8d003d7ab1c,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdcolor-8.c,artwork_image,,525e13e270a591dd8062641480f6bb074277de3e,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jddctmgr-12.c,artwork_image,,b069f9005de94506a2cff03d18aa1c8053d239a0,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jddctmgr-8.c,artwork_image,,f61de79cd1b8c9a75819009c9603f5ede800b3e7,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jddiffct-12.c,artwork_image,,138460740fd7cad3a71d1bc5665f52b37f081060,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jddiffct-16.c,artwork_image,,cfd1856fc94e0287c9ce074afe04684db2eebdd0,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jddiffct-8.c,artwork_image,,8ff0731d1964dacc56a9dff1cb16b5cad92c4695,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdlossls-12.c,artwork_image,,5de36d2008d492234021e42ff961c95867a6136d,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdlossls-16.c,artwork_image,,9eb379464c257413d30a8b464538155930a33703,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdlossls-8.c,artwork_image,,0bce5f432383961e94a566e801cdcfe8ced52ed6,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdmainct-12.c,artwork_image,,f3c6dce9744271c512a0124ce8589850cd012882,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdmainct-16.c,artwork_image,,d4a0eac1d274a54de1b992d6e59b52235f5aea60,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdmainct-8.c,artwork_image,,5f1bb6bfa7ad0deb88aa179f961cd6d38fdd0bbc,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdmerge-12.c,artwork_image,,eb4d201ce5f20e7a2537e581d26f78ac95d2ff31,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdmerge-8.c,artwork_image,,5faea11dd2a4f3a4fbfdfd23108561745a07d90e,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdpostct-12.c,artwork_image,,57d8047e009c4fd10e91e2496cc90e52ef14f864,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdpostct-16.c,artwork_image,,0f01ea519544e107399b9dd34e22aec1b7c6d056,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdpostct-8.c,artwork_image,,5227d363d119a8e8532218ec069609cabdb95faf,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdsample-12.c,artwork_image,,897b23e0163801deb35ac871a40b405687f311a7,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdsample-16.c,artwork_image,,12d075656920a6f0561cd628f071f5e2fba5c3a2,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jdsample-8.c,artwork_image,,29ad67a21e022b8a2d4fc7a52755c3a8aa3fca82,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jidctflt-12.c,artwork_image,,d3847fb8c672eafc2cf7ff4c3f9482d52a5f355a,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jidctflt-8.c,artwork_image,,23d91537890b7f10f9a3314c10725234e91756dd,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jidctfst-12.c,artwork_image,,22bdcfc700890a54d63a7b95a554e92c57233d12,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jidctfst-8.c,artwork_image,,26f6681890aa245c703f515978e763f38a0327c9,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jidctint-12.c,artwork_image,,04cb85e7d732a9e7c947faffe69e9e3197edcf09,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jidctint-8.c,artwork_image,,fda7fe300bca7bb01456f40a7963487048955b25,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jidctred-12.c,artwork_image,,8a738baf4bf1a8b6ec12af01254e4ac86019d496,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jidctred-8.c,artwork_image,,0957b0d37f145623d06476809398991f878d4184,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jquant1-12.c,artwork_image,,243ecae2b02ac4d922c3eb0f0a8559f83f108d46,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jquant1-8.c,artwork_image,,211f92212d32099f2e93c7441fdb7bc8bfebdbdd,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jquant2-12.c,artwork_image,,2333b38434c159e22921ce2a7f330b1d342c32d5,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jquant2-8.c,artwork_image,,30cfe17ceb00c777d23443346e1e4d7ff4ccfda9,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jutils-12.c,artwork_image,,8db71a30b1c218fa4a897699c66dbbc248fd2553,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jutils-16.c,artwork_image,,fff26d50017b78224109e8da80b9f415c85cb8e6,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/libjpeg-turbo-esp32/src/wrapper/jutils-8.c,artwork_image,,3c84956c3ca32129f4ed0f2e6f73e141af9d1115,,False,retain unchanged vendored decoder; no ESPHome API adaptation
+A,esphome/components/artwork_image/png_image.cpp,artwork_image,,48f44ca8bcb34ea59156e305b6e14f42b860b9d6,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/artwork_image/png_image.h,artwork_image,,cca71a81baf80339e54492407baead5cf4b089cb,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/audio_processor/__init__.py,audio_processor,,2384c36a45afef259625a8ce2d4062912e750d22,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/audio_processor/audio_processor.h,audio_processor,,bd5633860dc318c9d2a25ea25e92b8bc5e330d50,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/audio_processor/audio_utils.h,audio_processor,,cf2e832f3fdf3772eb50061c8839e0d71d96cf77,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/audio_processor/log_utils.h,audio_processor,,e3f189bb3e35c3b37a50b4a155605de4905678dc,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/audio_processor/ring_buffer_caps.cpp,audio_processor,,b5ad765d6f22f20dfa6d55d9a16469dc3ec5b0bd,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/audio_processor/ring_buffer_caps.h,audio_processor,,14c227a1d8ab2a5951c2a63226a479439cd967ed,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/audio_processor/scoped_lock.h,audio_processor,,32e42bafd208e6b434e36bd8ce9f4a206827fb98,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/audio_processor/task_utils.h,audio_processor,,c3d81537aaab93f6fbe8c8af782e096544326c24,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/const/__init__.py,const,6f4fa9aaa7a214f38c32fc8a8883ea394491d78c,ca8df4178874c0822ccc2e8f75ce612382a6abd6,26d3f2d3aa3313899d30eb728809c0d0cb0c42a8,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/display/__init__.py,display,7a66da11f2bbe7a9fabc23f52bf4814bea409624,0cf047aa1d36995d2ef7dba8dca030ffaa671683,be8586b3b25494de2ccb6f48f819b4eff8c7e41b,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/display/display.h,display,3a136937f6a15152752af7d5125fad05cd4c77d1,b146da543e7bbcec2bc00a3d6014fbaa80e41d0f,168157cba0bf53bb5fbb3d8e90bb2f728e8d342a,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/esp32/__init__.py,esp32,7e13156b4d910dd919c6f42905708e5e3d40a5cc,e0bb776bf783e5e152e5445e20354572dfc53b82,bb612cb214ca7f74a5930e2ffed951f891c6ed57,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32/cache_restart_framework_patch/CMakeLists.txt,esp32,,4766dd22cd5f3ef66dff78a6bbad6f2a9fdd45c9,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32/cache_restart_framework_patch/Kconfig.projbuild,esp32,,e70307a4ae9fcb48b75fde1eb044308128b5e116,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32/cache_restart_framework_patch/patch_esp32p4_restart.py,esp32,,d9e987fc45be5ba424e7bc677c4140f3cee41e82,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32/task_utils.h,esp32,,5f99a68d48bf58bfc6c990fe896a084b82df8500,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/esp32_hosted/__init__.py,esp32_hosted,16e9d4978213fd8e5f2fb019467def7e56ace800,26ca1b8ee63da851c427f2add8421be23d2485be,f84f9c64642307720c61a66dfaed784026da9b69,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32_hosted/restart_diagnostics.cpp,esp32_hosted,,d9ec982603c19e3afa337655f980eb5d65abf6dd,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32_hosted/restart_diagnostics.h,esp32_hosted,,cde5ff752497003ba3ccc49a22ce7cad3386859b,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32_hosted/sdmmc_framework_patch/CMakeLists.txt,esp32_hosted,,f9af211e5f1fcbb0c18259d1108bef7832f890fa,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32_hosted/sdmmc_framework_patch/Kconfig.projbuild,esp32_hosted,,74b5cf5b43fb3df04eda5e294a43d98ce25d7a40,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32_hosted/sdmmc_framework_patch/patch_sdmmc_transaction.py,esp32_hosted,,f66f51b4ac98628070aae8a6c8b2a29ee29bdfe2,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32_hosted/shutdown_reset.cpp,esp32_hosted,,5fd82ef348fad945bcaeaaa2179ed92d7f653ee1,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32_hosted/shutdown_reset.h,esp32_hosted,,42c6c50f346733cb454a2408f3caa176f39b077d,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32_jpeg/__init__.py,esp32_jpeg,,1f39bc754e10d9573420cde65780106ce4f1a8c1,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32_jpeg/esp32_jpeg.cpp,esp32_jpeg,,5f4c7e67d7888475c667eac7f017f7b2784b6074,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32_jpeg/esp32_jpeg.h,esp32_jpeg,,13c402c25d989a6197e5d2350257fd2f270f07c0,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32_jpeg/jpeg_huffman_normalizer.cpp,esp32_jpeg,,5f7c79c3d73198ceeb09ad29475c28204c478c85,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp32_jpeg/jpeg_huffman_normalizer.h,esp32_jpeg,,d994e2d45661637f097fd34dfdbb9f715e23e4a8,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_afe/__init__.py,esp_afe,,9c11be1044f1ca604df0ddece569f47fd8833157,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_afe/binary_sensor.py,esp_afe,,473c7ed5030819e003bd52f6028d60d24714f1ea,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_afe/esp_afe.cpp,esp_afe,,bfc82a19a9706873279b0cd546a4a09355cdb994,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_afe/esp_afe.h,esp_afe,,04252c3db5d66916c9297a07faa5da50d96b55c3,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_afe/sensor.py,esp_afe,,d17b442405252cd8e6540f329d2934cfcfe145c4,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_afe/switch.py,esp_afe,,09a6c4c37044054fec060be704788cc16aed168d,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/__init__.py,esp_audio_stack,,61d18bde9386eeab23c0b3cfa4d3b80099c28ba6,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/audio_effects_rate_converter.cpp,esp_audio_stack,,1b92c9969a12beee1fdefbfe277d7f53f87ce379,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/audio_pipeline.cpp,esp_audio_stack,,762995172395b99bae85746559a635f4df0d9d54,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/codec_dev_backend.cpp,esp_audio_stack,,6874009d2e39a1d548fe31540aa0f092b01588f4,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/codec_dev_backend.h,esp_audio_stack,,ae4b7fb35fa3fb73091fdd07191d98ce7c827c68,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/esp_audio_stack.cpp,esp_audio_stack,,13d9a2203018f4589f4f969548f101178a601db2,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/esp_audio_stack.h,esp_audio_stack,,936b9a045ab766961e00b26011222f33734872aa,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/microphone/__init__.py,esp_audio_stack,,514039a1609c365a7742eff4fcb99a10c5fb0d0d,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/microphone/esp_audio_stack_microphone.cpp,esp_audio_stack,,83c8f9b818c386a984dd5eed0061dca6d4d24c34,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/microphone/esp_audio_stack_microphone.h,esp_audio_stack,,76f30183f2f57dea9a027eb2c334d0771ebac6ea,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/number.cpp,esp_audio_stack,,37ddbbb553494d7bfad477fca561ed33e8aa34dc,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/number.h,esp_audio_stack,,212384c3392269c43acb012eec3260308fa77967,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/number.py,esp_audio_stack,,562ca3d97135323ece0c93197dd55be437b52e8c,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/sensor.h,esp_audio_stack,,a31efb740173a4730a2acdd5014a776c799d87ca,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/sensor.py,esp_audio_stack,,37066ad8f9af0080efe2fb71dfe1d647e7ea383a,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/speaker/__init__.py,esp_audio_stack,,af83acfe4f8c1f6dc636b1131eaead9f3f4b5995,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/speaker/esp_audio_stack_speaker.cpp,esp_audio_stack,,f8ede802ad8f1ab99d5b487fe33a38930aa1cefe,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/speaker/esp_audio_stack_speaker.h,esp_audio_stack,,9dc085e3fc90f377b5e7a0e165e4f71c0b371df0,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/switch.h,esp_audio_stack,,b6b982d75b2331940b50871c1fb1c2b34e5af5be,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/esp_audio_stack/switch.py,esp_audio_stack,,751254c8156f3b8cb821080fc5b05a2d74997ee9,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/font/__init__.py,font,7510f2f8b6981608628458c2c8060961084d61ba,afa76ff950cfe90e1b2e4d11e2284261ddc7124f,f2220f14a6a64e0122cb799bd1e811525eb94984,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/generic_image/__init__.py,generic_image,,8b142a3ff1edc05c750880476011fd7fbe1687f5,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/i18n/__init__.py,i18n,,1b5389062f4ae52756ed00856dfaa3a8f6021118,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/i18n/i18n.cpp,i18n,,235b2041272996c9b5b3570c2eee27f2efffa6ef,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/i18n/i18n.h,i18n,,8c42501350df5f5af37b5182b8ac9a0800745dcd,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/image/image.cpp,image,9b603683abc2566094668b09ffadeca195ac824a,aa052df93f9ea94316b96239e6921ebbedb8fe02,a38e84caaf999b37eda69f289bd4054b04ac586c,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/image/image.h,image,ccc2f23f200ff4306b4fa037396ed1429f020fdc,9745e31cc7f038a5f0280b893149122ffe3585e4,b03befcddb4ebfc6316bfa2e7465e18ac5007bc2,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/immich_gallery/__init__.py,immich_gallery,,82b37158ced6c5e06c0b1cdef9399dde3fe305dd,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/immich_gallery/immich_gallery.cpp,immich_gallery,,fcc6c328941037f116ad62f1800b608a5de4134a,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/immich_gallery/immich_gallery.h,immich_gallery,,dbee0c078a78e025d2f075b6ca9c64b7d4dfee70,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/ledc/ledc_output.cpp,ledc,62833a76493cf71355d0f1922f9dc2f27aee1f12,ec710872770e9c4cdfee543cd0afc1d45da9c7fb,18ce19a183b7ffb79ca6e635525a188206f21444,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/ledc/ledc_output.h,ledc,b0a243f2e4393273c8f3f77caf424799de257a4c,be2504a218efb077c20507e86f2492b5f653fcc9,1df0f675729baf25bb7ddbafc2a8c7bfabe7172d,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/ledc/output.py,ledc,95df1fba237d29d7a8b8bbfa2c83719e97f43302,83700a98c2d6f4652730c94de32ce05311859d7e,a606982a9b8f6ecc1df68686dcc74369001be104,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/WIDGETS_CHEATSHEET.md,lvgl,,f03c987593b6913d698866cb8f578a7cce662268,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/WIDGETS_GUIDE.md,lvgl,,b366a1d1056250ee2689d8471277a9f1dca67530,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/__init__.py,lvgl,256bf4bb3af9573b2e01af899ab9a0493a96c026,daa2196a1958bf8ed59220779e1eed2cc049926c,810d15f7005639f519a070ecc54b54188b2dd622,True,retain downstream feature and adapt to current official interfaces
+D,esphome/components/lvgl/animation.h,lvgl,1e0abce3583ccaca7eb02eb1a54456701618a4c9,,1ef22f9b91d1a52d5b0aecf929eb4cba437be48e,True,retain downstream feature and adapt to current official interfaces
+D,esphome/components/lvgl/animation.py,lvgl,2b1500f2c47396c486290f36d8a4eb82eb8cd556,,f1c3887d5c261e97e673e30f1d6cf7a7f2162b8e,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/atomic.h,lvgl,,f82abaeee4011c09d2d0e922633bb1c2ecc07d9e,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/automation.py,lvgl,b7c90a5c51aaa64dfe07847809e9ae0e732b817c,7bc19b1c627e22ea7b1e4748963406c8d03fb257,4e8698f33c04b5a9b401ab09bb4cc1c19c01520e,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/defines.py,lvgl,4f734fe20c7cbfcd994a637c20856d649a9de50f,cee5a8459307b2ea9f7cc6f1238d688f1283a66e,203a75b0c8e9fe5ae04fab6956eef130418e8b96,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/direct_scene_controller.h,lvgl,,d757e9eb75e21715d71b26aabc81ef8805158a74,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/dma2d_m2m_copy.cpp,lvgl,,d6063c951425525ba374628117eddfeeb0fbc95d,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/dma2d_m2m_copy.h,lvgl,,94d73ecc2b9f411e05ffd469add3ce206e5c9aab,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/encoders.py,lvgl,e6527bbc9b56e4104cdab3c21382cb379e89786e,58e8b761eaaec4ab192ec6fe4c553d1953efb8f0,30480eacc7e163dc1bd4cf11db460d4ce598050b,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/layout.py,lvgl,fd1f242d862a33656ac1a093697677f4c5843629,6370df34a0841437e690b335973684391883ec14,fd1f242d862a33656ac1a093697677f4c5843629,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/light/lvgl_light.h,lvgl,37dc4135ce652ef0ca48ab562d4e3f9cf5855c80,7bffc4570316bc1c23deb6b01bd945c0bda8944f,37dc4135ce652ef0ca48ab562d4e3f9cf5855c80,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lottie_loader.h,lvgl,,97924b3e74954df63ab3966308799aae9e499cba,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lv_draw_ppa_wrapper.cpp,lvgl,,708f428a371f73fba33f9ee51c9bcc88c3a58dc6,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/lv_validation.py,lvgl,42352b9602379dd3379c0755480888539ca75b13,808cd70adc7f0ee745674800c2482d35578af95a,646e472e7fe01754fa99185ba3a87005b795e629,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/lvcode.py,lvgl,de00593773044ada608fedcce663f77c12be4439,8fed078f8854563195702bb16325b6ed58cb7627,feffac28b339497aabcc6f48127086f301c40710,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_build_filter.py,lvgl,,fed192ec620def85b5750c65246e8de653a3f6a2,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_direct_snapshot_compositor.cpp,lvgl,,ebd5bd5d1253c385fae068ce0d2cedc13334bfca,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_direct_snapshot_compositor.h,lvgl,,96fc9312f9c82c7fcb24f341503d952251986f0c,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/lvgl_esphome.cpp,lvgl,b66a90443755a4d1f8613ac75b8a501e9ea7aeef,c7488a5dbfac53f773cf61bcc40dc7045a259917,ea557be7fbc586c42050d774bdbe24cf142d1d85,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/lvgl_esphome.h,lvgl,9221ab9542e2acc7bd31a48c7c0310220ebceadf,488188d34b59084ede87422fa2f68b172e85c3d1,35e5335c10e2a746237c983ef589a19c1c7d0c17,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_fps_benchmark.cpp,lvgl,,d346cdb9acf6d88dfca358c5ca114e9e36355d4c,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_fps_benchmark.h,lvgl,,32f669b126ec6123e62b2baa55d8df7d811493b9,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_gesture_router.cpp,lvgl,,f85c39850c4be7875d5b4864541e5a3e6974bf98,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_gesture_router.h,lvgl,,a1a0394d12c3c940a5874e00638be7a96ef5f368,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_navigation.cpp,lvgl,,d45211d90d9411da1a79e6196418bb0e749fca71,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_navigation.h,lvgl,,18e36f71288eaca5071128022eebb3a5d8263a04,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_scroll_snapshot.cpp,lvgl,,ce66edc6949421765b7554632cabb7ec68b78f7f,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_scroll_snapshot.h,lvgl,,93e76e82a25e5ec5ebfec7d0920dc9a6476a4de2,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_snapshot_compositor.cpp,lvgl,,83deea20265ed739291bfbc8aafd1e1568df6af8,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_snapshot_compositor.h,lvgl,,3a78429d55ae0c2027fc2cebc363d7aeb9a0e021,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_snapshot_store.cpp,lvgl,,2a0809a87e0a034b4a2bd4ef722f84c7b9f4f65e,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_snapshot_store.h,lvgl,,337b1bcca9020a53f7b93f1307cff5527b2491dd,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/lvgl_source_patch/CMakeLists.txt,lvgl,,7753aade118b78b3701c29ff7113aef43052e03b,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/navigation/__init__.py,lvgl,,f3bcab3c195216e3b9b1f3aa3dcd300cfa567a0f,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/number/lvgl_number.h,lvgl,eb2f70b4da1186b2d33b1195481f15a018384c7d,59f9acd6e6356a4b940bd92a28d7780611161259,eb2f70b4da1186b2d33b1195481f15a018384c7d,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/ppa/lv_draw_ppa.c,lvgl,,d00f564e3c7c95ea54cb7633ddeef47adedc82a3,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/ppa/lv_draw_ppa.h,lvgl,,a07c79b96979ea51ca14a46d4f10b737acada673,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/ppa/lv_draw_ppa_buf.c,lvgl,,739c5e82c93038d7b176279f1d1ad7438687de75,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/ppa/lv_draw_ppa_fill.c,lvgl,,68ec3f592f1a7cec8f3814d92e168ea58df2af60,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/ppa/lv_draw_ppa_img.c,lvgl,,ca88b79775bb945bb393dfc6d1ae01096e6d0e2c,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/ppa/lv_draw_ppa_private.h,lvgl,,ca2fff62727ba3221e6ad06e26b033be8e9f7af6,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/ppa/lvgl_ppa_accel_v9.c,lvgl,,f34b7c711e745c8fc2f5f46168e6607e2cf3198d,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/ppa/lvgl_ppa_accel_v9.h,lvgl,,8fbcb14bf5c70a6ce373fd036e86826b814d4ec8,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/schemas.py,lvgl,dd4f71a3460629ecf45bfe614d0b7fe79de337bf,1a4ed548302682beef319b062973e8f9af592c64,2d879e8d43aa06ecb5f3a30e375a6bcf4dce45f4,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/select/lvgl_select.h,lvgl,e36357328c2f35e6c674c3c97327243af7358c3b,ddfb2ec02b23f932c12fb2d68d92f19a1555ef10,dafdd91eb5059e1f44629d9b58add711f7dc8621,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/slideshow.cpp,lvgl,,b6eb2cb426ebebc88aff6a5d1c446beaa4206d9f,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/slideshow.h,lvgl,,b14c15dd355fafdcba6ee0d721189d47b0c3f593,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/snapshot/__init__.py,lvgl,,b503321b2d5142c32d74171872dfe6c94652c69e,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/svg_loader.h,lvgl,,ed2db97c4159ebf93b9e545e436922cc6c808c3c,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/switch/lvgl_switch.h,lvgl,ea15767ba8c94268e7254b317684cfb4f686a84c,a1ea38886d53c1050709726cbc836f0817a039b7,ea15767ba8c94268e7254b317684cfb4f686a84c,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/text/lvgl_text.h,lvgl,8d83f323abdc695cc1e89ee0cff2f37650fdb680,86796414928caec0f7c69afb9ca6b56ba456ee3a,8d83f323abdc695cc1e89ee0cff2f37650fdb680,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/trigger.py,lvgl,5f524969e28a362ace2330a78fdef7dbb8dede1b,d2f68f3635263a6bf12fe1fb38327d9a243ec9f8,cd118595f1a26dd8fdd44bb3d61c847c1203e560,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/types.py,lvgl,61efe385e692dc773a84f9303e6ecef871ada010,1ab01e569d39781886b6859e3bb9f1e173c3ac5a,cc8d9438a970b104ba31dd512ee105c5be4057b2,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/ARCLABEL_README.md,lvgl,,1c2c6c6c79d7d88fc3eaa3f6da31730d0a273210,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/CALENDAR_README.md,lvgl,,55f5365f5d8374b9ee9b61956181bdd68f61c51e,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/CHART_README.md,lvgl,,7a6c1e65d7b0799c09a3a723c25795bb3ec64059,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/IMGBTN_README.md,lvgl,,cae787cf63f02aa44083c4ab916eedae38b08af1,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/MENU_README.md,lvgl,,3a926a4a0bc8e7334d853fa0f0363d3170e011a6,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/SCALE_QUICK_REFERENCE.md,lvgl,,e1feaa14d602e9e9fc0c0a2db65d1842734052b6,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/SCALE_WIDGET_README.md,lvgl,,b533f6cc019d95b59d6afeac68d4bd242e9fc957,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/SPAN_README.md,lvgl,,101a7aa9580a7abfa0a30c59d33c431e9817c6e2,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/SVG_SUPPORT.md,lvgl,,2eb08c26c80fc7164b56df56db75f529afe1f3e1,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/TABLE_IMPLEMENTATION_SUMMARY.md,lvgl,,55d65aafe734106fdc816133c1c6ac4cc086eb97,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/TABLE_README.md,lvgl,,6448b6cfb34fd4d1cd9f6bf80370bae36bb54390,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/WIN_README.md,lvgl,,46e026e452a0caebb9555031cf1439a17eb7587f,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/widgets/__init__.py,lvgl,968db46adc50df593fc6803dea0d78c32301224e,ea75bd635d5c214f30fb7d0c89ff9b37df6c783d,210314103ec774f78de3d672404e55ef891865a9,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/widgets/arc.py,lvgl,ac993cc382969ac523c4d4be8947c11ec50f2b89,973a540998e4e0aba79c959349783843c501e2c6,4739412e09e61707f8c444714cdcfc925bdeeef6,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/arclabel.py,lvgl,,b6065a8ad05b7292d1474a3bbec4e84dc96975bb,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/arclabel_example.yaml,lvgl,,7acac4a6972b1bbd65331573abfae3ab10792369,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/calendar.py,lvgl,,6739664f30cdb1ac3a5254e8040c566af99babd3,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/calendar_example.yaml,lvgl,,31802accb565cee7194d7448e1d7763839291b69,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/widgets/canvas.py,lvgl,4427a3b00ebd0bcb5520b20cdf9cd83957dfa6d5,6a9bf42c935dadb2deab2ac8bbb06aa9eaa92cf5,9dd5e84419e91b38b79b7a2cb54ce52b0893a741,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/chart.py,lvgl,,7abb98dafeb81100414b0f9074baff08fb99c35b,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/chart_example.yaml,lvgl,,b17fe29c631a2d4bae66364f0bccbdd610548f20,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/widgets/dropdown.py,lvgl,34e6ef4e3577cd9daa0484c20d1e8162edfd4aaf,16e9d137c41a59522aaa6802197876311ffcba49,34e6ef4e3577cd9daa0484c20d1e8162edfd4aaf,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/dual_mic_example.yaml,lvgl,,aafc60ccac1a837fa1397d760168fdb3da6d6e91,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/widgets/img.py,lvgl,da81ab7737786630db1893218ee03b94c8b4cf4c,c8cb44f4b7ae127997b47de1fd33c6062cadaaf7,da81ab7737786630db1893218ee03b94c8b4cf4c,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/imgbtn.py,lvgl,,5953e679a8f431948bd9aca0f3eacb31848f8f9e,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/imgbtn_example.yaml,lvgl,,b84c8dff375db3c0c84ca6fa859f7bc3c2657b98,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/widgets/keyboard.py,lvgl,bcd2d2ae597f75feed2ce554a85cb2d6f5089c38,b0fda9558be29a0b23e2400f7d0d68cc3ed84ead,0356e66dac7fe48433105ac25b5a38809435284b,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/widgets/label.py,lvgl,5ac92f2717a63dbbd775d0fcb4e9cff76b72005f,9e507f6c7abe0810f9342730755898acdbc10f39,54c9819d2b7aa57a5f92a467e37d367a78a3694c,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/widgets/line.py,lvgl,9d6aa7b4ad621ab11aa46c62875c99447a591889,bc88d21ab396ac244467d9be19a236c28f29839a,9d6aa7b4ad621ab11aa46c62875c99447a591889,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/list.py,lvgl,,3839f19ee77e2364fa0b90ff2f3a3c555146ed45,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/list_example.yaml,lvgl,,f63ddc4763f40d32e3622ed09acf51db8657cd48,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/lottie.py,lvgl,,b2a03fc7a43647067831b1b67b0c27c269895ed5,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/lvgl95_new_features_example.yaml,lvgl,,335063d884de228faf2617b29cae691cf0802895,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/menu.py,lvgl,,cc609cdf062b53fdeaad535c7f49f11d32b9a7eb,e32a7e9ba357765b9a6f96c8e1e964f0e0ca702c,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/menu_example.yaml,lvgl,,9179d7ade49f626ad391aff5087124887e562aee,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/widgets/meter.py,lvgl,166e88f382a265e4f356fd5e48f1107cdd564c6e,6a7f8ff9cfb68581ab0b7b09bdf544b7823794dd,a49d58dc4db1442a92c1639404d632fe7c5ee970,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/widgets/msgbox.py,lvgl,29087009cb9636d074a02c2ae04e03981c260620,b48a3af46e45a25e5fc06741b9987d141a05bcd6,44d16bf61410e17ca6b05b5fc85ee72923669b16,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/nfs_dashboard_1024x600.yaml,lvgl,,5a8156612acbf5499ecefd2e9f23c968b76af07d,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/widgets/qrcode.py,lvgl,df76ab6bb0da7091e2ff9ece5761af59d64949f0,7c01576f6180ba4b304f281ec66daddcf5735859,59af9168aad2afb3c447d5552ec977aabd5dd230,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/scale.py,lvgl,,6864046ce6238c0be4bd268c1a709ac7888518ab,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/scale_example.yaml,lvgl,,c504d702693f9059b3e1e3efef5c5925c099aa3a,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/widgets/slider.py,lvgl,85096c302a3c751ac6d49647fa38ba8d8c85b32f,264a03c627c8de7e438c2b0af5d66565bb693c7d,85096c302a3c751ac6d49647fa38ba8d8c85b32f,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/span.py,lvgl,,25cf687b1d3a0b33c9c4630d3c94886fd5a1477a,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/span_example.yaml,lvgl,,31272e3cf57b8d1d16f72d45d3afe4a1ab7f8681,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/svg.py,lvgl,,f624d0b03bac9ace167f1e8d35958cd09bcc668d,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/table.py,lvgl,,fa46efe2b28ed198c42ec94954daa92e5d194991,019c6d4ecafde121bde53bda2ca3d8b41788ad11,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/table_example.yaml,lvgl,,af4a539303bd8704e3163cfe590f8bd102ed694d,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/lvgl/widgets/tabview.py,lvgl,ee252ecf0b241886d374b83217ed52c4b4f913dd,f157fceb8bb5398f3352a079ea7cf513e5ddaf6d,77c88c48ff8d753c6d0e7189d8f5d20ddb058561,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/thermostat_example.yaml,lvgl,,d68e48d9601d9bf49e44bd0bfcbb13e010614a24,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/win.py,lvgl,,d815c87891fa4219c9c8e90ae6892a4fd246b733,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl/widgets/win_example.yaml,lvgl,,3774e2e256bf478b568076f1056bafebd5947853,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_image_presenter/__init__.py,lvgl_image_presenter,,bf91e26f98130667489613aad487e5c94199501a,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_image_presenter/lvgl_image_presenter.cpp,lvgl_image_presenter,,fa7639cc086ff9637c049c758b2b2f21e191cd2b,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_image_presenter/lvgl_image_presenter.h,lvgl_image_presenter,,9dd1eb920eebe0193ce3f4498aa18b91fab2d8b3,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/__init__.py,lvgl_material,,7e096063028e590ca533047d04afdab1a95d8de1,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/lvgl_material.cpp,lvgl_material,,fbb61ba5a87698256aa94d17b822bc4c08bd6e7d,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/lvgl_material.h,lvgl_material,,78e9708a71f73a855883041ab7bd20954416ec79,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_direct_marquee.cpp,lvgl_material,,b820fcef4a6eb0d1c862b5997f5130b1942631a4,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_direct_marquee.h,lvgl_material,,01ecbf7a7a420d9181f4c9d2fb4854ebbe185a29,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_direct_spinner.cpp,lvgl_material,,e0f5a7519d12f786fd8b4394567e945ffa21140b,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_direct_spinner.h,lvgl_material,,e2ef4a35d206384a94abd7d4be745b4b7f0ddb19,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_direct_volume_overlay.cpp,lvgl_material,,8c7750812fdcef6058d16dbd0535d38d4609c787,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_direct_volume_overlay.h,lvgl_material,,7a4c8695a2b4d217128e87794880a9720d7336f7,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_notification.cpp,lvgl_material,,5e17c4f928b636dd44baf73511628f40198cef02,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_notification.h,lvgl_material,,6fb26c42c0e9458d37a92a64aa1b7298e2d0f94d,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_theme.cpp,lvgl_material,,3b56fb5b4219d23a4f02091dfea8f2e01a4fec3c,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_theme.h,lvgl_material,,c6347bd85acbed8b7aa97317e30a08584ffeedf6,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_tile_surface.cpp,lvgl_material,,810d9b93236ae786735486aec328e59d0d53549b,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_tile_surface.h,lvgl_material,,7e5410bfc04d26bd1a84709201ae760a086ac493,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_voice_assistant.cpp,lvgl_material,,e6d31d3d0c4051e2dfe63165cb384edbf1535dfc,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_voice_assistant.h,lvgl_material,,20238c07972111ff63b7ab49f8351c27b1eda063,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_wavy_progress.cpp,lvgl_material,,07ca0af7571889fef25f8e647558aec5426b91a7,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_wavy_progress.h,lvgl_material,,fa9c47dbed8b83441c361cf8bf554a588c3553b5,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_weather_presenter.cpp,lvgl_material,,0699899826a3406a3d6e6c4d769d5fe37d27a7a0,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_material/material_weather_presenter.h,lvgl_material,,0444cfee8f1c41ab09add59983d69ea0e5060128,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_region_presenter/__init__.py,lvgl_region_presenter,,46a87fed2609da4326f8ab924435059b510e362b,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_region_presenter/lvgl_region_presenter.cpp,lvgl_region_presenter,,ae6a23a1888849c97224f8c8a2bf86ac2c36073a,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/lvgl_region_presenter/lvgl_region_presenter.h,lvgl_region_presenter,,1c69343fd2ebca112b7d8eca7583cc26c94d9342,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/micro_wake_word/__init__.py,micro_wake_word,c427f28028eb4b11e3924671963f7eb927ac109d,7eef211f6716a4f9ac7b8e9d710595ca54d97ad7,6756e93c486aa63d8b88fd5c4c00793aa23d95f5,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/micro_wake_word/micro_wake_word.cpp,micro_wake_word,237d72229d289d58a0dfee7e1511e32268a030fa,343bed87fed9a6c47a7d61f1e24419ad03e7bcf6,0c9d071e6f330ecdcadf485ddd3afe3180a08a8f,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/micro_wake_word/micro_wake_word.h,micro_wake_word,aebb5b25954ca1d992178ee8ffefd82be0723f39,eb9c3c890972f5fe3e39101d66dc0f4eead69af7,5aa87cf1b738db79fa17436c5db37da283e13f65,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/mipi/__init__.py,mipi,3f73f9632778f31502b9e620900ae1eaeb8aac63,c3b744c919a41c14887a1f899f692900b5b06eb4,4db1ebdc5ed6b7d71e1672bc7b0a3e8fe8721c65,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/mipi_dsi/display.py,mipi_dsi,e5bb3d413d707979ee73fa78169ba75218d8b181,52a8a3ae9658f9151eb0992a82105d9fb6f5c385,67aad41c00ce10a84db20b7059e48bc2cd84af81,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/mipi_dsi/mipi_dsi.cpp,mipi_dsi,0ff934ae94a1e1378d97a506fc5dea25568a9e1f,2e70dbac907eea34f8d55025deb11fd2cb4076cb,005087b719b876ee2fc621dd2baab7386d4d0f7d,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/mipi_dsi/mipi_dsi.h,mipi_dsi,7bf2feb73c5b252d52749799435a1fdb6351bf23,c39c5eee2c35615369b2100a446568ebf6046144,9e7c562b54de6ec2313eadac1e2c7b82583bc913,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/mipi_dsi/mipi_dsi_framework_patch/CMakeLists.txt,mipi_dsi,,7701796511389e3a239003482e8ec047fe6a93d7,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/mipi_dsi/models/__init__.py,mipi_dsi,3f7f8370a3fcb10b76a27468eb355cb6520723f6,e69de29bb2d1d6434b8b29ae775ad8c2e48c5391,3f7f8370a3fcb10b76a27468eb355cb6520723f6,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/mipi_dsi/models/guition.py,mipi_dsi,914361a4ac5e54b645326c642dfea34db0b08944,db13c7f6cce009e8ee1d8f9d0345d281ea88cd1f,3ebaf53f5b7092198c483286989578110b751041,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/mipi_dsi/models/m5stack.py,mipi_dsi,5b07229ec7c740b17e8ebf3d7561c84478a5ea5a,2298f76cd41e1dbc0ac7ed31514a174d1f25bc2f,4e847ef6fd98d71f5941be016521faf56d70c926,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/mipi_dsi/models/seeed.py,mipi_dsi,84593b40e606dcae56fab6f06dfe0bb3f8235007,290b0e07ee44177afbcc0131a7311a2fc4e92ff4,84593b40e606dcae56fab6f06dfe0bb3f8235007,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/mipi_dsi/models/waveshare.py,mipi_dsi,a1702fb6a123544dfd0d8718fb9db3dad9d76b2e,c97a0bbd02177fab2fd7ad85d903ae123d012190,a1702fb6a123544dfd0d8718fb9db3dad9d76b2e,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/mipi_dsi/patch_espidf_dsi_dma2d.py,mipi_dsi,,9ad999c6d702e17de09e6d66bb761d9dc33bc5a0,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/network_camera/__init__.py,network_camera,,52110f9a739d8547f2e34ef781266570b2a0d407,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/network_camera/network_camera.cpp,network_camera,,b3cfa792f169a374296c28c7f3a278755ce947e7,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/network_camera/network_camera.h,network_camera,,3840ec9e0dd8ce60820887cca6526600b3e759d9,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/online_image/image.py,online_image,cb86f93e2946e97d713c9897191a049628d32695,c7d6a1448addb61c2d384a51307532ef8419d635,a36f3a949479233581c98fe3115b347ab08b3564,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/online_image/online_image.cpp,online_image,22bce4cc418df5b3b2729fc39544e01d882ff84f,5424e6262689229fcce2f8a513f97cd5adf72381,59c1db38a58f4beb8fe831895875abf52414623c,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/runtime_image/__init__.py,runtime_image,8db69aa53e3a1671aebf9841be5cfbeb0c8950a2,70d15af74546417fdd2284da6c9694b9689551fe,bccf5248687573e384722334db1542526db37947,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/runtime_image/esp32_jpeg_decoder.cpp,runtime_image,,1ac5339992cc429ab3c465d1141c6cd882469e0f,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/runtime_image/esp32_jpeg_decoder.h,runtime_image,,75ceb7d66028056eaf1584eb1fcc1b72ec50acb8,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/runtime_image/jpeg_decoder.cpp,runtime_image,c46e86fd0d976832ad40e5e21332eca67e11dc56,4a8a1a99b7049c929d2949eafb348f4c94f8ea8c,d4783701c4d1d057db9d89dc1c439e6c6fd0cdeb,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/runtime_image/jpeg_decoder.h,runtime_image,ed2401e2630ca5550667760eb4379eba9eb58a53,a5b5954181056959a6dbe21edcd8300a47983cfd,f72f69422d0579e5e266cfaa1b23985638fd89e7,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/runtime_image/runtime_image.cpp,runtime_image,4b12478e4ff0b51881086cfc99bbbe53549d5fe7,87a7510043b10f0b3b0ee3936cb24e7734bfafc5,1c6a2bc600289014e8d030107d34c7e8956995be,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/runtime_image/runtime_image.h,runtime_image,4bdcdcac9e071cf67d12fd0e189637f0d6fa9d69,92a6125a3c87a5ee7f3e5c4f5a4c14623afc3794,4dc6021364945825510d0722a89b01097c85a0fc,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/sendspin/__init__.py,sendspin,e20925f323d37ff58e9774aba1141f852837ebcd,93c48a64bbae0189bb8a9cf53cc64bbe5b0bce6d,3caad51f9191200dfa9bb7f7b0d5472001140337,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/sendspin/generic_image/__init__.py,sendspin,,b952f0175ba8ded20eba067fc34359aca1498986,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/sendspin/generic_image/sendspin_generic_image.cpp,sendspin,,40ad8258346d466fe5d05383d8ad3c5b022f4cc7,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/sendspin/generic_image/sendspin_generic_image.h,sendspin,,307aeedf635770fb0581b911d070ee0fa4b41a19,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/sendspin/media_source/__init__.py,sendspin,6af244d41f0da185cdcf8c9e13cb493740abac2d,5284056f265496098fda54b4e8a5254498f3caac,31c454fb71c0ba98c108a97c280a6fc27d34db77,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/sendspin/sendspin_hub.cpp,sendspin,04dbab0080c72c85f559fc5001d4384c5481d60c,b33770c0da7e409c59b6dac3ceef7e8a44742c19,701676503f4f90d8a8ced6a681d1157db01e28a1,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/sendspin/sendspin_hub.h,sendspin,c6b1ed97f7490803c6303211f8b4869e12069b60,92adff26f3101cf02643aceb81da87b38ba521f6,23c60d215b6b3a4ed8259722f1daa0c8e1642787,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/sendspin/text_sensor/__init__.py,sendspin,87f6c9b9362b012ac993a7791d2de196fc0ba391,b3ec7bba56ed042bc4eda38516b4c3884d5967c3,bd492b0d0b65215b1d180bd78ef7247399b8c42f,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/sendspin/text_sensor/sendspin_text_sensor.cpp,sendspin,9843fb966ec8740d1f4a0087581ba2c42d0f5d8d,79a449fd5724a6de87e296e2e9484c87beafe8e6,629396a681e00ec9c2529e5a068b18fe55b8df80,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/sendspin/text_sensor/sendspin_text_sensor.h,sendspin,d38f360d94dd7b2af0d5469895ebad374b189633,d41a66a762c2f0f674dc4d8e8dce9d51c786b2ee,cc25ab93c7c51deb96d5754019968f17857b09a7,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/task_runtime_profiler/__init__.py,task_runtime_profiler,,4a77acb2cd213623937f5c1d4db9ce123a2f0479,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/task_runtime_profiler/task_runtime_profiler.cpp,task_runtime_profiler,,f5458a4975cc0b746481ebce4299e9c94bd9e952,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/task_runtime_profiler/task_runtime_profiler.h,task_runtime_profiler,,0a897bfd9bccec545f759c4b41125ad8379cadc1,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/components/text_sensor/__init__.py,text_sensor,a3f4999a8fd6fed5d0d9a8781558b065e86d2ec8,ac29b30440e8f6386a07fa0196a56b4d94133988,2ff0421f392a4ccff92d393d8e11b13fab8c3954,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/text_sensor/filter.cpp,text_sensor,d4e6b5b9bbf515e283069ae5bce5bb9894104797,b99333e529c5cf458d76d2598c6388d7927b3782,54457d823863fa57e0c7495504687a2223601667,True,retain downstream feature and adapt to current official interfaces
+M,esphome/components/text_sensor/filter.h,text_sensor,6db76dcb64068abdff2223b5f8c56e312865bae9,f5ac33723b7d7b2e987fc75b678f049b03431a3a,7898d466861e23956dd99d81a498b590f199a59b,True,retain downstream feature and adapt to current official interfaces
+A,esphome/components/va_client/__init__.py,va_client,,bd0c49946716cb6d9838fb0a9e53afa932d4084a,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/va_client/automation.h,va_client,,3a25a917d923708c55e020cfa7bd2b1c80f02e2f,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/va_client/va_client.cpp,va_client,,622a59c46cf0d507a6561bb2a695fa7fd06f7584,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/va_client/va_client.h,va_client,,f11e1a4b2741df82294a75fb2d058383775026bb,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/va_pipecat/__init__.py,va_pipecat,,d36fe39cc71131ebebdb121156cba6c97faf1d94,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/va_pipecat/automation.h,va_pipecat,,76a7bed929531d4eb6ec752b5086b3f5ef5b1e89,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/va_pipecat/va_pipecat.cpp,va_pipecat,,0425765f73f591cc3615c58c30bf85ced186957b,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/components/va_pipecat/va_pipecat.h,va_pipecat,,04dee8471e14ad1b7daae97eea987b976a95a814,,False,retain downstream feature and adapt to current official interfaces
+A,esphome/core/buffer.h,core,,590f06bc229aa52a0de7a5a8d6f571f1a9f19862,,False,retain downstream feature and adapt to current official interfaces
+M,esphome/core/defines.h,core,03175bf2cc29e00b0098803be086741aeaf9afb8,685545e3e5228106435fe4736e2fd64353f9ffed,d5a776cc28acd5ad8878f30bcf47727446395d10,True,retain downstream feature and adapt to current official interfaces
+M,esphome/core/static_task.cpp,core,4cfead44c2945b5391501ac9ccd0597ce10efb1d,41c7ac9586b851a76e5b18a3f4190ef5763fb645,dd7309f8f0918442e2b4c11c927d07566464337b,True,subsumed: adopt current official implementation
+M,esphome/espidf/component.py,espidf,51d023099ed6e7cb14fcbdbd5ceea0e791504574,7bcfdbb88e79a232383436d3034559883fe7d912,c53dbe17dbaf49075691b06ec7d4817ccfb2da08,True,subsumed: adopt current official implementation
+M,esphome/framework_helpers.py,framework_helpers.py,202d4a2bfb92fe7960fe0012004505f08da2be73,26d055bcb59845d6e8c0ec3840a101b09339bb13,0599b531c288aae400c33a986a7e710384007082,True,retain downstream feature and adapt to current official interfaces
+M,tests/component_tests/font/test_font.py,tests:font,55e27ae84ce268e7edbe3e51cd8d7619dab70dd8,cb8c14ed60e9644bbf1cc37fe98ae165f987fff6,5bf765595a40fd80652f0f264f670cb33503bdbe,True,retain downstream feature and adapt to current official interfaces
+A,tests/component_tests/lvgl/test_navigation.py,tests:lvgl,,ba6a038a028491f3e88346022eb4a36eeb2d2d02,,False,retain downstream feature and adapt to current official interfaces
+M,tests/component_tests/lvgl/test_validation.py,tests:lvgl,9a767c0dae5f4bf08df34f1a9dccb5cd2a44df82,513067a420af87dbaadee69c796be8df0758522e,31cbccb9ff9b07c80a3713c3fd78ff2d5dea73ae,True,retain downstream feature and adapt to current official interfaces
+A,tests/components/esp32_jpeg/common.yaml,tests:esp32_jpeg,,da9a6e62e9d2bd0e7486a4c993c1861e26f98aed,,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/esp32_jpeg/test.esp32-p4-idf.yaml,tests:esp32_jpeg,,0da579ad0f7706b93b7cd88b590c61a8bc5df2ce,,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/esp_audio_stack/test.esp32-p4-idf.yaml,tests:esp_audio_stack,,bb066182cbfa437c23b2cb5e32ca89d5e815b428,,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/immich_gallery/common.yaml,tests:immich_gallery,,8b246899a6430e08365b4fe52ff570491528f5c9,,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/immich_gallery/test.esp32-idf.yaml,tests:immich_gallery,,2eec2fec41e360782573da27dd32c4bbdc56efec,,False,retain downstream feature and adapt to current official interfaces
+M,tests/components/ledc/common.yaml,tests:ledc,70352b451952566cc7b1758dd6ec3c28fb36bcb7,8f575daa26b562303aaec86c1341f7d7924911d3,52bef63fbb666695fa9ee05db0138f5207c3569f,True,retain downstream feature and adapt to current official interfaces
+M,tests/components/lvgl/lvgl-package.yaml,tests:lvgl,f085b62cb6e0259ab4db29ac16ce7fe85ee9cd7d,df94822247c1a4e03841b9463f7c31c7cd9536f0,3ac6e6a81d6c237ade18e6d35740f2de43b363c3,True,retain downstream feature and adapt to current official interfaces
+A,tests/components/lvgl/test-direct.esp32-p4-idf.yaml,tests:lvgl,,b4a83caba3ff975992483a93dfdf42d0f0325841,,False,retain downstream feature and adapt to current official interfaces
+M,tests/components/lvgl/test.esp32-p4-idf.yaml,tests:lvgl,5fd93702554a73923fdcaaca17b80710b29edc18,5e18765bea05e591a3d6b3e959e418331beed3ea,a7a8d13ffc5b8a72aa20ac8f65a51e3586083633,True,retain downstream feature and adapt to current official interfaces
+A,tests/components/lvgl/test.lottie.json,tests:lvgl,,d109951b7c6353a2b15a887bd87d9b706ac13bc9,,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/lvgl/test_navigation_lifecycle.cpp,tests:lvgl,,5e2d904aeb115833860df870f080d12c0411ed7a,,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/lvgl_material/test.esp32-p4-idf.yaml,tests:lvgl_material,,089323ea80ac1a2a9798449d44d21c3bbaa5fd4d,,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/lvgl_region_presenter/test.esp32-p4-idf.yaml,tests:lvgl_region_presenter,,a58cef783cfa23089eb2e32a06971a17b17228e7,,False,retain downstream feature and adapt to current official interfaces
+M,tests/components/micro_wake_word/common.yaml,tests:micro_wake_word,9ac1056ba49ebdbfd9967d64cee9824538ac7c3e,219ed0b11e8915eecd393b466deaaa36c4ff353d,2b9df607c87de9c733950fdc71a81992c837340e,True,retain downstream feature and adapt to current official interfaces
+M,tests/components/mipi_dsi/test.esp32-p4-idf.yaml,tests:mipi_dsi,770b11d089334a0518363298559ffe1f7f138ac9,d3a9504d6245ee560fd9bd037aad79427472dfff,770b11d089334a0518363298559ffe1f7f138ac9,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/network_camera/.gitignore,tests:network_camera,,d8b4157aef93a9ac611766077b969c9f87628941,,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/network_camera/common.yaml,tests:network_camera,,11d1966560c9b0fdad13d11248695290d547bba9,,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/network_camera/test.esp32-p4-idf.yaml,tests:network_camera,,2680e5e8360d5d1bf9f840e1280afca8878bd7c0,,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/sendspin/common-generic_image.yaml,tests:sendspin,,74e67bf98e2a429f0ee0672a0e41c6d470e83479,,False,retain downstream feature and adapt to current official interfaces
+M,tests/components/sendspin/common-media_source.yaml,tests:sendspin,5b33a5464773ef047ccc8ca7547aeb31ee1d1347,a12215e3081fdbb0f6ef9dd893b5da70081cdd23,87dfb0add6f60a1b1953f08812470033ab3172be,True,retain downstream feature and adapt to current official interfaces
+M,tests/components/sendspin/common-text_sensor.yaml,tests:sendspin,fc6a56a21ad93c90f2400ebbf73d3763d2ffeac5,52431939c33132a8c7f390a31df43ea3233e30f1,087bbdb6b0e9510503721b086d8a0a2519bb43db,True,retain downstream feature and adapt to current official interfaces
+A,tests/components/sendspin/test-generic_image.esp32-idf.yaml,tests:sendspin,,451fc7169c86aee84f31a03b18ddd9a47c10c602,,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/sendspin/test-generic_image.esp32-p4-idf.yaml,tests:sendspin,,c42ed6ad173a7453edbd6c13d5843569f15a1566,,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/task_runtime_profiler/common.yaml,tests:task_runtime_profiler,,34fc9a722b1b198b1e9f2b0626756d815724515c,,False,retain downstream feature and adapt to current official interfaces
+A,tests/components/task_runtime_profiler/test.esp32-p4-idf.yaml,tests:task_runtime_profiler,,2ff4a61eb34620ed7cfe1c136c0a20d2516bb84e,,False,retain downstream feature and adapt to current official interfaces
+M,tests/components/text_sensor/common.yaml,tests:text_sensor,97b0b8ad942b1e103030d6cdecfc12da2bfdaff4,a50b2d6c00d3e537426da2133240dccbb5a12140,efbf4e1dc7a8493dec075534acacdc6d7a4606cf,True,retain downstream feature and adapt to current official interfaces
+M,tests/unit_tests/test_espidf_component.py,tests:unit_tests,f9ed44b8d2a91a1bb837a2ca9cfcc3e20ee04026,3ac29e41f9cc983026f3489dea60e069d5f549ca,60794d31f80e727b1bbcb4333da2ba60ad3363f2,True,subsumed: adopt current official implementation
+M,tests/unit_tests/test_framework_helpers.py,tests:unit_tests,b8aa19d6ae7ac4c9b9595d8619b7cf896b992211,27c596838cfc45b97658d1fd2b9b9486e44a2fc8,f63838a8e274a92598279c44bcbcfe36f3168718,True,retain downstream feature and adapt to current official interfaces
