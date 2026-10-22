@@ -10,6 +10,12 @@
 #include <cstring>
 #include <vector>
 
+#ifdef USE_ESP32_PREFERENCES_SYNC_DIAGNOSTICS
+#include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#endif
+
 namespace esphome::esp32 {
 
 ESPHOME_LOG_TAG(TAG, "preferences");
@@ -221,6 +227,11 @@ bool ESP32Preferences::sync() {
   if (s_pending_save.empty())
     return true;
 
+#ifdef USE_ESP32_PREFERENCES_SYNC_DIAGNOSTICS
+  const uint32_t sync_begin_tick = static_cast<uint32_t>(xTaskGetTickCount());
+  const int64_t sync_begin_us = esp_timer_get_time();
+#endif
+
   ESP_LOGV(TAG, "Saving %zu items...", s_pending_save.size());
   int cached = 0, written = 0, failed = 0;
   esp_err_t last_err = ESP_OK;
@@ -261,6 +272,15 @@ bool ESP32Preferences::sync() {
 
   // note: commit on esp-idf currently is a no-op, nvs_set_blob always writes
   esp_err_t err = nvs_commit(this->nvs_handle);
+#ifdef USE_ESP32_PREFERENCES_SYNC_DIAGNOSTICS
+  const int64_t sync_end_us = esp_timer_get_time();
+  const uint32_t sync_end_tick = static_cast<uint32_t>(xTaskGetTickCount());
+  ESP_LOGI(TAG,
+           "Sync diagnostics: tick_begin=%" PRIu32 " tick_end=%" PRIu32 " tick_span=%" PRIu32 " us_begin=%" PRIi64
+           " us_end=%" PRIi64 " duration_us=%" PRIi64 " cached=%d written=%d failed=%d commit=%d",
+           sync_begin_tick, sync_end_tick, static_cast<uint32_t>(sync_end_tick - sync_begin_tick), sync_begin_us,
+           sync_end_us, sync_end_us - sync_begin_us, cached, written, failed, err);
+#endif
   if (err != 0) {
     ESP_LOGV(TAG, "nvs_commit() failed: %s", esp_err_to_name(err));
     return false;

@@ -14,6 +14,16 @@ IntervalSyncer = preferences_ns.class_("IntervalSyncer", cg.PollingComponent)
 
 CONF_FLASH_WRITE_INTERVAL = "flash_write_interval"
 CONF_RTC_STORAGE = "rtc_storage"
+CONF_SYNC_DIAGNOSTICS = "sync_diagnostics"
+
+
+def validate_sync_diagnostics(value):
+    value = cv.boolean(value)
+    if value:
+        cv.only_on_esp32(value)
+    return value
+
+
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(IntervalSyncer),
@@ -24,6 +34,7 @@ CONFIG_SCHEMA = cv.Schema(
         # to NVS. No default: absence means "no request" (see
         # preferences.validate_rtc_storage for the per-platform rules).
         cv.Optional(CONF_RTC_STORAGE): preferences.validate_rtc_storage,
+        cv.Optional(CONF_SYNC_DIAGNOSTICS, default=False): validate_sync_diagnostics,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -35,4 +46,6 @@ async def to_code(config: ConfigType) -> None:
     cg.add(var.set_update_interval(write_interval))
     if config.get(CONF_RTC_STORAGE):
         preferences.request_rtc_storage()
+    if config[CONF_SYNC_DIAGNOSTICS]:
+        cg.add_define("USE_ESP32_PREFERENCES_SYNC_DIAGNOSTICS")
     await cg.register_component(var, config)
