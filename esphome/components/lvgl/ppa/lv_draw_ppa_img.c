@@ -11,7 +11,7 @@
 #include "lv_draw_ppa_private.h"
 #include "lv_draw_ppa.h"
 #include "src/draw/lv_draw_image_private.h"
-#include "src/draw/lv_image_decoder_private.h"
+#include "src/image/lv_image_decoder_private.h"
 #include "src/draw/lv_image_decoder.h"
 #include "esp_timer.h"
 #include "esp_rom_sys.h"
