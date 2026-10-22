@@ -17027,6 +17027,20 @@ extern "C" bool lvgl_esphome_snapshot_refresh_tile_backing(lv_obj_t *page, int w
     if (busy)
       return false;
   }
+  auto *display = lv_obj_get_display(page);
+  auto *component = display == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(display));
+  if (component == nullptr)
+    return false;
+
+  // The pause API owns one nesting level even if its drain times out. Balance
+  // only this lease, after every borrowed slot and codec operation has retired.
+  struct DirectRegionPauseLease {
+    LvglComponent *component;
+    ~DirectRegionPauseLease() { this->component->direct_regions_pause(false, 0); }
+  } region_pause{component};
+  if (!component->direct_regions_pause(true, 120))
+    return false;
+
   const int slot_index = snapshot_tile_window_slot_index(page);
   auto *buffer = slot_index >= 0 ? snapshot_tile_window_cache.slots[slot_index] : snapshot_app_work_buf;
   int borrowed_slot = -1;
@@ -17060,7 +17074,6 @@ extern "C" bool lvgl_esphome_snapshot_refresh_tile_backing(lv_obj_t *page, int w
     return false;
   if (buffer == snapshot_app_work_buf)
     snapshot_app_work_obj = nullptr;
-  auto *display = lv_obj_get_display(page);
   const bool invalidation = lv_display_is_invalidation_enabled(display);
   lv_display_enable_invalidation(display, false);
   const bool taken = snapshot_take_centered_to(page, buffer);
