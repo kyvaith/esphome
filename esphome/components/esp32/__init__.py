@@ -115,6 +115,8 @@ CONF_COMPILER_OPTIMIZATION = "compiler_optimization"
 CONF_ENABLE_IDF_EXPERIMENTAL_FEATURES = "enable_idf_experimental_features"
 CONF_ENABLE_CACHE_SAFE_RESTART = "enable_cache_safe_restart"
 REVIEWED_CACHE_RESTART_IDF_VERSIONS = ("5.5.5", "5.5.6")
+CONF_ENABLE_PIE_CONTEXT_FIX = "enable_pie_context_fix"
+REVIEWED_PIE_CONTEXT_IDF_VERSIONS = ("5.5.5", "5.5.6")
 CONF_ENGINEERING_SAMPLE = "engineering_sample"
 CONF_INCLUDE_BUILTIN_IDF_COMPONENTS = "include_builtin_idf_components"
 CONF_ENABLE_LWIP_ASSERT = "enable_lwip_assert"
@@ -1435,6 +1437,24 @@ def _validate_cache_safe_restart(config: ConfigType) -> ConfigType:
     return config
 
 
+def _validate_pie_context_fix(config: ConfigType) -> ConfigType:
+    """Restrict the PIE context backport to reviewed native ESP-IDF versions on P4."""
+    framework = config[CONF_FRAMEWORK]
+    if not framework[CONF_ADVANCED][CONF_ENABLE_PIE_CONTEXT_FIX]:
+        return config
+    if (
+        config[CONF_VARIANT] != VARIANT_ESP32P4
+        or framework[CONF_TYPE] != FRAMEWORK_ESP_IDF
+        or framework[CONF_VERSION] not in REVIEWED_PIE_CONTEXT_IDF_VERSIONS
+        or not CORE.using_toolchain_esp_idf
+    ):
+        raise cv.Invalid(
+            "enable_pie_context_fix requires ESP32-P4 with native ESP-IDF 5.5.5 or 5.5.6",
+            path=[CONF_FRAMEWORK, CONF_ADVANCED, CONF_ENABLE_PIE_CONTEXT_FIX],
+        )
+    return config
+
+
 def _parse_pio_platform_version(value):
     try:
         ver = cv.Version.parse(cv.version_number(value))
@@ -2307,6 +2327,7 @@ FRAMEWORK_SCHEMA = cv.Schema(
                     CONF_ENABLE_IDF_EXPERIMENTAL_FEATURES, default=False
                 ): cv.boolean,
                 cv.Optional(CONF_ENABLE_CACHE_SAFE_RESTART, default=False): cv.boolean,
+                cv.Optional(CONF_ENABLE_PIE_CONTEXT_FIX, default=False): cv.boolean,
                 cv.Optional(CONF_ENABLE_LWIP_ASSERT, default=True): cv.boolean,
                 cv.Optional(CONF_IGNORE_EFUSE_CUSTOM_MAC, default=False): cv.boolean,
                 cv.Optional(CONF_IGNORE_EFUSE_MAC_CRC, default=False): cv.boolean,
@@ -2524,6 +2545,7 @@ CONFIG_SCHEMA = cv.All(
     _set_default_framework,
     _check_versions,
     _validate_cache_safe_restart,
+    _validate_pie_context_fix,
     set_core_data,
     _require_ipv4_on_arduino,
     cv.has_at_least_one_key(CONF_BOARD, CONF_VARIANT),
@@ -3303,6 +3325,13 @@ async def to_code(config):
             path=Path(__file__).with_name("cache_restart_framework_patch").as_posix(),
         )
         add_idf_sdkconfig_option("CONFIG_ESPHOME_ESP32P4_CACHE_SAFE_RESTART", True)
+
+    if advanced[CONF_ENABLE_PIE_CONTEXT_FIX]:
+        add_idf_component(
+            name="pie_context_framework_patch",
+            path=Path(__file__).with_name("pie_context_framework_patch").as_posix(),
+        )
+        add_idf_sdkconfig_option("CONFIG_ESPHOME_ESP32P4_PIE_CONTEXT_FIX", True)
 
     # Re-include any IDF components the user explicitly requested
     for component_name in advanced.get(CONF_INCLUDE_BUILTIN_IDF_COMPONENTS, []):

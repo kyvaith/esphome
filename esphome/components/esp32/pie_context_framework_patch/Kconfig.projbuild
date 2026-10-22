@@ -1,0 +1,9 @@
+config ESPHOME_ESP32P4_PIE_CONTEXT_FIX
+    bool "Use the reviewed ESP32-P4 PIE register context backport"
+    depends on IDF_TARGET_ESP32P4
+    default n
+    help
+        Opt in to the ESP-IDF PIE save/restore correction from official commit
+        b25cb2906c7db70a86332dffbe77df64345d8a73. Preserve Q3 and correctly
+        pack and restore XACC, SAR, SAR_BYTES and FFT_BIT_WIDTH. The original
+        reviewed ESP-IDF 5.5.5/5.5.6 source remains active when disabled.
