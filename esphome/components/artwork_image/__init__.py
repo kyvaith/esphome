@@ -138,6 +138,12 @@ class JPEGFormat(Format):
             if dest_path.exists():
                 shutil.rmtree(dest_path)
             shutil.copytree(src_path, dest_path)
+        # Discovery alone compiles the local component but does not give src/
+        # its public headers or link dependency in the native ESP-IDF build.
+        # The manifest dependency is shared with the PlatformIO IDF writer.
+        esp32.add_idf_component(
+            name="libjpeg-turbo-esp32", path=dest_path.as_posix()
+        )
 
 
 class PNGFormat(Format):

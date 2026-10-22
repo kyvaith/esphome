@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 from esphome import config_validation as cv
-from esphome.components.esp32 import KEY_ESP32, KEY_SDKCONFIG_OPTIONS
+from esphome.components.esp32 import (
+    KEY_COMPONENTS,
+    KEY_ESP32,
+    KEY_PATH,
+    KEY_SDKCONFIG_OPTIONS,
+    get_managed_component_require_names,
+)
 from esphome.components.sendspin import (
     CONF_SUPPORTED_CHANNELS,
     _get_data,
@@ -88,3 +94,12 @@ def test_local_artwork_tls_options_reach_both_idf_toolchains(
     sdkconfig = CORE.data[KEY_ESP32][KEY_SDKCONFIG_OPTIONS]
     assert sdkconfig["CONFIG_ESP_TLS_INSECURE"] is True
     assert sdkconfig["CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY"] is True
+    # A copied component being discovered is insufficient: generated src must
+    # declare its dependency so both build tools inherit the public headers.
+    jpeg = CORE.data[KEY_ESP32][KEY_COMPONENTS]["libjpeg-turbo-esp32"]
+    jpeg_path = Path(jpeg[KEY_PATH])
+    assert jpeg_path == CORE.relative_build_path(
+        "components", "libjpeg-turbo-esp32"
+    ).resolve()
+    assert (jpeg_path / "src" / "jpeglib.h").is_file()
+    assert "libjpeg-turbo-esp32" in get_managed_component_require_names()
