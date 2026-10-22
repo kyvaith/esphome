@@ -1,0 +1,12 @@
+packages:
+  display: !include paused.yaml
+
+lvgl:
+  paused: false
+  widgets:
+    - lottie:
+        id: native_lottie
+        src: /sdcard/animation.json
+        width: 96
+        height: 96
+        auto_start: false

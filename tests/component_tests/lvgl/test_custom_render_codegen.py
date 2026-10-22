@@ -38,3 +38,21 @@ def test_rgb888_direct_uses_packed_color_format_with_full_refresh(
     assert "LV_USE_PPA_IMG" not in feature_defines
     assert "lvgl::LvglComponent({direct_display}, 1, true, true," in main_cpp
     assert "set_color_mode" not in main_cpp
+
+
+def test_lottie_keeps_native_and_opaque_handoff_formats(
+    generate_main, component_config_path
+) -> None:
+    generate_main(component_config_path("lottie_formats.yaml"))
+    defines = df.get_defines()
+    for color_format in ("ARGB8888", "ARGB8888_PREMULTIPLIED", "RGB888", "XRGB8888"):
+        assert defines[f"LV_DRAW_SW_SUPPORT_{color_format}"] == "1"
+
+
+def test_lottie_only_formats_remain_pruned_when_unused(
+    generate_main, component_config_path
+) -> None:
+    generate_main(component_config_path("lv_conf_defaults.yaml"))
+    defines = df.get_defines()
+    assert "LV_DRAW_SW_SUPPORT_ARGB8888_PREMULTIPLIED" not in defines
+    assert "LV_DRAW_SW_SUPPORT_XRGB8888" not in defines

@@ -853,6 +853,10 @@ async def to_code(configs):
         normalized_lv_uses.update({"CANVAS", "IMAGE"})
     # Currently always need RGB565 for the display buffer, and ARGB8888 is used for layer blending.
     lv_image_formats = {"RGB565", display_format, "ARGB8888"}
+    if "LOTTIE" in normalized_lv_uses:
+        # Custom ThorVG canvases publish premultiplied alpha frames. Opaque
+        # direct frames are also exposed as RGB/XRGB during native handoff.
+        lv_image_formats.update({"ARGB8888_PREMULTIPLIED", "RGB888", "XRGB8888"})
 
     if {
         "transform_rotation",
