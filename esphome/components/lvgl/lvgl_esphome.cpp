@@ -9780,22 +9780,25 @@ bool LvglComponent::snapshot_swipe_direct_render_panorama(const uint8_t *panoram
 #endif
 }
 
-bool LvglComponent::snapshot_scroll_direct_render(lv_draw_buf_t *content, lv_draw_buf_t *content_tail,
-                                                  int content_tail_y, int scroll_y, int viewport_w, int viewport_h) {
+bool LvglComponent::snapshot_scroll_direct_render(const std::vector<SnapshotScrollSegment> &segments, int scroll_y,
+                                                  int viewport_w, int viewport_h) {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32)
   constexpr lv_color_format_t SCROLL_CF = LV_COLOR_FORMAT_RGB565;
   uint64_t t0 = esp_timer_get_time();
-  if (content == nullptr || content->data == nullptr)
+  if (segments.empty() || viewport_w != this->width_ || viewport_h != this->height_ || viewport_w <= 0 ||
+      viewport_h <= 0)
     return false;
-  if (viewport_w != this->width_ || viewport_h != this->height_ || viewport_w <= 0 || viewport_h <= 0)
-    return false;
-  if (content->header.cf != SCROLL_CF || content->header.w < viewport_w || content->header.h < viewport_h)
-    if (content_tail == nullptr || content->header.cf != SCROLL_CF || content->header.w < viewport_w ||
-        content_tail->data == nullptr || content_tail->header.cf != SCROLL_CF || content_tail->header.w < viewport_w ||
-        content_tail_y != content->header.h)
+  int content_height = 0;
+  for (const auto &segment : segments) {
+    const auto *buffer = segment.buffer;
+    if (buffer == nullptr || buffer->data == nullptr || buffer->header.cf != SCROLL_CF ||
+        buffer->header.w != viewport_w || buffer->header.stride != static_cast<uint32_t>(viewport_w * 2) ||
+        segment.height <= 0 || buffer->header.h != segment.height || segment.y != content_height)
       return false;
-
-  const int content_height = content_tail == nullptr ? content->header.h : content_tail_y + content_tail->header.h;
+    content_height += segment.height;
+  }
+  if (content_height < viewport_h)
+    return false;
   const int max_scroll_y = std::max(0, content_height - viewport_h);
   scroll_y = std::clamp(scroll_y, -120, max_scroll_y + 120);
 
@@ -9904,27 +9907,9 @@ bool LvglComponent::snapshot_scroll_direct_render(lv_draw_buf_t *content, lv_dra
   };
 
   auto copy_content_rows = [&](int source_y, int target_y, int rows) -> bool {
-    if (rows <= 0)
-      return true;
-    if (content_tail == nullptr || source_y + rows <= content_tail_y)
-      return copy_rows(content, source_y, target_y, rows);
-    if (source_y >= content_tail_y)
-      return copy_rows(content_tail, source_y - content_tail_y, target_y, rows);
-    const int head_rows = content_tail_y - source_y;
-#if CONFIG_ESPHOME_LVGL_SNAPSHOT_DMA2D_M2M
-    if (content->header.cf == LV_COLOR_FORMAT_RGB888 && content_tail->header.cf == LV_COLOR_FORMAT_RGB888) {
-      const Dma2dM2mCopySpan spans[2] = {
-          {content->data, static_cast<int>(content->header.w), static_cast<int>(content->header.h), 0, source_y, 0,
-           target_y, viewport_w, head_rows},
-          {content_tail->data, static_cast<int>(content_tail->header.w), static_cast<int>(content_tail->header.h), 0, 0,
-           0, target_y + head_rows, viewport_w, rows - head_rows},
-      };
-      if (dma2d_m2m_copy_rgb888_spans(spans, 2, target, viewport_w, viewport_h))
-        return true;
-    }
-#endif
-    return copy_rows(content, source_y, target_y, head_rows) &&
-           copy_rows(content_tail, 0, target_y + head_rows, rows - head_rows);
+    return scroll_snapshot_visit_spans(segments, source_y, rows, [&](size_t index, int local_y, int copied, int count) {
+      return copy_rows(segments[index].buffer, local_y, target_y + copied, count);
+    });
   };
 
   bool copied = false;
@@ -12799,8 +12784,7 @@ struct SnapshotSwipeState {
 struct SnapshotScrollState {
   lv_obj_t *root{nullptr};
   lv_draw_buf_t *content_buf{nullptr};
-  lv_draw_buf_t *content_tail_buf{nullptr};
-  int content_tail_y{0};
+  std::vector<SnapshotScrollSegment> segments;
   int viewport_w{0};
   int viewport_h{0};
   int content_h{0};
@@ -12818,8 +12802,6 @@ struct SnapshotScrollState {
   bool inertia_bounce_pending{false};
   bool worker_enabled{false};
   bool root_was_hidden{false};
-  bool owns_content_buf{true};
-  bool owns_content_tail_buf{true};
   uint64_t perf_first_render_us{0};
   uint64_t perf_last_render_us{0};
   uint64_t perf_total_render_us{0};
@@ -13192,11 +13174,8 @@ extern "C" size_t lvgl_esphome_snapshot_memory_bytes(void) {
   for (const auto &entry : snapshot_panorama_cache)
     panorama_bytes += entry.buf == nullptr ? 0 : entry.size;
 
-  if (snapshot_scroll_state.content_buf != nullptr)
-    scroll_bytes += snapshot_scroll_state.content_buf->data_size;
-  if (snapshot_scroll_state.content_tail_buf != nullptr &&
-      snapshot_scroll_state.content_tail_buf != snapshot_scroll_state.content_buf)
-    scroll_bytes += snapshot_scroll_state.content_tail_buf->data_size;
+  for (const auto &segment : snapshot_scroll_state.segments)
+    scroll_bytes += segment.buffer == nullptr ? 0 : segment.buffer->data_size;
   if (snapshot_app_prepared_close_owns_buf && snapshot_app_prepared_close_buf != nullptr &&
       snapshot_app_prepared_close_buf != snapshot_app_work_buf)
     prepared_close_bytes = snapshot_app_prepared_close_buf->data_size;
@@ -13230,11 +13209,8 @@ extern "C" void lvgl_esphome_snapshot_log_memory(const char *phase) {
   }
   for (const auto &entry : snapshot_panorama_cache)
     panorama_bytes += entry.buf == nullptr ? 0 : entry.size;
-  if (snapshot_scroll_state.content_buf != nullptr)
-    scroll_bytes += snapshot_scroll_state.content_buf->data_size;
-  if (snapshot_scroll_state.content_tail_buf != nullptr &&
-      snapshot_scroll_state.content_tail_buf != snapshot_scroll_state.content_buf)
-    scroll_bytes += snapshot_scroll_state.content_tail_buf->data_size;
+  for (const auto &segment : snapshot_scroll_state.segments)
+    scroll_bytes += segment.buffer == nullptr ? 0 : segment.buffer->data_size;
   const size_t app_work_bytes = snapshot_app_work_buf == nullptr ? 0 : snapshot_app_work_buf->data_size;
   const size_t prepared_close_bytes = snapshot_app_prepared_close_owns_buf &&
                                               snapshot_app_prepared_close_buf != nullptr &&
@@ -14341,8 +14317,8 @@ bool snapshot_scroll_render_direct_frame(int scroll_y) {
     return false;
 
   const uint64_t started_us = esp_timer_get_time();
-  const bool rendered = state.component->snapshot_scroll_direct_render(
-      state.content_buf, state.content_tail_buf, state.content_tail_y, scroll_y, state.viewport_w, state.viewport_h);
+  const bool rendered =
+      state.component->snapshot_scroll_direct_render(state.segments, scroll_y, state.viewport_w, state.viewport_h);
   const uint64_t finished_us = esp_timer_get_time();
   const uint32_t render_us = static_cast<uint32_t>(finished_us - started_us);
   if (state.perf_first_render_us == 0)
@@ -15189,7 +15165,7 @@ bool snapshot_app_cleanup() {
   return true;
 }
 
-void snapshot_scroll_cleanup();
+bool snapshot_scroll_cleanup();
 
 void snapshot_app_clear_prepared_close() {
   if (snapshot_app_prepared_close_owns_buf && snapshot_app_prepared_close_buf != nullptr) {
@@ -15409,7 +15385,8 @@ bool snapshot_app_begin(lv_obj_t *app, lv_obj_t *background, int width, int end_
 #if LV_USE_SNAPSHOT
   s_snapshot_app_open_frame_held = false;
   snapshot_swipe_cleanup();
-  snapshot_scroll_cleanup();
+  if (!snapshot_scroll_cleanup())
+    return false;
   if (!snapshot_app_cleanup())
     return false;
   if (app == nullptr || width <= 0)
@@ -15772,9 +15749,10 @@ void snapshot_swipe_finish_now() {
   lv_obj_invalidate(lv_screen_active());
 }
 
-void snapshot_scroll_cleanup() {
+bool snapshot_scroll_cleanup() {
 #ifdef USE_ESP32
-  snapshot_scroll_worker_stop_and_wait();
+  if (!snapshot_scroll_worker_stop_and_wait())
+    return false;  // A timed-out worker still owns every source surface.
 #endif
   s_snapshot_direct_active = false;
   if (snapshot_scroll_state.root != nullptr) {
@@ -15784,14 +15762,10 @@ void snapshot_scroll_cleanup() {
       lv_obj_clear_flag(snapshot_scroll_state.root, LV_OBJ_FLAG_HIDDEN);
     }
   }
-  if (snapshot_scroll_state.content_buf != nullptr && snapshot_scroll_state.owns_content_buf) {
-    lv_draw_buf_destroy(snapshot_scroll_state.content_buf);
-  }
-  if (snapshot_scroll_state.content_tail_buf != nullptr && snapshot_scroll_state.owns_content_tail_buf) {
-    lv_draw_buf_destroy(snapshot_scroll_state.content_tail_buf);
-  }
+  scroll_snapshot_release_segments(snapshot_scroll_state.segments, lv_draw_buf_destroy);
   snapshot_scroll_external_buffer.in_use = false;
   snapshot_scroll_state = {};
+  return true;
 }
 
 int snapshot_scroll_clamp_y(int scroll_y) {
@@ -15822,9 +15796,12 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
   auto *parent = lv_obj_get_parent(obj);
   const int old_scroll_y = lv_obj_get_scroll_y(obj);
   const int max_scroll_y = std::max<int>(0, lv_obj_get_scroll_top(obj) + lv_obj_get_scroll_bottom(obj));
-  const int content_h = std::max(viewport_h, viewport_h + max_scroll_y);
+  if (max_scroll_y > INT32_MAX - viewport_h)
+    return false;
+  const int content_h = viewport_h + max_scroll_y;
   const size_t stride = lv_draw_buf_width_to_stride(viewport_w, SNAPSHOT_SCROLL_CF);
-  if (stride == 0 || static_cast<size_t>(content_h) > snapshot_scroll_config.max_content_bytes / stride) {
+  if (stride != static_cast<size_t>(viewport_w) * 2 ||
+      static_cast<size_t>(content_h) > snapshot_scroll_config.max_content_bytes / stride) {
     ESP_LOGW(TAG, "snapshot scroll: content needs %u bytes, configured limit is %u",
              static_cast<unsigned>(stride * content_h),
              static_cast<unsigned>(snapshot_scroll_config.max_content_bytes));
@@ -15836,12 +15813,10 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
   lv_obj_stop_scroll_anim(obj);
   lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
 
-  // Prefer one contiguous list surface. It needs only one DMA2D/PPA crop per
-  // frame and reaches the same throughput as the Home panorama. Fall back to
-  // two segments only when PSRAM fragmentation prevents the larger block.
-  int content_tail_y = 0;
-  int head_h = content_h;
-  int tail_h = 0;
+  // Keep the external/contiguous fast path. Fragmented heaps use a row-aligned
+  // bounded partition, never another raw full-screen buffer or a CPU copy.
+  const size_t required_bytes = stride * static_cast<size_t>(content_h);
+  std::vector<SnapshotScrollSegment> segments;
   auto take_segment = [&](int segment_y, int segment_h) -> lv_draw_buf_t * {
     lv_obj_set_height(obj, segment_h);
     lv_obj_update_layout(parent == nullptr ? obj : parent);
@@ -15849,101 +15824,62 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
     lv_obj_update_layout(parent == nullptr ? obj : parent);
     return lv_snapshot_take(obj, SNAPSHOT_SCROLL_CF);
   };
-
-  const size_t required_bytes = stride * static_cast<size_t>(content_h);
-  lv_draw_buf_t *content_buf = nullptr;
-  lv_draw_buf_t *content_tail_buf = nullptr;
-  bool owns_content_buf = true;
   if (snapshot_scroll_external_buffer.data != nullptr && !snapshot_scroll_external_buffer.in_use &&
       snapshot_scroll_external_buffer.capacity >= required_bytes) {
     lv_obj_set_height(obj, content_h);
     lv_obj_update_layout(parent == nullptr ? obj : parent);
     lv_obj_scroll_to_y(obj, 0, LV_ANIM_OFF);
     lv_obj_update_layout(parent == nullptr ? obj : parent);
-    snapshot_scroll_external_buffer.view = {};
-    if (lv_draw_buf_init(&snapshot_scroll_external_buffer.view, viewport_w, content_h, SNAPSHOT_SCROLL_CF,
-                         static_cast<uint32_t>(stride), snapshot_scroll_external_buffer.data,
+    auto &view = snapshot_scroll_external_buffer.view;
+    view = {};
+    if (lv_draw_buf_init(&view, viewport_w, content_h, SNAPSHOT_SCROLL_CF, static_cast<uint32_t>(stride),
+                         snapshot_scroll_external_buffer.data,
                          snapshot_scroll_external_buffer.capacity) == LV_RESULT_OK &&
-        lv_snapshot_take_to_draw_buf(obj, SNAPSHOT_SCROLL_CF, &snapshot_scroll_external_buffer.view) == LV_RESULT_OK) {
-      content_buf = &snapshot_scroll_external_buffer.view;
-      owns_content_buf = false;
-      snapshot_scroll_external_buffer.in_use = true;
-      ESP_LOGI(TAG, "snapshot scroll: captured into shared external buffer (%u/%u bytes)",
-               static_cast<unsigned>(required_bytes), static_cast<unsigned>(snapshot_scroll_external_buffer.capacity));
+        lv_snapshot_take_to_draw_buf(obj, SNAPSHOT_SCROLL_CF, &view) == LV_RESULT_OK) {
+      segments.push_back({&view, 0, content_h, false});
     }
   }
-  // Do not spend a failed full-content allocation attempt when PSRAM is
-  // already fragmented below that size. Two smaller contiguous segments keep
-  // the same scroll surface while avoiding a long LVGL allocation failure and
-  // the resulting blank settings page.
-  const bool prefer_segments = required_bytes > heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
-  if (content_buf == nullptr && !prefer_segments)
-    content_buf = take_segment(0, head_h);
-  if (content_buf == nullptr && content_h > viewport_h) {
-    content_tail_y = (content_h + 1) / 2;
-    head_h = content_tail_y;
-    tail_h = content_h - content_tail_y;
-    content_buf = take_segment(0, head_h);
-    content_tail_buf = content_buf != nullptr ? take_segment(content_tail_y, tail_h) : nullptr;
-    if (content_buf != nullptr && content_tail_buf != nullptr) {
-      ESP_LOGI(TAG, "snapshot scroll: captured as two segments head=%u tail=%u total=%u", static_cast<unsigned>(head_h),
-               static_cast<unsigned>(tail_h), static_cast<unsigned>(content_h));
-    }
+  const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+  if (segments.empty() && required_bytes + 128 <= largest) {
+    if (auto *buffer = take_segment(0, content_h); buffer != nullptr)
+      segments.push_back({buffer, 0, content_h, true});
+  }
+  if (segments.empty()) {
+    // Count derives from the already validated max_content_bytes budget. No
+    // per-app surfaces are retained; only this open scroll-session partition lives.
+    scroll_snapshot_capture_partition(segments, content_h, stride, take_segment, lv_draw_buf_destroy);
   }
 
   lv_obj_set_height(obj, old_h);
   lv_obj_scroll_to_y(obj, old_scroll_y, LV_ANIM_OFF);
   lv_obj_update_layout(parent == nullptr ? obj : parent);
-  if (was_hidden) {
+  if (was_hidden)
     lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
-  }
 
-  if (content_buf == nullptr || (tail_h > 0 && content_tail_buf == nullptr)) {
-    ESP_LOGW(TAG, "snapshot scroll: failed for obj=%p content_h=%d", obj, content_h);
-    if (content_buf != nullptr && owns_content_buf)
-      lv_draw_buf_destroy(content_buf);
-    if (content_tail_buf != nullptr)
-      lv_draw_buf_destroy(content_tail_buf);
-    return false;
+  int captured_rows = 0;
+  bool valid = !segments.empty();
+  for (const auto &segment : segments) {
+    const auto *buffer = segment.buffer;
+    valid = valid && buffer != nullptr && buffer->data != nullptr && buffer->header.cf == SNAPSHOT_SCROLL_CF &&
+            buffer->header.w == viewport_w && buffer->header.h == segment.height && buffer->header.stride == stride &&
+            segment.y == captured_rows;
+    captured_rows += segment.height;
   }
-  if (content_buf->header.cf != SNAPSHOT_SCROLL_CF || content_buf->header.w < viewport_w ||
-      content_buf->header.h != head_h ||
-      (content_tail_buf != nullptr &&
-       (content_tail_buf->header.cf != SNAPSHOT_SCROLL_CF || content_tail_buf->header.w < viewport_w ||
-        content_tail_buf->header.h != tail_h))) {
-    ESP_LOGW(TAG, "snapshot scroll: invalid segmented buffers head=%dx%d tail=%dx%d", (int) content_buf->header.w,
-             (int) content_buf->header.h, content_tail_buf == nullptr ? 0 : (int) content_tail_buf->header.w,
-             content_tail_buf == nullptr ? 0 : (int) content_tail_buf->header.h);
-    if (owns_content_buf) {
-      lv_draw_buf_destroy(content_buf);
-    } else {
-      snapshot_scroll_external_buffer.in_use = false;
-    }
-    if (content_tail_buf != nullptr)
-      lv_draw_buf_destroy(content_tail_buf);
+  if (!valid || captured_rows != content_h) {
+    ESP_LOGW(TAG, "snapshot scroll: failed for obj=%p content_h=%d captured=%d segments=%u", obj, content_h,
+             captured_rows, static_cast<unsigned>(segments.size()));
+    scroll_snapshot_release_segments(segments, lv_draw_buf_destroy);
     return false;
   }
 #if defined(USE_ESP32)
-  {
-    const size_t content_size = content_buf->data_size != 0
-                                    ? content_buf->data_size
-                                    : (size_t) content_buf->header.stride * content_buf->header.h;
-    lvgl_cache_msync_external(content_buf->data, content_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-    if (content_tail_buf != nullptr) {
-      const size_t tail_size = content_tail_buf->data_size != 0
-                                   ? content_tail_buf->data_size
-                                   : (size_t) content_tail_buf->header.stride * content_tail_buf->header.h;
-      lvgl_cache_msync_external(content_tail_buf->data, tail_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-    }
+  for (const auto &segment : segments) {
+    lvgl_cache_msync_external(segment.buffer->data, stride * segment.height, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   }
 #endif
-
+  snapshot_scroll_external_buffer.in_use = !segments.front().owned;
   snapshot_scroll_state.root = obj;
-  snapshot_scroll_state.content_buf = content_buf;
-  snapshot_scroll_state.content_tail_buf = content_tail_buf;
-  snapshot_scroll_state.content_tail_y = content_tail_y;
-  snapshot_scroll_state.owns_content_buf = owns_content_buf;
-  snapshot_scroll_state.owns_content_tail_buf = true;
+  snapshot_scroll_state.content_buf = segments.front().buffer;
+  snapshot_scroll_state.segments = std::move(segments);
   snapshot_scroll_state.viewport_w = viewport_w;
   snapshot_scroll_state.viewport_h = viewport_h;
   snapshot_scroll_state.content_h = content_h;
@@ -15955,8 +15891,8 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
   if (!render_now)
     return true;
 
-  if (!component->snapshot_scroll_direct_render(content_buf, content_tail_buf, content_tail_y,
-                                                snapshot_scroll_state.current_scroll_y, viewport_w, viewport_h)) {
+  if (!component->snapshot_scroll_direct_render(snapshot_scroll_state.segments, snapshot_scroll_state.current_scroll_y,
+                                                viewport_w, viewport_h)) {
     snapshot_scroll_cleanup();
     return false;
   }
@@ -18102,7 +18038,8 @@ bool snapshot_scroll_process_pending() {
   if (state.inertia_active && state.worker_enabled) {
     if (snapshot_scroll_worker.inertia_done.load(std::memory_order_acquire)) {
       const int final_y = state.inertia_final_y;
-      snapshot_scroll_worker_stop_and_wait();
+      if (!snapshot_scroll_worker_stop_and_wait())
+        return true;
       state.worker_enabled = false;
       state.inertia_active = false;
       state.inertia_bounce_pending = false;
@@ -18113,9 +18050,10 @@ bool snapshot_scroll_process_pending() {
     if (snapshot_scroll_worker.inertia_requested.load(std::memory_order_acquire))
       return true;
     if (snapshot_scroll_worker.failed.load(std::memory_order_acquire)) {
+      if (!snapshot_scroll_worker_stop_and_wait())
+        return true;
       state.inertia_start_y = snapshot_scroll_worker.rendered_scroll_y.load(std::memory_order_acquire);
       state.inertia_start_us = static_cast<uint64_t>(millis()) * 1000ULL;
-      snapshot_scroll_worker_stop_and_wait();
       state.worker_enabled = false;
     }
   }
@@ -18154,7 +18092,8 @@ bool snapshot_scroll_process_pending() {
   if (state.worker_enabled) {
     if (!snapshot_scroll_worker.failed.load(std::memory_order_acquire))
       return state.inertia_active;
-    snapshot_scroll_worker_stop_and_wait();
+    if (!snapshot_scroll_worker_stop_and_wait())
+      return true;
     state.worker_enabled = false;
     state.pending_scroll_y = snapshot_scroll_worker.requested_scroll_y.load(std::memory_order_acquire);
     state.pending_update = true;
@@ -18182,7 +18121,7 @@ void snapshot_scroll_log_summary() {
            static_cast<unsigned>(state.perf_render_frames), static_cast<unsigned>(fps),
            static_cast<unsigned long long>(state.perf_total_render_us / state.perf_render_frames),
            static_cast<unsigned>(state.perf_max_render_us), static_cast<unsigned>(state.perf_failed_frames),
-           state.content_tail_buf == nullptr ? 1U : 2U);
+           static_cast<unsigned>(state.segments.size()));
 }
 
 extern "C" void lvgl_esphome_snapshot_swipe_end(void) {
@@ -18258,7 +18197,8 @@ extern "C" bool lvgl_esphome_snapshot_scroll_begin(lv_obj_t *obj, int viewport_w
   }
 
   const bool preserve_open_hold = s_snapshot_app_open_frame_held;
-  snapshot_scroll_cleanup();
+  if (!snapshot_scroll_cleanup())
+    return false;
   snapshot_swipe_cleanup();
   if (preserve_open_hold)
     s_snapshot_direct_active = true;
@@ -18308,7 +18248,8 @@ extern "C" bool lvgl_esphome_snapshot_scroll_prepare(lv_obj_t *obj, int viewport
     return true;
   }
   const bool preserve_open_hold = s_snapshot_app_open_frame_held;
-  snapshot_scroll_cleanup();
+  if (!snapshot_scroll_cleanup())
+    return false;
   snapshot_swipe_cleanup();
   if (preserve_open_hold)
     s_snapshot_direct_active = true;
@@ -18326,7 +18267,8 @@ extern "C" bool lvgl_esphome_snapshot_scroll_refresh(lv_obj_t *obj, int viewport
     return false;
 
 #ifdef USE_ESP32
-  snapshot_scroll_worker_stop_and_wait();
+  if (!snapshot_scroll_worker_stop_and_wait())
+    return false;
 #endif
   if (state.viewport_w != viewport_w || state.viewport_h != viewport_h ||
       state.content_buf->header.cf != SNAPSHOT_SCROLL_CF || state.content_buf->header.w < viewport_w)
@@ -18349,8 +18291,13 @@ extern "C" bool lvgl_esphome_snapshot_scroll_refresh(lv_obj_t *obj, int viewport
     return lv_snapshot_take_to_draw_buf(obj, SNAPSHOT_SCROLL_CF, buffer) == LV_RESULT_OK;
   };
 
-  const bool refreshed_head = refresh_segment(0, state.content_buf);
-  const bool refreshed_tail = refreshed_head && refresh_segment(state.content_tail_y, state.content_tail_buf);
+  bool refreshed = true;
+  for (const auto &segment : state.segments) {
+    if (!refresh_segment(segment.y, segment.buffer)) {
+      refreshed = false;
+      break;
+    }
+  }
 
   lv_obj_set_height(obj, old_h);
   lv_obj_scroll_to_y(obj, old_scroll_y, LV_ANIM_OFF);
@@ -18358,25 +18305,22 @@ extern "C" bool lvgl_esphome_snapshot_scroll_refresh(lv_obj_t *obj, int viewport
   if (was_hidden)
     lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
 
-  if (!refreshed_head || !refreshed_tail)
+  if (!refreshed) {
+    // No worker can publish a mixture of old and newly rendered pieces. Let
+    // the next prepare reconstruct the complete partition instead.
+    snapshot_scroll_cleanup();
     return false;
+  }
 #if defined(USE_ESP32)
-  const size_t head_size = state.content_buf->data_size != 0
-                               ? state.content_buf->data_size
-                               : static_cast<size_t>(state.content_buf->header.stride) * state.content_buf->header.h;
-  lvgl_cache_msync_external(state.content_buf->data, head_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-  if (state.content_tail_buf != nullptr) {
-    const size_t tail_size =
-        state.content_tail_buf->data_size != 0
-            ? state.content_tail_buf->data_size
-            : static_cast<size_t>(state.content_tail_buf->header.stride) * state.content_tail_buf->header.h;
-    lvgl_cache_msync_external(state.content_tail_buf->data, tail_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  for (const auto &segment : state.segments) {
+    const size_t bytes = static_cast<size_t>(segment.buffer->header.stride) * segment.height;
+    lvgl_cache_msync_external(segment.buffer->data, bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   }
 #endif
   state.current_scroll_y = snapshot_scroll_clamp_y(old_scroll_y);
   if (s_swipe_logging_enabled) {
     ESP_LOGI(TAG, "snapshot scroll: refreshed y=%d max=%d segments=%u", state.current_scroll_y, state.max_scroll_y,
-             state.content_tail_buf == nullptr ? 1U : 2U);
+             static_cast<unsigned>(state.segments.size()));
   }
   return true;
 #else
@@ -18414,7 +18358,8 @@ extern "C" void lvgl_esphome_snapshot_scroll_finish(int scroll_y) {
   if (snapshot_scroll_state.worker_enabled) {
     const uint32_t generation = snapshot_scroll_worker_queue_update(clamped_y);
     rendered_by_worker = snapshot_scroll_worker_wait_for(generation, 160);
-    snapshot_scroll_worker_stop_and_wait();
+    if (!snapshot_scroll_worker_stop_and_wait())
+      return;
     snapshot_scroll_state.worker_enabled = false;
   }
 #endif
@@ -18451,7 +18396,8 @@ extern "C" void lvgl_esphome_snapshot_scroll_finish_retain(int scroll_y) {
   if (snapshot_scroll_state.worker_enabled) {
     const uint32_t generation = snapshot_scroll_worker_queue_update(clamped_y);
     rendered_by_worker = snapshot_scroll_worker_wait_for(generation, 160);
-    snapshot_scroll_worker_stop_and_wait();
+    if (!snapshot_scroll_worker_stop_and_wait())
+      return;
     snapshot_scroll_state.worker_enabled = false;
   }
 #endif
@@ -18528,7 +18474,8 @@ extern "C" void lvgl_esphome_snapshot_scroll_finish_inertial(int scroll_y, int v
 }
 
 extern "C" void lvgl_esphome_snapshot_scroll_end(void) {
-  snapshot_scroll_cleanup();
+  if (!snapshot_scroll_cleanup())
+    return;
   lv_obj_invalidate(lv_screen_active());
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esphome/components/lvgl/slideshow.h"
+#include "esphome/components/lvgl/scroll_snapshot_geometry.h"
 #include "esphome/core/defines.h"
 
 #ifdef USE_BINARY_SENSOR
@@ -227,6 +228,13 @@ extern "C" void lvgl_esphome_snapshot_log_memory(const char *phase);
 #endif  // USE_LVGL_BUTTONMATRIX
 
 namespace esphome::lvgl {
+
+struct SnapshotScrollSegment {
+  lv_draw_buf_t *buffer{nullptr};
+  int y{0};
+  int height{0};
+  bool owned{true};
+};
 
 #if LV_COLOR_DEPTH == 16
 using lv_color_data = uint16_t;
@@ -565,8 +573,8 @@ class LvglComponent final : public PollingComponent {
   bool snapshot_swipe_direct_render_edge(lv_draw_buf_t *current, int current_x, int width);
   bool snapshot_swipe_direct_render_panorama(const uint8_t *panorama, int current_x, int width, int scale,
                                              int initial_next_x, int panorama_page_count, int source_page_index);
-  bool snapshot_scroll_direct_render(lv_draw_buf_t *content, lv_draw_buf_t *content_tail, int content_tail_y,
-                                     int scroll_y, int viewport_w, int viewport_h);
+  bool snapshot_scroll_direct_render(const std::vector<SnapshotScrollSegment> &segments, int scroll_y, int viewport_w,
+                                     int viewport_h);
   bool snapshot_app_direct_render(lv_draw_buf_t *background, lv_draw_buf_t *app, int center_x, int center_y, int width,
                                   int height);
   bool snapshot_present_current_frame();
