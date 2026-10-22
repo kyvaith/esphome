@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from esphome.components.lvgl import defines as df
+from esphome.core import CORE
 
 
 def test_transitions_expand_style_shortcuts_and_preserve_zero_duration(
@@ -31,5 +32,9 @@ def test_rgb888_direct_uses_packed_color_format_with_full_refresh(
     assert defines["LV_DRAW_SW_SUPPORT_RGB888"] == "1"
     # The optional direct presenter still uses semantic depth 32 for packed RGB888.
     assert defines["LV_COLOR_DEPTH"] == "32"
+    assert defines["LV_USE_PPA"] == "0"
+    feature_defines = {define.name for define in CORE.defines}
+    assert "USE_LVGL_PPA_IMG" in feature_defines
+    assert "LV_USE_PPA_IMG" not in feature_defines
     assert "lvgl::LvglComponent({direct_display}, 1, true, true," in main_cpp
     assert "set_color_mode" not in main_cpp

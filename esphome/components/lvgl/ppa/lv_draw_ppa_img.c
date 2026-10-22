@@ -201,8 +201,7 @@ static inline bool lv_draw_ppa_verbose_log_enabled(void) {
 }
 
 static inline bool lv_draw_ppa_source_written_by_dma(const void *ptr) {
-  return (esphome_artwork_image_buffer_written_by_dma != NULL &&
-          esphome_artwork_image_buffer_written_by_dma(ptr)) ||
+  return (esphome_artwork_image_buffer_written_by_dma != NULL && esphome_artwork_image_buffer_written_by_dma(ptr)) ||
          (esphome_lvgl_image_buffer_written_by_dma != NULL && esphome_lvgl_image_buffer_written_by_dma(ptr));
 }
 
@@ -678,7 +677,7 @@ static void lv_draw_img_ppa_core(lv_draw_task_t *t, const lv_draw_image_dsc_t *d
   }
 }
 
-#ifdef LV_USE_PPA_IMG
+#ifdef USE_LVGL_PPA_IMG
 
 void lv_draw_ppa_img_srm(lv_draw_task_t *t, const lv_draw_image_dsc_t *dsc, const lv_area_t *coords) {
   if (dsc->opa <= (lv_opa_t) LV_OPA_MIN)
@@ -1331,6 +1330,6 @@ void lv_draw_ppa_img_rotate(lv_draw_task_t *t, const lv_draw_image_dsc_t *dsc, c
   lv_image_decoder_close(&decoder_dsc);
 }
 
-#endif /* LV_USE_PPA_IMG */
+#endif /* USE_LVGL_PPA_IMG */
 
 #endif /* CONFIG_SOC_PPA_SUPPORTED */

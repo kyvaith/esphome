@@ -69,25 +69,19 @@ uint64_t lv_draw_ppa_get_img_overlay_dest_post_us(void);
 void lv_draw_ppa_srm_qos_begin(uint32_t pixel_count);
 void lv_draw_ppa_srm_qos_end(uint32_t pixel_count);
 
-void lv_draw_ppa_fill(lv_draw_task_t * t, const lv_draw_fill_dsc_t * dsc,
-                      const lv_area_t * coords);
+void lv_draw_ppa_fill(lv_draw_task_t *t, const lv_draw_fill_dsc_t *dsc, const lv_area_t *coords);
 
-void lv_draw_ppa_img(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
-                     const lv_area_t * coords);
+void lv_draw_ppa_img(lv_draw_task_t *t, const lv_draw_image_dsc_t *dsc, const lv_area_t *coords);
 
-#ifdef LV_USE_PPA_IMG
-void lv_draw_ppa_img_rotate(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
-                            const lv_area_t * coords);
-void lv_draw_ppa_img_srm(lv_draw_task_t * t, const lv_draw_image_dsc_t * dsc,
-                         const lv_area_t * coords);
+#ifdef USE_LVGL_PPA_IMG
+void lv_draw_ppa_img_rotate(lv_draw_task_t *t, const lv_draw_image_dsc_t *dsc, const lv_area_t *coords);
+void lv_draw_ppa_img_srm(lv_draw_task_t *t, const lv_draw_image_dsc_t *dsc, const lv_area_t *coords);
 #endif
 
-void lv_draw_ppa_cache_sync_to_memory(lv_draw_buf_t * buf);
-void lv_draw_ppa_cache_sync_from_memory(lv_draw_buf_t * buf);
-void lv_draw_ppa_cache_sync_area_to_memory(lv_draw_buf_t * buf, const lv_area_t * buf_area,
-                                           const lv_area_t * area);
-void lv_draw_ppa_cache_sync_area_from_memory(lv_draw_buf_t * buf, const lv_area_t * buf_area,
-                                             const lv_area_t * area);
+void lv_draw_ppa_cache_sync_to_memory(lv_draw_buf_t *buf);
+void lv_draw_ppa_cache_sync_from_memory(lv_draw_buf_t *buf);
+void lv_draw_ppa_cache_sync_area_to_memory(lv_draw_buf_t *buf, const lv_area_t *buf_area, const lv_area_t *area);
+void lv_draw_ppa_cache_sync_area_from_memory(lv_draw_buf_t *buf, const lv_area_t *buf_area, const lv_area_t *area);
 
 /**********************
  *      MACROS

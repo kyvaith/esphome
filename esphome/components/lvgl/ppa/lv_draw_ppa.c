@@ -338,7 +338,7 @@ static int32_t ppa_evaluate(lv_draw_unit_t *draw_unit, lv_draw_task_t *t) {
         s_ppa_img_eval_logs++;
       }
 
-#ifdef LV_USE_PPA_IMG
+#ifdef USE_LVGL_PPA_IMG
       /* PPA SRM handles 90-degree increment rotation in hardware */
       if (dsc->rotation != 0) {
         int32_t angle = dsc->rotation % 3600;
@@ -382,7 +382,7 @@ static int32_t ppa_evaluate(lv_draw_unit_t *draw_unit, lv_draw_task_t *t) {
       if (dsc->skew_x != 0 || dsc->skew_y != 0)
         return 0;
 
-#ifdef LV_USE_PPA_IMG
+#ifdef USE_LVGL_PPA_IMG
       /* PPA SRM handles slideshow scale and translation with rotation=0. */
       if (!ppa_image_scale_is_identity(dsc)) {
         if (dsc->opa < (lv_opa_t) LV_OPA_MAX) {
@@ -422,7 +422,7 @@ static int32_t ppa_evaluate(lv_draw_unit_t *draw_unit, lv_draw_task_t *t) {
       if (!ppa_image_scale_is_identity(dsc))
         return 0;
 #endif
-#ifdef LV_USE_PPA_IMG
+#ifdef USE_LVGL_PPA_IMG
       if (ppa_image_task_is_direct_overlay(t, dsc)) {
         if (t->preference_score > 45) {
           t->preference_score = 45;
@@ -507,7 +507,7 @@ static int32_t ppa_dispatch(lv_draw_unit_t *draw_unit, lv_layer_t *layer) {
         case LV_DRAW_TASK_TYPE_IMAGE: {
           s_ppa_img_tasks++;
           lv_draw_image_dsc_t *img_dsc = (lv_draw_image_dsc_t *) t->draw_dsc;
-#ifdef LV_USE_PPA_IMG
+#ifdef USE_LVGL_PPA_IMG
           if (img_dsc->rotation != 0) {
             lv_draw_ppa_img_rotate(t, img_dsc, &t->area);
           } else if (!ppa_image_scale_is_identity(img_dsc) || img_dsc->skew_x != 0 || img_dsc->skew_y != 0) {

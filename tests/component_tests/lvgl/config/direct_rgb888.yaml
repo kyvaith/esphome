@@ -27,6 +27,7 @@ lvgl:
   direct_mode: true
   full_refresh: true
   buffer_size: 100%
+  use_ppa_img: true
   widgets:
     - obj:
         id: direct_root

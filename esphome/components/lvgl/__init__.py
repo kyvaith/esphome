@@ -548,7 +548,7 @@ async def to_code(configs):
         cg.add_define("USE_LVGL_PPA_BLEND_HANDLER")
     if use_ppa_img:
         # Enable PPA SRM hardware rotation for images (0/90/180/270 degrees)
-        cg.add_define("LV_USE_PPA_IMG")
+        cg.add_define("USE_LVGL_PPA_IMG")
     use_fps_benchmark = _config_bool(config_0.get(CONF_FPS_BENCHMARK, False))
     use_perf_monitor = _config_bool(config_0.get(CONF_PERF_MONITOR, False))
     use_profiler = _config_bool(config_0.get(CONF_PROFILER, False))
