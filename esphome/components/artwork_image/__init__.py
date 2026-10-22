@@ -7,7 +7,6 @@ from esphome.components import esp32, sendspin
 from esphome.components.const import CONF_BYTE_ORDER, CONF_REQUEST_HEADERS
 from esphome.components.http_request import CONF_HTTP_REQUEST_ID, HttpRequestComponent
 from esphome.components.image import (
-    IMAGE_TYPE,
     Image_,
     get_image_type_enum,
     get_transparency_enum,
@@ -193,7 +192,11 @@ DecodePendingAction = artwork_image_ns.class_(
 ARTWORK_IMAGE_SCHEMA = cv.Schema(
     {
         cv.Required(CONF_ID): cv.declare_id(ArtworkImage),
-        cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
+        # The legacy decoder supports these formats; upstream's RGB111 image
+        # format has no draw_pixel_/LVGL descriptor implementation here.
+        cv.Required(CONF_TYPE): validate_type(
+            ("BINARY", "GRAYSCALE", "RGB565", "RGB")
+        ),
         cv.Optional(CONF_RESIZE): cv.dimensions,
         cv.Optional(CONF_BYTE_ORDER): cv.one_of(
             "BIG_ENDIAN", "LITTLE_ENDIAN", upper=True

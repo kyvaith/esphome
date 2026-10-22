@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from esphome import config_validation as cv
+from esphome.components.artwork_image import ARTWORK_IMAGE_SCHEMA
 from esphome.components.esp32 import (
     KEY_COMPONENTS,
     KEY_ESP32,
@@ -22,6 +23,29 @@ from esphome.components.sendspin.media_source import CONFIG_SCHEMA
 from esphome.const import PlatformFramework
 from esphome.core import CORE
 from tests.component_tests.types import SetCoreConfigCallable
+
+
+@pytest.mark.parametrize("image_type", ["RGB111", "rgb111"])
+def test_legacy_artwork_rejects_unimplemented_rgb111(
+    set_core_config: SetCoreConfigCallable, image_type: str
+) -> None:
+    """A format supported by native images must not silently reach an older decoder."""
+    set_core_config(PlatformFramework.ESP32_IDF)
+    with pytest.raises(cv.Invalid):
+        ARTWORK_IMAGE_SCHEMA(
+            {"id": "artwork", "type": image_type, "url": "https://example.com/art.jpg"}
+        )
+
+
+@pytest.mark.parametrize("image_type", ["BINARY", "GRAYSCALE", "RGB565", "RGB"])
+def test_legacy_artwork_retains_supported_image_types(
+    set_core_config: SetCoreConfigCallable, image_type: str
+) -> None:
+    set_core_config(PlatformFramework.ESP32_IDF)
+    config = ARTWORK_IMAGE_SCHEMA(
+        {"id": "artwork", "type": image_type, "url": "https://example.com/art.jpg"}
+    )
+    assert config["type"] == image_type
 
 
 def test_mono_codecs_reach_the_generated_role(
