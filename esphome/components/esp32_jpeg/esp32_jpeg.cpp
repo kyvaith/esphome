@@ -1018,6 +1018,19 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   if (stored_data == nullptr)
     stored_data = static_cast<uint8_t *>(heap_caps_malloc(encoded_size, MALLOC_CAP_8BIT));
   if (stored_data == nullptr) {
+    // Successful processing has completed DMA and synchronized its payload to
+    // the CPU. When the separate compact copy cannot fit, shrink and transfer
+    // only scratch owned by this call. Borrowed reusable output stays intact.
+    if (owns_output) {
+      auto *compacted =
+          static_cast<uint8_t *>(heap_caps_realloc(output_data, encoded_size, OUTPUT_CAPS | MALLOC_CAP_8BIT));
+      if (compacted != nullptr) {
+        ESP_LOGW(TAG, "JPEG encode recovered owned-copy allocation: scratch_before=%zu scratch_after=%zu encoded=%zu",
+                 output_capacity, static_cast<size_t>(encoded_size), static_cast<size_t>(encoded_size));
+        output->reset(compacted, encoded_size, encoded_size);
+        return ESP_OK;
+      }
+    }
     log_no_mem("owned_copy", encoded_size, encoded_size, 0, output_capacity, encoded_size, input_capacity);
     if (owns_output)
       heap_caps_free(output_data);
