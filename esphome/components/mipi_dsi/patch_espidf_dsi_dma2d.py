@@ -7,7 +7,8 @@
 #
 # Remove this once the framework package contains the same guard upstream.
 
-# ruff: noqa: F821
+# Unified-diff blank context lines must retain their leading space.
+# ruff: noqa: F821, W293
 # pylint: disable=undefined-variable
 from contextlib import suppress
 import hashlib
@@ -1395,9 +1396,11 @@ esp_err_t esphome_mipi_dsi_set_dma_flow_controller(esp_lcd_panel_handle_t panel,
         ),
         (
             "    mipi_dsi_brg_ll_set_burst_len(hal->bridge, 256);",
-            "    hal->bridge->mem_clk_ctrl.dsi_bridge_mem_clk_force_on = 1;\n"
-            "    hal->bridge->mem_clk_ctrl.dsi_mem_clk_force_on = 1;\n"
-            "    mipi_dsi_brg_ll_set_burst_len(hal->bridge, 128);",
+            (
+                "    hal->bridge->mem_clk_ctrl.dsi_bridge_mem_clk_force_on = 1;\n"
+                "    hal->bridge->mem_clk_ctrl.dsi_mem_clk_force_on = 1;\n"
+                "    mipi_dsi_brg_ll_set_burst_len(hal->bridge, 128);"
+            ),
         ),
         (
             "    mipi_dsi_brg_ll_set_empty_threshold(hal->bridge, 1024 - 256);",
