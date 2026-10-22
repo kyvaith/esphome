@@ -849,6 +849,17 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   if (!lock.locked())
     return ESP_ERR_TIMEOUT;
 
+  auto log_no_mem = [](const char *stage, size_t requested, size_t planned, size_t reported_capacity,
+                       size_t scratch_capacity, size_t encoded_size, size_t input_capacity) {
+    ESP_LOGW(TAG,
+             "JPEG encode NO_MEM: stage=%s requested=%zu planned=%zu reported_capacity=%zu "
+             "scratch_capacity=%zu encoded=%zu input_capacity=%zu psram_free=%zu psram_largest=%zu "
+             "internal_free=%zu internal_largest=%zu",
+             stage, requested, planned, reported_capacity, scratch_capacity, encoded_size, input_capacity,
+             heap_caps_get_free_size(MALLOC_CAP_SPIRAM), heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+  };
+
   // A DMA/PPA producer bypasses the CPU cache. Discard stale CPU lines before
   // either the CPU copies this source or the JPEG peripheral reads it.
   if (config.input_dma_owned && esp_ptr_external_ram(input)) {
@@ -869,6 +880,8 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
         .timeout_ms = config.timeout_ms,
     };
     err = jpeg_new_encoder_engine(&engine_cfg, &encoder);
+    if (err == ESP_ERR_NO_MEM)
+      log_no_mem("engine_create", 0, 0, 0, 0, 0, 0);
     if (err != ESP_OK)
       return err;
     owns_encoder = true;
@@ -893,6 +906,7 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
       std::memcpy(input_data, input, expected_input_size);
   }
   if (input_data == nullptr || input_capacity < expected_input_size) {
+    log_no_mem("input_staging", expected_input_size, expected_input_size, input_capacity, 0, 0, input_capacity);
     if (owns_input && input_data != nullptr)
       heap_caps_free(input_data);
     if (owns_encoder)
@@ -939,6 +953,8 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
     output_capacity = preallocated_encoder_output_capacity;
   }
   if (output_data == nullptr) {
+    log_no_mem("output_scratch", requested_output_size, output_plan.allocation_size, output_capacity, 0, 0,
+               input_capacity);
     if (owns_input)
       heap_caps_free(input_data);
     if (owns_encoder)
@@ -988,6 +1004,9 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   if (owns_encoder)
     jpeg_del_encoder_engine(encoder);
   if (err != ESP_OK || encoded_size == 0 || encoded_size > output_limit) {
+    if (err == ESP_ERR_NO_MEM)
+      log_no_mem("process_reported_no_mem", requested_output_size, output_limit, output_capacity, output_capacity,
+                 encoded_size, input_capacity);
     if (owns_output)
       heap_caps_free(output_data);
     if (err == ESP_OK && encoded_size > output_limit)
@@ -999,6 +1018,7 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   if (stored_data == nullptr)
     stored_data = static_cast<uint8_t *>(heap_caps_malloc(encoded_size, MALLOC_CAP_8BIT));
   if (stored_data == nullptr) {
+    log_no_mem("owned_copy", encoded_size, encoded_size, 0, output_capacity, encoded_size, input_capacity);
     if (owns_output)
       heap_caps_free(output_data);
     return ESP_ERR_NO_MEM;
