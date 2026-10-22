@@ -3255,11 +3255,11 @@ inline bool lottie_launch(LottieContext *ctx) {
   ctx->fast_radial_buffer_ptr[0] = ctx->work_buffer;
   ctx->fast_radial_buffer_ptr[1] = ctx->work_buffer_alt;
 
-  // Opaque/direct scenes need a third presentation buffer because PPA reads
-  // an immutable XRGB source asynchronously. Transparent ARGB scenes use the
-  // pixel and work buffers as a normal double buffer instead.
-  if (render_direct_to_back || (ctx->flatten_to_opaque && ctx->work_buffer != nullptr) ||
-      (lottie_uses_scaled_render(ctx) && !lottie_uses_direct_scaled_argb(ctx))) {
+  // The unscaled direct opaque pipeline owns a stable canvas and two private
+  // render targets. Other opaque/scaled paths still need a display back buffer.
+  if ((!lottie_uses_direct_opaque_pipeline(ctx) || lottie_uses_scaled_render(ctx)) &&
+      (render_direct_to_back || (ctx->flatten_to_opaque && ctx->work_buffer != nullptr) ||
+       (lottie_uses_scaled_render(ctx) && !lottie_uses_direct_scaled_argb(ctx)))) {
     ctx->display_back_buffer = lottie_alloc_pixel_buffer(display_alloc_bytes, &ctx->display_back_buffer_internal);
     if (ctx->display_back_buffer == nullptr) {
       ESP_LOGE("lvgl.lottie", "Display back buffer alloc failed: %u bytes free=%uK largest=%uK",
