@@ -310,17 +310,21 @@ def patch_sw_rgb888_artwork_throttle_source(src):
     except OSError as err:
         print("WARNING: failed to read LVGL RGB888 blend source:", err)
         return
-    if SW_RGB888_ARTWORK_THROTTLE_MARKER in text:
-        return
-
     original = text
-    text = text.replace(
-        '#include "../../../stdlib/lv_string.h"\n',
-        '#include "../../../stdlib/lv_string.h"\n\n'
-        + SW_RGB888_ARTWORK_THROTTLE_HELPER.strip()
-        + "\n",
-        1,
-    )
+    helper_declaration = f"static inline bool {SW_RGB888_ARTWORK_THROTTLE_MARKER}("
+    if helper_declaration not in text:
+        # LVGL 9.6 moved the common declarations into the private blend header.
+        # Also repair generated trees where an older patch inserted only calls.
+        include = '#include "lv_draw_sw_blend_private.h"\n'
+        if include not in text:
+            include = '#include "../../../stdlib/lv_string.h"\n'
+        if include not in text:
+            raise RuntimeError(f"Unsupported LVGL RGB888 blend include: {src}")
+        text = text.replace(
+            include,
+            include + "\n" + SW_RGB888_ARTWORK_THROTTLE_HELPER.strip() + "\n",
+            1,
+        )
 
     func_start = text.find("static void LV_ATTRIBUTE_FAST_MEM rgb565_image_blend(")
     if func_start == -1:
@@ -331,12 +335,13 @@ def patch_sw_rgb888_artwork_throttle_source(src):
     if decl_pos == -1:
         print("WARNING: failed to find LVGL RGB565->RGB888 blend declarations")
         return
-    insert_at = decl_pos + len(decl)
-    text = (
-        text[:insert_at]
-        + "    const bool esphome_artwork_throttle = esphome_lvgl_rgb888_artwork_should_throttle(dsc);\n"
-        + text[insert_at:]
+    active_declaration = (
+        "    const bool esphome_artwork_throttle = "
+        "esphome_lvgl_rgb888_artwork_should_throttle(dsc);\n"
     )
+    if active_declaration not in text:
+        insert_at = decl_pos + len(decl)
+        text = text[:insert_at] + active_declaration + text[insert_at:]
 
     func_end = text.find("\n#endif", func_start)
     if func_end == -1:
@@ -344,11 +349,13 @@ def patch_sw_rgb888_artwork_throttle_source(src):
         return
     body = text[func_start:func_end]
     old = "src_buf_c16 = drawbuf_next_row(src_buf_c16, src_stride);"
-    new = (
-        old
-        + "\n                    esphome_lvgl_rgb888_artwork_throttle(esphome_artwork_throttle, y);"
-    )
-    body = body.replace(old, new)
+    throttle_call = "esphome_lvgl_rgb888_artwork_throttle(esphome_artwork_throttle, y);"
+    rows = body.count(old)
+    calls = body.count(throttle_call)
+    if rows == 0 or calls not in (0, rows):
+        raise RuntimeError(f"Unsupported LVGL RGB565 artwork row loops: {src}")
+    if calls == 0:
+        body = body.replace(old, old + "\n                    " + throttle_call)
     text = text[:func_start] + body + text[func_end:]
 
     if text == original:
@@ -514,7 +521,7 @@ def patch_component_sources(component_dir):
         (
             patch_sw_rgb888_artwork_throttle_source,
             lvgl_src / "draw" / "sw" / "blend" / "lv_draw_sw_blend_to_rgb888.c",
-            SW_RGB888_ARTWORK_THROTTLE_MARKER,
+            f"static inline bool {SW_RGB888_ARTWORK_THROTTLE_MARKER}(",
         ),
         (
             patch_thorvg_renderer_source,
