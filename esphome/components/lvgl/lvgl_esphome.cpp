@@ -11920,15 +11920,34 @@ void LvSelectable::set_selected_text(const std::string &text, lv_anim_enable_t a
   }
 }
 
-void LvSelectable::set_options(FixedVector<const char *> options) {
+void LvSelectable::set_options(FixedVector<const char *> options) { this->apply_options_(std::move(options), nullptr); }
+
+void LvSelectable::set_options_dynamic(std::vector<std::string> options) {
+  auto owned_options = std::make_unique<std::vector<std::string>>(std::move(options));
+  FixedVector<const char *> labels;
+  labels.init(owned_options->size());
+  for (const auto &option : *owned_options)
+    labels.push_back(option.c_str());
+  this->apply_options_(std::move(labels), std::move(owned_options));
+}
+
+void LvSelectable::apply_options_(FixedVector<const char *> options,
+                                  std::unique_ptr<std::vector<std::string>> owned_options) {
   lv_lock();
   auto index = this->get_selected_index();
-  if (index >= options.size())
+  if (options.empty())
+    index = 0;
+  else if (index >= options.size())
     index = options.size() - 1;
+  // Keep the old strings alive until the pointer view and LVGL's copied text
+  // have been replaced. Refresh callbacks may install another option list.
+  auto previous_options = std::move(this->dynamic_options_);
   this->options_ = std::move(options);
+  this->dynamic_options_ = std::move(owned_options);
   this->set_option_string(join_string(this->options_).c_str());
   lv_obj_send_event(this->obj, LV_EVENT_REFRESH, nullptr);
-  this->set_selected_index(index, LV_ANIM_OFF);
+  if (!this->options_.empty())
+    this->set_selected_index(index, LV_ANIM_OFF);
   lv_unlock();
 }
 #endif  // USE_LVGL_DROPDOWN || LV_USE_ROLLER

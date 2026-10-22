@@ -26,6 +26,7 @@
 #include <list>
 #include <lvgl.h>
 #include <map>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -1174,11 +1175,16 @@ class LvSelectable : public LvCompound {
   void set_selected_text(const std::string &text, lv_anim_enable_t anim);
   std::string get_selected_text();
   const FixedVector<const char *> &get_options() { return this->options_; }
+  /// Borrow persistent strings without copying their storage.
   void set_options(FixedVector<const char *> options);
+  /// Own runtime labels, including strings supplied by a temporary vector.
+  void set_options_dynamic(std::vector<std::string> options);
 
  protected:
   virtual void set_option_string(const char *options) = 0;
+  void apply_options_(FixedVector<const char *> options, std::unique_ptr<std::vector<std::string>> owned_options);
   FixedVector<const char *> options_{};
+  std::unique_ptr<std::vector<std::string>> dynamic_options_{};
 };
 
 #ifdef USE_LVGL_DROPDOWN
