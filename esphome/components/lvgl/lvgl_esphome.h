@@ -540,6 +540,7 @@ class LvglComponent final : public PollingComponent {
   void show_prev_page(lv_screen_load_anim_t anim, uint32_t time);
   void set_page_wrap(bool wrap) { this->page_wrap_ = wrap; }
   void set_navigation(LvglNavigation *navigation) { this->navigation_ = navigation; }
+  LvglNavigation *get_navigation() const { return this->navigation_; }
   void navigation_touch_begin(int32_t x, int32_t y);
   bool navigation_touch_update(int32_t x, int32_t y);
   bool navigation_touch_end();

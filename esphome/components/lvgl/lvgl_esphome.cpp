@@ -13452,7 +13452,9 @@ bool snapshot_compression_worker_setup() {
 }
 #endif
 
-bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf) {
+bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf, bool *out_of_memory = nullptr) {
+  if (out_of_memory != nullptr)
+    *out_of_memory = false;
 #if defined(USE_LVGL_SNAPSHOT_JPEG_CACHE) && LV_COLOR_DEPTH == 32
   if (!SNAPSHOT_JPEG_CACHE_ENABLED || buf == nullptr || buf->data == nullptr)
     return false;
@@ -13482,6 +13484,8 @@ bool snapshot_cache_encode_jpeg(SnapshotCacheEntry &entry, lv_draw_buf_t *buf) {
   esp32_jpeg::JpegBuffer out;
   const uint64_t t0 = snapshot_diag_now_us_();
   const esp_err_t err = snapshot_encode_jpeg(encode_cfg, static_cast<const uint8_t *>(buf->data), raw_size, &out);
+  if (out_of_memory != nullptr)
+    *out_of_memory = err == ESP_ERR_NO_MEM;
   const uint64_t elapsed_us = snapshot_diag_now_us_() - t0;
 
   bool stored = false;
@@ -16327,13 +16331,42 @@ bool snapshot_tile_cache_valid(const SnapshotCacheEntry *entry, int width, int h
 #endif
 }
 
-bool snapshot_tile_cache_encode(lv_obj_t *page, lv_draw_buf_t *source) {
+struct SnapshotTileEncodeAdmission {
+  lv_obj_t **home_pages;
+  int page_count;
+  bool reclaim_attempted{false};
+};
+
+#ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
+SnapshotPreviewReclaimStats snapshot_reclaim_idle_application_previews(lv_obj_t **home_pages, int page_count);
+#endif
+
+bool snapshot_tile_cache_encode(lv_obj_t *page, lv_draw_buf_t *source,
+                                SnapshotTileEncodeAdmission *admission = nullptr) {
   auto *entry = snapshot_tile_cache_entry(page, true);
   if (entry == nullptr || source == nullptr || source->data == nullptr)
     return false;
   entry->big_endian = snapshot_cache_obj_big_endian(page);
   entry->tile_page = true;
-  if (!snapshot_cache_encode_jpeg(*entry, source))
+  bool out_of_memory = false;
+  bool encoded = snapshot_cache_encode_jpeg(*entry, source, &out_of_memory);
+#ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
+  if (!encoded && out_of_memory && admission != nullptr && !admission->reclaim_attempted) {
+    // This stack budget belongs only to synchronous Home preparation. Codec
+    // workers and background refresh never acquire cache-reclamation authority.
+    admission->reclaim_attempted = true;
+    const auto reclaimed = snapshot_reclaim_idle_application_previews(admission->home_pages, admission->page_count);
+    const bool retry = reclaimed.bytes != 0;
+    if (retry)
+      encoded = snapshot_cache_encode_jpeg(*entry, source);
+    ESP_LOGW(TAG, "snapshot tiles: JPEG preview reclaim bytes=%u count=%u retry=%s restored=%s",
+             static_cast<unsigned>(reclaimed.bytes), static_cast<unsigned>(reclaimed.count), YESNO(retry),
+             YESNO(encoded));
+  }
+#else
+  (void) admission;
+#endif
+  if (!encoded)
     return false;
   entry->generation++;
   return true;
@@ -16347,7 +16380,7 @@ int snapshot_tile_window_slot_index(lv_obj_t *page) {
   return -1;
 }
 
-bool snapshot_tile_window_flush_slot(size_t slot_index) {
+bool snapshot_tile_window_flush_slot(size_t slot_index, SnapshotTileEncodeAdmission *admission = nullptr) {
   if (slot_index >= SNAPSHOT_TILE_SLOT_COUNT || snapshot_tile_window_cache.busy[slot_index])
     return false;
   if (!snapshot_tile_window_cache.dirty[slot_index])
@@ -16357,7 +16390,7 @@ bool snapshot_tile_window_flush_slot(size_t slot_index) {
   if (page == nullptr || slot == nullptr)
     return false;
 
-  if (!snapshot_tile_cache_encode(page, slot)) {
+  if (!snapshot_tile_cache_encode(page, slot, admission)) {
     // Replacing a resident tile must not depend on successfully allocating a
     // fresh JPEG at the exact moment PSRAM is busiest. Every Home page gets a
     // compressed backing image during bootstrap, so retain that last complete
@@ -16374,7 +16407,7 @@ bool snapshot_tile_window_flush_slot(size_t slot_index) {
   return true;
 }
 
-bool snapshot_tile_window_restore_slot(size_t slot_index) {
+bool snapshot_tile_window_restore_slot(size_t slot_index, SnapshotTileEncodeAdmission *admission = nullptr) {
   auto *page = snapshot_tile_window_cache.restore_pages[slot_index];
   if (page == nullptr)
     return true;
@@ -16391,7 +16424,7 @@ bool snapshot_tile_window_restore_slot(size_t slot_index) {
   const bool restored =
       snapshot_tile_cache_valid(entry, snapshot_tile_window_cache.width, snapshot_tile_window_cache.height)
           ? snapshot_cache_decode_jpeg_to_draw_buf(*entry, slot)
-          : snapshot_take_centered_to(page, slot) && snapshot_tile_cache_encode(page, slot);
+          : snapshot_take_centered_to(page, slot) && snapshot_tile_cache_encode(page, slot, admission);
   lvgl_esphome_wait_snapshot_dsi_fifo();
   if (!restored)
     return false;
@@ -16401,15 +16434,16 @@ bool snapshot_tile_window_restore_slot(size_t slot_index) {
   return true;
 }
 
-bool snapshot_tile_window_restore_pending() {
+bool snapshot_tile_window_restore_pending(SnapshotTileEncodeAdmission *admission = nullptr) {
   for (size_t index = 0; index < SNAPSHOT_TILE_SLOT_COUNT; index++) {
-    if (!snapshot_tile_window_restore_slot(index))
+    if (!snapshot_tile_window_restore_slot(index, admission))
       return false;
   }
   return true;
 }
 
-bool snapshot_tile_window_load_page(lv_obj_t *page, size_t slot_index, int width, int height) {
+bool snapshot_tile_window_load_page(lv_obj_t *page, size_t slot_index, int width, int height,
+                                    SnapshotTileEncodeAdmission *admission = nullptr) {
   if (page == nullptr || slot_index >= SNAPSHOT_TILE_SLOT_COUNT || snapshot_tile_window_cache.busy[slot_index])
     return false;
   auto *slot = snapshot_tile_window_cache.slots[slot_index];
@@ -16421,15 +16455,17 @@ bool snapshot_tile_window_load_page(lv_obj_t *page, size_t slot_index, int width
   if (snapshot_tile_window_cache.pages[slot_index] == page)
     return true;
   if (snapshot_tile_window_cache.restore_pages[slot_index] != nullptr &&
-      snapshot_tile_window_cache.restore_pages[slot_index] != page && !snapshot_tile_window_restore_slot(slot_index))
+      snapshot_tile_window_cache.restore_pages[slot_index] != page &&
+      !snapshot_tile_window_restore_slot(slot_index, admission))
     return false;
 
   auto *outgoing = snapshot_tile_window_cache.pages[slot_index];
   if (outgoing != nullptr) {
-    if (!snapshot_tile_window_flush_slot(slot_index))
+    if (!snapshot_tile_window_flush_slot(slot_index, admission))
       return false;
     auto *outgoing_entry = snapshot_tile_cache_entry(outgoing, false);
-    if (!snapshot_tile_cache_valid(outgoing_entry, width, height) && !snapshot_tile_cache_encode(outgoing, slot))
+    if (!snapshot_tile_cache_valid(outgoing_entry, width, height) &&
+        !snapshot_tile_cache_encode(outgoing, slot, admission))
       return false;
     snapshot_tile_window_cache.restore_pages[slot_index] = outgoing;
   } else if (snapshot_tile_window_cache.restore_pages[slot_index] == nullptr) {
@@ -16447,13 +16483,13 @@ bool snapshot_tile_window_load_page(lv_obj_t *page, size_t slot_index, int width
     ready = snapshot_cache_decode_jpeg_to_draw_buf(*entry, slot);
     lvgl_esphome_wait_snapshot_dsi_fifo();
   } else {
-    ready = snapshot_take_centered_to(page, slot) && snapshot_tile_cache_encode(page, slot);
+    ready = snapshot_take_centered_to(page, slot) && snapshot_tile_cache_encode(page, slot, admission);
   }
   if (!ready) {
     // Best effort now, durable metadata for the next explicit prepare if the
     // decoder is still busy. No extra raw allocation or per-frame retry.
     if (outgoing != nullptr)
-      snapshot_tile_window_restore_slot(slot_index);
+      snapshot_tile_window_restore_slot(slot_index, admission);
     return false;
   }
 
@@ -16755,6 +16791,17 @@ extern "C" bool lvgl_esphome_snapshot_trim_tile_window(lv_obj_t *retained_page) 
 #ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
 SnapshotPreviewReclaimStats snapshot_reclaim_idle_application_previews(lv_obj_t **home_pages, int page_count) {
   SnapshotPreviewReclaimStats reclaimed;
+  if (home_pages == nullptr || page_count <= 0 || home_pages[0] == nullptr)
+    return reclaimed;
+  auto *display = lv_obj_get_display(home_pages[0]);
+  auto *component = display == nullptr ? nullptr : static_cast<LvglComponent *>(lv_display_get_user_data(display));
+  if (component == nullptr)
+    return reclaimed;
+  auto *navigation = component->get_navigation();
+  // An application remains open after its transition state has been retired.
+  // Never evict its preview, or another preview needed by its close lifecycle.
+  if (navigation != nullptr && navigation->get_active_application() != nullptr)
+    return reclaimed;
   if (s_snapshot_direct_active || s_snapshot_swipe_active || s_snapshot_app_open_frame_held ||
       snapshot_app_state.active || snapshot_app_state.worker_start_pending || snapshot_scroll_state.direct_render)
     return reclaimed;
@@ -16831,6 +16878,7 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int pa
   const int height = display == nullptr ? 0 : lv_display_get_vertical_resolution(display);
   if (height <= 0)
     return false;
+  SnapshotTileEncodeAdmission encode_admission{pages, page_count};
 
   // The old full panorama grew by one 1.92 MB RGB888 frame per page. Keep a
   // fixed previous/current/next working set instead; every other page remains
@@ -16847,7 +16895,7 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int pa
       });
   if (!reserved)
     return false;
-  if (!snapshot_tile_window_restore_pending())
+  if (!snapshot_tile_window_restore_pending(&encode_admission))
     return false;
 #ifdef USE_ESP32
   // Task creation and stack initialisation must not happen in the first
@@ -16880,7 +16928,7 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int pa
     for (size_t slot_index = 0; slot_index < SNAPSHOT_TILE_SLOT_COUNT; slot_index++) {
       if (slot_used[slot_index])
         continue;
-      if (!snapshot_tile_window_flush_slot(slot_index))
+      if (!snapshot_tile_window_flush_slot(slot_index, &encode_admission))
         return false;
       desired_slots[index] = static_cast<int>(slot_index);
       slot_used[slot_index] = true;
@@ -16894,7 +16942,7 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int pa
     const size_t slot_index = static_cast<size_t>(desired_slots[index]);
     if (snapshot_tile_window_cache.pages[slot_index] == desired_pages[index])
       continue;
-    if (!snapshot_tile_window_load_page(desired_pages[index], slot_index, width, height))
+    if (!snapshot_tile_window_load_page(desired_pages[index], slot_index, width, height, &encode_admission))
       return false;
   }
 
@@ -16931,12 +16979,12 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int pa
           // raw slot becomes encoder scratch.  Otherwise the later restore
           // from JPEG could silently discard that update (and, after an
           // accent invalidation, leave no valid backing at all).
-          if (!snapshot_tile_window_flush_slot(scratch_index))
+          if (!snapshot_tile_window_flush_slot(scratch_index, &encode_admission))
             return false;
           auto *outgoing = snapshot_tile_window_cache.pages[scratch_index];
           auto *outgoing_entry = snapshot_tile_cache_entry(outgoing, false);
           if (!snapshot_tile_cache_valid(outgoing_entry, width, height) &&
-              !snapshot_tile_cache_encode(outgoing, scratch))
+              !snapshot_tile_cache_encode(outgoing, scratch, &encode_admission))
             return false;
           snapshot_tile_window_cache.restore_pages[scratch_index] = outgoing;
           snapshot_tile_window_cache.pages[scratch_index] = nullptr;
@@ -16946,14 +16994,15 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int pa
         break;
       }
       const bool taken = snapshot_take_centered_to(pages[page_index], scratch);
-      const bool encoded = taken && snapshot_tile_cache_encode(pages[page_index], scratch);
-      if (borrowed_slot < SNAPSHOT_TILE_SLOT_COUNT && !snapshot_tile_window_restore_slot(borrowed_slot))
+      const bool encoded = taken && snapshot_tile_cache_encode(pages[page_index], scratch, &encode_admission);
+      if (borrowed_slot < SNAPSHOT_TILE_SLOT_COUNT &&
+          !snapshot_tile_window_restore_slot(borrowed_slot, &encode_admission))
         return false;
       if (!encoded)
         return false;
       continue;
     }
-    if (!snapshot_tile_cache_encode(pages[page_index], scratch))
+    if (!snapshot_tile_cache_encode(pages[page_index], scratch, &encode_admission))
       return false;
   }
 
@@ -16963,7 +17012,7 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int pa
 
   for (size_t slot_index = 0; slot_index < SNAPSHOT_TILE_SLOT_COUNT; slot_index++) {
     if (!slot_used[slot_index]) {
-      if (!snapshot_tile_window_flush_slot(slot_index))
+      if (!snapshot_tile_window_flush_slot(slot_index, &encode_admission))
         return false;
       snapshot_tile_window_cache.pages[slot_index] = nullptr;
       snapshot_tile_window_cache.dirty[slot_index] = false;
