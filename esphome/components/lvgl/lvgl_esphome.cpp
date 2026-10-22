@@ -6,6 +6,7 @@
 #include "lvgl_esphome.h"
 #include "lvgl_navigation.h"
 #include "lottie_loader.h"
+#include "snapshot_cache_admission.h"
 
 #include "core/lv_obj_class_private.h"
 #include "core/lv_obj_private.h"
@@ -16751,6 +16752,59 @@ extern "C" bool lvgl_esphome_snapshot_trim_tile_window(lv_obj_t *retained_page) 
 #endif
 }
 
+#ifdef USE_LVGL_SNAPSHOT_JPEG_CACHE
+SnapshotPreviewReclaimStats snapshot_reclaim_idle_application_previews(lv_obj_t **home_pages, int page_count) {
+  SnapshotPreviewReclaimStats reclaimed;
+  if (s_snapshot_direct_active || s_snapshot_swipe_active || s_snapshot_app_open_frame_held ||
+      snapshot_app_state.active || snapshot_app_state.worker_start_pending || snapshot_scroll_state.direct_render)
+    return reclaimed;
+#ifdef USE_ESP32
+  if (snapshot_app_worker.pending.load(std::memory_order_acquire) ||
+      snapshot_app_worker.running.load(std::memory_order_acquire) ||
+      snapshot_swipe_worker.active.load(std::memory_order_acquire) ||
+      snapshot_swipe_worker.running.load(std::memory_order_acquire) ||
+      snapshot_scroll_worker.active.load(std::memory_order_acquire) ||
+      snapshot_scroll_worker.running.load(std::memory_order_acquire) ||
+      snapshot_tile_prefetch_worker.busy.load(std::memory_order_acquire) ||
+      snapshot_tile_prefetch_worker.result_ready.load(std::memory_order_acquire))
+    return reclaimed;
+#endif
+  auto is_protected = [&](lv_obj_t *obj) {
+    if (obj == nullptr || obj == snapshot_app_state.app_root || obj == snapshot_app_state.background_root ||
+        obj == snapshot_app_prepared_close_obj || obj == snapshot_app_work_obj ||
+        obj == snapshot_cache_latest_raw_app_obj || obj == snapshot_scroll_state.root ||
+        obj == snapshot_swipe_state.current_root || obj == snapshot_swipe_state.next_root)
+      return true;
+    for (int index = 0; index < page_count; index++) {
+      if (obj == home_pages[index])
+        return true;
+    }
+    for (size_t index = 0; index < SNAPSHOT_TILE_SLOT_COUNT; index++) {
+      if (obj == snapshot_tile_window_cache.pages[index] || obj == snapshot_tile_window_cache.restore_pages[index])
+        return true;
+    }
+    return false;
+  };
+  for (auto &entry : snapshot_cache) {
+    const SnapshotPreviewReclaimState state{
+        .has_object = entry.obj != nullptr,
+        .tile_page = entry.tile_page,
+        .has_raw = entry.buf != nullptr,
+        .in_flight = entry.compression_in_flight || snapshot_compression_worker.entry == &entry,
+        .protected_owner = is_protected(entry.obj),
+        .jpeg_bytes = entry.jpeg.capacity(),
+    };
+    if (!snapshot_preview_can_reclaim(state))
+      continue;
+    reclaimed.bytes += entry.jpeg.capacity();
+    reclaimed.count++;
+    snapshot_cache_destroy_jpeg(entry);
+    entry.generation++;
+  }
+  return reclaimed;
+}
+#endif
+
 extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int page_count, int current_page, int width) {
 #if LV_USE_SNAPSHOT && defined(USE_LVGL_SNAPSHOT_JPEG_CACHE)
   if (!lvgl_esphome_snapshot_cache_complete_tile_prefetch(1000)) {
@@ -16783,7 +16837,15 @@ extern "C" bool lvgl_esphome_snapshot_cache_tile_window(lv_obj_t **pages, int pa
   // a compact JPEG and is decoded directly into a recycled slot.
   for (auto &panorama : snapshot_panorama_cache)
     snapshot_panorama_free_entry(panorama);
-  if (!snapshot_tile_window_reserve(width, height))
+  const bool reserved = snapshot_reserve_with_preview_reclaim(
+      [&]() { return snapshot_tile_window_reserve(width, height); },
+      [&]() { return snapshot_reclaim_idle_application_previews(pages, page_count); },
+      [&](const SnapshotPreviewReclaimStats &reclaimed, bool retry, bool restored) {
+        ESP_LOGW(TAG, "snapshot tiles: preview reclaim bytes=%u count=%u retry=%s restored=%s",
+                 static_cast<unsigned>(reclaimed.bytes), static_cast<unsigned>(reclaimed.count), YESNO(retry),
+                 YESNO(restored));
+      });
+  if (!reserved)
     return false;
   if (!snapshot_tile_window_restore_pending())
     return false;

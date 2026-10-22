@@ -47,3 +47,30 @@ failure. The Python test compiles and runs it with a host C++20 compiler. Separa
 source checks guard FreeRTOS timeout paths, which cannot execute on the host.
 Full firmware compilation and hardware scrolling across segment boundaries are
 still required, together with throughput, memory and display diagnostics.
+
+## Raw window admission takes priority over idle previews
+
+An application may temporarily trim the Home working window while it owns the
+screen. Returning Home must admit all configured reusable raw slots. A large
+free-block diagnostic after a failed admission can describe the heap after the
+reservation rolled back its newly created slots; it does not prove that all
+missing surfaces could coexist.
+
+If the first full-window reservation fails and completes rollback, the cache
+may discard only idle compressed application previews and retry the complete
+reservation once. Home JPEG backing, resident/restore raw slots, current close
+backgrounds, prepared close sources, shared work owners and in-flight readers
+are protected. The cache refuses reclaim while app, swipe, scroll or prefetch
+workers still own a transition; pending prefetch results also block it. Entry
+eligibility requires a named non-Home object, compressed bytes, no raw surface,
+no in-flight compression and no protected owner. Releasing its JPEG advances the
+generation, leaving the object identity available for an ordinary cache miss.
+
+Opening an application without a cached JPEG retains the existing fresh render
+into its borrowed DSI transition surface. The closing animation and its source
+must complete before reclaim. Optional previews can be rebuilt after raw-window
+admission; there is no new raw arena, quality reduction or partial-window success.
+A log records reclaimed bytes/count, whether a retry occurred and whether the
+full raw window was restored. The original allocation warning is recovered only
+when the retry and subsequent page preparation succeed; repeated failure remains
+an observable failure instead of a background allocation loop.
