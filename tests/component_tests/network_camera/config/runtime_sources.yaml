@@ -1,0 +1,35 @@
+esphome:
+  name: runtime-camera-tls
+
+esp32:
+  board: esp32-p4-evboard
+  framework:
+    type: esp-idf
+
+esp32_hosted:
+  variant: ESP32C6
+  active_high: true
+  reset_pin: GPIO15
+  cmd_pin: GPIO13
+  clk_pin: GPIO12
+  d0_pin: GPIO11
+  d1_pin: GPIO10
+  d2_pin: GPIO9
+  d3_pin: GPIO8
+
+wifi:
+  ap:
+
+psram:
+
+esp_ldo:
+  - channel: 3
+    voltage: 2.5V
+
+display:
+  - platform: mipi_dsi
+    model: JC1060P470
+
+network_camera:
+  id: runtime_camera
+  sources: []

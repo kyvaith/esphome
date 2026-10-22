@@ -1,0 +1,7 @@
+config ESPHOME_SDMMC_PRESERVE_TRANSACTION_ERROR
+    bool "Preserve SDMMC transaction errors across final cache synchronization"
+    default n
+    help
+        Backport the error precedence from Espressif commit 5038e2ad.
+        Cache synchronization still executes after a failed transaction.
+        Only an otherwise successful transaction adopts its final sync result.

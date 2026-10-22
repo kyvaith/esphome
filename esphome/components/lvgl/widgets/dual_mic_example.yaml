@@ -1,0 +1,420 @@
+# ESPHome LVGL Dual Microphone Waveform Display
+# =============================================================================
+# Real-time audio waveform visualization for Voice Assistant
+# Works with ES7210 ADC + ES8311 DAC on ESP32-P4
+# =============================================================================
+
+globals:
+  # Voice assistant state for visual feedback
+  - id: va_is_listening
+    type: bool
+    initial_value: "false"
+  # Audio samples for chart display
+  - id: audio_sample_left
+    type: int
+    initial_value: "0"
+  - id: audio_sample_right
+    type: int
+    initial_value: "0"
+
+# =============================================================================
+# I2S AUDIO CONFIGURATION (ES7210 + ES8311)
+# =============================================================================
+i2s_audio:
+  - id: audio_bus
+    i2s_mclk_pin: GPIO13
+    i2s_lrclk_pin: GPIO10
+    i2s_bclk_pin: GPIO12
+
+audio_dac:
+  - platform: es8311
+    id: es8311_dac
+    i2c_id: bsp_bus
+    address: 0x18
+
+audio_adc:
+  - platform: es7210
+    id: es7210_adc
+    i2c_id: bsp_bus
+    address: 0x40
+
+microphone:
+  - platform: i2s_audio
+    id: esp32_microphone
+    i2s_audio_id: audio_bus
+    i2s_din_pin: GPIO11
+    sample_rate: 16000
+    bits_per_sample: 16bit
+    adc_type: external
+    on_data:
+      - lambda: |-
+          // Audio data comes as int16_t samples in x vector
+          // For stereo ES7210: interleaved L/R data
+          const int16_t *samples = (const int16_t *)x.data();
+          int num_samples = x.size() / 2;  // 2 bytes per sample
+
+          if (num_samples >= 2) {
+            // Amplify samples for better visualization (x8 gain)
+            int32_t left = samples[0] * 8;
+            int32_t right = samples[1] * 8;
+
+            // Clamp to int16 range
+            if (left > 32767) left = 32767;
+            if (left < -32768) left = -32768;
+            if (right > 32767) right = 32767;
+            if (right < -32768) right = -32768;
+
+            id(audio_sample_left) = left;
+            id(audio_sample_right) = right;
+          }
+
+# =============================================================================
+# CHART UPDATE INTERVAL
+# =============================================================================
+interval:
+  - interval: 20ms
+    then:
+      - lvgl.chart.set_next_value:
+          id: chart_mic_left
+          series_id: series_mic_left
+          value: !lambda 'return id(audio_sample_left);'
+      - lvgl.chart.set_next_value:
+          id: chart_mic_right
+          series_id: series_mic_right
+          value: !lambda 'return id(audio_sample_right);'
+
+speaker:
+  - platform: i2s_audio
+    id: esp32_speaker
+    i2s_audio_id: audio_bus
+    i2s_dout_pin: GPIO9
+    audio_dac: es8311_dac
+    dac_type: external
+    channel: stereo
+    buffer_duration: 100ms
+    bits_per_sample: 16bit
+    sample_rate: 48000
+
+  - platform: mixer
+    id: mixing_speaker
+    output_speaker: esp32_speaker
+    source_speakers:
+      - id: announcement_mixing_input
+        timeout: never
+      - id: media_mixing_input
+        timeout: never
+
+  - platform: resampler
+    id: announcement_resampling_speaker
+    output_speaker: announcement_mixing_input
+    sample_rate: 48000
+    bits_per_sample: 16
+
+  - platform: resampler
+    id: media_resampling_speaker
+    output_speaker: media_mixing_input
+    sample_rate: 48000
+    bits_per_sample: 16
+
+media_player:
+  - platform: speaker
+    name: "ESP32 P4 Media Player"
+    id: speaker_media_player
+    codec_support_enabled: true
+    volume_min: 0.5
+    volume_max: 0.75
+    volume_increment: 0.05
+    announcement_pipeline:
+      speaker: announcement_resampling_speaker
+      format: FLAC
+      sample_rate: 48000
+      num_channels: 1
+    media_pipeline:
+      speaker: media_resampling_speaker
+      format: FLAC
+      num_channels: 1
+      sample_rate: 48000
+    on_announcement:
+      - if:
+          condition:
+            - microphone.is_capturing:
+          then:
+            - micro_wake_word.stop
+            - voice_assistant.stop
+      - mixer_speaker.apply_ducking:
+          id: media_mixing_input
+          decibel_reduction: 20
+          duration: 0.0s
+      - switch.turn_on: audio_amplifier
+      - delay: 100ms
+    on_state:
+      if:
+        condition:
+          and:
+            - not:
+                voice_assistant.is_running:
+            - not:
+                media_player.is_announcing:
+        then:
+          - mixer_speaker.apply_ducking:
+              id: media_mixing_input
+              decibel_reduction: 0
+              duration: 1.0s
+    on_play:
+      - logger.log: "Media player started playing"
+      - switch.turn_on: audio_amplifier
+      - delay: 100ms
+      - micro_wake_word.stop
+      - voice_assistant.stop
+    on_idle:
+      - delay: 100ms
+      - switch.turn_off: audio_amplifier
+      - if:
+          condition:
+            not:
+              voice_assistant.is_running:
+          then:
+            - micro_wake_word.start
+
+micro_wake_word:
+  id: my_wake_word
+  models:
+    - model: https://github.com/chrisdunnname/esphome-p4-86-panel-eth-2ro-lvgl/raw/main/microwakeword/okay_hal.json
+      id: okay_hal
+  on_wake_word_detected:
+    then:
+      - logger.log: "Wake word detected"
+      - lambda: 'id(va_is_listening) = true;'
+      # Navigate to HAL page
+      - lvgl.page.show:
+          id: hall
+          animation: MOVE_LEFT
+          time: 300ms
+      - voice_assistant.start:
+          wake_word: !lambda return wake_word;
+
+voice_assistant:
+  microphone: esp32_microphone
+  media_player: speaker_media_player
+  micro_wake_word: my_wake_word
+  noise_suppression_level: 2
+  auto_gain: 31dBFS
+  volume_multiplier: 2.0
+  conversation_timeout: 300s
+  on_listening:
+    - lambda: 'id(va_is_listening) = true;'
+    - lvgl.label.update:
+        id: mic_status_label
+        text: "Listening..."
+        text_color: 0xFF0000
+  on_stt_end:
+    - lvgl.label.update:
+        id: mic_status_label
+        text: "Processing..."
+        text_color: 0xFF6600
+  on_tts_start:
+    - lambda: 'id(va_is_listening) = false;'
+    - lvgl.label.update:
+        id: mic_status_label
+        text: "Speaking..."
+        text_color: 0xFF3300
+  on_end:
+    - lambda: 'id(va_is_listening) = false;'
+    - lvgl.label.update:
+        id: mic_status_label
+        text: "Goodbye"
+        text_color: 0x660000
+    - wait_until:
+        condition:
+          - media_player.is_announcing:
+        timeout: 0.5s
+    - wait_until:
+        - and:
+            - not:
+                media_player.is_announcing:
+            - not:
+                media_player.is_playing:
+    - delay: 1s
+    - lvgl.page.show:
+        id: home_page
+        animation: MOVE_RIGHT
+        time: 300ms
+    - micro_wake_word.start:
+  on_error:
+    - lambda: 'id(va_is_listening) = false;'
+    - lvgl.label.update:
+        id: mic_status_label
+        text: "Error"
+        text_color: 0xFF0000
+    - delay: 2s
+    - lvgl.page.show:
+        id: home_page
+        animation: FADE_OUT
+        time: 300ms
+  on_client_connected:
+    - micro_wake_word.start:
+  on_client_disconnected:
+    - micro_wake_word.stop:
+
+# =============================================================================
+# LVGL CONFIGURATION
+# =============================================================================
+lvgl:
+  displays:
+    - display_id: my_display
+      pages:
+        # =====================================================================
+        # PAGE: HOME - Main page with wake word hint
+        # =====================================================================
+        - id: home_page
+          bg_color: 0x1a1a1a
+          widgets:
+            - label:
+                align: CENTER
+                y: -50
+                text: "Voice Assistant Ready"
+                text_color: 0xFFFFFF
+                text_font: montserrat_24
+
+            - label:
+                align: CENTER
+                y: 0
+                text: "Say 'Okay HAL' to start"
+                text_color: 0x808080
+                text_font: montserrat_18
+
+            # Microphone icon hint
+            - obj:
+                align: CENTER
+                y: 80
+                width: 60
+                height: 60
+                radius: 30
+                bg_color: 0x333333
+                border_width: 2
+                border_color: 0x00FF00
+                widgets:
+                  - label:
+                      align: CENTER
+                      text: "MIC"
+                      text_color: 0x00FF00
+                      text_font: montserrat_14
+
+        # =====================================================================
+        # PAGE: HAL - Voice Assistant Active Page
+        # =====================================================================
+        - id: hall
+          bg_color: 0x000000
+          widgets:
+            # HAL Eye (inspired by 2001: A Space Odyssey)
+            - obj:
+                align: CENTER
+                y: -30
+                width: 200
+                height: 200
+                radius: 100
+                bg_color: 0x000000
+                border_width: 4
+                border_color: 0xFF0000
+                widgets:
+                  # Red glow circle
+                  - obj:
+                      align: CENTER
+                      width: 150
+                      height: 150
+                      radius: 75
+                      bg_color: 0x330000
+                      border_width: 0
+                      widgets:
+                        # Inner red eye
+                        - obj:
+                            id: hal_eye
+                            align: CENTER
+                            width: 80
+                            height: 80
+                            radius: 40
+                            bg_color: 0xFF0000
+                            border_width: 0
+
+            # Status text
+            - label:
+                id: mic_status_label
+                align: CENTER
+                y: 100
+                text: "Listening..."
+                text_color: 0xFF0000
+                text_font: montserrat_24
+
+            # HAL name
+            - label:
+                align: BOTTOM_MID
+                y: -40
+                text: "HAL 9000"
+                text_color: 0xFF0000
+                text_font: montserrat_20
+
+            # Microphone waveforms (smaller, at bottom)
+            - obj:
+                align: BOTTOM_MID
+                y: -80
+                width: 400
+                height: 60
+                bg_color: 0x1a0000
+                radius: 8
+                border_width: 1
+                border_color: 0x330000
+                pad_all: 5
+                widgets:
+                  - chart:
+                      id: chart_mic_left
+                      x: 0
+                      y: 0
+                      width: 190
+                      height: 50
+                      bg_color: 0x0a0000
+                      radius: 6
+                      border_width: 0
+                      type: LINE
+                      point_count: 64
+                      update_mode: SHIFT
+                      div_line_count_hor: 0
+                      div_line_count_ver: 0
+                      axis_primary_y:
+                        min_value: -32768
+                        max_value: 32767
+                      series:
+                        - id: series_mic_left
+                          color: 0xFF0000
+                          axis: PRIMARY_Y
+                      items:
+                        bg_opa: TRANSP
+                      indicator:
+                        width: 0
+                        height: 0
+
+                  - chart:
+                      id: chart_mic_right
+                      x: 200
+                      y: 0
+                      width: 190
+                      height: 50
+                      bg_color: 0x0a0000
+                      radius: 6
+                      border_width: 0
+                      type: LINE
+                      point_count: 64
+                      update_mode: SHIFT
+                      div_line_count_hor: 0
+                      div_line_count_ver: 0
+                      axis_primary_y:
+                        min_value: -32768
+                        max_value: 32767
+                      series:
+                        - id: series_mic_right
+                          color: 0xFF0000
+                          axis: PRIMARY_Y
+                      items:
+                        bg_opa: TRANSP
+                      indicator:
+                        width: 0
+                        height: 0

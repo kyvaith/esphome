@@ -21,6 +21,7 @@ DOMAIN = "runtime_image"
 
 CONF_PLACEHOLDER = "placeholder"
 CONF_TRANSPARENCY = "transparency"
+CONF_DECODER = "decoder"
 
 runtime_image_ns = cg.esphome_ns.namespace("runtime_image")
 
@@ -43,6 +44,15 @@ IMAGE_FORMAT_BMP = ImageFormat.BMP
 IMAGE_FORMAT_JPEG = ImageFormat.JPEG
 IMAGE_FORMAT_PNG = ImageFormat.PNG
 IMAGE_FORMAT_QOI = ImageFormat.QOI
+
+DecoderType = runtime_image_ns.enum("DecoderType", is_class=True)
+DECODER_SOFTWARE = DecoderType.SOFTWARE
+DECODER_ESP32_JPEG = DecoderType.ESP32_JPEG
+
+DECODER_TYPES = {
+    "SOFTWARE": DECODER_SOFTWARE,
+    "ESP32_JPEG": DECODER_ESP32_JPEG,
+}
 
 # Export enum for decode errors
 DecodeError = runtime_image_ns.enum("DecodeError")
@@ -92,6 +102,7 @@ class JPEGFormat(Format):
 
     def actions(self) -> None:
         cg.add_define("USE_RUNTIME_IMAGE_JPEG")
+        cg.add_define("USE_RUNTIME_IMAGE_JPEG_SOFTWARE")
         cg.add_library("JPEGDEC", "1.8.4", "https://github.com/bitbank2/JPEGDEC#1.8.4")
         if CORE.is_host:
             # JPEGDEC's host detection checks __MACH__/__LINUX__, but gcc only
@@ -177,6 +188,9 @@ def runtime_image_schema(image_class: cg.MockObjClass = RuntimeImage) -> cv.Sche
         {
             cv.Required(CONF_ID): cv.declare_id(image_class),
             cv.Required(CONF_FORMAT): cv.one_of(*IMAGE_FORMATS, upper=True),
+            cv.Optional(CONF_DECODER, default="SOFTWARE"): cv.one_of(
+                *DECODER_TYPES, upper=True
+            ),
             cv.Optional(CONF_RESIZE): cv.dimensions,
             cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
             cv.Optional(CONF_BYTE_ORDER): validate_byte_order,
@@ -188,7 +202,18 @@ def runtime_image_schema(image_class: cg.MockObjClass = RuntimeImage) -> cv.Sche
 
 def validate_runtime_image_settings(config: dict) -> dict:
     """Apply validate_settings from image component to runtime image config."""
-    return validate_settings(config)
+    config = validate_settings(config)
+    if config[CONF_DECODER] == "ESP32_JPEG":
+        if config[CONF_FORMAT] not in ("JPEG", "JPG"):
+            raise cv.Invalid("decoder: ESP32_JPEG is only valid for JPEG images")
+        if config[CONF_TYPE] not in ("RGB", "RGB565"):
+            raise cv.Invalid(
+                "decoder: ESP32_JPEG only supports RGB and RGB565 image types"
+            )
+        if config[CONF_TRANSPARENCY] != "opaque":
+            raise cv.Invalid("decoder: ESP32_JPEG does not support transparency")
+        config = cv.requires_component("esp32_jpeg")(config)
+    return config
 
 
 @dataclass
@@ -202,6 +227,7 @@ class RuntimeImageSettings:
     transparent: cg.MockObj
     byte_order_big_endian: bool
     placeholder: cg.MockObj | None
+    decoder_type_enum: cg.MockObj
 
 
 async def process_runtime_image_config(config: dict) -> RuntimeImageSettings:
@@ -216,8 +242,12 @@ async def process_runtime_image_config(config: dict) -> RuntimeImageSettings:
 
     # Handle format (required for runtime images)
     format_name = config[CONF_FORMAT]
-    # Enable the format in the runtime_image component
-    enable_format(format_name)
+    decoder_type = config[CONF_DECODER]
+    if decoder_type == "ESP32_JPEG":
+        cg.add_define("USE_RUNTIME_IMAGE_JPEG")
+        cg.add_define("USE_RUNTIME_IMAGE_ESP32_JPEG")
+    else:
+        enable_format(format_name)
     # Map format names to enum values (handle JPG as alias for JPEG)
     if format_name.upper() == "JPG":
         format_name = "JPEG"
@@ -246,4 +276,5 @@ async def process_runtime_image_config(config: dict) -> RuntimeImageSettings:
         transparent=transparent,
         byte_order_big_endian=byte_order_big_endian,
         placeholder=placeholder,
+        decoder_type_enum=DECODER_TYPES[decoder_type],
     )

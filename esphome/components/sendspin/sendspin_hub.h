@@ -170,6 +170,7 @@ class SendspinHub final : public Component,
   }
 
   void set_task_stack_in_psram(bool task_stack_in_psram) { this->task_stack_in_psram_ = task_stack_in_psram; }
+  bool get_task_stack_in_psram() const { return this->task_stack_in_psram_; }
 
   /// @brief Requests the Sendspin client, including the server, the roles and the mDNS advertisement, to start or
   /// stop.

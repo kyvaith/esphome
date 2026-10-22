@@ -22,6 +22,46 @@ enum Transparency {
   TRANSPARENCY_ALPHA_CHANNEL = 2,
 };
 
+class Image;
+
+enum class JpegFrameResult : uint8_t {
+  UNSUPPORTED,
+  CONSUMED,
+  DROPPED,
+};
+
+/** Optional sink for encoded JPEG frames produced by a runtime image source.
+ *
+ * A sink can decode directly into display-owned memory and avoid allocating
+ * and copying an intermediate RGB image. The JPEG data is valid only for the
+ * duration of consume_jpeg_frame().
+ */
+class JpegFrameConsumer {
+ public:
+  virtual JpegFrameResult consume_jpeg_frame(const uint8_t *data, size_t size) = 0;
+};
+
+/** A stable view of an image's pixel buffer.
+ *
+ * Runtime image implementations may hold an internal read lock until the
+ * matching release_buffer() call. Keep leases short-lived and release them
+ * from the same task that acquired them.
+ */
+struct ImageBufferLease {
+  const Image *owner{};
+  const uint8_t *data{};
+  size_t size{};
+  size_t stride{};
+  int width{};
+  int height{};
+  ImageType type{IMAGE_TYPE_BINARY};
+  Transparency transparency{TRANSPARENCY_OPAQUE};
+  BufferWriter writer{BufferWriter::CPU};
+  uint32_t generation{};
+
+  explicit operator bool() const { return this->owner != nullptr && this->data != nullptr; }
+};
+
 class Image : public display::BaseImage {
  public:
   /// big_endian is the RGB565 byte order; codegen writes little endian unless configured otherwise.
@@ -31,6 +71,10 @@ class Image : public display::BaseImage {
   int get_width() const override;
   int get_height() const override;
   const uint8_t *get_data_start() const { return this->data_start_; }
+  virtual BufferWriter get_buffer_writer() const { return BufferWriter::CPU; }
+  virtual bool acquire_buffer(ImageBufferLease *lease) const;
+  virtual bool release_buffer(ImageBufferLease *lease) const;
+  virtual bool set_jpeg_frame_consumer(JpegFrameConsumer *consumer) { return false; }
   ImageType get_type() const;
 
   int get_bpp() const { return this->bpp_; }

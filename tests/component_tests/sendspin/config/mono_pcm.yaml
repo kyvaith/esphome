@@ -1,0 +1,19 @@
+esphome:
+  name: mono-pcm-test
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+wifi:
+  ap:
+
+sendspin:
+  id: sendspin_hub
+
+media_source:
+  - platform: sendspin
+    id: mono_media_source
+    codecs: [pcm]
+    supported_channels: [1]

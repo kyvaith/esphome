@@ -1,0 +1,17 @@
+packages:
+  display: !include paused.yaml
+
+lvgl:
+  paused: false
+  widgets:
+    - obj:
+        id: transition_obj
+        pad_all: 0
+        bg_color: 0x112233
+        style_transition_time: 90ms
+        style_transition_delay: 10ms
+        style_transition_path: ease_out
+        pressed:
+          pad_all: 4
+          bg_color: 0x445566
+          style_transition_time: 0ms

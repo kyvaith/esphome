@@ -20,6 +20,7 @@ from .. import (
     CONF_FIXED_DELAY,
     CONF_INITIAL_STATIC_DELAY,
     CONF_SENDSPIN_ID,
+    CONF_SUPPORTED_CHANNELS,
     DEFAULT_CODECS,
     MEMORY_LOCATIONS,
     OPUS_SAMPLE_RATE,
@@ -44,6 +45,12 @@ SendspinMediaSource = sendspin_ns.class_(
 
 def _resolve_codecs(config: ConfigType) -> ConfigType:
     """Validate the codec preference list, filling in the default when it is not set."""
+    if len(set(config[CONF_SUPPORTED_CHANNELS])) != len(
+        config[CONF_SUPPORTED_CHANNELS]
+    ):
+        raise cv.Invalid(
+            "Channel counts must be unique", path=[CONF_SUPPORTED_CHANNELS]
+        )
     sample_rate = config[CONF_SAMPLE_RATE]
     if (codecs := config.get(CONF_CODECS)) is None:
         config[CONF_CODECS] = [
@@ -73,6 +80,7 @@ def _register(config: ConfigType) -> ConfigType:
     register_player_config(
         {
             CONF_CODECS: config[CONF_CODECS],
+            CONF_SUPPORTED_CHANNELS: config[CONF_SUPPORTED_CHANNELS],
             CONF_SAMPLE_RATE: config[CONF_SAMPLE_RATE],
             CONF_BUFFER_SIZE: config[CONF_BUFFER_SIZE],
             CONF_INITIAL_STATIC_DELAY: config[CONF_INITIAL_STATIC_DELAY],
@@ -105,6 +113,9 @@ CONFIG_SCHEMA = cv.All(
                 min=16000, max=96000
             ),
             cv.Optional(CONF_DECODE_MEMORY): cv.one_of(*MEMORY_LOCATIONS, lower=True),
+            cv.Optional(CONF_SUPPORTED_CHANNELS, default=[2, 1]): cv.All(
+                cv.ensure_list(cv.int_range(min=1, max=2)), cv.Length(min=1)
+            ),
             cv.Optional(CONF_CODECS): cv.All(
                 cv.ensure_list(cv.enum(CODECS, lower=True)), cv.Length(min=1)
             ),

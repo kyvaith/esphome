@@ -143,3 +143,12 @@ def test_views_get_the_byte_order(
     views = [line for line in main_cpp.splitlines() if "ArtworkImageView(" in line]
     assert len(views) == 2
     assert all(line.endswith(f", {expected});") for line in views), views
+
+
+def test_owned_output_decoder_is_rejected_for_external_slot(
+    set_core_config: SetCoreConfigCallable,
+) -> None:
+    """A slot must not silently ignore a decoder that cannot use its frame buffers."""
+    set_core_config(PlatformFramework.ESP32_IDF)
+    with pytest.raises(cv.Invalid):
+        CONFIG_SCHEMA(_slot_config(decoder="ESP32_JPEG"))

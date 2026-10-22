@@ -952,3 +952,108 @@ LV_DEFINES = (
     "LV_WAYLAND_USE_EGL", "LV_WAYLAND_USE_G2D", "LV_WAYLAND_USE_SHM", "LV_LINUX_DRM_USE_EGL",
     "LV_USE_LZ4", "LV_USE_THORVG", "LV_SDL_USE_EGL", "LV_USE_EGL", "LV_LABEL_LONG_TXT_HINT", "LV_LABEL_TEXT_SELECTION",
 ) + tuple(f"LV_DRAW_SW_SUPPORT_{f}" for f in LV_COLOR_FORMATS)
+
+# Additional reusable widgets and optional direct-rendering configuration.
+KEY_THEME_WIDGET_MAP = "theme_widget_map"
+
+KEY_WIDGETS_COMPLETED = "widgets_completed"
+
+CONF_HEADER = "header"
+
+CONF_SIDEBAR = "sidebar"
+
+CONF_COLOR_DEPTH = "color_depth"
+
+CONF_DIRECT_MODE = "direct_mode"
+
+CONF_ROWS = "rows"
+
+CONF_BLUR_RADIUS = "blur_radius"
+
+CONF_BLUR_BACKDROP = "blur_backdrop"
+
+CONF_BLUR_QUALITY = "blur_quality"
+
+CONF_BG_MAIN_OPA = "bg_main_opa"
+
+CONF_BG_GRAD_OPA = "bg_grad_opa"
+
+CONF_IMAGE_OPA = "image_opa"
+
+CONF_BITMAP_MASK_SRC = "bitmap_mask_src"
+
+CONF_MARGIN_TOP = "margin_top"
+
+CONF_MARGIN_BOTTOM = "margin_bottom"
+
+CONF_MARGIN_LEFT = "margin_left"
+
+CONF_MARGIN_RIGHT = "margin_right"
+
+CONF_TEXT_OUTLINE_STROKE_COLOR = "text_outline_stroke_color"
+
+CONF_TEXT_OUTLINE_STROKE_OPA = "text_outline_stroke_opa"
+
+CONF_TEXT_OUTLINE_STROKE_WIDTH = "text_outline_stroke_width"
+
+CONF_DROP_SHADOW_RADIUS = "drop_shadow_radius"
+
+CONF_DROP_SHADOW_OFFSET_X = "drop_shadow_offset_x"
+
+CONF_DROP_SHADOW_OFFSET_Y = "drop_shadow_offset_y"
+
+CONF_DROP_SHADOW_COLOR = "drop_shadow_color"
+
+CONF_DROP_SHADOW_OPA = "drop_shadow_opa"
+
+CONF_DROP_SHADOW_QUALITY = "drop_shadow_quality"
+
+CONF_IMAGE_COLORKEY = "image_colorkey"
+
+CONF_ARC_IMAGE_SRC = "arc_image_src"
+
+CONF_ROTARY_SENSITIVITY = "rotary_sensitivity"
+
+CONF_STYLE_TRANSITION_TIME = "style_transition_time"
+
+CONF_STYLE_TRANSITION_DELAY = "style_transition_delay"
+
+CONF_STYLE_TRANSITION_PATH = "style_transition_path"
+
+ANIM_PATHS = {
+    "linear": "lv_anim_path_linear",
+    "ease_in": "lv_anim_path_ease_in",
+    "ease_out": "lv_anim_path_ease_out",
+    "ease_in_out": "lv_anim_path_ease_in_out",
+    "overshoot": "lv_anim_path_overshoot",
+    "bounce": "lv_anim_path_bounce",
+    "step": "lv_anim_path_step",
+}
+
+LV_EVENT_MAP.update({
+    "CHILD_CHANGED": "CHILD_CHANGED",
+    "CHILD_CREATED": "CHILD_CREATED",
+    "CHILD_DELETED": "CHILD_DELETED",
+    "COLOR_FORMAT_CHANGED": "COLOR_FORMAT_CHANGED",
+    "DRAW_TASK_ADDED": "DRAW_TASK_ADDED",
+    "LAYOUT_CHANGED": "LAYOUT_CHANGED",
+    "SIZE_CHANGED": "SIZE_CHANGED",
+    "STYLE_CHANGED": "STYLE_CHANGED"
+})
+
+LV_SCREEN_EVENT_MAP.update({
+    "SCREEN_LOADED": "SCREEN_LOADED",
+    "SCREEN_UNLOADED": "SCREEN_UNLOADED"
+})
+
+LV_DISPLAY_EVENT_MAP.update({
+    "RESOLUTION_CHANGED": "RESOLUTION_CHANGED"
+})
+
+STATES += ("alt",)
+
+PARTS += ("header", "sidebar")
+
+LV_CHART_TYPES += ("CURVE",)
+
+LV_OBJ_FLAG = LvConstant("LV_OBJ_FLAG_", *OBJ_FLAGS)

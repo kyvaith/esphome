@@ -18,3 +18,7 @@ text_sensor:
     name: "Pairing Code"
     type: pairing_code
     entity_category: diagnostic
+
+  - platform: sendspin
+    id: artwork_url
+    type: artwork_url

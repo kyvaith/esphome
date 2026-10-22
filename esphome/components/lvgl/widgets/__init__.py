@@ -1,3 +1,4 @@
+import builtins
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import ExitStack
 import sys
@@ -17,11 +18,12 @@ from esphome.const import (
 )
 from esphome.core import ID, EsphomeError, TimePeriod
 from esphome.coroutine import FakeAwaitable
-from esphome.cpp_generator import MockObj, call_lambda
+from esphome.cpp_generator import MockObj, RawStatement, call_lambda
 from esphome.schema_extractors import EnableSchemaExtraction
 from esphome.types import Expression
 
 from ..defines import (
+    ANIM_PATHS,
     CONF_DEBUG_OUTLINE,
     CONF_FLEX_ALIGN_CROSS,
     CONF_FLEX_ALIGN_MAIN,
@@ -36,6 +38,9 @@ from ..defines import (
     CONF_PAD_COLUMN,
     CONF_PAD_ROW,
     CONF_SCALE,
+    CONF_STYLE_TRANSITION_DELAY,
+    CONF_STYLE_TRANSITION_PATH,
+    CONF_STYLE_TRANSITION_TIME,
     CONF_STYLES,
     CONF_WIDGETS,
     CUSTOM_FLAGS,
@@ -44,6 +49,8 @@ from ..defines import (
     OBJ_FLAGS,
     PARTS,
     STATES,
+    TYPE_FLEX as TYPE_FLEX,
+    TYPE_GRID as TYPE_GRID,
     LValidator,
     add_lv_use,
     add_warning,
@@ -370,6 +377,12 @@ class Widget:
     def is_checked(self) -> MockObj:
         return self.has_state(LV_STATE.CHECKED)
 
+    def add_flag(self, flag):
+        return lv_obj.add_flag(self.obj, literal(flag))
+
+    def clear_flag(self, flag):
+        return lv_obj.remove_flag(self.obj, literal(flag))
+
     def set_flag(self, flag: str, value: bool | Expression) -> None:
         """
         Set or clear an object flag, given as the lower case name without the LV_OBJ_FLAG_ prefix
@@ -467,7 +480,7 @@ class Widget:
     def get_value(self) -> Expression:
         if isinstance(self.type.w_type, LvType):
             result = self.type.w_type.value(self)
-            if isinstance(result, list):
+            if isinstance(result, builtins.list):
                 return result[0]
             return result
         return self.obj
@@ -475,7 +488,7 @@ class Widget:
     def get_values(self) -> list[Expression]:
         if isinstance(self.type.w_type, LvType):
             result = self.type.w_type.value(self)
-            if isinstance(result, list):
+            if isinstance(result, builtins.list):
                 return result
             return [result]
         return [self.obj]
@@ -536,7 +549,7 @@ async def get_widget_(wid):
 async def get_widgets(config: dict | list, id: str = CONF_ID) -> list[Widget]:
     if not config:
         return []
-    if not isinstance(config, list):
+    if not isinstance(config, builtins.list):
         config = [config]
     return [await get_widget_(c[id]) for c in config if id in c]
 
@@ -558,6 +571,14 @@ def collect_props(config):
                 props[CONF_SCALE + "_y"] = config[prop]
             else:
                 props[prop] = config[prop]
+    # Collect transition properties
+    for prop in [
+        CONF_STYLE_TRANSITION_TIME,
+        CONF_STYLE_TRANSITION_DELAY,
+        CONF_STYLE_TRANSITION_PATH,
+    ]:
+        if prop in config:
+            props[prop] = config[prop]
     return props
 
 
@@ -710,6 +731,16 @@ async def set_obj_properties(w: Widget, config):
         )
     parts = collect_parts(config)
     for part, states in parts.items():
+        transition_props = set()
+        for state_props in states.values():
+            for prop in state_props:
+                if prop in ALL_STYLES:
+                    remapped = remap_property(prop)
+                    transition_props.update(
+                        ("pad_top", "pad_bottom", "pad_left", "pad_right")
+                        if remapped == "pad_all"
+                        else (remapped,)
+                    )
         targets = w.type.part_targets(w, part)
         for state, props in states.items():
             style_ids = props.get(CONF_STYLES, ())
@@ -732,12 +763,41 @@ async def set_obj_properties(w: Widget, config):
                                 LocalVariable(prop, validator.rtype, value, modifier="")
                             )
                     values.append((remap_property(prop), value))
-                for target, target_part in targets:
+                for target_index, (target, target_part) in enumerate(targets):
                     lv_state = get_part_state_selector(target_part, state)
                     for style_id in style_ids:
                         target.add_style(style_id, lv_state)
                     for prop_r, value in values:
                         target.set_style(prop_r, value, lv_state)
+                    if (
+                        duration := props.get(CONF_STYLE_TRANSITION_TIME)
+                    ) is not None and transition_props:
+                        base = f"{config[CONF_ID]}_{part}_{state}_{target_index}_transition"
+                        properties = ", ".join(
+                            f"LV_STYLE_{prop.upper()}"
+                            for prop in sorted(transition_props)
+                        )
+                        delay = props.get(CONF_STYLE_TRANSITION_DELAY)
+                        delay_ms = (
+                            int(delay.total_milliseconds) if delay is not None else 0
+                        )
+                        path_cb = ANIM_PATHS[
+                            props.get(CONF_STYLE_TRANSITION_PATH, "ease_in_out")
+                        ]
+                        lv_add(
+                            RawStatement(
+                                f"static const lv_style_prop_t {base}_props[] = {{{properties}, 0}};"
+                            )
+                        )
+                        lv_add(
+                            RawStatement(f"static lv_style_transition_dsc_t {base};")
+                        )
+                        lv_add(
+                            RawStatement(
+                                f"lv_style_transition_dsc_init(&{base}, {base}_props, {path_cb}, {int(duration.total_milliseconds)}, {delay_ms}, nullptr);"
+                            )
+                        )
+                        target.set_style("transition", literal(f"&{base}"), lv_state)
     if group := config.get(CONF_GROUP):
         group = await cg.get_variable(group)
         lv.group_add_obj(group, w.obj)

@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 
 from esphome import pins
+import esphome.codegen as cg
 from esphome.components import esp32
 from esphome.components.const import CONF_SLOT, CONF_USE_PSRAM
 import esphome.config_validation as cv
@@ -22,7 +23,8 @@ from esphome.const import (
     KEY_ESP32,
 )
 from esphome.core import CORE
-from esphome.cpp_generator import add_define
+from esphome.coroutine import CoroPriority, coroutine_with_priority
+from esphome.cpp_generator import add_build_flag, add_define
 import esphome.final_validate as fv
 from esphome.types import ConfigType
 
@@ -46,8 +48,21 @@ CONF_DATA_READY_ACTIVE_HIGH = "data_ready_active_high"
 CONF_DATA_READY_PIN = "data_ready_pin"
 CONF_HANDSHAKE_ACTIVE_HIGH = "handshake_active_high"
 CONF_HANDSHAKE_PIN = "handshake_pin"
+CONF_PRESERVE_SDIO_TRANSACTION_ERRORS = "preserve_sdio_transaction_errors"
+CONF_RESET_COPROCESSOR_ON_SHUTDOWN = "reset_coprocessor_on_shutdown"
+CONF_SHUTDOWN_RESET_ID = "shutdown_reset_id"
+CONF_RESTART_DIAGNOSTICS = "restart_diagnostics"
+CONF_RESTART_DIAGNOSTICS_ID = "restart_diagnostics_id"
 CONF_SDIO_FREQUENCY = "sdio_frequency"
 CONF_SPI_MODE = "spi_mode"
+CONF_TRANSPORT_DIAGNOSTICS = "transport_diagnostics"
+REVIEWED_LIFECYCLE_IDF_VERSIONS = (cv.Version(5, 5, 5), cv.Version(5, 5, 6))
+
+esp32_hosted_ns = cg.esphome_ns.namespace("esp32_hosted")
+RestartDiagnosticsComponent = esp32_hosted_ns.class_(
+    "RestartDiagnosticsComponent", cg.Component
+)
+ShutdownResetComponent = esp32_hosted_ns.class_("ShutdownResetComponent", cg.Component)
 
 # ESP-NOW-over-hosted shim (esp_now_hosted.cpp). esp-hosted proxies esp_wifi.h
 # but not esp_now.h (espressif/esp-hosted-mcu#19), and esp_wifi_remote injects
@@ -75,11 +90,19 @@ BASE_SCHEMA = cv.Schema(
         cv.Required(CONF_ACTIVE_HIGH): cv.boolean,
         cv.Required(CONF_RESET_PIN): pins.internal_gpio_output_pin_number,
         cv.Optional(CONF_USE_PSRAM, default=False): cv.boolean,
+        cv.Optional(CONF_RESTART_DIAGNOSTICS, default=False): cv.boolean,
+        cv.Optional(CONF_TRANSPORT_DIAGNOSTICS, default=False): cv.boolean,
+        cv.GenerateID(CONF_RESTART_DIAGNOSTICS_ID): cv.declare_id(
+            RestartDiagnosticsComponent
+        ),
     }
 )
 
 SDIO_SCHEMA = BASE_SCHEMA.extend(
     {
+        cv.Optional(CONF_PRESERVE_SDIO_TRANSACTION_ERRORS, default=False): cv.boolean,
+        cv.Optional(CONF_RESET_COPROCESSOR_ON_SHUTDOWN, default=False): cv.boolean,
+        cv.GenerateID(CONF_SHUTDOWN_RESET_ID): cv.declare_id(ShutdownResetComponent),
         cv.Required(CONF_CLK_PIN): pins.internal_gpio_output_pin_number,
         cv.Required(CONF_CMD_PIN): pins.internal_gpio_output_pin_number,
         cv.Required(CONF_D0_PIN): pins.internal_gpio_output_pin_number,
@@ -96,6 +119,23 @@ SDIO_SCHEMA = BASE_SCHEMA.extend(
 
 
 def _validate_sdio(config: ConfigType) -> ConfigType:
+    if (
+        config[CONF_RESET_COPROCESSOR_ON_SHUTDOWN]
+        and esp32.idf_version() not in REVIEWED_LIFECYCLE_IDF_VERSIONS
+    ):
+        raise cv.Invalid(
+            "reset_coprocessor_on_shutdown requires the reviewed ESP-IDF 5.5.5 or 5.5.6 lifecycle",
+            path=[CONF_RESET_COPROCESSOR_ON_SHUTDOWN],
+        )
+    if (
+        config[CONF_PRESERVE_SDIO_TRANSACTION_ERRORS]
+        and esp32.idf_version() not in REVIEWED_LIFECYCLE_IDF_VERSIONS
+    ):
+        raise cv.Invalid(
+            "preserve_sdio_transaction_errors requires the reviewed "
+            "ESP-IDF 5.5.5 or 5.5.6 source",
+            path=[CONF_PRESERVE_SDIO_TRANSACTION_ERRORS],
+        )
     if config[CONF_BUS_WIDTH] == 4:
         for pin in (CONF_D1_PIN, CONF_D2_PIN, CONF_D3_PIN):
             if pin not in config:
@@ -148,12 +188,40 @@ def _validate_spi(config: ConfigType) -> ConfigType:
     return config
 
 
-CONFIG_SCHEMA = cv.typed_schema(
-    {
-        "sdio": cv.All(SDIO_SCHEMA, _validate_sdio),
-        "spi": cv.All(SPI_SCHEMA, _validate_spi),
-    },
-    default_type="sdio",
+def _validate_transport_diagnostics(config: ConfigType) -> ConfigType:
+    if config[CONF_TRANSPORT_DIAGNOSTICS] and not config[CONF_RESTART_DIAGNOSTICS]:
+        raise cv.Invalid(
+            "transport_diagnostics requires restart_diagnostics: true",
+            path=[CONF_TRANSPORT_DIAGNOSTICS],
+        )
+    return config
+
+
+def _remove_disabled_diagnostics_id(config: ConfigType) -> ConfigType:
+    if not config[CONF_RESTART_DIAGNOSTICS]:
+        config = config.copy()
+        config.pop(CONF_RESTART_DIAGNOSTICS_ID)
+    return config
+
+
+def _remove_disabled_shutdown_reset_id(config: ConfigType) -> ConfigType:
+    if config[CONF_TYPE] == "sdio" and not config[CONF_RESET_COPROCESSOR_ON_SHUTDOWN]:
+        config = config.copy()
+        config.pop(CONF_SHUTDOWN_RESET_ID)
+    return config
+
+
+CONFIG_SCHEMA = cv.All(
+    cv.typed_schema(
+        {
+            "sdio": cv.All(SDIO_SCHEMA, _validate_sdio),
+            "spi": cv.All(SPI_SCHEMA, _validate_spi),
+        },
+        default_type="sdio",
+    ),
+    _validate_transport_diagnostics,
+    _remove_disabled_diagnostics_id,
+    _remove_disabled_shutdown_reset_id,
 )
 
 
@@ -197,6 +265,12 @@ def _final_validate(config: ConfigType) -> None:
         )
     if (major := user_esp_hosted_major()) is None or major < 3:
         return
+    if config.get(CONF_RESET_COPROCESSOR_ON_SHUTDOWN, False):
+        raise cv.Invalid(
+            "reset_coprocessor_on_shutdown requires the reviewed esp_hosted 2.x "
+            "reset lifecycle; disable it when selecting esp_hosted 3.x.",
+            path=[CONF_RESET_COPROCESSOR_ON_SHUTDOWN],
+        )
     if idf_ver < cv.Version(5, 5, 0):
         raise cv.Invalid(
             f"esp_hosted 3.x requires ESP-IDF 5.5 or newer, got {idf_ver}. "
@@ -456,8 +530,43 @@ def _configure_3x(config: ConfigType) -> None:
         esp32.add_idf_sdkconfig_option("CONFIG_ESP_HOSTED_DFLT_TASK_FROM_SPIRAM", True)
 
 
+@coroutine_with_priority(CoroPriority.FINAL)
+async def _configure_transport_diagnostic_logging() -> None:
+    # Reconcile after ESP32's normal code generation without raising the default.
+    esp32.add_idf_sdkconfig_option("CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT", False)
+    esp32.add_idf_sdkconfig_option("CONFIG_LOG_MAXIMUM_LEVEL_INFO", True)
+    esp32.add_idf_sdkconfig_option("CONFIG_LOG_DYNAMIC_LEVEL_CONTROL", True)
+    esp32.add_idf_sdkconfig_option("CONFIG_LOG_TAG_LEVEL_IMPL_NONE", False)
+    esp32.add_idf_sdkconfig_option(
+        "CONFIG_LOG_TAG_LEVEL_IMPL_CACHE_AND_LINKED_LIST", True
+    )
+
+
+# Register diagnostic and reset components before safe_mode's generated return.
+@coroutine_with_priority(CoroPriority.DIAGNOSTICS)
 async def to_code(config: ConfigType) -> None:
     add_define("USE_ESP32_HOSTED")
+    if config.get(CONF_RESET_COPROCESSOR_ON_SHUTDOWN, False):
+        add_define("USE_ESP32_HOSTED_SHUTDOWN_RESET")
+        shutdown_reset = cg.new_Pvariable(config[CONF_SHUTDOWN_RESET_ID])
+        await cg.register_component(shutdown_reset, config)
+    if config[CONF_RESTART_DIAGNOSTICS]:
+        add_define("USE_ESP32_HOSTED_RESTART_DIAGNOSTICS")
+        add_build_flag("-Wl,--wrap=esp_restart")
+        add_build_flag("-Wl,--wrap=hosted_restart_host")
+        diagnostics = cg.new_Pvariable(config[CONF_RESTART_DIAGNOSTICS_ID])
+        await cg.register_component(diagnostics, config)
+    if config[CONF_TRANSPORT_DIAGNOSTICS]:
+        add_define("USE_ESP32_HOSTED_TRANSPORT_DIAGNOSTICS")
+        CORE.add_job(_configure_transport_diagnostic_logging)
+    if config.get(CONF_PRESERVE_SDIO_TRANSACTION_ERRORS, False):
+        esp32.add_idf_component(
+            name="sdmmc_framework_patch",
+            path=Path(__file__).with_name("sdmmc_framework_patch").as_posix(),
+        )
+        esp32.add_idf_sdkconfig_option(
+            "CONFIG_ESPHOME_SDMMC_PRESERVE_TRANSACTION_ERROR", True
+        )
     use_3x = uses_esp_hosted_3x()
 
     if use_3x:

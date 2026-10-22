@@ -9,7 +9,7 @@ from esphome.const import (
     CONF_X,
     CONF_Y,
 )
-from esphome.cpp_generator import MockObj, new_Pvariable
+from esphome.cpp_generator import MockObj, RawStatement, new_Pvariable
 from esphome.cpp_helpers import register_component
 from esphome.cpp_types import nullptr
 
@@ -88,7 +88,13 @@ async def generate_triggers():
                 selected = literal(
                     f"lv_indev_get_gesture_dir(lv_indev_active()) == {dir}"
                 )
-                await add_trigger(conf, w, "GESTURE", is_selected=selected)
+                await add_trigger(
+                    conf,
+                    w,
+                    "GESTURE",
+                    is_selected=selected,
+                    wait_release=True,
+                )
 
             for conf in config.get(CONF_ON_VALUE, ()):
                 await add_trigger(
@@ -147,7 +153,13 @@ def _get_event_literal(trigger: str | MockObj) -> MockObj:
 
 
 async def add_trigger(
-    conf, w, *events: str | MockObj, is_selected=None, attach_obj=None, user_data=None
+    conf,
+    w,
+    *events: str | MockObj,
+    is_selected=None,
+    attach_obj=None,
+    user_data=None,
+    wait_release=False,
 ):
     """
     :param attach_obj: The object to actually register the callback on, if different
@@ -174,6 +186,8 @@ async def add_trigger(
     await automation.build_automation(trigger, args, conf)
     async with LambdaContext(EVENT_ARG, where=tid) as context:
         with LvConditional(is_selected):
+            if wait_release:
+                lv_add(RawStatement("lv_indev_wait_release(lv_indev_active());"))
             lv_add(trigger.trigger(*value, literal("event")))
     callback = await context.get_lambda()
     event_literals = [_get_event_literal(event) for event in events]

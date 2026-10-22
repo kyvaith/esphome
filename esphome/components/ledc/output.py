@@ -7,6 +7,7 @@ from esphome.components.esp32 import include_builtin_idf_component
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_CHANNEL,
+    CONF_DURATION,
     CONF_FREQUENCY,
     CONF_ID,
     CONF_PHASE_ANGLE,
@@ -81,4 +82,18 @@ automation.register_apply_action(
         }
     ),
     automation.ApplyField(CONF_FREQUENCY, "update_frequency", cg.float_),
+)
+
+
+automation.register_apply_action(
+    "output.ledc.set_next_fade_duration",
+    cv.Schema(
+        {
+            cv.Required(CONF_ID): cv.use_id(LEDCOutput),
+            cv.Required(CONF_DURATION): cv.templatable(
+                cv.positive_time_period_milliseconds
+            ),
+        }
+    ),
+    automation.ApplyField(CONF_DURATION, "set_next_fade_duration", cg.uint32),
 )

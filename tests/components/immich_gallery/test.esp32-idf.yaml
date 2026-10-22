@@ -1,0 +1,15 @@
+substitutions:
+  device_name: immich-gallery-test
+
+packages:
+  common: !include common.yaml
+
+esphome:
+  name: ${device_name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:

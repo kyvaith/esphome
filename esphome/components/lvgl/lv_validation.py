@@ -480,3 +480,30 @@ async def get_start_value(config):
     else:
         value = config.get(CONF_VALUE)
     return await lv_int.process(value)
+
+
+# Compatibility for independently reusable storage/SVG widgets. Normal image
+# IDs and mapping expressions continue through the official validator.
+COLOR_NAMES = CSS_COLORS
+
+
+def image_validator(value):
+    try:
+        return _image_validator(value)
+    except cv.Invalid as image_error:
+        for namespace, class_name in (
+            ("storage", "SdImageComponent"),
+            ("svg_file", "SvgFile"),
+        ):
+            try:
+                result = cv.use_id(
+                    cg.esphome_ns.namespace(namespace).class_(class_name)
+                )(value)
+                add_lv_use("image", "label")
+                return result
+            except cv.Invalid:
+                pass
+        if isinstance(value, str) and value.startswith("/"):
+            add_lv_use("image", "label")
+            return value
+        raise image_error

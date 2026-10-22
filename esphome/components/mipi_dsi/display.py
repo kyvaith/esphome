@@ -1,10 +1,11 @@
 import importlib
 import logging
+from pathlib import Path
 import pkgutil
 
 from esphome import pins
 import esphome.codegen as cg
-from esphome.components import display
+from esphome.components import display, esp32
 from esphome.components.const import (
     BYTE_ORDER_BIG,
     BYTE_ORDER_LITTLE,
@@ -51,6 +52,7 @@ from esphome.const import (
     CONF_TRANSFORM,
     CONF_WIDTH,
 )
+from esphome.core import CORE
 from esphome.final_validate import full_config
 from esphome.types import ConfigType
 
@@ -69,6 +71,8 @@ ColorBitness = display.display_ns.enum("ColorBitness")
 
 CONF_LANE_BIT_RATE = "lane_bit_rate"
 CONF_LANES = "lanes"
+CONF_USE_DMA2D = "use_dma2d"
+CONF_ASYNC_LVGL_FLUSH = "async_lvgl_flush"
 
 DsiDriverChip("CUSTOM")
 
@@ -128,6 +132,8 @@ def model_schema(config: ConfigType) -> cv.All:
             model.option(CONF_LANE_BIT_RATE, None): cv.All(
                 cv.bps, cv.Range(min=100e6, max=3200e6)
             ),
+            model.option(CONF_USE_DMA2D, False): cv.boolean,
+            model.option(CONF_ASYNC_LVGL_FLUSH, False): cv.boolean,
             iseqconf: cv.ensure_list(map_sequence),
             model.option(CONF_BYTE_ORDER, BYTE_ORDER_LITTLE): cv.one_of(
                 BYTE_ORDER_LITTLE, BYTE_ORDER_BIG, lower=True
@@ -158,9 +164,7 @@ def _config_schema(config: ConfigType) -> ConfigType:
     config = model_schema(config)(config)
     model = MODELS[config[CONF_MODEL].upper()]
     model.check_requirements()
-    width, height, _offset_width, _offset_height, _pad_width, _pad_height = (
-        model.get_dimensions(config)
-    )
+    width, height, *_ = model.get_dimensions(config)
     display.add_metadata(
         config[CONF_ID],
         width,
@@ -171,6 +175,8 @@ def _config_schema(config: ConfigType) -> ConfigType:
         or config.get(CONF_AUTO_CLEAR_ENABLED) is True,
         rotation=config.get(CONF_ROTATION, 0),
         draw_rounding=config.get(CONF_DRAW_ROUNDING, 0),
+        frame_buffer_count=3,
+        frame_buffer_bytes_per_pixel=3 if get_color_depth(config) == 24 else 2,
     )
     return config
 
@@ -190,12 +196,24 @@ FINAL_VALIDATE_SCHEMA = _final_validate
 
 
 async def to_code(config: ConfigType) -> None:
+    cg.add_define("USE_MIPI_DSI")
+    if config[CONF_ASYNC_LVGL_FLUSH]:
+        patch_script = Path(__file__).with_name("patch_espidf_dsi_dma2d.py")
+        if CORE.using_toolchain_esp_idf:
+            patch_component = patch_script.with_name("mipi_dsi_framework_patch")
+            esp32.add_idf_component(
+                name="mipi_dsi_framework_patch",
+                path=patch_component.as_posix(),
+            )
+        else:
+            cg.add_platformio_option(
+                "extra_scripts", [f"pre:{patch_script.as_posix()}"]
+            )
+
     model = MODELS[config[CONF_MODEL].upper()]
     color_depth = COLOR_DEPTHS[get_color_depth(config)]
     pixel_mode = int(config[CONF_PIXEL_MODE].removesuffix("bit"))
-    width, height, _offset_width, _offset_height, _pad_width, _pad_height = (
-        model.get_dimensions(config)
-    )
+    width, height, *_ = model.get_dimensions(config)
     var = cg.new_Pvariable(config[CONF_ID], width, height, color_depth, pixel_mode)
     cg.add(var.set_big_endian(config[CONF_BYTE_ORDER] == BYTE_ORDER_BIG))
 
@@ -213,6 +231,8 @@ async def to_code(config: ConfigType) -> None:
     cg.add(var.set_pclk_frequency(config[CONF_PCLK_FREQUENCY] / 1.0e6))
     cg.add(var.set_lanes(int(config[CONF_LANES])))
     cg.add(var.set_lane_bit_rate(config[CONF_LANE_BIT_RATE] / 1.0e6))
+    cg.add(var.set_use_dma2d(config[CONF_USE_DMA2D]))
+    cg.add(var.set_async_lvgl_flush(config[CONF_ASYNC_LVGL_FLUSH]))
     await cg.add_pin(var.set_reset_pin, config.get(CONF_RESET_PIN))
     if enable_pin := config.get(CONF_ENABLE_PIN):
         enable = [await cg.gpio_pin_expression(pin) for pin in enable_pin]

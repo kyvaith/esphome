@@ -1,0 +1,120 @@
+# ESPHome LVGL Table Widget Example
+# Demonstrates table widget features in LVGL v9.5
+#
+# The table widget provides:
+# - Configurable rows and columns
+# - Custom column widths
+# - Individual cell text content
+# - Dynamic cell updates via lvgl.table.update action
+
+lvgl:
+  displays:
+    - display_id: my_display
+      pages:
+        - id: main_page
+          widgets:
+            # ============================================
+            # Example 1: Sensor Data Table
+            # ============================================
+            - table:
+                id: sensor_table
+                x: 10
+                y: 10
+                width: 350
+                row_count: 4
+                column_count: 3
+                columns:
+                  - id: 0
+                    width: 120
+                  - id: 1
+                    width: 100
+                  - id: 2
+                    width: 80
+                cells:
+                  # Header row
+                  - row: 0
+                    column: 0
+                    text: "Sensor"
+                  - row: 0
+                    column: 1
+                    text: "Value"
+                  - row: 0
+                    column: 2
+                    text: "Unit"
+
+                  # Data rows
+                  - row: 1
+                    column: 0
+                    text: "Temperature"
+                  - row: 1
+                    column: 1
+                    text: "25.5"
+                  - row: 1
+                    column: 2
+                    text: "°C"
+
+                  - row: 2
+                    column: 0
+                    text: "Humidity"
+                  - row: 2
+                    column: 1
+                    text: "60"
+                  - row: 2
+                    column: 2
+                    text: "%"
+
+                  - row: 3
+                    column: 0
+                    text: "Pressure"
+                  - row: 3
+                    column: 1
+                    text: "1013"
+                  - row: 3
+                    column: 2
+                    text: "hPa"
+
+            # ============================================
+            # Example 2: Device Status Table
+            # ============================================
+            - table:
+                id: status_table
+                x: 10
+                y: 200
+                width: 300
+                row_count: 3
+                column_count: 2
+                columns:
+                  - id: 0
+                    width: 150
+                  - id: 1
+                    width: 150
+                cells:
+                  - row: 0
+                    column: 0
+                    text: "Property"
+                  - row: 0
+                    column: 1
+                    text: "Status"
+                  - row: 1
+                    column: 0
+                    text: "WiFi"
+                  - row: 1
+                    column: 1
+                    text: "Connected"
+                  - row: 2
+                    column: 0
+                    text: "Uptime"
+                  - row: 2
+                    column: 1
+                    text: "0h 0m"
+
+# Dynamic table update example:
+# interval:
+#   - interval: 10s
+#     then:
+#       - lvgl.table.update:
+#           id: sensor_table
+#           cells:
+#             - row: 1
+#               column: 1
+#               text: !lambda 'return str(id(temperature_sensor).state);'

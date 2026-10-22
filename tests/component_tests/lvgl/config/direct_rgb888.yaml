@@ -1,0 +1,32 @@
+esphome:
+  name: test-direct-rgb888
+
+esp32:
+  board: esp32-p4-evboard
+  framework:
+    type: esp-idf
+
+psram:
+  speed: 200MHz
+
+esp_ldo:
+  - channel: 3
+    voltage: 2.5V
+
+display:
+  - platform: mipi_dsi
+    id: direct_display
+    model: WAVESHARE-P4-86-PANEL
+    color_depth: 24
+    pixel_mode: 24
+    auto_clear_enabled: false
+    update_interval: never
+
+lvgl:
+  color_depth: 32
+  direct_mode: true
+  full_refresh: true
+  buffer_size: 100%
+  widgets:
+    - obj:
+        id: direct_root

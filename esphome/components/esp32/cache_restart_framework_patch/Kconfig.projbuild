@@ -1,0 +1,10 @@
+config ESPHOME_ESP32P4_CACHE_SAFE_RESTART
+    bool "Stall ESP32-P4 peer CPU and drain cache sync before software restart"
+    depends on IDF_TARGET_ESP32P4
+    default n
+    help
+        Opt in to the reviewed ESP-IDF 5.5.5/5.5.6 ESP32-P4 restart workaround for
+        espressif/esp-idf#19171. Preserve an in-progress shared cache sync by
+        stalling the other CPU without first resetting it. Wait until sync
+        operation enable bits clear before issuing the restart writeback.
+        This wait has no timeout and cannot recover a wedged hardware engine.

@@ -49,6 +49,7 @@ esphome/components/apds9930/* @iyesin
 esphome/components/api/* @esphome/core
 esphome/components/aqi/* @freekode @jasstrong @ximex
 esphome/components/aranet/* @patrickod
+esphome/components/artwork_image/* @jtenniswood
 esphome/components/as5600/* @ammmze
 esphome/components/as5600/sensor/* @ammmze
 esphome/components/as7341/* @mrgnr
@@ -64,6 +65,7 @@ esphome/components/audio_dac/* @kbx81
 esphome/components/audio_file/* @kahrendt
 esphome/components/audio_file/media_source/* @kahrendt
 esphome/components/audio_http/* @kahrendt
+esphome/components/audio_processor/* @n-IA-hane
 esphome/components/axs15231/* @clydebarrow
 esphome/components/b_parasite/* @rbaron
 esphome/components/ballu/* @bazuchan
@@ -202,11 +204,16 @@ esphome/components/esp32_camera_web_server/* @ayufan
 esphome/components/esp32_can/* @Sympatron
 esphome/components/esp32_hosted/* @swoboda1337
 esphome/components/esp32_hosted/update/* @swoboda1337
+esphome/components/esp32_jpeg/* @kyvaith
 esphome/components/esp32_power_management/* @rwrozelle
 esphome/components/esp32_rmt/* @jesserockz
 esphome/components/esp32_rmt_led_strip/* @jesserockz
 esphome/components/esp32_ulp/* @swoboda1337
 esphome/components/esp8266/* @esphome/core
+esphome/components/esp_afe/* @n-IA-hane
+esphome/components/esp_audio_stack/* @n-IA-hane
+esphome/components/esp_audio_stack/microphone/* @n-IA-hane
+esphome/components/esp_audio_stack/speaker/* @n-IA-hane
 esphome/components/esp_ldo/* @clydebarrow
 esphome/components/espectre/* @francescopace
 esphome/components/esphome/ota/* @esphome/core
@@ -233,6 +240,7 @@ esphome/components/ft63x6/* @gpambrozio
 esphome/components/fusb302b/* @remcom
 esphome/components/gcja5/* @gcormier
 esphome/components/gdk101/* @Szewcson
+esphome/components/generic_image/* @kahrendt
 esphome/components/gl_r01_i2c/* @pkejval
 esphome/components/globals/* @esphome/core
 esphome/components/gp2y1010au0f/* @zry98
@@ -309,6 +317,7 @@ esphome/components/iaqcore/* @yozik04
 esphome/components/icm20689/* @lboue
 esphome/components/icnt86/* @danepowell
 esphome/components/ili9xxx/* @clydebarrow @nielsnl68
+esphome/components/immich_gallery/* @kyvaith
 esphome/components/improv_base/* @esphome/core
 esphome/components/improv_ble/* @jesserockz
 esphome/components/improv_serial/* @esphome/core
@@ -366,6 +375,9 @@ esphome/components/ltr390/* @latonita @sjtrny
 esphome/components/ltr501/* @latonita
 esphome/components/ltr_als_ps/* @latonita
 esphome/components/lvgl/* @clydebarrow
+esphome/components/lvgl_image_presenter/* @kyvaith
+esphome/components/lvgl_material/* @kyvaith
+esphome/components/lvgl_region_presenter/* @kyvaith
 esphome/components/m5stack_8angle/* @rnauber
 esphome/components/mapping/* @clydebarrow
 esphome/components/matrix_keypad/* @ssieb
@@ -438,6 +450,7 @@ esphome/components/mt6701_i2c/* @slimcdk
 esphome/components/mt6701_spi/* @slimcdk
 esphome/components/nau7802/* @cujomalainey
 esphome/components/network/* @esphome/core
+esphome/components/network_camera/* @kyvaith
 esphome/components/nextion/* @edwardtfn @senexcrenshaw
 esphome/components/nextion/binary_sensor/* @senexcrenshaw
 esphome/components/nextion/sensor/* @senexcrenshaw
@@ -544,6 +557,7 @@ esphome/components/sen21231/* @shreyaskarnik
 esphome/components/sen5x/* @martgras
 esphome/components/sen6x/* @martgras @mebner86 @tuct
 esphome/components/sendspin/* @kahrendt
+esphome/components/sendspin/generic_image/* @kahrendt
 esphome/components/sendspin/image/* @kahrendt
 esphome/components/sendspin/media_player/* @kahrendt
 esphome/components/sendspin/media_source/* @kahrendt
@@ -629,6 +643,7 @@ esphome/components/systa_bus/* @Mat931
 esphome/components/t6615/* @tylermenezes
 esphome/components/tas2780/* @remcom
 esphome/components/tas58xx/* @mrtoy-me @remcom
+esphome/components/task_runtime_profiler/* @kyvaith
 esphome/components/tc74/* @sethgirvan
 esphome/components/tca8418/* @zebble
 esphome/components/tca9548a/* @andreashergert1984
@@ -692,6 +707,7 @@ esphome/components/usb_audio/* @ab-tools
 esphome/components/usb_cdc_acm/* @kbx81
 esphome/components/usb_host/* @clydebarrow
 esphome/components/usb_uart/* @clydebarrow
+esphome/components/va_client/* @maxmaxme
 esphome/components/valve/* @esphome/core
 esphome/components/vbus/* @ssieb
 esphome/components/veml3235/* @kbx81

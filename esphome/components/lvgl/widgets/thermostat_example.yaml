@@ -1,0 +1,391 @@
+# ESPHome LVGL Thermostat Example
+# =============================================================================
+# Circular thermostat gauge with:
+#   - Round scale with tick marks (uses major tick offset feature)
+#   - Draggable arc cursor (blue knob)
+#   - Green/cyan indicator arc for set temperature
+#   - Large temperature display in center
+#   - Current temperature display
+#   - Left sidebar with mode buttons
+#
+# Target display: 480x480 (square)
+# =============================================================================
+
+globals:
+  - id: thermostat_setpoint
+    type: float
+    initial_value: "16.0"
+  - id: current_temperature
+    type: float
+    initial_value: "8.5"
+
+# =============================================================================
+# HOME ASSISTANT INTEGRATION (optional)
+# =============================================================================
+# sensor:
+#   - platform: homeassistant
+#     id: ha_current_temp
+#     entity_id: sensor.indoor_temperature
+#     on_value:
+#       then:
+#         - globals.set:
+#             id: current_temperature
+#             value: !lambda 'return x;'
+#         - lvgl.label.update:
+#             id: lbl_current_temp
+#             text:
+#               format: "%.1f°"
+#               args: [id(current_temperature)]
+
+# =============================================================================
+# ANIMATION - Update arc from knob interaction
+# =============================================================================
+interval:
+  - interval: 100ms
+    then:
+      # Update setpoint label from arc value
+      - lvgl.label.update:
+          id: lbl_setpoint
+          text:
+            format: "%.1f"
+            args: [id(thermostat_setpoint)]
+
+# =============================================================================
+# LVGL CONFIGURATION
+# =============================================================================
+lvgl:
+  displays:
+    - display_id: my_display
+      pages:
+        # =====================================================================
+        # THERMOSTAT PAGE
+        # =====================================================================
+        - id: thermostat_page
+          bg_color: 0x1A1E2E
+          widgets:
+            # =================================================================
+            # LEFT SIDEBAR - Mode buttons
+            # =================================================================
+            - obj:
+                id: sidebar
+                x: 0
+                y: 0
+                width: 56
+                height: 480
+                bg_color: 0x141824
+                bg_opa: COVER
+                radius: 0
+                border_width: 0
+                pad_all: 0
+                scrollbar_mode: "off"
+                layout:
+                  type: FLEX
+                  flex_flow: COLUMN
+                  flex_align_main: SPACE_EVENLY
+                  flex_align_cross: CENTER
+                widgets:
+                  # Home/thermostat button (active)
+                  - button:
+                      id: btn_thermostat
+                      width: 44
+                      height: 44
+                      radius: 22
+                      bg_color: 0x00E5A0
+                      border_width: 0
+                      widgets:
+                        - label:
+                            align: CENTER
+                            text: "\uF2C9"
+                            text_color: 0x1A1E2E
+                            text_font: montserrat_20
+
+                  # Heat mode
+                  - button:
+                      id: btn_heat
+                      width: 44
+                      height: 44
+                      radius: 22
+                      bg_color: 0x252A3C
+                      border_width: 0
+                      widgets:
+                        - label:
+                            align: CENTER
+                            text: "\uF06D"
+                            text_color: 0x667788
+                            text_font: montserrat_20
+
+                  # Cool mode
+                  - button:
+                      id: btn_cool
+                      width: 44
+                      height: 44
+                      radius: 22
+                      bg_color: 0x252A3C
+                      border_width: 0
+                      widgets:
+                        - label:
+                            align: CENTER
+                            text: "\uF2DC"
+                            text_color: 0x667788
+                            text_font: montserrat_20
+
+                  # Fan mode
+                  - button:
+                      id: btn_fan
+                      width: 44
+                      height: 44
+                      radius: 22
+                      bg_color: 0x252A3C
+                      border_width: 0
+                      widgets:
+                        - label:
+                            align: CENTER
+                            text: "\uF863"
+                            text_color: 0x667788
+                            text_font: montserrat_20
+
+                  # Settings
+                  - button:
+                      id: btn_settings
+                      width: 44
+                      height: 44
+                      radius: 22
+                      bg_color: 0x252A3C
+                      border_width: 0
+                      widgets:
+                        - label:
+                            align: CENTER
+                            text: "\uF013"
+                            text_color: 0x667788
+                            text_font: montserrat_20
+
+            # =================================================================
+            # MAIN GAUGE AREA - Circular thermostat
+            # =================================================================
+            - obj:
+                id: gauge_container
+                x: 76
+                y: 20
+                width: 384
+                height: 384
+                bg_color: 0x1A1E2E
+                bg_opa: TRANSP
+                border_width: 0
+                pad_all: 0
+                scrollbar_mode: "off"
+                widgets:
+                  # Dark circle background for the gauge
+                  - obj:
+                      id: gauge_bg
+                      align: CENTER
+                      width: 380
+                      height: 380
+                      bg_color: 0x212638
+                      bg_opa: COVER
+                      radius: 190
+                      border_width: 2
+                      border_color: 0x2A3048
+                      border_opa: 80%
+                      pad_all: 0
+                      scrollbar_mode: "off"
+
+                  # ---------------------------------------------------------
+                  # SCALE - Tick marks around the perimeter
+                  # Uses offset feature: range 4-31 with major ticks at
+                  # 5, 10, 15, 20, 25, 30 (offset=1, stride=5)
+                  # ---------------------------------------------------------
+                  - scale:
+                      id: thermostat_scale
+                      align: CENTER
+                      width: 360
+                      height: 360
+                      mode: ROUND_OUTER
+                      min_value: 4
+                      max_value: 31
+                      rotation: 135
+                      angle_range: 270
+                      ticks:
+                        count: 28
+                        width: 1
+                        length: 8
+                        color: 0x3A4060
+                        major:
+                          stride: 5
+                          offset: 1
+                          width: 2
+                          length: 16
+                          color: 0x8090AA
+                          label_show: true
+                          label_gap: 10
+                      sections:
+                        # Blue - cold zone (4° to 15°)
+                        - id: section_cold
+                          range_from: 4
+                          range_to: 15
+                          color: 0x42A5F5
+                          width: 2
+                          items:
+                            color: 0x42A5F5
+                            width: 1
+                        # Green - comfort zone (15° to 22°)
+                        - id: section_comfort
+                          range_from: 15
+                          range_to: 22
+                          color: 0x00E5A0
+                          width: 2
+                          items:
+                            color: 0x00E5A0
+                            width: 1
+                        # Orange - warm zone (22° to 27°)
+                        - id: section_warm
+                          range_from: 22
+                          range_to: 27
+                          color: 0xFFA726
+                          width: 2
+                          items:
+                            color: 0xFFA726
+                            width: 1
+                        # Red - hot zone (27° to 31°)
+                        - id: section_hot
+                          range_from: 27
+                          range_to: 31
+                          color: 0xEF5350
+                          width: 2
+                          items:
+                            color: 0xEF5350
+                            width: 1
+
+                  # ---------------------------------------------------------
+                  # ARC - Interactive temperature control with blue knob
+                  # The user drags the knob to set temperature
+                  # ---------------------------------------------------------
+                  - arc:
+                      id: thermostat_arc
+                      align: CENTER
+                      width: 310
+                      height: 310
+                      min_value: 4
+                      max_value: 31
+                      value: 16
+                      rotation: 135
+                      start_angle: 0
+                      end_angle: 270
+                      mode: NORMAL
+                      adjustable: true
+                      change_rate: 720
+                      indicator:
+                        arc_color: 0x00E5A0
+                        arc_width: 6
+                        arc_rounded: true
+                      main:
+                        arc_color: 0x2A3048
+                        arc_width: 6
+                        arc_rounded: true
+                      knob:
+                        bg_color: 0x2196F3
+                        radius: 16
+                        border_width: 3
+                        border_color: 0x64B5F6
+                        shadow_width: 12
+                        shadow_color: 0x1565C0
+                        shadow_opa: 60%
+                        pad_all: 10
+                      on_value:
+                        then:
+                          - globals.set:
+                              id: thermostat_setpoint
+                              value: !lambda 'return x;'
+
+                  # ---------------------------------------------------------
+                  # CENTER DISPLAY - Temperature setpoint (large)
+                  # ---------------------------------------------------------
+                  - label:
+                      id: lbl_setpoint
+                      align: CENTER
+                      y: -20
+                      text: "16.0"
+                      text_color: 0x00E5A0
+                      text_font: montserrat_48
+
+                  # Degree unit
+                  - label:
+                      id: lbl_unit
+                      align: CENTER
+                      y: 25
+                      text: "°C"
+                      text_color: 0x556677
+
+                  # Current temperature (smaller, below)
+                  - label:
+                      id: lbl_current_temp
+                      align: CENTER
+                      y: 55
+                      text: "8.5°"
+                      text_color: 0x7888AA
+                      text_font: montserrat_20
+
+                  # Label "Current"
+                  - label:
+                      id: lbl_current_label
+                      align: CENTER
+                      y: 80
+                      text: "actuelle"
+                      text_color: 0x445566
+
+            # =================================================================
+            # BOTTOM STATUS BAR
+            # =================================================================
+            - obj:
+                id: status_bar
+                x: 76
+                y: 420
+                width: 384
+                height: 50
+                bg_color: 0x1A1E2E
+                bg_opa: TRANSP
+                border_width: 0
+                pad_all: 0
+                scrollbar_mode: "off"
+                layout:
+                  type: FLEX
+                  flex_flow: ROW
+                  flex_align_main: SPACE_EVENLY
+                  flex_align_cross: CENTER
+                widgets:
+                  # Mode indicator
+                  - label:
+                      text: "Chauffage"
+                      text_color: 0x00E5A0
+
+                  # Status
+                  - label:
+                      text: "Auto"
+                      text_color: 0x556677
+
+# =============================================================================
+# USAGE NOTES
+# =============================================================================
+#
+# Major tick offset feature:
+#   The scale uses min_value: 4, max_value: 31 with 28 ticks.
+#   Without offset, major ticks would fall on: 4, 9, 14, 19, 24, 29
+#   With offset: 1 and stride: 5, major ticks fall on: 5, 10, 15, 20, 25, 30
+#
+# Arc + Scale overlay:
+#   The arc widget provides the interactive cursor (blue knob).
+#   The scale widget provides the tick marks and labels.
+#   Both share the same min/max range and angular configuration.
+#
+# Knob customization:
+#   The knob section under arc: controls the draggable cursor appearance.
+#   - bg_color: fill color of the knob circle
+#   - radius: corner radius (set equal to half size for perfect circle)
+#   - border_*: outline around the knob
+#   - shadow_*: glow effect behind the knob
+#   - pad_all: increases the knob hit area and visual size
+#
+# Home Assistant integration:
+#   Uncomment the sensor section to link with a real temperature sensor.
+#   The arc on_value event updates the global setpoint variable.
+#   Add a climate entity call to actually control your thermostat.
+#

@@ -49,6 +49,9 @@ CONF_INITIAL_STATIC_DELAY = "initial_static_delay"
 CONF_FIXED_DELAY = "fixed_delay"
 CONF_DECODE_MEMORY = "decode_memory"
 CONF_CODECS = "codecs"
+CONF_SUPPORTED_CHANNELS = "supported_channels"
+CONF_REQUIRE_FRAME_DONE = "require_frame_done"
+CONF_MAX_IMAGE_BYTES = "max_image_bytes"
 
 CONF_STATIC_PAIRING_CODE = "static_pairing_code"
 CONF_UNPAIRED_ACCESS = "unpaired_access"
@@ -441,8 +444,8 @@ async def to_code(config: ConfigType) -> None:
     if data.artwork_support:
         cg.add_define("USE_SENDSPIN_ARTWORK", True)
 
-        # require_frame_done is always on: SendspinImageSlot always acks a delivery, either
-        # immediately or from the transition_finished action.
+        # Native image slots acknowledge deliveries. Other image owners may retain only
+        # the latest encoded frame while paused and explicitly opt out of that gate.
         preference_structs = [
             cg.StructInitializer(
                 ImageSlotPreference,
@@ -450,8 +453,13 @@ async def to_code(config: ConfigType) -> None:
                 ("format", pref[CONF_FORMAT]),
                 ("width", pref[CONF_WIDTH]),
                 ("height", pref[CONF_HEIGHT]),
-                ("require_frame_done", True),
-                ("display_offset_ms", pref[CONF_DISPLAY_OFFSET]),
+                ("require_frame_done", pref.get(CONF_REQUIRE_FRAME_DONE, True)),
+                ("display_offset_ms", pref.get(CONF_DISPLAY_OFFSET, 0)),
+                *(
+                    [("max_image_bytes", pref[CONF_MAX_IMAGE_BYTES])]
+                    if CONF_MAX_IMAGE_BYTES in pref
+                    else []
+                ),
             )
             for pref in data.artwork_preferences
         ]
@@ -497,7 +505,9 @@ async def to_code(config: ConfigType) -> None:
             )
 
         audio_format_structs = [
-            _audio_format(codec, channels) for codec in codecs for channels in (2, 1)
+            _audio_format(codec, channels)
+            for codec in codecs
+            for channels in player_cfg.get(CONF_SUPPORTED_CHANNELS, (2, 1))
         ]
 
         psram_stack = player_cfg.get(CONF_TASK_STACK_IN_PSRAM, False)

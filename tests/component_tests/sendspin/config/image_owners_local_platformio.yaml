@@ -1,0 +1,9 @@
+packages:
+  image_owners: !include image_owners.yaml
+
+esp32:
+  toolchain: platformio
+
+artwork_image:
+  - id: !extend retained_artwork
+    allow_insecure_local_urls: true

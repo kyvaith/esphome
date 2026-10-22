@@ -9,6 +9,7 @@
 #include "esphome/core/automation.h"
 #include "esphome/core/defines.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/buffer.h"
 #include "esphome/core/time.h"
 #include "esphome/core/log.h"
 #include "display_color_utils.h"
@@ -26,6 +27,52 @@
 #endif
 
 namespace esphome::display {
+
+class Display;
+
+/** A framebuffer temporarily owned by a renderer outside the normal display loop.
+ *
+ * The lease is only valid while the matching framebuffer session is active.
+ * Callers must return or present it before ending that session.
+ */
+struct FrameBufferLease {
+  Display *owner{};
+  uint8_t *data{};
+  size_t size{};
+  size_t stride{};
+  size_t width{};
+  size_t height{};
+  ColorBitness bitness{COLOR_BITNESS_565};
+  ColorOrder color_order{COLOR_ORDER_RGB};
+  bool big_endian{};
+  BufferWriter writer{BufferWriter::CPU};
+  size_t index{};
+  uint32_t generation{};
+
+  explicit operator bool() const { return this->owner != nullptr && this->data != nullptr; }
+};
+
+/** A stable read-only view of the framebuffer currently scanned out by a display.
+ *
+ * The view is only valid until the next framebuffer is presented in the
+ * matching session. It does not transfer ownership to the caller.
+ */
+struct FrameBufferView {
+  const Display *owner{};
+  const uint8_t *data{};
+  size_t size{};
+  size_t stride{};
+  size_t width{};
+  size_t height{};
+  ColorBitness bitness{COLOR_BITNESS_565};
+  ColorOrder color_order{COLOR_ORDER_RGB};
+  bool big_endian{};
+  BufferWriter writer{BufferWriter::CPU};
+  size_t index{};
+  uint32_t generation{};
+
+  explicit operator bool() const { return this->owner != nullptr && this->data != nullptr; }
+};
 
 /** TextAlign is used to tell the display class how to position a piece of text. By default
  * the coordinates you enter for the print*() functions take the upper left corner of the text
@@ -400,6 +447,47 @@ class Display : public PollingComponent {
     this->draw_pixels_at(x_start, y_start, w, h, ptr, order, bitness, big_endian, 0, 0, 0);
 #pragma GCC diagnostic pop
   }
+
+  /** Return a display-owned framebuffer suitable for direct rendering.
+   *
+   * Drivers that expose their native framebuffers may override these methods.
+   * The default implementation reports that direct rendering is unsupported.
+   */
+  virtual uint8_t *get_frame_buffer(size_t index) const { return nullptr; }
+  virtual size_t get_frame_buffer_count() const { return 0; }
+  virtual size_t get_frame_buffer_size() const { return 0; }
+  virtual size_t get_frame_buffer_stride() const { return 0; }
+  virtual ColorBitness get_frame_buffer_bitness() const { return COLOR_BITNESS_565; }
+  virtual bool present_frame_buffer(uint8_t *frame_buffer, int y_start, int y_end) { return false; }
+
+  /** Start exclusive access to native framebuffers.
+   *
+   * The caller must stop its normal renderer before starting a session. Drivers
+   * that cannot prove framebuffer ownership leave this capability unsupported.
+   */
+  virtual bool begin_frame_buffer_session(uint32_t timeout_ms = 50) { return false; }
+  virtual bool begin_frame_buffer_session(uint32_t timeout_ms, uint32_t owner_generation) { return false; }
+  virtual bool acquire_frame_buffer(FrameBufferLease *lease, BufferWriter writer = BufferWriter::CPU,
+                                    uint32_t timeout_ms = 50) {
+    return false;
+  }
+  virtual bool acquire_frame_buffer(FrameBufferLease *lease, BufferWriter writer, uint32_t timeout_ms,
+                                    uint32_t expected_generation) {
+    return false;
+  }
+  virtual bool get_active_frame_buffer(FrameBufferView *view, BufferReader reader = BufferReader::CPU) const {
+    return false;
+  }
+  virtual bool present_frame_buffer_lease(FrameBufferLease *lease, uint32_t timeout_ms = 50,
+                                          bool wait_for_active = true) {
+    return false;
+  }
+  virtual bool release_frame_buffer(FrameBufferLease *lease) { return false; }
+  // Close new lease acquisition and prove the pool is idle before its owner
+  // restores native draw buffers. A false result retains exclusive ownership;
+  // outstanding leases may still be presented or released before retrying.
+  virtual bool prepare_frame_buffer_session_end(uint32_t timeout_ms = 50) { return false; }
+  virtual bool end_frame_buffer_session(uint32_t timeout_ms = 50) { return false; }
 
   /// Draw a straight line from the point [x1,y1] to [x2,y2] with the given color.
   void line(int x1, int y1, int x2, int y2, Color color = COLOR_ON);

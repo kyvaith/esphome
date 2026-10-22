@@ -105,3 +105,11 @@ text_sensor:
       - text_sensor.template.publish:
           id: test_map_single
           state: !lambda 'return x + " again";'
+  - platform: template
+    name: "Test Sanitize HTML"
+    id: test_sanitize_html
+    filters:
+      - sanitize_html:
+          decode_entities: true
+          strip_tags: true
+          collapse_whitespace: true

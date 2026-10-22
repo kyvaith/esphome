@@ -32,6 +32,8 @@ const char *SendspinTextSensor::extract_value_(const sendspin::ServerMetadataSta
       return metadata.album.has_value() ? metadata.album.value().c_str() : "";
     case SendspinTextMetadataTypes::ALBUM_ARTIST:
       return metadata.album_artist.has_value() ? metadata.album_artist.value().c_str() : "";
+    case SendspinTextMetadataTypes::ARTWORK_URL:
+      return metadata.artwork_url.has_value() ? metadata.artwork_url.value().c_str() : "";
   }
   return "";
 }

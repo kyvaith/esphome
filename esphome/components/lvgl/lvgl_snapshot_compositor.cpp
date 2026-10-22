@@ -1,0 +1,563 @@
+#include "lvgl_snapshot_compositor.h"
+
+#include "lvgl_navigation.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+
+namespace esphome::lvgl {
+
+void LvglSnapshotCompositor::add_home_page(LvPageType *page) {
+  if (page != nullptr)
+    this->add_home_view(page->obj);
+}
+
+void LvglSnapshotCompositor::add_home_view(lv_obj_t *view) {
+  if (view != nullptr)
+    this->home_views_.push_back(view);
+}
+
+bool LvglSnapshotCompositor::prepare_applications(const std::vector<LvglApplication *> &applications) {
+  bool prepared = true;
+  for (auto *application : applications) {
+    auto *view = application == nullptr ? nullptr : application->get_view();
+    if (application != nullptr && application->uses_black_open_transition_snapshot())
+      prepared = this->ensure_black_application_buffer_() && prepared;
+    else if (view != nullptr)
+      prepared = this->store_->capture_object(view) && prepared;
+  }
+  return prepared;
+}
+
+bool LvglSnapshotCompositor::begin_home(int page_index) {
+  if (this->home_active_ || page_index < 0 || page_index >= static_cast<int>(this->home_views_.size()))
+    return false;
+
+  auto *view = this->home_views_[page_index];
+  if (!this->ensure_overlay_(view) || !this->bind_surface_(this->current_, view, 0))
+    return false;
+
+  const int32_t width = this->parent_->get_width();
+  if (page_index > 0 && !this->bind_surface_(this->previous_, this->home_views_[page_index - 1], -width)) {
+    this->release_home_();
+    return false;
+  }
+  if (page_index + 1 < static_cast<int>(this->home_views_.size()) &&
+      !this->bind_surface_(this->next_, this->home_views_[page_index + 1], width)) {
+    this->release_home_();
+    return false;
+  }
+
+  this->current_index_ = page_index;
+  this->target_index_ = page_index;
+  this->home_offset_ = 0;
+  this->home_active_ = true;
+  this->set_home_offset_(0);
+  lv_obj_remove_flag(this->overlay_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(this->overlay_);
+  return true;
+}
+
+bool LvglSnapshotCompositor::take_over_home(int *page_index, int32_t *offset_x) {
+  if (!this->home_active_)
+    return false;
+  lv_anim_delete(this, animation_exec_);
+  if (page_index != nullptr)
+    *page_index = this->current_index_;
+  if (offset_x != nullptr)
+    *offset_x = this->home_offset_;
+  return true;
+}
+
+bool LvglSnapshotCompositor::get_home_position(int *page_index, int32_t *offset_x) const {
+  if (!this->home_active_)
+    return false;
+  if (page_index != nullptr)
+    *page_index = this->current_index_;
+  if (offset_x != nullptr)
+    *offset_x = this->home_offset_;
+  return true;
+}
+
+bool LvglSnapshotCompositor::update_home(int32_t delta_x) {
+  if (!this->home_active_)
+    return false;
+
+  const int32_t width = this->parent_->get_width();
+  delta_x = std::clamp(delta_x, -width, width);
+  if ((this->current_index_ == 0 && delta_x > 0) ||
+      (this->current_index_ + 1 == static_cast<int>(this->home_views_.size()) && delta_x < 0))
+    delta_x /= 2;
+  this->set_home_offset_(delta_x);
+  return true;
+}
+
+bool LvglSnapshotCompositor::settle_home(int target_index, int32_t release_velocity_px_s) {
+  if (!this->home_active_)
+    return false;
+  if (target_index < 0 || target_index >= static_cast<int>(this->home_views_.size()))
+    target_index = this->current_index_;
+
+  this->target_index_ = target_index;
+  int32_t target_offset = 0;
+  if (target_index > this->current_index_)
+    target_offset = -this->parent_->get_width();
+  else if (target_index < this->current_index_)
+    target_offset = this->parent_->get_width();
+
+  if (target_offset == this->home_offset_) {
+    this->complete_home_();
+    return true;
+  }
+
+  lv_anim_delete(this, animation_exec_);
+  lv_anim_t animation;
+  lv_anim_init(&animation);
+  lv_anim_set_var(&animation, this);
+  lv_anim_set_user_data(&animation, this);
+  lv_anim_set_values(&animation, this->home_offset_, target_offset);
+  const uint32_t duration = this->home_settle_duration_(target_offset, release_velocity_px_s);
+  lv_anim_set_duration(&animation, duration);
+  lv_anim_set_path_cb(&animation, lv_anim_path_ease_out);
+  lv_anim_set_exec_cb(&animation, animation_exec_);
+  lv_anim_set_completed_cb(&animation, animation_completed_);
+  lv_anim_start(&animation);
+  return true;
+}
+
+uint32_t LvglSnapshotCompositor::home_settle_duration_(int32_t target_offset, int32_t release_velocity_px_s) const {
+  const uint32_t distance = static_cast<uint32_t>(std::abs(target_offset - this->home_offset_));
+  const uint32_t width = std::max<int32_t>(1, this->parent_->get_width());
+  const uint32_t distance_duration = std::max<uint32_t>(80, this->settle_duration_ * distance / width);
+  const int32_t remaining = target_offset - this->home_offset_;
+  if (distance == 0 || release_velocity_px_s == 0 || (remaining < 0) != (release_velocity_px_s < 0))
+    return distance_duration;
+
+  const uint32_t speed = static_cast<uint32_t>(std::abs(release_velocity_px_s));
+  if (speed < 160)
+    return distance_duration;
+
+  // Cubic ease-out starts at three times its average velocity. Select the
+  // duration from that derivative so the first compositor frame continues at
+  // the finger's release speed instead of visibly accelerating or braking.
+  const uint32_t velocity_duration =
+      std::clamp<uint32_t>(static_cast<uint32_t>((static_cast<uint64_t>(distance) * 3000ULL) / speed), 80U,
+                           std::max<uint32_t>(this->settle_duration_ * 2U, 320U));
+  return (distance_duration + velocity_duration * 7U) / 8U;
+}
+
+void LvglSnapshotCompositor::cancel_home() {
+  lv_anim_delete(this, animation_exec_);
+  this->release_home_();
+}
+
+bool LvglSnapshotCompositor::open_application(LvglApplication *application, int home_index) {
+  if (!this->application_transitions_enabled_ || this->home_active_ || this->application_active_ ||
+      application == nullptr || application->get_view() == nullptr || home_index < 0 ||
+      home_index >= static_cast<int>(this->home_views_.size()))
+    return false;
+  if (!this->ensure_overlay_(application->get_view()) || !this->bind_application_(application, false, true))
+    return false;
+
+  this->application_home_index_ = home_index;
+  this->application_opening_ = true;
+  this->application_close_committed_ = false;
+  this->application_active_ = true;
+  this->set_application_progress_(0);
+  lv_obj_remove_flag(this->overlay_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_remove_flag(this->application_mask_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(this->overlay_);
+  if (this->display_ != nullptr)
+    lv_refr_now(this->display_);
+  return this->animate_application_to_(1000, this->application_open_duration_);
+}
+
+bool LvglSnapshotCompositor::begin_application_close(LvglApplication *application, int home_index) {
+  if (!this->application_transitions_enabled_ || this->home_active_ || this->application_active_ ||
+      application == nullptr || application->get_view() == nullptr || home_index < 0 ||
+      home_index >= static_cast<int>(this->home_views_.size()))
+    return false;
+  if (!this->ensure_overlay_(application->get_view()) || !this->bind_application_(application, true, false))
+    return false;
+
+  this->application_home_index_ = home_index;
+  this->application_opening_ = false;
+  this->application_close_committed_ = false;
+  this->application_active_ = true;
+  this->set_application_progress_(1000);
+  lv_obj_remove_flag(this->overlay_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_remove_flag(this->application_mask_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(this->overlay_);
+  if (this->display_ != nullptr)
+    lv_refr_now(this->display_);
+  if (this->navigation_ != nullptr)
+    this->navigation_->activate_home_view(home_index);
+  return true;
+}
+
+bool LvglSnapshotCompositor::update_application_close(int32_t delta_y) {
+  if (!this->application_active_ || this->application_opening_)
+    return false;
+  const int32_t height = std::max<int32_t>(1, this->parent_->get_height());
+  const int32_t progress = 1000 + std::clamp<int32_t>(delta_y, -height, 0) * 1000 / height;
+  this->set_application_progress_(progress);
+  return true;
+}
+
+bool LvglSnapshotCompositor::settle_application_close(bool close) {
+  if (!this->application_active_ || this->application_opening_)
+    return false;
+  this->application_close_committed_ = close;
+  const int32_t target = close ? 0 : 1000;
+  const uint32_t distance = std::abs(target - this->application_progress_);
+  const uint32_t duration = std::max<uint32_t>(80, this->application_close_duration_ * distance / 1000);
+  return this->animate_application_to_(target, duration);
+}
+
+void LvglSnapshotCompositor::cancel_application() {
+  lv_anim_delete(this, application_animation_exec_);
+  this->release_application_();
+}
+
+void LvglSnapshotCompositor::animation_exec_(void *var, int32_t value) {
+  static_cast<LvglSnapshotCompositor *>(var)->set_home_offset_(value);
+}
+
+void LvglSnapshotCompositor::animation_completed_(lv_anim_t *animation) {
+  static_cast<LvglSnapshotCompositor *>(lv_anim_get_user_data(animation))->complete_home_();
+}
+
+void LvglSnapshotCompositor::application_animation_exec_(void *var, int32_t value) {
+  static_cast<LvglSnapshotCompositor *>(var)->set_application_progress_(value);
+}
+
+void LvglSnapshotCompositor::application_animation_completed_(lv_anim_t *animation) {
+  static_cast<LvglSnapshotCompositor *>(lv_anim_get_user_data(animation))->complete_application_();
+}
+
+bool LvglSnapshotCompositor::ensure_overlay_(lv_obj_t *view) {
+  if (this->overlay_ != nullptr)
+    return true;
+  if (view == nullptr)
+    return false;
+
+  this->display_ = lv_obj_get_display(view);
+  auto *layer = lv_display_get_layer_top(this->display_);
+  if (layer == nullptr)
+    return false;
+
+  this->overlay_ = lv_obj_create(layer);
+  lv_obj_remove_style_all(this->overlay_);
+  lv_obj_set_pos(this->overlay_, 0, 0);
+  lv_obj_set_size(this->overlay_, this->parent_->get_width(), this->parent_->get_height());
+  lv_obj_add_flag(this->overlay_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(this->overlay_, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  lv_obj_add_flag(this->overlay_, LV_OBJ_FLAG_FLOATING);
+  lv_obj_clear_flag(this->overlay_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(this->overlay_, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_clip_corner(this->overlay_, true, LV_PART_MAIN);
+
+  for (auto *surface : {&this->previous_, &this->current_, &this->next_}) {
+    surface->image = lv_image_create(this->overlay_);
+    lv_obj_add_flag(surface->image, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(surface->image, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_add_flag(surface->image, LV_OBJ_FLAG_FLOATING);
+    lv_obj_clear_flag(surface->image, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(surface->image, LV_OBJ_FLAG_CLICKABLE);
+  }
+
+  this->application_mask_ = lv_obj_create(this->overlay_);
+  lv_obj_remove_style_all(this->application_mask_);
+  lv_obj_add_flag(this->application_mask_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(this->application_mask_, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  lv_obj_add_flag(this->application_mask_, LV_OBJ_FLAG_FLOATING);
+  lv_obj_clear_flag(this->application_mask_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(this->application_mask_, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_opa(this->application_mask_, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_clip_corner(this->application_mask_, true, LV_PART_MAIN);
+
+  this->application_image_ = lv_image_create(this->application_mask_);
+  lv_obj_add_flag(this->application_image_, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  lv_obj_add_flag(this->application_image_, LV_OBJ_FLAG_FLOATING);
+  lv_obj_clear_flag(this->application_image_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(this->application_image_, LV_OBJ_FLAG_CLICKABLE);
+  lv_image_set_inner_align(this->application_image_, LV_IMAGE_ALIGN_STRETCH);
+  return true;
+}
+
+bool LvglSnapshotCompositor::bind_surface_(Surface &surface, lv_obj_t *view, int32_t origin_x) {
+  if (view == nullptr || surface.image == nullptr)
+    return false;
+
+  auto *buffer = this->store_->acquire_object(view);
+  if (buffer == nullptr && this->store_->capture_object(view))
+    buffer = this->store_->acquire_object(view);
+  if (buffer == nullptr)
+    return false;
+  if (buffer->header.w != this->parent_->get_width() || buffer->header.h != this->parent_->get_height()) {
+    ESP_LOGE("lvgl.snapshot", "Home view snapshot is %ux%u; expected %dx%d", buffer->header.w, buffer->header.h,
+             this->parent_->get_width(), this->parent_->get_height());
+    this->store_->release_object(view);
+    return false;
+  }
+
+  surface.view = view;
+  surface.buffer = buffer;
+  surface.origin_x = origin_x;
+  lv_image_set_src(surface.image, buffer);
+  lv_obj_set_pos(surface.image, origin_x, 0);
+  lv_obj_remove_flag(surface.image, LV_OBJ_FLAG_HIDDEN);
+  return true;
+}
+
+void LvglSnapshotCompositor::release_surface_(Surface &surface) {
+  if (surface.image != nullptr) {
+    lv_obj_add_flag(surface.image, LV_OBJ_FLAG_HIDDEN);
+    ::lv_image_set_src(surface.image, nullptr);
+  }
+  if (surface.view != nullptr && surface.buffer != nullptr)
+    this->store_->release_object(surface.view);
+  surface.view = nullptr;
+  surface.buffer = nullptr;
+  surface.origin_x = 0;
+}
+
+void LvglSnapshotCompositor::set_home_offset_(int32_t offset) {
+  this->home_offset_ = offset;
+  for (auto *surface : {&this->previous_, &this->current_, &this->next_}) {
+    if (surface->buffer != nullptr)
+      lv_obj_set_x(surface->image, surface->origin_x + offset);
+  }
+}
+
+void LvglSnapshotCompositor::complete_home_() {
+  if (!this->home_active_)
+    return;
+
+  const int target = std::clamp(this->target_index_, 0, static_cast<int>(this->home_views_.size()) - 1);
+  if (this->navigation_ != nullptr)
+    this->navigation_->activate_home_view(target);
+  lv_obj_add_flag(this->overlay_, LV_OBJ_FLAG_HIDDEN);
+  if (this->display_ != nullptr)
+    lv_refr_now(this->display_);
+  this->release_home_();
+  if (this->navigation_ != nullptr)
+    this->navigation_->notify_home_presented(target);
+}
+
+void LvglSnapshotCompositor::release_home_() {
+  this->release_surface_(this->previous_);
+  this->release_surface_(this->current_);
+  this->release_surface_(this->next_);
+  if (this->overlay_ != nullptr)
+    lv_obj_add_flag(this->overlay_, LV_OBJ_FLAG_HIDDEN);
+  this->current_index_ = -1;
+  this->target_index_ = -1;
+  this->home_offset_ = 0;
+  this->home_active_ = false;
+}
+
+bool LvglSnapshotCompositor::bind_application_(LvglApplication *application, bool force_capture, bool opening) {
+  if (application == nullptr || application->get_view() == nullptr || this->application_image_ == nullptr)
+    return false;
+  this->application_buffer_from_store_ = false;
+  auto *view = application->get_view();
+  const bool use_black = opening ? application->uses_black_open_transition_snapshot()
+                                 : application->uses_black_close_transition_snapshot();
+  if (use_black) {
+    if (!this->ensure_black_application_buffer_())
+      return false;
+    this->application_ = application;
+    this->application_buffer_ = this->black_application_buffer_;
+    lv_image_set_src(this->application_image_, this->black_application_buffer_);
+    return true;
+  }
+  if (force_capture && !this->store_->capture_object(view))
+    return false;
+
+  auto *buffer = this->store_->acquire_object(view);
+  if (buffer == nullptr && this->store_->capture_object(view))
+    buffer = this->store_->acquire_object(view);
+  if (buffer == nullptr)
+    return false;
+
+  this->application_ = application;
+  this->application_buffer_ = buffer;
+  this->application_buffer_from_store_ = true;
+  lv_image_set_src(this->application_image_, buffer);
+  return true;
+}
+
+bool LvglSnapshotCompositor::ensure_application_transition_buffer_() {
+  const int32_t width = this->parent_ == nullptr ? 0 : this->parent_->get_width();
+  const int32_t height = this->parent_ == nullptr ? 0 : this->parent_->get_height();
+  if (width <= 0 || height <= 0)
+    return false;
+
+#if LV_COLOR_DEPTH == 16
+  constexpr lv_color_format_t COLOR_FORMAT = LV_COLOR_FORMAT_RGB565;
+  constexpr uint32_t BYTES_PER_PIXEL = 2;
+#else
+  constexpr lv_color_format_t COLOR_FORMAT = LV_COLOR_FORMAT_RGB888;
+  constexpr uint32_t BYTES_PER_PIXEL = 3;
+#endif
+  const uint32_t stride = static_cast<uint32_t>(width) * BYTES_PER_PIXEL;
+  if (this->external_application_transition_active_ && this->external_application_transition_view_.data != nullptr)
+    return true;
+  if (this->black_application_buffer_ != nullptr && this->black_application_buffer_->header.cf == COLOR_FORMAT &&
+      this->black_application_buffer_->header.w == static_cast<uint32_t>(width) &&
+      this->black_application_buffer_->header.h == static_cast<uint32_t>(height) &&
+      this->black_application_buffer_->header.stride == stride) {
+    return true;
+  }
+
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI)
+  if (COLOR_FORMAT == LV_COLOR_FORMAT_RGB888 &&
+      this->parent_->acquire_direct_transition_frame(&this->external_application_transition_view_)) {
+    this->external_application_transition_active_ = true;
+    this->black_application_buffer_ = &this->external_application_transition_view_;
+    this->black_application_buffer_is_black_ = false;
+    ESP_LOGI("lvgl.snapshot", "Using an existing DSI framebuffer for application transition source");
+    return true;
+  }
+#endif
+
+  if (this->black_application_buffer_ != nullptr)
+    lv_draw_buf_destroy(this->black_application_buffer_);
+  this->black_application_buffer_is_black_ = false;
+  this->black_application_buffer_ = lv_draw_buf_create(width, height, COLOR_FORMAT, stride);
+  if (this->black_application_buffer_ == nullptr || this->black_application_buffer_->data == nullptr) {
+    if (this->black_application_buffer_ != nullptr)
+      lv_draw_buf_destroy(this->black_application_buffer_);
+    this->black_application_buffer_ = nullptr;
+    ESP_LOGW("lvgl.snapshot", "Unable to allocate shared %dx%d black application transition frame",
+             static_cast<int>(width), static_cast<int>(height));
+    return false;
+  }
+  lv_draw_buf_clear(this->black_application_buffer_, nullptr);
+  this->black_application_buffer_is_black_ = true;
+  ESP_LOGI("lvgl.snapshot", "Allocated shared black application transition frame: %u KB",
+           static_cast<unsigned>(this->black_application_buffer_->data_size / 1024U));
+  return true;
+}
+
+void LvglSnapshotCompositor::release_external_application_transition_buffer_() {
+  if (!this->external_application_transition_active_)
+    return;
+  if (this->parent_ != nullptr)
+    this->parent_->release_direct_transition_frame(&this->external_application_transition_view_);
+  this->external_application_transition_active_ = false;
+  if (this->black_application_buffer_ == &this->external_application_transition_view_)
+    this->black_application_buffer_ = nullptr;
+  this->black_application_buffer_is_black_ = false;
+}
+
+bool LvglSnapshotCompositor::ensure_black_application_buffer_() {
+  if (!this->ensure_application_transition_buffer_())
+    return false;
+  if (this->black_application_buffer_is_black_)
+    return true;
+
+  lv_draw_buf_clear(this->black_application_buffer_, nullptr);
+  this->black_application_buffer_is_black_ = true;
+  return true;
+}
+
+void LvglSnapshotCompositor::set_application_progress_(int32_t progress) {
+  this->application_progress_ = std::clamp<int32_t>(progress, 0, 1000);
+  if (this->application_mask_ == nullptr || this->application_image_ == nullptr)
+    return;
+
+  const int32_t width = std::max<int32_t>(1, this->parent_->get_width());
+  const int32_t height = std::max<int32_t>(1, this->parent_->get_height());
+  const int32_t start_width = std::max<int32_t>(1, std::lround(width * this->application_start_ratio_));
+  const int32_t start_height = std::max<int32_t>(1, std::lround(height * this->application_start_ratio_));
+  const int32_t frame_width = start_width + (width - start_width) * this->application_progress_ / 1000;
+  const int32_t frame_height = start_height + (height - start_height) * this->application_progress_ / 1000;
+
+  const int32_t screen_center_x = width / 2;
+  const int32_t screen_center_y = height / 2;
+  int32_t target_x = screen_center_x;
+  int32_t target_y = screen_center_y;
+  if (!this->application_opening_) {
+    target_x = std::lround(width * this->application_close_target_x_);
+    target_y = std::lround(height * this->application_close_target_y_);
+  }
+  const int32_t center_x = target_x + (screen_center_x - target_x) * this->application_progress_ / 1000;
+  const int32_t center_y = target_y + (screen_center_y - target_y) * this->application_progress_ / 1000;
+
+  lv_obj_set_pos(this->application_mask_, center_x - frame_width / 2, center_y - frame_height / 2);
+  lv_obj_set_size(this->application_mask_, frame_width, frame_height);
+  lv_obj_set_style_radius(this->application_mask_,
+                          std::min(frame_width, frame_height) * (1000 - this->application_progress_) / 2000,
+                          LV_PART_MAIN);
+  lv_obj_set_pos(this->application_image_, 0, 0);
+  lv_obj_set_size(this->application_image_, frame_width, frame_height);
+}
+
+bool LvglSnapshotCompositor::animate_application_to_(int32_t progress, uint32_t duration) {
+  if (!this->application_active_)
+    return false;
+  progress = std::clamp<int32_t>(progress, 0, 1000);
+  if (progress == this->application_progress_) {
+    this->complete_application_();
+    return true;
+  }
+
+  lv_anim_delete(this, application_animation_exec_);
+  lv_anim_t animation;
+  lv_anim_init(&animation);
+  lv_anim_set_var(&animation, this);
+  lv_anim_set_user_data(&animation, this);
+  lv_anim_set_values(&animation, this->application_progress_, progress);
+  lv_anim_set_duration(&animation, std::max<uint32_t>(1, duration));
+  lv_anim_set_path_cb(&animation, lv_anim_path_ease_out);
+  lv_anim_set_exec_cb(&animation, application_animation_exec_);
+  lv_anim_set_completed_cb(&animation, application_animation_completed_);
+  lv_anim_start(&animation);
+  return true;
+}
+
+void LvglSnapshotCompositor::complete_application_() {
+  if (!this->application_active_)
+    return;
+
+  auto *application = this->application_;
+  const bool opening = this->application_opening_;
+  const bool close_committed = this->application_close_committed_;
+  if (this->navigation_ != nullptr)
+    this->navigation_->prepare_application_transition(application, opening, close_committed);
+  else if (application != nullptr && (opening || !close_committed))
+    this->parent_->show_page(application->get_page()->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
+  lv_obj_add_flag(this->application_mask_, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(this->overlay_, LV_OBJ_FLAG_HIDDEN);
+  if (this->display_ != nullptr)
+    lv_refr_now(this->display_);
+  if (this->navigation_ != nullptr)
+    this->navigation_->complete_application_transition(application, opening, close_committed);
+  this->release_application_();
+}
+
+void LvglSnapshotCompositor::release_application_() {
+  if (this->application_mask_ != nullptr)
+    lv_obj_add_flag(this->application_mask_, LV_OBJ_FLAG_HIDDEN);
+  if (this->application_image_ != nullptr)
+    ::lv_image_set_src(this->application_image_, nullptr);
+  if (this->application_ != nullptr && this->application_buffer_ != nullptr && this->application_buffer_from_store_)
+    this->store_->release_object(this->application_->get_view());
+  this->application_ = nullptr;
+  this->application_buffer_ = nullptr;
+  this->application_buffer_from_store_ = false;
+  this->application_home_index_ = -1;
+  this->application_progress_ = 0;
+  this->application_active_ = false;
+  this->application_opening_ = false;
+  this->application_close_committed_ = false;
+}
+
+}  // namespace esphome::lvgl
+
+#endif

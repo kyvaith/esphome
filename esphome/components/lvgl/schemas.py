@@ -158,6 +158,9 @@ ENCODER_SCHEMA = cv.Schema(
         ),
         cv.Optional(df.CONF_LONG_PRESS_TIME, default="400ms"): PRESS_TIME,
         cv.Optional(df.CONF_LONG_PRESS_REPEAT_TIME, default="100ms"): PRESS_TIME,
+        cv.Optional(df.CONF_ROTARY_SENSITIVITY, default=1.0): cv.float_range(
+            min=0.1, max=10.0
+        ),
     }
 )
 
@@ -318,6 +321,8 @@ BASE_PROPS = {
     "y": lvalid.pixels_or_percent,
 }
 
+BASE_PROPS.update({"image_colorkey": lvalid.lv_color, "arc_image_src": lvalid.lv_image})
+
 STYLE_REMAP = {
     "anim_time": "anim_duration",
     "transform_angle": "transform_rotation",
@@ -358,6 +363,11 @@ STYLE_SCHEMA = cv.Schema({cv.Optional(k): v for k, v in STYLE_PROPS.items()}).ex
         ).one_of,
         cv.Optional(CONF_EXT_CLICK_AREA): lvalid.pixels,
         cv.Optional(CONF_SCROLL_DIR): df.SCROLL_DIRECTIONS.one_of,
+        cv.Optional(df.CONF_STYLE_TRANSITION_TIME): lvalid.lv_milliseconds,
+        cv.Optional(df.CONF_STYLE_TRANSITION_DELAY): lvalid.lv_milliseconds,
+        cv.Optional(df.CONF_STYLE_TRANSITION_PATH): cv.one_of(
+            *df.ANIM_PATHS, lower=True
+        ),
         cv.Optional(CONF_SCROLL_SNAP_X): df.SNAP_DIRECTIONS.one_of,
         cv.Optional(CONF_SCROLL_SNAP_Y): df.SNAP_DIRECTIONS.one_of,
     }

@@ -48,10 +48,14 @@ DrawEndTrigger = esphome_ns.class_(
     "Trigger<uint32_t, uint32_t>", automation.Trigger.template(cg.uint32, cg.uint32)
 )
 lvgl_ns = cg.esphome_ns.namespace("lvgl")
+DirectSceneController = lvgl_ns.class_("DirectSceneController")
 IdleTrigger = lvgl_ns.class_("IdleTrigger", automation.Trigger.template())
 ObjUpdateAction = lvgl_ns.class_("ObjUpdateAction", automation.Action)
 LvglCondition = lvgl_ns.class_("LvglCondition", automation.Condition)
 LvglAction = lvgl_ns.class_("LvglAction", automation.Action)
+SlideshowController = lvgl_ns.class_(
+    "SlideshowController", Component, DirectSceneController
+)
 lv_lambda_t = lvgl_ns.class_("LvLambdaComponent", Component)
 LvCompound = lvgl_ns.class_("LvCompound")
 lv_font_t = cg.global_ns.class_("lv_font_t")
@@ -65,13 +69,47 @@ lv_opa_t = cg.global_ns.struct("lv_opa_t")
 lv_group_t = cg.global_ns.struct("lv_group_t")
 LVTouchListener = lvgl_ns.class_("LVTouchListener")
 LVEncoderListener = lvgl_ns.class_("LVEncoderListener")
+LvglNavigation = lvgl_ns.class_("LvglNavigation")
+LvglApplication = lvgl_ns.class_("LvglApplication")
+LvglSnapshotStore = lvgl_ns.class_("LvglSnapshotStore", Component)
+LvglSnapshotCompositor = lvgl_ns.class_("LvglSnapshotCompositor")
+LvglDirectSnapshotCompositor = lvgl_ns.class_(
+    "LvglDirectSnapshotCompositor", LvglSnapshotCompositor
+)
+LvglScrollSnapshotController = lvgl_ns.class_("LvglScrollSnapshotController")
+NavigationOpenAction = lvgl_ns.class_("NavigationOpenAction", automation.Action)
+NavigationCloseAction = lvgl_ns.class_("NavigationCloseAction", automation.Action)
+NavigationHomeAction = lvgl_ns.class_("NavigationHomeAction", automation.Action)
+NavigationRefreshAction = lvgl_ns.class_("NavigationRefreshAction", automation.Action)
+NavigationPrepareApplicationsAction = lvgl_ns.class_(
+    "NavigationPrepareApplicationsAction", automation.Action
+)
+NavigationHomePreparedCondition = lvgl_ns.class_(
+    "NavigationHomePreparedCondition", automation.Condition
+)
+NavigationIsOpenCondition = lvgl_ns.class_(
+    "NavigationIsOpenCondition", automation.Condition
+)
+SnapshotCaptureAction = lvgl_ns.class_("SnapshotCaptureAction", automation.Action)
+SnapshotCaptureAllAction = lvgl_ns.class_("SnapshotCaptureAllAction", automation.Action)
+SnapshotInvalidateAction = lvgl_ns.class_("SnapshotInvalidateAction", automation.Action)
+SnapshotClearAction = lvgl_ns.class_("SnapshotClearAction", automation.Action)
+ScrollSnapshotPrepareAction = lvgl_ns.class_(
+    "ScrollSnapshotPrepareAction", automation.Action
+)
+ScrollSnapshotRefreshAction = lvgl_ns.class_(
+    "ScrollSnapshotRefreshAction", automation.Action
+)
+ScrollSnapshotReleaseAction = lvgl_ns.class_(
+    "ScrollSnapshotReleaseAction", automation.Action
+)
 lv_obj_t = LvType("lv_obj_t")
 lv_page_t = LvType("LvPageType", parents=(LvCompound,))
 lv_image_t = LvType("lv_image_t")
 lv_gradient_t = LvType("lv_grad_dsc_t")
 LvAnimation = lvgl_ns.class_("LvAnimation", cg.Component)
-lv_event_t = LvType("lv_event_t")
 RotationType = lvgl_ns.enum("RotationType")
+lv_event_t = LvType("lv_event_t")
 lv_point_t = cg.global_ns.struct("lv_point_t")
 lv_point_precise_t = cg.global_ns.struct("lv_point_precise_t")
 

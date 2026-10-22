@@ -1,0 +1,615 @@
+# ESPHome LVGL Chart Widget Examples
+# =============================================================================
+# LVGL v9.4 Chart Widget - Complete Examples
+#
+# Chart Types: LINE, BAR, SCATTER
+# Update Modes: SHIFT (sliding window), CIRCULAR (ECG-style)
+# Axes: PRIMARY_Y, SECONDARY_Y, PRIMARY_X, SECONDARY_X
+#
+# Actions:
+#   - lvgl.chart.set_next_value: Add point (uses SHIFT/CIRCULAR mode)
+#   - lvgl.chart.set_value_by_id: Set specific point by index
+#   - lvgl.chart.set_value_by_id2: Set X/Y for scatter charts
+#   - lvgl.chart.set_series_color: Change series color dynamically
+#   - lvgl.chart.set_cursor_point: Move cursor to a point
+#   - lvgl.chart.refresh: Refresh chart display
+# =============================================================================
+
+globals:
+  # Animation counters
+  - id: ecg_counter
+    type: int
+    initial_value: "0"
+  - id: scatter_angle
+    type: float
+    initial_value: "0"
+  - id: faded_counter
+    type: int
+    initial_value: "0"
+
+# =============================================================================
+# SENSORS - Home Assistant Integration
+# =============================================================================
+sensor:
+  - platform: homeassistant
+    id: weather_temp
+    entity_id: weather.forecast_maison
+    attribute: temperature
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: temp_label
+            text:
+              format: "%.1f°C"
+              args: [id(weather_temp).state]
+        - lvgl.chart.set_next_value:
+            id: weather_chart
+            series_id: temp_series
+            value: !lambda 'return (int)id(weather_temp).state;'
+
+  - platform: homeassistant
+    id: weather_humidity
+    entity_id: weather.forecast_maison
+    attribute: humidity
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: humidity_label
+            text:
+              format: "%.0f%%"
+              args: [id(weather_humidity).state]
+        - lvgl.chart.set_next_value:
+            id: weather_chart
+            series_id: humidity_series
+            value: !lambda 'return (int)id(weather_humidity).state;'
+
+# =============================================================================
+# ANIMATIONS - Interval-based chart updates
+# =============================================================================
+interval:
+  # ECG Animation (100ms)
+  - interval: 100ms
+    then:
+      - lambda: 'id(ecg_counter)++;'
+      - lvgl.chart.set_next_value:
+          id: ecg_chart
+          series_id: ecg_series
+          value: !lambda |-
+            int val = 50;
+            int phase = id(ecg_counter) % 25;
+            if (phase == 0) val = 90;       // P wave
+            else if (phase == 1) val = 50;
+            else if (phase == 5) val = 30;  // Q wave
+            else if (phase == 6) val = 95;  // R wave (peak)
+            else if (phase == 7) val = 20;  // S wave
+            else if (phase == 8) val = 50;
+            else if (phase == 12) val = 60; // T wave
+            else if (phase == 13) val = 65;
+            else if (phase == 14) val = 55;
+            else val = 50 + (rand() % 6) - 3;
+            return val;
+
+  # Scatter Animation (50ms) - Multiple points orbiting
+  - interval: 50ms
+    then:
+      - lambda: |-
+          id(scatter_angle) += 0.08;
+          if (id(scatter_angle) > 6.28) id(scatter_angle) = 0;
+      # Animate 8 points in different orbits
+      - lvgl.chart.set_value_by_id2:
+          id: animated_scatter_chart
+          series_id: orbit_series
+          point_index: 0
+          x_value: !lambda 'return 50 + (int)(35 * cos(id(scatter_angle)));'
+          y_value: !lambda 'return 50 + (int)(35 * sin(id(scatter_angle)));'
+      - lvgl.chart.set_value_by_id2:
+          id: animated_scatter_chart
+          series_id: orbit_series
+          point_index: 1
+          x_value: !lambda 'return 50 + (int)(35 * cos(id(scatter_angle) + 0.785));'
+          y_value: !lambda 'return 50 + (int)(35 * sin(id(scatter_angle) + 0.785));'
+      - lvgl.chart.set_value_by_id2:
+          id: animated_scatter_chart
+          series_id: orbit_series
+          point_index: 2
+          x_value: !lambda 'return 50 + (int)(35 * cos(id(scatter_angle) + 1.57));'
+          y_value: !lambda 'return 50 + (int)(35 * sin(id(scatter_angle) + 1.57));'
+      - lvgl.chart.set_value_by_id2:
+          id: animated_scatter_chart
+          series_id: orbit_series
+          point_index: 3
+          x_value: !lambda 'return 50 + (int)(35 * cos(id(scatter_angle) + 2.355));'
+          y_value: !lambda 'return 50 + (int)(35 * sin(id(scatter_angle) + 2.355));'
+      - lvgl.chart.set_value_by_id2:
+          id: animated_scatter_chart
+          series_id: orbit_series
+          point_index: 4
+          x_value: !lambda 'return 50 + (int)(35 * cos(id(scatter_angle) + 3.14));'
+          y_value: !lambda 'return 50 + (int)(35 * sin(id(scatter_angle) + 3.14));'
+      - lvgl.chart.set_value_by_id2:
+          id: animated_scatter_chart
+          series_id: orbit_series
+          point_index: 5
+          x_value: !lambda 'return 50 + (int)(35 * cos(id(scatter_angle) + 3.925));'
+          y_value: !lambda 'return 50 + (int)(35 * sin(id(scatter_angle) + 3.925));'
+      - lvgl.chart.set_value_by_id2:
+          id: animated_scatter_chart
+          series_id: orbit_series
+          point_index: 6
+          x_value: !lambda 'return 50 + (int)(35 * cos(id(scatter_angle) + 4.71));'
+          y_value: !lambda 'return 50 + (int)(35 * sin(id(scatter_angle) + 4.71));'
+      - lvgl.chart.set_value_by_id2:
+          id: animated_scatter_chart
+          series_id: orbit_series
+          point_index: 7
+          x_value: !lambda 'return 50 + (int)(35 * cos(id(scatter_angle) + 5.495));'
+          y_value: !lambda 'return 50 + (int)(35 * sin(id(scatter_angle) + 5.495));'
+
+  # Faded Area Chart Animation (500ms)
+  - interval: 500ms
+    then:
+      - lambda: 'id(faded_counter)++;'
+      - lvgl.chart.set_next_value:
+          id: faded_chart
+          series_id: faded_series
+          value: !lambda |-
+            // Generate wave-like data
+            float x = id(faded_counter) * 0.5;
+            return 50 + (int)(30 * sin(x) + 15 * sin(x * 2.5));
+
+  # Bar chart color change based on value (2s)
+  - interval: 2s
+    then:
+      - lambda: |-
+          // Change bar color based on latest value
+          static int last_val = 0;
+          last_val = 100 + (rand() % 400);
+      - lvgl.chart.set_next_value:
+          id: dynamic_bar_chart
+          series_id: dynamic_bar_series
+          value: !lambda 'return 100 + (rand() % 400);'
+
+# =============================================================================
+# LVGL CONFIGURATION
+# =============================================================================
+lvgl:
+  displays:
+    - display_id: my_display
+      pages:
+        # =====================================================================
+        # PAGE 1: Weather Chart (LINE) with Dual Axes
+        # =====================================================================
+        - id: weather_page
+          bg_color: 0x0a0a14
+          widgets:
+            - label:
+                x: 20
+                y: 5
+                text: "Weather Monitor"
+                text_color: 0xFFFFFF
+                text_font: montserrat_20
+
+            - label:
+                id: temp_label
+                x: 20
+                y: 35
+                width: 100
+                text: "--.-°C"
+                text_color: 0xFF6B6B
+                text_font: montserrat_18
+
+            - label:
+                id: humidity_label
+                x: 140
+                y: 35
+                width: 100
+                text: "--%"
+                text_color: 0x4ECDC4
+                text_font: montserrat_18
+
+            - chart:
+                id: weather_chart
+                x: 20
+                y: 70
+                width: 440
+                height: 200
+                type: LINE
+                point_count: 24
+                update_mode: SHIFT
+                bg_color: 0x16213e
+                border_width: 1
+                border_color: 0x1f4068
+                div_line_count_hor: 5
+                div_line_count_ver: 6
+                items:
+                  line_width: 2
+                indicator:
+                  radius: 4
+                axis_primary_y:
+                  min_value: -10
+                  max_value: 45
+                axis_secondary_y:
+                  min_value: 0
+                  max_value: 100
+                series:
+                  - id: temp_series
+                    color: 0xFF6B6B
+                    axis: PRIMARY_Y
+                  - id: humidity_series
+                    color: 0x4ECDC4
+                    axis: SECONDARY_Y
+
+        # =====================================================================
+        # PAGE 2: Faded Area Line Chart with Gradient
+        # =====================================================================
+        - id: faded_page
+          bg_color: 0x0a0a14
+          widgets:
+            - label:
+                x: 20
+                y: 10
+                text: "Faded Area Chart with Gradient"
+                text_color: 0xFFFFFF
+                text_font: montserrat_18
+
+            - chart:
+                id: faded_chart
+                x: 20
+                y: 50
+                width: 440
+                height: 220
+                type: LINE
+                point_count: 30
+                update_mode: SHIFT
+                bg_color: 0x0a0a14
+                border_width: 1
+                border_color: 0x1a1a2e
+                # Custom division lines
+                div_line_count_hor: 6
+                div_line_count_ver: 10
+                # Faded area effect with gradient
+                items:
+                  line_color: 0x00D9FF
+                  line_width: 3
+                  bg_color: 0x00D9FF
+                  bg_opa: 40%
+                  bg_grad_color: 0x0a0a14
+                  bg_grad_dir: VER
+                indicator:
+                  bg_color: 0x00D9FF
+                  radius: 5
+                  border_width: 2
+                  border_color: 0xFFFFFF
+                axis_primary_y:
+                  min_value: 0
+                  max_value: 100
+                series:
+                  - id: faded_series
+                    color: 0x00D9FF
+                    points: [50, 55, 60, 58, 65, 70, 68, 75, 72, 78]
+
+        # =====================================================================
+        # PAGE 3: ECG-Style Circular Chart
+        # =====================================================================
+        - id: ecg_page
+          bg_color: 0x001100
+          widgets:
+            - label:
+                x: 20
+                y: 10
+                text: "ECG Monitor (CIRCULAR Mode)"
+                text_color: 0x00FF00
+                text_font: montserrat_18
+
+            - chart:
+                id: ecg_chart
+                x: 20
+                y: 50
+                width: 440
+                height: 220
+                type: LINE
+                point_count: 200
+                update_mode: CIRCULAR
+                bg_color: 0x001100
+                border_width: 1
+                border_color: 0x003300
+                div_line_count_hor: 5
+                div_line_count_ver: 10
+                items:
+                  line_color: 0x00FF00
+                  line_width: 2
+                indicator:
+                  radius: 0
+                axis_primary_y:
+                  min_value: 0
+                  max_value: 100
+                series:
+                  - id: ecg_series
+                    color: 0x00FF00
+
+        # =====================================================================
+        # PAGE 4: Animated Scatter Chart - Multiple Points
+        # =====================================================================
+        - id: scatter_page
+          bg_color: 0x0a0a14
+          widgets:
+            - label:
+                x: 20
+                y: 10
+                text: "Animated Scatter - Orbital Points"
+                text_color: 0xFFFFFF
+                text_font: montserrat_18
+
+            - chart:
+                id: animated_scatter_chart
+                x: 100
+                y: 50
+                width: 280
+                height: 280
+                type: SCATTER
+                point_count: 8
+                bg_color: 0x16213e
+                border_width: 2
+                border_color: 0x1f4068
+                div_line_count_hor: 5
+                div_line_count_ver: 5
+                items:
+                  line_width: 0
+                indicator:
+                  bg_color: 0xFF6600
+                  radius: 8
+                  border_width: 2
+                  border_color: 0xFFFFFF
+                axis_primary_y:
+                  min_value: 0
+                  max_value: 100
+                axis_primary_x:
+                  min_value: 0
+                  max_value: 100
+                series:
+                  - id: orbit_series
+                    color: 0xFF6600
+                    x_points: [50, 85, 85, 50, 15, 15, 50, 50]
+                    y_points: [15, 30, 70, 85, 70, 30, 50, 50]
+
+        # =====================================================================
+        # PAGE 5: Bar Chart with Dynamic Colors
+        # =====================================================================
+        - id: bar_page
+          bg_color: 0x0a0a14
+          widgets:
+            - label:
+                x: 20
+                y: 10
+                text: "Bar Chart - Live Data"
+                text_color: 0xFFFFFF
+                text_font: montserrat_18
+
+            - chart:
+                id: dynamic_bar_chart
+                x: 20
+                y: 50
+                width: 440
+                height: 220
+                type: BAR
+                point_count: 12
+                update_mode: SHIFT
+                bg_color: 0x16213e
+                border_width: 1
+                border_color: 0x1f4068
+                div_line_count_hor: 5
+                div_line_count_ver: 12
+                items:
+                  bg_opa: 80%
+                axis_primary_y:
+                  min_value: 0
+                  max_value: 500
+                series:
+                  - id: dynamic_bar_series
+                    color: 0x4CAF50
+                    points: [120, 180, 240, 200, 280, 350, 420, 380, 320, 290, 250, 200]
+
+        # =====================================================================
+        # PAGE 6: Cursor Chart - Click to Show Value
+        # =====================================================================
+        - id: cursor_page
+          bg_color: 0x0a0a14
+          widgets:
+            - label:
+                x: 20
+                y: 10
+                text: "Interactive Chart - Click Points"
+                text_color: 0xFFFFFF
+                text_font: montserrat_18
+
+            - label:
+                id: cursor_value_label
+                x: 20
+                y: 40
+                text: "Click a point..."
+                text_color: 0xFFCC00
+                text_font: montserrat_16
+
+            - chart:
+                id: cursor_chart
+                x: 20
+                y: 75
+                width: 440
+                height: 200
+                type: LINE
+                point_count: 12
+                clickable: true
+                bg_color: 0x16213e
+                border_width: 1
+                border_color: 0x1f4068
+                div_line_count_hor: 5
+                div_line_count_ver: 12
+                items:
+                  line_width: 3
+                indicator:
+                  radius: 6
+                  bg_color: 0x2196F3
+                axis_primary_y:
+                  min_value: 0
+                  max_value: 100
+                series:
+                  - id: cursor_series
+                    color: 0x2196F3
+                    points: [15, 35, 28, 55, 42, 70, 58, 82, 68, 90, 75, 95]
+                cursors:
+                  - id: main_cursor
+                    color: 0xFF0000
+                    direction: ALL
+                on_value:
+                  then:
+                    - lvgl.chart.set_cursor_point:
+                        id: cursor_chart
+                        cursor_id: main_cursor
+                        series_id: cursor_series
+                        point_index: !lambda 'return point_index;'
+                    - lvgl.label.update:
+                        id: cursor_value_label
+                        text:
+                          format: "Point %d - Value: %d"
+                          args: ['point_index', 'value']
+
+        # =====================================================================
+        # PAGE 7: Gauge with Scale + Arc (Animated)
+        # =====================================================================
+        - id: gauge_page
+          bg_color: 0x0a0a14
+          widgets:
+            - label:
+                x: 20
+                y: 10
+                text: "Animated Gauge (Scale + Arc)"
+                text_color: 0xFFFFFF
+                text_font: montserrat_18
+
+            # Scale widget for tick marks and labels
+            - scale:
+                id: gauge_scale
+                align: CENTER
+                width: 250
+                height: 250
+                mode: ROUND_OUTER
+                min_value: 0
+                max_value: 100
+                rotation: 135
+                angle_range: 270
+                ticks:
+                  count: 21
+                  length: 8
+                  width: 2
+                  color: 0x404040
+                  major:
+                    stride: 5
+                    length: 15
+                    width: 3
+                    color: 0xFFFFFF
+                    label_show: true
+                    label_gap: 10
+                sections:
+                  - id: gauge_green
+                    range_from: 0
+                    range_to: 60
+                    color: 0x00FF00
+                    width: 4
+                  - id: gauge_yellow
+                    range_from: 60
+                    range_to: 80
+                    color: 0xFFFF00
+                    width: 4
+                  - id: gauge_red
+                    range_from: 80
+                    range_to: 100
+                    color: 0xFF0000
+                    width: 4
+
+            # Arc widget for the animated indicator
+            - arc:
+                id: gauge_arc
+                align: CENTER
+                width: 200
+                height: 200
+                min_value: 0
+                max_value: 100
+                value: 0
+                rotation: 135
+                start_angle: 0
+                end_angle: 270
+                mode: NORMAL
+                adjustable: false
+                indicator:
+                  arc_color: 0x00BFFF
+                  arc_width: 15
+                main:
+                  arc_color: 0x1a1a2e
+                  arc_width: 15
+
+            # Value display (recolor enabled for inline color codes)
+            - label:
+                id: gauge_value_label
+                align: CENTER
+                y: 30
+                text: "#00BFFF 0#"
+                recolor: true
+                text_font: montserrat_28
+
+# Animation for the gauge
+interval:
+  - interval: 100ms
+    then:
+      - lambda: |-
+          static int gauge_val = 0;
+          static int direction = 1;
+          gauge_val += direction * 2;
+          if (gauge_val >= 100) direction = -1;
+          if (gauge_val <= 0) direction = 1;
+      - lvgl.arc.update:
+          id: gauge_arc
+          value: !lambda |-
+            static int v = 0;
+            static int d = 1;
+            v += d * 2;
+            if (v >= 100) d = -1;
+            if (v <= 0) d = 1;
+            return v;
+      - lvgl.label.update:
+          id: gauge_value_label
+          text:
+            format: "%s%d#"
+            args:
+              - |-
+                id(gauge_arc).get_value() < 30 ? "#00FF00 " :
+                id(gauge_arc).get_value() < 70 ? "#FFFF00 " : "#FF0000 "
+              - 'id(gauge_arc).get_value()'
+
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Labels show "--" or placeholder text:
+#   - Check that entity_id exists in Home Assistant
+#   - Check that attribute name is correct (temperature, humidity, etc.)
+#   - Make sure label ID in on_value matches label ID in widgets
+#   - Check ESPHome logs for sensor values
+#
+# Faded area not showing:
+#   - Set items.bg_opa to a value > 0 (e.g., 40%)
+#   - Set items.bg_color for the fill color
+#   - Set items.bg_grad_color and bg_grad_dir for gradient
+#
+# Cursor not showing:
+#   - Make sure clickable: true is set on the chart
+#   - Define cursors section with at least one cursor
+#   - Use lvgl.chart.set_cursor_point action to position cursor
+#
+# Scatter points not animating:
+#   - Use lvgl.chart.set_value_by_id2 for each point
+#   - Make sure point_index is within range (0 to point_count-1)
+#
+# Scale not showing with gauge:
+#   - Scale widget only shows ticks/labels, not animated value
+#   - Use Arc widget overlaid on Scale for animated indicator
+#

@@ -60,6 +60,11 @@ PrependFilter = text_sensor_ns.class_("PrependFilter", Filter)
 SubstituteFilter = text_sensor_ns.class_("SubstituteFilter", Filter)
 MapFilter = text_sensor_ns.class_("MapFilter", Filter)
 Substitution = text_sensor_ns.struct("Substitution")
+SanitizeHtmlFilter = text_sensor_ns.class_("SanitizeHtmlFilter", Filter)
+
+CONF_COLLAPSE_WHITESPACE = "collapse_whitespace"
+CONF_DECODE_ENTITIES = "decode_entities"
+CONF_STRIP_TAGS = "strip_tags"
 
 
 @FILTER_REGISTRY.register("lambda", LambdaFilter, cv.returning_lambda)
@@ -88,6 +93,26 @@ async def append_filter_to_code(config, filter_id):
 @FILTER_REGISTRY.register("prepend", PrependFilter, cv.string)
 async def prepend_filter_to_code(config, filter_id):
     return cg.new_Pvariable(filter_id, config)
+
+
+@FILTER_REGISTRY.register(
+    "sanitize_html",
+    SanitizeHtmlFilter,
+    cv.Schema(
+        {
+            cv.Optional(CONF_DECODE_ENTITIES, default=True): cv.boolean,
+            cv.Optional(CONF_STRIP_TAGS, default=True): cv.boolean,
+            cv.Optional(CONF_COLLAPSE_WHITESPACE, default=True): cv.boolean,
+        }
+    ),
+)
+async def sanitize_html_filter_to_code(config, filter_id):
+    return cg.new_Pvariable(
+        filter_id,
+        config[CONF_DECODE_ENTITIES],
+        config[CONF_STRIP_TAGS],
+        config[CONF_COLLAPSE_WHITESPACE],
+    )
 
 
 def validate_mapping(value):

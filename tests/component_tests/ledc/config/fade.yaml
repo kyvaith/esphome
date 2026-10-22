@@ -1,0 +1,22 @@
+esphome:
+  name: ledc-fade-compatibility
+  on_boot:
+    - output.ledc.set_frequency:
+        id: backlight
+        frequency: !lambda return 20000.0f;
+    - output.ledc.set_next_fade_duration:
+        id: backlight
+        duration: 500ms
+    - output.set_level:
+        id: backlight
+        level: 50%
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+output:
+  - platform: ledc
+    id: backlight
+    pin: GPIO4

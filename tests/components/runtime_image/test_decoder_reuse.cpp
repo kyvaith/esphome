@@ -502,4 +502,76 @@ TEST(RuntimeImageDecoder, SessionFlagsTrackLifecycle) {
   EXPECT_FALSE(img.is_decode_finished()) << "no session means nothing is 'finished'";
 }
 
+TEST(RuntimeImageDecoder, DeferredPublicationPreservesVisibleFrameAndWarmDecoder) {
+  TestableRuntimeImage img(BMP);
+  ASSERT_TRUE(decode_all(img, BMP_24BPP, sizeof(BMP_24BPP)));
+  const auto *visible = img.get_data_start();
+  const uint32_t generation = img.get_generation();
+  ImageDecoder *decoder = img.decoder();
+  std::vector<uint8_t> next(BMP_24BPP, BMP_24BPP + sizeof(BMP_24BPP));
+  next[54] = 0x7F;
+
+  ASSERT_TRUE(img.begin_decode(next.size()));
+  ASSERT_EQ(img.feed_data(next.data(), next.size()), static_cast<int>(next.size()));
+  ASSERT_TRUE(img.end_decode(false));
+  EXPECT_EQ(img.decoder(), decoder);
+  EXPECT_FALSE(img.is_decoding());
+  ASSERT_TRUE(img.has_pending_image());
+  EXPECT_EQ(img.get_data_start(), visible);
+  EXPECT_EQ(img.get_generation(), generation);
+  expect_pixels(img, BMP_24BPP_EXPECTED);
+
+  ASSERT_TRUE(img.publish_pending());
+  EXPECT_FALSE(img.has_pending_image());
+  EXPECT_EQ(img.get_generation(), generation + 1);
+  EXPECT_EQ(img.get_pixel(0, 1).b, 0x7F);
+}
+
+TEST(RuntimeImageDecoder, AbortingReplacementPreservesVisibleFrame) {
+  TestableRuntimeImage img(BMP);
+  ASSERT_TRUE(decode_all(img, BMP_24BPP, sizeof(BMP_24BPP)));
+  const auto *visible = img.get_data_start();
+  const uint32_t generation = img.get_generation();
+  ImageDecoder *decoder = img.decoder();
+  std::vector<uint8_t> next(BMP_8BPP, BMP_8BPP + sizeof(BMP_8BPP));
+  ASSERT_TRUE(img.begin_decode(next.size()));
+  ASSERT_GT(img.feed_data(next.data(), next.size()), 0);
+  img.abort_decode();
+  EXPECT_EQ(img.decoder(), decoder);
+  EXPECT_FALSE(img.has_pending_image());
+  EXPECT_EQ(img.pending_buffer_size(), 0);
+  EXPECT_EQ(img.get_data_start(), visible);
+  EXPECT_EQ(img.get_generation(), generation);
+  expect_pixels(img, BMP_24BPP_EXPECTED);
+}
+
+TEST(RuntimeImageDecoder, ExternalDecodeUsesOnlyCallerBufferAndDoesNotFreeIt) {
+  TestableRuntimeImage img(BMP);
+  std::array<uint8_t, 18> pixels{};
+  ASSERT_TRUE(img.set_external_buffer(pixels.data(), 3, 2));
+  ASSERT_TRUE(decode_all(img, BMP_24BPP, sizeof(BMP_24BPP)));
+  EXPECT_EQ(img.get_data_start(), pixels.data());
+  EXPECT_EQ(img.memory_usage_bytes(), 0);
+  expect_pixels(img, BMP_24BPP_EXPECTED);
+  const auto decoded = pixels;
+  img.release();
+  EXPECT_EQ(pixels, decoded);
+  EXPECT_EQ(img.get_data_start(), nullptr);
+  EXPECT_FALSE(img.is_loaded());
+}
+
+TEST(RuntimeImageDecoder, MismatchedExternalDimensionsCannotPublishOrResize) {
+  TestableRuntimeImage img(BMP);
+  std::array<uint8_t, 12> pixels;
+  pixels.fill(0xA5);
+  ASSERT_TRUE(img.set_external_buffer(pixels.data(), 2, 2));
+  std::vector<uint8_t> source(BMP_24BPP, BMP_24BPP + sizeof(BMP_24BPP));
+  ASSERT_TRUE(img.begin_decode(source.size()));
+  img.feed_data(source.data(), source.size());
+  EXPECT_FALSE(img.end_decode());
+  EXPECT_FALSE(img.is_loaded());
+  EXPECT_FALSE(img.has_pending_image());
+  EXPECT_TRUE(std::all_of(pixels.begin(), pixels.end(), [](uint8_t value) { return value == 0xA5; }));
+}
+
 }  // namespace esphome::runtime_image::testing

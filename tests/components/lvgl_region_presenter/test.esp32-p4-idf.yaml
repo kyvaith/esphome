@@ -1,0 +1,33 @@
+display:
+  - platform: mipi_dsi
+    id: region_display
+    model: WAVESHARE-ESP32-P4-WIFI6-TOUCH-LCD-3.4C
+    color_depth: 24
+    pixel_mode: 24
+    frame_buffer_count: 2
+
+lvgl:
+  displays: region_display
+  buffer_size: 100%
+  color_depth: 32
+  direct_mode: true
+  use_ppa: true
+  widgets:
+    - button:
+        widgets:
+          - label:
+              text: Region presenter
+        on_press:
+          - lvgl_region_presenter.begin: region_presenter
+        on_release:
+          - lvgl_region_presenter.end: region_presenter
+
+lvgl_region_presenter:
+  id: region_presenter
+  frame_interval: 16ms
+
+psram:
+
+esp_ldo:
+  - channel: 3
+    voltage: 2.5V

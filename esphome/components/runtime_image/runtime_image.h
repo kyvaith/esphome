@@ -8,6 +8,11 @@
 
 namespace esphome::runtime_image {
 
+enum class DecoderType {
+  SOFTWARE,
+  ESP32_JPEG,
+};
+
 /**
  * @brief A dynamic image that can be loaded and decoded at runtime.
  *
@@ -52,8 +57,8 @@ class RuntimeImage : public image::Image {
   int resize(int width, int height);
   void draw_pixel(int x, int y, const Color &color);
   void map_chroma_key(Color &color);
-  int get_buffer_width() const { return this->buffer_width_; }
-  int get_buffer_height() const { return this->buffer_height_; }
+  int get_buffer_width() const;
+  int get_buffer_height() const;
 
   // Image drawing interface
   void draw(int x, int y, display::Display *display, Color color_on, Color color_off) override;
@@ -81,7 +86,22 @@ class RuntimeImage : public image::Image {
    *
    * @return true if decoding completed successfully.
    */
-  bool end_decode();
+  bool end_decode(bool publish = true);
+
+  /**
+   * @brief Discard the current decode without changing the visible image.
+   */
+  void abort_decode();
+
+  /**
+   * @brief Atomically make a successfully decoded pending image visible.
+   *
+   * This is intended for sources that decode on a worker task and present on
+   * the main loop at a later timestamp.
+   *
+   * @return true if a pending image was published.
+   */
+  bool publish_pending();
 
   /**
    * @brief Check if decoding is currently in progress.
@@ -103,6 +123,38 @@ class RuntimeImage : public image::Image {
    * @brief Check if an image is currently loaded.
    */
   bool is_loaded() const { return this->buffer_ != nullptr; }
+
+  /**
+   * @brief Check if a complete decoded image is waiting to be published.
+   */
+  bool has_pending_image() const;
+
+  /**
+   * @brief Return the number of bytes owned by the visible image buffer.
+   */
+  size_t active_buffer_size() const;
+
+  /**
+   * @brief Return the number of bytes owned by the pending decode buffer.
+   */
+  size_t pending_buffer_size() const;
+
+  /**
+   * @brief Return the total bytes owned by runtime image pixel buffers.
+   */
+  size_t memory_usage_bytes() const;
+
+  /**
+   * @brief Return a monotonically increasing visible-image generation.
+   *
+   * The value changes whenever a pending image is published or a visible image
+   * is released. Consumers can use it to avoid resetting an LVGL image source
+   * when the underlying image has not changed.
+   */
+  uint32_t get_generation() const;
+  BufferWriter get_buffer_writer() const override;
+  bool acquire_buffer(image::ImageBufferLease *lease) const override;
+  bool release_buffer(image::ImageBufferLease *lease) const override;
 
   /**
    * @brief Get the image format.
@@ -163,6 +215,22 @@ class RuntimeImage : public image::Image {
    */
   void set_progressive_display(bool progressive) { this->progressive_display_ = progressive; }
 
+  void set_decoder_type(DecoderType decoder_type) { this->decoder_type_ = decoder_type; }
+  bool is_big_endian() const { return this->big_endian_; }
+
+  /**
+   * @brief Adopt a tightly packed decoded buffer as the current decode target.
+   *
+   * Ownership transfers to RuntimeImage on success.
+   */
+  bool adopt_decode_buffer(uint8_t *buffer, int width, int height, BufferWriter writer = BufferWriter::CPU);
+
+  /**
+   * @brief Check whether a decoder can publish the supplied dimensions without
+   * requiring a second scale/copy pass.
+   */
+  bool accepts_decoded_dimensions(int width, int height) const;
+
  protected:
   /**
    * @brief Resize the image buffer to the requested dimensions.
@@ -181,6 +249,21 @@ class RuntimeImage : public image::Image {
   void release_buffer_();
 
   /**
+   * @brief Release the non-visible decode/pending buffer.
+   */
+  void release_decode_buffer_();
+
+  /**
+   * @brief Publish a pending buffer while buffer_mutex_ is held.
+   */
+  bool publish_pending_locked_();
+
+  /**
+   * @brief Get the buffer size in bytes for given dimensions.
+   */
+  size_t get_buffer_size_(int width, int height) const;
+
+  /**
    * @brief Get the position in the buffer for a pixel.
    */
   int get_position_(int x, int y) const;
@@ -194,11 +277,15 @@ class RuntimeImage : public image::Image {
 
   // Memory management
   uint8_t *buffer_{nullptr};
+  uint8_t *decode_buffer_{nullptr};
+  BufferWriter buffer_writer_{BufferWriter::CPU};
+  BufferWriter decode_buffer_writer_{BufferWriter::CPU};
 
   // Decoder management
   std::unique_ptr<ImageDecoder> decoder_{nullptr};
   /** The image format this RuntimeImage is configured to decode. */
   const ImageFormat format_;
+  DecoderType decoder_type_{DecoderType::SOFTWARE};
 
   /**
    * Actual width of the current image.
@@ -216,6 +303,10 @@ class RuntimeImage : public image::Image {
    * are updated during decoding to allow rendering in progress.
    */
   int buffer_height_{0};
+  int decode_buffer_width_{0};
+  int decode_buffer_height_{0};
+  bool pending_image_{false};
+  uint32_t generation_{0};
 
   // Decoding state
   size_t decoded_bytes_{0};
@@ -234,6 +325,8 @@ class RuntimeImage : public image::Image {
   bool external_buffer_{false};
 
   friend class ImageDecoder;
+
+  mutable Mutex buffer_mutex_;
 };
 
 }  // namespace esphome::runtime_image

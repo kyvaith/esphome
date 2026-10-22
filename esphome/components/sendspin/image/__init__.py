@@ -132,6 +132,11 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_FORMAT): cv.All(
                 _reject_bmp, cv.one_of(*_FORMAT_TO_SENDSPIN_ENUM, upper=True)
             ),
+            # The slot decodes into its own external buffer; the hardware decoder
+            # currently adopts an owned output allocation instead.
+            cv.Optional(runtime_image.CONF_DECODER, default="SOFTWARE"): cv.one_of(
+                "SOFTWARE", upper=True
+            ),
             cv.Required(CONF_RESIZE): cv.dimensions,
             cv.Required(CONF_CURRENT_IMAGE): _IMAGE_SCHEMA,
             cv.Optional(CONF_TRANSITION_IMAGE): _IMAGE_SCHEMA,

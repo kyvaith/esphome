@@ -30,7 +30,7 @@ SendspinPairingCodeTextSensor = sendspin_ns.class_(
 
 SendspinTextMetadataTypes = sendspin_ns.enum("SendspinTextMetadataTypes", is_class=True)
 SENDSPIN_TEXT_METADATA_TYPES = SendspinTextMetadataTypes.options(
-    "title", "artist", "album", "album_artist"
+    "title", "artist", "album", "album_artist", "artwork_url"
 )
 
 

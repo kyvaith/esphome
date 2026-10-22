@@ -33,7 +33,9 @@ class BenchDisplay : public display::DisplayBuffer {
 class BenchImage : public RuntimeImage {
  public:
   BenchImage(image::ImageType type, image::Transparency transparency, bool big_endian)
-      : RuntimeImage(JPEG, type, transparency, nullptr, big_endian, kWidth, kHeight) {}
+      : RuntimeImage(JPEG, type, transparency, nullptr, big_endian, kWidth, kHeight) {
+    this->set_progressive_display(true);
+  }
 
   bool fill() {
     if (this->resize(kWidth, kHeight) == 0)
