@@ -77,12 +77,14 @@ struct EncodeConfig {
   // The source was last written by a peripheral (for example PPA/DMA2D) and
   // CPU cache lines must not be written back over it before JPEG DMA reads it.
   bool input_dma_owned{false};
-  // Reuse one full-size hardware output buffer across a batch of encodes.
+  // Reuse one bounded hardware output buffer across a batch of encodes.
   // Disable this for occasional runtime encodes when retaining that scratch
   // allocation would cost more memory than the compressed image itself.
   bool retain_output_buffer{true};
-  // Zero reserves the raw image size. A diagnostic caller may use a bounded
-  // compressed output budget and accept an error if that budget is exceeded.
+  // Zero uses the raw image size as the output budget. Fragmented PSRAM may
+  // provide a smaller aligned scratch buffer; the requested quality is retained
+  // and the encode fails if that capacity cannot hold the complete JPEG. A
+  // caller may provide a smaller compressed output budget as an upper bound.
   size_t output_buffer_size{0};
   // Zero/-1 retain the component defaults. Per-operation overrides keep
   // fullscreen snapshot traffic from starving a continuously scanned display.

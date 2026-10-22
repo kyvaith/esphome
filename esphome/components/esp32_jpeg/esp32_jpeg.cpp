@@ -16,6 +16,7 @@
 #include "sdkconfig.h"
 #include "esphome/core/defines.h"
 #include "esphome/core/log.h"
+#include "encoder_output_buffer.h"
 #include "jpeg_huffman_normalizer.h"
 
 #if defined(SOC_JPEG_CODEC_SUPPORTED) && SOC_JPEG_CODEC_SUPPORTED
@@ -901,23 +902,41 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
 
   size_t output_capacity = 0;
   uint8_t *output_data = nullptr;
+  bool owns_output = false;
   const size_t requested_output_size = config.output_buffer_size == 0 ? expected_input_size : config.output_buffer_size;
   const bool retain_output = config.retain_output_buffer && !owns_encoder && encoder == preallocated_encoder;
-  if (retain_output && preallocated_encoder_output_capacity >= requested_output_size) {
+#if defined(CONFIG_SPIRAM_ENC_EXEMPT) && CONFIG_SPIRAM_ENC_EXEMPT
+  static constexpr uint32_t OUTPUT_CAPS = MALLOC_CAP_SPIRAM_NO_ENC;
+#else
+  static constexpr uint32_t OUTPUT_CAPS = MALLOC_CAP_SPIRAM;
+#endif
+  const size_t output_alignment = std::max<size_t>(cache_alignment, 16);
+  const auto output_plan =
+      plan_encoder_output_buffer(requested_output_size, heap_caps_get_largest_free_block(OUTPUT_CAPS), output_alignment,
+                                 preallocated_encoder_output != nullptr ? preallocated_encoder_output_capacity : 0);
+  if (output_plan.reuse_retained) {
     output_data = preallocated_encoder_output;
     output_capacity = preallocated_encoder_output_capacity;
-  } else {
+  } else if (output_plan.allocation_size != 0) {
     jpeg_encode_memory_alloc_cfg_t output_mem_cfg = {
         .buffer_direction = JPEG_ENC_ALLOC_OUTPUT_BUFFER,
     };
     output_data =
-        static_cast<uint8_t *>(jpeg_alloc_encoder_mem(requested_output_size, &output_mem_cfg, &output_capacity));
+        static_cast<uint8_t *>(jpeg_alloc_encoder_mem(output_plan.allocation_size, &output_mem_cfg, &output_capacity));
+    owns_output = output_data != nullptr;
     if (output_data != nullptr && retain_output) {
       if (preallocated_encoder_output != nullptr)
         heap_caps_free(preallocated_encoder_output);
       preallocated_encoder_output = output_data;
       preallocated_encoder_output_capacity = output_capacity;
+      owns_output = false;
     }
+  }
+  // Another task can consume the observed block before allocation. Keep the
+  // previous scratch intact on failed growth and try that bounded capacity.
+  if (output_data == nullptr && preallocated_encoder_output != nullptr) {
+    output_data = preallocated_encoder_output;
+    output_capacity = preallocated_encoder_output_capacity;
   }
   if (output_data == nullptr) {
     if (owns_input)
@@ -926,16 +945,17 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
       jpeg_del_encoder_engine(encoder);
     return ESP_ERR_NO_MEM;
   }
+  const size_t output_limit = encoder_output_limit(requested_output_size, output_capacity);
 
   uint8_t quality = std::min<uint8_t>(std::max<uint8_t>(config.quality, 1), 100);
   jpeg_encode_cfg_t encode_cfg = {
-    .height = config.height,
-    .width = config.width,
-    .src_type = to_encode_format(config.input_format),
-    .sub_sample = to_down_sampling(config.down_sampling),
-    .image_quality = quality,
+      .height = config.height,
+      .width = config.width,
+      .src_type = to_encode_format(config.input_format),
+      .sub_sample = to_down_sampling(config.down_sampling),
+      .image_quality = quality,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
-    .pixel_reverse = config.pixel_reverse,
+      .pixel_reverse = config.pixel_reverse,
 #endif
   };
   uint32_t encoded_size = 0;
@@ -951,7 +971,7 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
         heap_caps_free(input_data);
       if (owns_encoder)
         jpeg_del_encoder_engine(encoder);
-      if (!retain_output)
+      if (owns_output)
         heap_caps_free(output_data);
       return sync_err;
     }
@@ -960,16 +980,18 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
     Dma2dJpegBurstGuard qos_guard;
     Dma2dJpegTransferAbilityGuard transfer_guard(true, config.dma2d_burst_length, config.dma2d_descriptor_burst);
     Dma2dJpegInputCacheSyncGuard input_cache_sync_guard(direct_dma_owned_input);
-    err = jpeg_encoder_process(encoder, &encode_cfg, input_data, expected_input_size, output_data, output_capacity,
+    err = jpeg_encoder_process(encoder, &encode_cfg, input_data, expected_input_size, output_data, output_limit,
                                &encoded_size);
   }
   if (owns_input)
     heap_caps_free(input_data);
   if (owns_encoder)
     jpeg_del_encoder_engine(encoder);
-  if (err != ESP_OK || encoded_size == 0) {
-    if (!retain_output)
+  if (err != ESP_OK || encoded_size == 0 || encoded_size > output_limit) {
+    if (owns_output)
       heap_caps_free(output_data);
+    if (err == ESP_OK && encoded_size > output_limit)
+      return ESP_ERR_INVALID_SIZE;
     return err == ESP_OK ? ESP_FAIL : err;
   }
 
@@ -977,12 +999,12 @@ esp_err_t encode(const EncodeConfig &config, const uint8_t *input, size_t input_
   if (stored_data == nullptr)
     stored_data = static_cast<uint8_t *>(heap_caps_malloc(encoded_size, MALLOC_CAP_8BIT));
   if (stored_data == nullptr) {
-    if (!retain_output)
+    if (owns_output)
       heap_caps_free(output_data);
     return ESP_ERR_NO_MEM;
   }
   std::memcpy(stored_data, output_data, encoded_size);
-  if (!retain_output)
+  if (owns_output)
     heap_caps_free(output_data);
   output->reset(stored_data, encoded_size, encoded_size);
   return ESP_OK;
