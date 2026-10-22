@@ -70,7 +70,8 @@ def test_reclaim_preserves_actual_reader_identities_and_invalidates_generation()
         encoding="utf-8"
     )
     reclaim = source.split(
-        "SnapshotPreviewReclaimStats snapshot_reclaim_idle_application_previews(", 1
+        "SnapshotPreviewReclaimStats snapshot_reclaim_idle_application_previews(lv_obj_t **home_pages, int page_count) {",
+        1,
     )[1].split('extern "C" bool lvgl_esphome_snapshot_cache_tile_window(', 1)[0]
     for protected in (
         "snapshot_app_state.background_root",
