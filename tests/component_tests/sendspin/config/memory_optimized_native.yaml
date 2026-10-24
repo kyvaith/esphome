@@ -1,0 +1,8 @@
+packages:
+  mono_pcm: !include mono_pcm.yaml
+
+esp32:
+  toolchain: esp-idf
+
+sendspin:
+  optimize_memory: true

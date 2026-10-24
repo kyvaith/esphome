@@ -4132,6 +4132,7 @@ void ArtworkImage::start_pending_update_() {
 }
 
 void ArtworkImage::log_state_(const char *stage) {
+#ifdef ESPHOME_LOG_HAS_DEBUG
   size_t heap_free = 0;
   size_t heap_largest = this->allocator_.get_max_free_block_size();
 #ifdef USE_ESP32
@@ -4150,6 +4151,9 @@ void ArtworkImage::log_state_(const char *stage) {
            this->decode_buffer_height_, this->decode_content_width_, this->decode_content_height_,
            this->decode_offset_x_, this->decode_offset_y_, retired_count, heap_free, heap_largest,
            this->update_pending_ ? "yes" : "no");
+#else
+  (void) stage;
+#endif
 }
 
 void ArtworkImage::end_connection_() {

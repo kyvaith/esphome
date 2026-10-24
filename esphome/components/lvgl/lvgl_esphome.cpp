@@ -7,6 +7,7 @@
 #include "lvgl_navigation.h"
 #include "lottie_loader.h"
 #include "snapshot_cache_admission.h"
+#include "direct_refresh_barrier.h"
 
 #include "core/lv_obj_class_private.h"
 #include "core/lv_obj_private.h"
@@ -5038,6 +5039,11 @@ void LvglComponent::direct_region_refresh_begin_() {
   if (xSemaphoreTake(s_region_srm_mutex, portMAX_DELAY) != pdTRUE)
     return;
   this->direct_region_refresh_locked_ = true;
+  this->direct_region_full_refresh_barrier_active_ =
+      this->direct_region_full_refresh_barrier_ &&
+      direct_region_has_full_display_invalidation(this->disp_->inv_areas, this->disp_->inv_p,
+                                                  lv_display_get_horizontal_resolution(this->disp_),
+                                                  lv_display_get_vertical_resolution(this->disp_));
 
   if (this->displays_.size() != 1)
     return;
@@ -5068,6 +5074,8 @@ void LvglComponent::direct_region_refresh_begin_() {
     auto *target = static_cast<uint8_t *>(this->disp_->buf_act->data);
     if (mipi_display->reserve_direct_render_frame_buffer(target)) {
       this->direct_region_refresh_reserved_buffer_ = target;
+      if (this->direct_region_full_refresh_barrier_active_)
+        this->direct_region_full_refresh_barriers_.fetch_add(1, std::memory_order_relaxed);
       this->direct_region_concurrent_refreshes_.fetch_add(1, std::memory_order_relaxed);
       return;
     }
@@ -5077,6 +5085,19 @@ void LvglComponent::direct_region_refresh_begin_() {
 
 void LvglComponent::direct_region_refresh_allow_compositor_() {
   if (this->direct_region_refresh_reserved_buffer_ == nullptr || !this->direct_region_refresh_locked_)
+    return;
+  // Layout and blur expansion can add a full-display invalidation after
+  // REFR_START. We still own the mutex here, so promote the same barrier
+  // before allowing regional PPA work to overlap native drawing.
+  if (this->direct_region_full_refresh_barrier_ && !this->direct_region_full_refresh_barrier_active_ &&
+      this->disp_ != nullptr &&
+      direct_region_has_full_display_invalidation(this->disp_->inv_areas, this->disp_->inv_p,
+                                                  lv_display_get_horizontal_resolution(this->disp_),
+                                                  lv_display_get_vertical_resolution(this->disp_))) {
+    this->direct_region_full_refresh_barrier_active_ = true;
+    this->direct_region_full_refresh_barriers_.fetch_add(1, std::memory_order_relaxed);
+  }
+  if (this->direct_region_full_refresh_barrier_active_)
     return;
   this->direct_region_refresh_locked_ = false;
   xSemaphoreGive(s_region_srm_mutex);
@@ -5192,6 +5213,7 @@ void LvglComponent::direct_region_refresh_end_() {
     this->direct_region_refresh_locked_ = false;
     xSemaphoreGive(s_region_srm_mutex);
   }
+  this->direct_region_full_refresh_barrier_active_ = false;
 }
 
 void LvglComponent::direct_region_task_() {
@@ -5572,6 +5594,8 @@ void LvglComponent::direct_region_task_() {
             this->direct_region_concurrent_refreshes_.exchange(0, std::memory_order_acq_rel);
         const uint32_t refresh_fallbacks =
             this->direct_region_refresh_fallbacks_.exchange(0, std::memory_order_acq_rel);
+        const uint32_t full_refresh_barriers =
+            this->direct_region_full_refresh_barriers_.exchange(0, std::memory_order_acq_rel);
         const uint32_t refresh_relock_us =
             this->direct_region_refresh_relock_us_.exchange(0, std::memory_order_acq_rel);
         const uint32_t refresh_relock_max_us =
@@ -5583,7 +5607,7 @@ void LvglComponent::direct_region_task_() {
         ESP_LOGI("lvgl.region",
                  "perf2s: frames=%u received=%u submitted=%u/%u busy=%u coalesced=%u batch_max=%u "
                  "avg=%uus max=%uus queued=%u last=%s miss=%u compose_fail=%u race=%u reject=%u "
-                 "refresh=%u/%u relock=%u/%uus rebase=%u/%uus max=%uus",
+                 "refresh=%u/%u full_barrier=%u relock=%u/%uus rebase=%u/%uus max=%uus",
                  static_cast<unsigned>(perf_count), static_cast<unsigned>(perf_request_count),
                  static_cast<unsigned>(submitted_copy), static_cast<unsigned>(submitted_blend),
                  static_cast<unsigned>(submit_busy), static_cast<unsigned>(perf_coalesced_count),
@@ -5594,6 +5618,7 @@ void LvglComponent::direct_region_task_() {
                  static_cast<unsigned>(perf_prepare_miss_count), static_cast<unsigned>(perf_compose_fail_count),
                  static_cast<unsigned>(perf_generation_race_count), static_cast<unsigned>(perf_queue_reject_count),
                  static_cast<unsigned>(concurrent_refreshes), static_cast<unsigned>(refresh_fallbacks),
+                 static_cast<unsigned>(full_refresh_barriers),
                  static_cast<unsigned>(refresh_relock_us / std::max<uint32_t>(1, concurrent_refreshes)),
                  static_cast<unsigned>(refresh_relock_max_us), static_cast<unsigned>(full_rebases),
                  static_cast<unsigned>(full_rebase_us / std::max<uint32_t>(1, full_rebases)),
@@ -12328,6 +12353,8 @@ void LvglComponent::setup() {
     lv_display_add_event_cb(this->disp_, direct_region_refresh_start_cb, LV_EVENT_REFR_START, this);
     lv_display_add_event_cb(this->disp_, direct_region_flush_start_cb, LV_EVENT_FLUSH_START, this);
     lv_display_add_event_cb(this->disp_, direct_region_refresh_end_cb, LV_EVENT_REFR_READY, this);
+    if (this->direct_region_full_refresh_barrier_)
+      lv_display_add_event_cb(this->disp_, direct_region_refresh_end_cb, LV_EVENT_DELETE, this);
   }
   if (this->direct_mode_active_ && !this->start_direct_region_compositor_()) {
     ESP_LOGW(TAG, "Direct region compositor unavailable; regional widgets will use LVGL invalidation");
@@ -12419,13 +12446,29 @@ void LvglComponent::loop() {
       return;
     }
     snapshot_cache_process_pending_compression();
-    // Time the LVGL handler. flush_cb_ separately accumulates the DSI
-    // DMA wait into perf_flush_us_; subtract it so the reported CPU%%
-    // counts only real render work (matches lvgl_camera_display's
-    // approach: cpu_time / frame_interval).
+    // Time the LVGL handler and subtract the separately accumulated flush
+    // duration. This is wall time, including preemption and mutex waits;
+    // the historical cpu/loop fields do not measure actual task CPU usage.
     uint64_t t0 = esp_timer_get_time();
+#ifdef USE_LVGL_HANDLER_DIAGNOSTICS
+    // LVGL's recursive mutex makes the nested lock inside its handler a no-op.
+    // Measure contention separately without changing the existing wall metric.
+    lv_lock();
+    const uint64_t handler_locked_us = esp_timer_get_time();
+    const bool no_pending_render = this->disp_->inv_p == 0;
+    const uint64_t flush_before = this->perf_flush_us_;
+    const uint32_t invalidations_before = this->perf_invalidated_areas_;
+#endif
     lv_timer_handler();
     uint64_t t1 = esp_timer_get_time();
+#ifdef USE_LVGL_HANDLER_DIAGNOSTICS
+    const bool no_render = no_pending_render && this->disp_->inv_p == 0 &&
+                           this->perf_flush_us_ == flush_before &&
+                           this->perf_invalidated_areas_ == invalidations_before;
+    lv_unlock();
+    this->handler_diagnostics_.note(static_cast<uint32_t>(handler_locked_us - t0),
+                                    static_cast<uint32_t>(t1 - handler_locked_us), no_render);
+#endif
     uint64_t loop_dt = t1 - t0;
     profiler_note_loop(loop_dt > UINT32_MAX ? UINT32_MAX : (uint32_t) loop_dt);
     this->perf_busy_us_ += loop_dt;
@@ -12671,6 +12714,16 @@ void LvglComponent::loop() {
       }
 #endif
       if (s_perf_logging_enabled) {
+#ifdef USE_LVGL_HANDLER_DIAGNOSTICS
+        const auto &handler = this->handler_diagnostics_;
+        ESP_LOGI(TAG,
+                 "handler1s: calls=%u lock=%lluus max=%uus body=%lluus max=%uus no_render=%u/%lluus window=%lluus",
+                 static_cast<unsigned>(handler.calls), static_cast<unsigned long long>(handler.lock_us),
+                 static_cast<unsigned>(handler.lock_max_us), static_cast<unsigned long long>(handler.body_us),
+                 static_cast<unsigned>(handler.body_max_us), static_cast<unsigned>(handler.no_render_calls),
+                 static_cast<unsigned long long>(handler.no_render_body_us),
+                 static_cast<unsigned long long>(elapsed_us));
+#endif
         ESP_LOGI(TAG,
                  "perf1s: cpu=%u%% loop=%lluus flush=%lluus dsi_under=%u dsi_sync=%lluus max=%ums dsi_copy=%lluus/%u "
                  "max=%ums dsi_submit=%lluus max=%ums dsi_done=%lluus/%u max=%ums zc=%u stage=%u/%u unsafe=%u/%u/%u "
@@ -12699,6 +12752,9 @@ void LvglComponent::loop() {
       ESP_LOGV(TAG, "perf: CPU %u%% (render %llu us, flush %llu us / wall %llu us)", (unsigned) cpu_pct,
                (unsigned long long) cpu_us, (unsigned long long) this->perf_flush_us_, (unsigned long long) elapsed_us);
       this->perf_busy_us_ = 0;
+#ifdef USE_LVGL_HANDLER_DIAGNOSTICS
+      this->handler_diagnostics_ = {};
+#endif
       this->perf_flush_us_ = 0;
       this->perf_invalidated_px_ = 0;
       this->perf_invalidated_areas_ = 0;
@@ -18854,9 +18910,10 @@ void *lv_malloc_core(size_t size) {
   // Keep small, frequently accessed LVGL objects in internal SRAM. Large
   // image and draw buffers remain in PSRAM, while the headroom protects audio,
   // networking, and interrupt-time allocations from SRAM starvation.
-  const size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   const bool prefer_internal =
-      aligned_size <= LVGL_INTERNAL_MAX_ALLOCATION && largest_internal >= aligned_size + LVGL_INTERNAL_HEADROOM;
+      aligned_size <= LVGL_INTERNAL_MAX_ALLOCATION &&
+      heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) >= aligned_size + LVGL_INTERNAL_HEADROOM &&
+      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) >= aligned_size + LVGL_INTERNAL_HEADROOM;
   void *ptr = nullptr;
   if (prefer_internal) {
     ptr = heap_caps_aligned_alloc(LVGL_ALIGNMENT, aligned_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);

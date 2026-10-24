@@ -1,0 +1,5 @@
+packages:
+  camera_base: !include runtime_sources.yaml
+
+network_camera:
+  release_input_buffers_on_stop: true

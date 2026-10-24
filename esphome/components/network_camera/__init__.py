@@ -30,6 +30,7 @@ CONF_ON_SOURCE = "on_source"
 CONF_ON_STATE = "on_state"
 CONF_RECONNECT_INTERVAL = "reconnect_interval"
 CONF_RELEASE_BUFFER_ON_STOP = "release_buffer_on_stop"
+CONF_RELEASE_INPUT_BUFFERS_ON_STOP = "release_input_buffers_on_stop"
 CONF_REQUEST_TIMEOUT = "request_timeout"
 CONF_SOURCES = "sources"
 CONF_SOURCE_SELECT = "source_select"
@@ -117,6 +118,7 @@ CONFIG_SCHEMA = cv.All(
                 CONF_REQUEST_TIMEOUT, default="3s"
             ): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_RELEASE_BUFFER_ON_STOP, default=True): cv.boolean,
+            cv.Optional(CONF_RELEASE_INPUT_BUFFERS_ON_STOP, default=False): cv.boolean,
             cv.Optional(CONF_TASK_CORE, default=-1): cv.int_range(min=-1, max=1),
             cv.Optional(CONF_TASK_PRIORITY, default=1): cv.int_range(min=1, max=20),
             cv.Optional(CONF_TASK_STACK_SIZE, default=8192): cv.int_range(
@@ -179,6 +181,11 @@ async def to_code(config):
     )
     cg.add(var.set_request_timeout(config[CONF_REQUEST_TIMEOUT].total_milliseconds))
     cg.add(var.set_release_buffer_on_stop(config[CONF_RELEASE_BUFFER_ON_STOP]))
+    cg.add(
+        var.set_release_input_buffers_on_stop(
+            config[CONF_RELEASE_INPUT_BUFFERS_ON_STOP]
+        )
+    )
     cg.add(var.set_task_core(config[CONF_TASK_CORE]))
     cg.add(var.set_task_priority(config[CONF_TASK_PRIORITY]))
     cg.add(var.set_task_stack_size(config[CONF_TASK_STACK_SIZE]))

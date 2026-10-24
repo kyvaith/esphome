@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 import logging
+from pathlib import Path
 from typing import Any
 
 from esphome import automation
@@ -52,6 +53,7 @@ CONF_CODECS = "codecs"
 CONF_SUPPORTED_CHANNELS = "supported_channels"
 CONF_REQUIRE_FRAME_DONE = "require_frame_done"
 CONF_MAX_IMAGE_BYTES = "max_image_bytes"
+CONF_OPTIMIZE_MEMORY = "optimize_memory"
 
 CONF_STATIC_PAIRING_CODE = "static_pairing_code"
 CONF_UNPAIRED_ACCESS = "unpaired_access"
@@ -273,11 +275,18 @@ def _request_high_performance_networking(config: ConfigType) -> ConfigType:
     return config
 
 
+def _validate_memory_optimization(config: ConfigType) -> ConfigType:
+    if config[CONF_OPTIMIZE_MEMORY] and not CORE.using_toolchain_esp_idf:
+        raise cv.Invalid("optimize_memory requires the native ESP-IDF toolchain")
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(SendspinHub),
             cv.Optional(CONF_TASK_STACK_IN_PSRAM): psram.validate_task_stack_in_psram,
+            cv.Optional(CONF_OPTIMIZE_MEMORY, default=False): cv.boolean,
             cv.Optional(CONF_MANUFACTURER): DEVICE_INFO_STRING,
             cv.Optional(CONF_MODEL): DEVICE_INFO_STRING,
             cv.Optional(CONF_FIRMWARE_VERSION): DEVICE_INFO_STRING,
@@ -303,6 +312,7 @@ CONFIG_SCHEMA = cv.All(
     cv.only_on_esp32,
     # sendspin-cpp needs noise-c as an ESP-IDF component, which Arduino below IDF 6.0 cannot use.
     cv.only_with_framework("esp-idf"),
+    _validate_memory_optimization,
     _request_high_performance_networking,
 )
 
@@ -424,6 +434,14 @@ async def to_code(config: ConfigType) -> None:
 
     # sendspin-cpp library
     esp32.add_idf_component(name="sendspin/sendspin-cpp", ref="0.9.3")
+    if config[CONF_OPTIMIZE_MEMORY]:
+        esp32.add_idf_component(
+            name="sendspin_memory_patch",
+            path=Path(__file__).with_name("sendspin_memory_patch").as_posix(),
+        )
+        esp32.add_idf_sdkconfig_option(
+            "CONFIG_ESPHOME_SENDSPIN_MEMORY_OPTIMIZATIONS", True
+        )
     # esp_websocket_client links esp_tls even for ws:// connections.
     esp32.request_tls()
 

@@ -1,0 +1,9 @@
+config ESPHOME_SENDSPIN_MEMORY_OPTIMIZATIONS
+    bool "Size PCM receive overhead from its format and release idle artwork assemblies"
+    default n
+    help
+        Preserve Sendspin audio quotas, message limits and artwork caps while
+        deriving the receive hold window from PCM formats when no compressed
+        codec is offered. Allocate encoded artwork assemblies only during a
+        transfer or a parked acknowledgement, and release after the synchronous
+        decode callback or discard. The original 0.9.3 behavior remains when off.

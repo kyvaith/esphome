@@ -14,6 +14,7 @@ from contextlib import suppress
 import hashlib
 from pathlib import Path
 import re
+import runpy
 import sys
 
 env = None
@@ -3311,6 +3312,11 @@ def _patch_ppa_transaction_races(framework_dir: Path) -> None:
         if not target.is_file():
             raise RuntimeError(f"ESP-IDF PPA race fix source missing: {relative}")
         text = target.read_text(encoding="utf-8")
+        if "esphome_ppa_wait_diagnostics" in text:
+            diagnostic_patch = runpy.run_path(
+                str(Path(__file__).with_name("ppa_wait_diagnostics.py"))
+            )
+            text = diagnostic_patch["original_source"](relative, text)
         originals[target] = text
         for hunk in re.split(r"^@@[^\n]*\n", patch, flags=re.MULTILINE)[1:]:
             lines = hunk.splitlines(keepends=True)
@@ -3675,6 +3681,11 @@ def main() -> None:
     _patch_ppa_srm_dma_stall(framework_path)
     _patch_ppa_transaction_races(framework_path)
     _patch_dma2d_transaction_race(framework_path)
+    if "--ppa-wait-diagnostics" in sys.argv[2:]:
+        diagnostic_patch = runpy.run_path(
+            str(Path(__file__).with_name("ppa_wait_diagnostics.py"))
+        )
+        diagnostic_patch["patch_framework"](framework_path)
 
 
 if env is not None or __name__ == "__main__":

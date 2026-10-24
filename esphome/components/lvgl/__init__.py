@@ -177,6 +177,8 @@ CONF_PPA_BURST_LENGTH = "ppa_burst_length"
 CONF_FPS_BENCHMARK = "fps_benchmark"
 CONF_PERF_MONITOR = "perf_monitor"
 CONF_PROFILER = "profiler"
+CONF_HANDLER_DIAGNOSTICS = "handler_diagnostics"
+CONF_DIRECT_REGION_FULL_REFRESH_BARRIER = "direct_region_full_refresh_barrier"
 
 
 SIMPLE_TRIGGERS = (
@@ -552,6 +554,8 @@ async def to_code(configs):
     use_fps_benchmark = _config_bool(config_0.get(CONF_FPS_BENCHMARK, False))
     use_perf_monitor = _config_bool(config_0.get(CONF_PERF_MONITOR, False))
     use_profiler = _config_bool(config_0.get(CONF_PROFILER, False))
+    if config_0[CONF_HANDLER_DIAGNOSTICS]:
+        cg.add_define("USE_LVGL_HANDLER_DIAGNOSTICS")
 
     if use_fps_benchmark:
         # Espressif esp_lvgl_adapter FPS sampler (P10/25/50/75/90 report).
@@ -775,6 +779,11 @@ async def to_code(configs):
             rotation_type,
         )
         await cg.register_component(lv_component, config)
+        cg.add(
+            lv_component.set_direct_region_full_refresh_barrier(
+                config[CONF_DIRECT_REGION_FULL_REFRESH_BARRIER]
+            )
+        )
         if rotation := config.get(CONF_ROTATION):
             cg.add(lv_component.set_rotation(rotation))
         if paused := config[df.CONF_PAUSED]:
@@ -1114,6 +1123,9 @@ LVGL_TOP_LEVEL_SCHEMA = (
             cv.Optional(df.CONF_DEFAULT_FONT, default="montserrat_14"): lvalid.lv_font,
             cv.Optional(df.CONF_FULL_REFRESH, default=False): cv.boolean,
             cv.Optional(df.CONF_DIRECT_MODE, default=False): cv.boolean,
+            cv.Optional(
+                CONF_DIRECT_REGION_FULL_REFRESH_BARRIER, default=False
+            ): cv.boolean,
             cv.Optional(df.CONF_UPDATE_WHEN_DISPLAY_IDLE, default=False): cv.boolean,
             cv.Optional(df.CONF_REFRESH_INTERVAL): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_DRAW_ROUNDING, default=2): cv.positive_int,
@@ -1175,6 +1187,7 @@ LVGL_TOP_LEVEL_SCHEMA = (
             cv.Optional(CONF_FPS_BENCHMARK, default=False): cv.boolean,
             cv.Optional(CONF_PERF_MONITOR, default=False): cv.boolean,
             cv.Optional(CONF_PROFILER, default=False): cv.boolean,
+            cv.Optional(CONF_HANDLER_DIAGNOSTICS, default=False): cv.boolean,
             cv.Optional(df.CONF_DEBUG_OUTLINE, default=False): cv.boolean,
         }
     )

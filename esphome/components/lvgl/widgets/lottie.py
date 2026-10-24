@@ -43,6 +43,12 @@ Usage in ESPHome YAML:
         fast_radial_fill_color: 0x46B1E1
         fast_radial_outline_color: 0x0D0D0D
 
+    Optional ESP32 render task scheduling:
+        task_priority: 2  # FreeRTOS priority 1..24; the default preserves current behavior
+
+    Priority 1 shares processor time with the ESPHome loop. Benchmark animation
+    cadence and audio on the device before changing the default priority.
+
 Actions:
     - lvgl.lottie.start: my_animation
     - lvgl.lottie.stop: my_animation
@@ -82,6 +88,7 @@ CONF_FAST_RADIAL = "fast_radial"
 CONF_FAST_RADIAL_FILL_COLOR = "fast_radial_fill_color"
 CONF_FAST_RADIAL_OUTLINE_COLOR = "fast_radial_outline_color"
 CONF_COLOR_SLOT = "color_slot"
+CONF_TASK_PRIORITY = "task_priority"
 
 lv_lottie_t = LvType("lv_lottie_t")
 
@@ -172,6 +179,7 @@ LOTTIE_SCHEMA = cv.Schema(
         # declared by the embedded Lottie document; the reusable widget does
         # not assume a product-specific name when this is omitted.
         cv.Optional(CONF_COLOR_SLOT): cv.string,
+        cv.Optional(CONF_TASK_PRIORITY, default=2): cv.int_range(min=1, max=24),
         cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
     }
 ).add_extra(validate_lottie_source)
@@ -246,6 +254,7 @@ class LottieType(WidgetType):
         else:
             opaque_args += ", false, lv_color_hex(0x000000)"
         opaque_args += f", {play_count}, {render_width}, {render_height}, {fast_radial}, {fast_radial_fill_color}, {fast_radial_outline_color}{color_slot_args}"
+        opaque_args += f", {config[CONF_TASK_PRIORITY]}"
 
         # Use lottie_init() which handles PSRAM allocation, screen events, and task launch
         if src := config.get(CONF_SRC):

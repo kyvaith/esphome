@@ -21,6 +21,7 @@
 #include "esphome/core/log.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <cstdio>
 
@@ -190,6 +191,7 @@ struct LottieContext {
   StackType_t *task_stack;  // PSRAM – 64 KB
   StaticTask_t *task_tcb;   // internal RAM
   TaskHandle_t task_handle;
+  uint8_t task_priority;
   volatile bool stop_requested;
   volatile bool restart_requested;  // ✅ Flag to restart animation from frame 0
   volatile bool reveal_after_restart;
@@ -777,8 +779,7 @@ inline void lottie_fast_radial_make_vectors(float phase, LottieFastRadialVector 
 }
 
 // Clear only the rectangle that can contain one capsule. The source buffer is
-// ping-ponged, so clearing the previous and current bounds removes stale
-// pixels even when a buffer was last used two timeline frames ago.
+// ping-ponged, so its own retained frame identifies every old ray to erase.
 inline void lottie_fast_radial_clear_capsule_bounds(uint32_t *pixels, uint32_t stride_pixels, uint32_t width,
                                                      uint32_t height, float center_x, float center_y, float ux,
                                                      float uy, float half_length, float outer_radius) {
@@ -1003,11 +1004,35 @@ inline LOTTIE_FAST_RADIAL_HOT bool lottie_render_fast_radial_frame(LottieContext
                                                center_y + ray.y * ray_center_radius, ray.x, ray.y, ray_half_length,
                                                ray_outer_radius);
     }
+    // Old ray bounds already cover all stale ray pixels. Preserve the legacy
+    // second clear only where its coarse rectangle can touch the retained disk.
+    const float core_guard_radius = 26.0f * scale + stroke_half_width + 2.0f;
+    const float core_guard_squared = core_guard_radius * core_guard_radius;
+    constexpr float squared_coordinate_limit =
+        static_cast<float>(INT32_MAX) / (2.0f * LOTTIE_FAST_RADIAL_COORD_ONE * LOTTIE_FAST_RADIAL_COORD_ONE);
+    // Outside the signed Q8 distance domain, keep even legacy overflow pixels.
+    const bool bounded_core = core_guard_squared < squared_coordinate_limit;
     for (const auto &ray : ray_vectors) {
+      const float ray_x = center_x + ray.x * ray_center_radius;
+      const float ray_y = center_y + ray.y * ray_center_radius;
+      const float extent_x = std::fabs(ray.x) * ray_half_length + ray_outer_radius + 1.5f;
+      const float extent_y = std::fabs(ray.y) * ray_half_length + ray_outer_radius + 1.5f;
+      const int x_start = std::max(0, static_cast<int>(std::floor(ray_x - extent_x)));
+      const int y_start = std::max(0, static_cast<int>(std::floor(ray_y - extent_y)));
+      const int x_end = std::min(static_cast<int>(ctx->render_width) - 1,
+                                static_cast<int>(std::ceil(ray_x + extent_x)));
+      const int y_end = std::min(static_cast<int>(ctx->render_height) - 1,
+                                static_cast<int>(std::ceil(ray_y + extent_y)));
+      if (x_start > x_end || y_start > y_end)
+        continue;
+      const float nearest_x = std::clamp(center_x, static_cast<float>(x_start) + 0.5f,
+                                        static_cast<float>(x_end) + 0.5f) - center_x;
+      const float nearest_y = std::clamp(center_y, static_cast<float>(y_start) + 0.5f,
+                                        static_cast<float>(y_end) + 0.5f) - center_y;
+      if (bounded_core && nearest_x * nearest_x + nearest_y * nearest_y > core_guard_squared)
+        continue;
       lottie_fast_radial_clear_capsule_bounds(pixels, stride_pixels, ctx->render_width, ctx->render_height,
-                                               center_x + ray.x * ray_center_radius,
-                                               center_y + ray.y * ray_center_radius, ray.x, ray.y, ray_half_length,
-                                               ray_outer_radius);
+                                               ray_x, ray_y, ray.x, ray.y, ray_half_length, ray_outer_radius);
     }
   }
   ctx->fast_radial_dirty_x1 = static_cast<int16_t>(clear_x_start);
@@ -3296,15 +3321,14 @@ inline bool lottie_launch(LottieContext *ctx) {
   ctx->launch_tick = xTaskGetTickCount();
 #if CONFIG_FREERTOS_UNICORE
   constexpr BaseType_t render_core = tskNO_AFFINITY;
-  constexpr BaseType_t render_priority = 2;
 #else
   // The regional PPA compositor is pinned to the background core. Keep the
   // CPU-bound weather rasterizer beside ESPHome's loop task so the PPA work
   // can progress independently instead of serializing both halves on core 0.
   const BaseType_t loop_core = esp32::loop_task_core();
   const BaseType_t render_core = loop_core == 0 || loop_core == 1 ? loop_core : xPortGetCoreID();
-  constexpr BaseType_t render_priority = 2;
 #endif
+  const UBaseType_t render_priority = ctx->task_priority;
   ctx->task_handle =
       xTaskCreateStaticPinnedToCore(lottie_render_task, "lottie_anim", LOTTIE_TASK_STACK_SIZE / sizeof(StackType_t),
                                     ctx, render_priority, ctx->task_stack, ctx->task_tcb, render_core);
@@ -3818,7 +3842,7 @@ inline bool lottie_init(lv_obj_t *obj, const void *data, size_t data_size, const
                         uint32_t render_width = 0, uint32_t render_height = 0, bool fast_radial = false,
                         lv_color_t fast_radial_fill_color = lv_color_hex(0x46B1E1),
                         lv_color_t fast_radial_outline_color = lv_color_hex(0x0D0D0D),
-                        const char *color_slot = nullptr) {
+                        const char *color_slot = nullptr, uint8_t task_priority = 2) {
   LottieContext *ctx = (LottieContext *) heap_caps_malloc(sizeof(LottieContext), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   if (!ctx)
     return false;
@@ -3842,6 +3866,7 @@ inline bool lottie_init(lv_obj_t *obj, const void *data, size_t data_size, const
   ctx->fast_radial_fill_color = fast_radial_fill_color;
   ctx->fast_radial_outline_color = fast_radial_outline_color;
   ctx->color_slot = color_slot;
+  ctx->task_priority = task_priority;
   ctx->color_slot_rgb = (static_cast<uint32_t>(fast_radial_fill_color.red) << 16) |
                         (static_cast<uint32_t>(fast_radial_fill_color.green) << 8) |
                         static_cast<uint32_t>(fast_radial_fill_color.blue);

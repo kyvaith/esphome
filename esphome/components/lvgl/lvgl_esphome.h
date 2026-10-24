@@ -4,6 +4,10 @@
 #include "esphome/components/lvgl/scroll_snapshot_geometry.h"
 #include "esphome/core/defines.h"
 
+#ifdef USE_LVGL_HANDLER_DIAGNOSTICS
+#include "handler_diagnostics.h"
+#endif
+
 #ifdef USE_BINARY_SENSOR
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #endif  // USE_BINARY_SENSOR
@@ -450,6 +454,7 @@ class LvglComponent final : public PollingComponent {
   }
   void set_landscape_trigger(Trigger<> *trigger) { this->landscape_callback_ = trigger; }
   void set_portrait_trigger(Trigger<> *trigger) { this->portrait_callback_ = trigger; }
+  void set_direct_region_full_refresh_barrier(bool enabled) { this->direct_region_full_refresh_barrier_ = enabled; }
 
   /** Temporarily hand the display framebuffers to an external renderer.
    *
@@ -898,6 +903,7 @@ class LvglComponent final : public PollingComponent {
   lv_area_t direct_dirty_areas_[DIRECT_DIRTY_AREA_CAPACITY]{};
   size_t direct_dirty_area_count_{};
   bool direct_mode_active_{false};
+  bool direct_region_full_refresh_barrier_{false};
   std::atomic<bool> direct_image_animation_active_{false};
   std::atomic<bool> direct_image_animation_allows_regions_{false};
   bool direct_image_framebuffer_dma_owned_[3]{};
@@ -918,6 +924,7 @@ class LvglComponent final : public PollingComponent {
   std::atomic<uint32_t> direct_region_submit_busy_{0};
   std::atomic<uint32_t> direct_region_concurrent_refreshes_{0};
   std::atomic<uint32_t> direct_region_refresh_fallbacks_{0};
+  std::atomic<uint32_t> direct_region_full_refresh_barriers_{0};
   std::atomic<uint32_t> direct_region_refresh_relock_us_{0};
   std::atomic<uint32_t> direct_region_refresh_relock_max_us_{0};
   std::atomic<uint32_t> direct_region_full_rebases_{0};
@@ -932,6 +939,7 @@ class LvglComponent final : public PollingComponent {
   uint8_t *direct_region_scale_scratch_{nullptr};
   size_t direct_region_scale_scratch_size_{};
   bool direct_region_refresh_locked_{false};
+  bool direct_region_full_refresh_barrier_active_{false};
   uint8_t *direct_region_refresh_reserved_buffer_{nullptr};
 #endif
 #ifdef USE_ESP32
@@ -1006,6 +1014,9 @@ class LvglComponent final : public PollingComponent {
   uint64_t perf_flush_px_{0};
   uint32_t perf_loop_max_us_{0};
   uint32_t perf_flush_max_us_{0};
+#ifdef USE_LVGL_HANDLER_DIAGNOSTICS
+  HandlerDiagnostics handler_diagnostics_{};
+#endif
 };
 
 class IdleTrigger : public Trigger<> {

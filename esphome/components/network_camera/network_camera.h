@@ -60,6 +60,7 @@ class NetworkCamera : public Component, public image::Image {
   void set_reconnect_interval(uint32_t interval_ms) { this->reconnect_interval_ms_ = interval_ms; }
   void set_request_timeout(uint32_t timeout_ms) { this->request_timeout_ms_ = timeout_ms; }
   void set_release_buffer_on_stop(bool release) { this->release_buffer_on_stop_ = release; }
+  void set_release_input_buffers_on_stop(bool release) { this->release_input_buffers_on_stop_ = release; }
   void set_task_core(int8_t core) { this->task_core_ = core; }
   void set_task_priority(uint8_t priority) { this->task_priority_ = priority; }
   void set_task_stack_size(uint32_t size) { this->task_stack_size_ = size; }
@@ -116,6 +117,8 @@ class NetworkCamera : public Component, public image::Image {
   void stream_task_();
   bool connect_stream_(const StreamSource &source);
   void disconnect_stream_();
+  bool ensure_input_buffers_();
+  void release_input_buffers_();
   bool read_stream_();
   bool consume_stream_bytes_(const uint8_t *data, size_t size);
   bool finish_jpeg_frame_();
@@ -144,6 +147,7 @@ class NetworkCamera : public Component, public image::Image {
   uint32_t task_stack_size_{8192};
   bool task_stack_in_psram_{false};
   bool release_buffer_on_stop_{true};
+  bool release_input_buffers_on_stop_{false};
 
   mutable Mutex frame_mutex_{};
   uint8_t *frame_buffer_{nullptr};
@@ -165,6 +169,8 @@ class NetworkCamera : public Component, public image::Image {
   std::atomic<bool> first_frame_pending_{false};
   std::atomic<bool> awaiting_first_frame_{true};
   std::atomic<bool> source_event_pending_{false};
+  std::atomic<bool> input_allocation_failed_{false};
+  bool input_allocation_warning_{false};
 
   std::atomic<uint32_t> received_frames_{0};
   std::atomic<uint32_t> decoded_frames_{0};
@@ -193,6 +199,8 @@ class NetworkCamera : public Component, public image::Image {
   esp_http_client_handle_t http_client_{nullptr};
   uint8_t *encoded_buffer_{nullptr};
   uint8_t *read_buffer_{nullptr};
+  // The worker owns both pointers. Diagnostics read only this atomic footprint.
+  std::atomic<size_t> input_buffer_bytes_{0};
   size_t read_buffer_size_{8192};
   size_t encoded_size_{0};
   bool jpeg_started_{false};

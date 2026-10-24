@@ -1,0 +1,10 @@
+config ESPHOME_PPA_WAIT_DIAGNOSTICS
+    bool "ESPHome PPA completion wait diagnostics"
+    depends on IDF_TARGET_ESP32P4
+    default n
+    help
+        Retain a bounded numeric DMA2D interrupt journal and report PPA waits
+        longer than one second. This does not complete, cancel, or recover a
+        stalled transaction. An explicit diagnostic API may force SRM macroblock
+        bypass only for an unrotated RGB888 1:1 FIFO equality case.
+        Intended for diagnosis with the reviewed ESP-IDF 5.5.6 SDK only.

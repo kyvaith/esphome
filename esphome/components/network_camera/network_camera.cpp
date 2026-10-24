@@ -61,12 +61,7 @@ NetworkCamera::NetworkCamera() : image::Image(nullptr, 0, 0, image::IMAGE_TYPE_R
 NetworkCamera::~NetworkCamera() {
 #ifdef USE_ESP_IDF
   this->disconnect_stream_();
-  if (this->encoded_buffer_ != nullptr)
-    heap_caps_free(this->encoded_buffer_);
-  this->encoded_buffer_ = nullptr;
-  if (this->read_buffer_ != nullptr)
-    heap_caps_free(this->read_buffer_);
-  this->read_buffer_ = nullptr;
+  this->release_input_buffers_();
   this->release_frame_buffer_();
   if (this->stream_task_stack_ != nullptr && this->stream_task_handle_ == nullptr)
     heap_caps_free(this->stream_task_stack_);
@@ -97,23 +92,9 @@ void NetworkCamera::setup() {
     }
     this->sources_.reserve(this->max_runtime_sources_);
   }
-  this->encoded_buffer_ =
-      static_cast<uint8_t *>(heap_caps_malloc(this->max_frame_size_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (this->encoded_buffer_ == nullptr)
-    this->encoded_buffer_ = static_cast<uint8_t *>(heap_caps_malloc(this->max_frame_size_, MALLOC_CAP_8BIT));
-  if (this->encoded_buffer_ == nullptr) {
-    ESP_LOGE(TAG, "Unable to allocate the %zu-byte encoded frame buffer", this->max_frame_size_);
-    this->mark_failed();
-    return;
-  }
-  // esp_http_client_read copies into this buffer; it is not a DMA destination.
-  // Keep scarce internal memory available for lwIP and driver control objects.
-  this->read_buffer_ =
-      static_cast<uint8_t *>(heap_caps_malloc(this->read_buffer_size_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (this->read_buffer_ == nullptr)
-    this->read_buffer_ = static_cast<uint8_t *>(heap_caps_malloc(this->read_buffer_size_, MALLOC_CAP_8BIT));
-  if (this->read_buffer_ == nullptr) {
-    ESP_LOGE(TAG, "Unable to allocate the %zu-byte HTTP read buffer", this->read_buffer_size_);
+  // The default keeps setup-time reservation and its original permanent-failure
+  // policy. Opt-in stream-lifetime buffers are acquired only by the worker.
+  if (!this->release_input_buffers_on_stop_ && !this->ensure_input_buffers_()) {
     this->mark_failed();
     return;
   }
@@ -167,6 +148,14 @@ void NetworkCamera::setup() {
 }
 
 void NetworkCamera::loop() {
+  const bool input_failed = this->input_allocation_failed_.load(std::memory_order_acquire);
+  if (input_failed != this->input_allocation_warning_) {
+    this->input_allocation_warning_ = input_failed;
+    if (input_failed)
+      this->status_set_warning(LOG_STR("Unable to allocate camera input buffers"));
+    else
+      this->status_clear_warning();
+  }
   const StreamState current = this->state_.load(std::memory_order_acquire);
   if (current != this->reported_state_.load(std::memory_order_relaxed)) {
     this->reported_state_.store(current, std::memory_order_relaxed);
@@ -201,6 +190,7 @@ void NetworkCamera::dump_config() {
   ESP_LOGCONFIG(TAG, "  Frame interval: %u ms", static_cast<unsigned>(this->frame_interval_ms_));
   ESP_LOGCONFIG(TAG, "  Reconnect interval: %u ms", static_cast<unsigned>(this->reconnect_interval_ms_));
   ESP_LOGCONFIG(TAG, "  Release decoded frame on stop: %s", YESNO(this->release_buffer_on_stop_));
+  ESP_LOGCONFIG(TAG, "  Release input buffers on stop: %s", YESNO(this->release_input_buffers_on_stop_));
   ESP_LOGCONFIG(TAG, "  Worker: core %d%s, priority %u, stack %u (%s)", static_cast<int>(this->resolved_task_core_),
                 this->task_core_ < 0 ? " (automatic)" : "", this->task_priority_,
                 static_cast<unsigned>(this->task_stack_size_), this->task_stack_in_psram_ ? "PSRAM" : "internal");
@@ -373,7 +363,7 @@ const char *NetworkCamera::state_name() const { return state_to_string(this->sta
 size_t NetworkCamera::memory_usage_bytes() const {
   LockGuard lock(this->frame_mutex_);
 #ifdef USE_ESP_IDF
-  return this->frame_capacity_ + (this->encoded_buffer_ == nullptr ? 0 : this->max_frame_size_);
+  return this->frame_capacity_ + this->input_buffer_bytes_.load(std::memory_order_acquire);
 #else
   return this->frame_capacity_;
 #endif
@@ -438,6 +428,9 @@ void NetworkCamera::stream_task_() {
   while (!this->shutdown_requested_.load(std::memory_order_acquire)) {
     if (!this->running_requested_.load(std::memory_order_acquire)) {
       this->disconnect_stream_();
+      if (this->release_input_buffers_on_stop_)
+        this->release_input_buffers_();
+      this->input_allocation_failed_.store(false, std::memory_order_release);
       if (this->release_buffer_on_stop_)
         this->release_frame_buffer_();
       this->set_state_(StreamState::IDLE);
@@ -463,6 +456,13 @@ void NetworkCamera::stream_task_() {
 
     if (this->http_client_ == nullptr || connected_revision != revision) {
       this->disconnect_stream_();
+      if (!this->ensure_input_buffers_()) {
+        this->input_allocation_failed_.store(true, std::memory_order_release);
+        this->set_state_(StreamState::RETRY_WAIT);
+        this->wait_for_task_wakeup_(this->reconnect_interval_ms_);
+        continue;
+      }
+      this->input_allocation_failed_.store(false, std::memory_order_release);
       this->set_state_(StreamState::CONNECTING);
       if (!this->connect_stream_(source)) {
         this->reconnects_.fetch_add(1, std::memory_order_relaxed);
@@ -486,7 +486,50 @@ void NetworkCamera::stream_task_() {
   }
 
   this->disconnect_stream_();
+  this->release_input_buffers_();
   this->stream_task_handle_ = nullptr;
+}
+
+bool NetworkCamera::ensure_input_buffers_() {
+  if (this->encoded_buffer_ != nullptr && this->read_buffer_ != nullptr)
+    return true;
+
+  auto *encoded =
+      static_cast<uint8_t *>(heap_caps_malloc(this->max_frame_size_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (encoded == nullptr)
+    encoded = static_cast<uint8_t *>(heap_caps_malloc(this->max_frame_size_, MALLOC_CAP_8BIT));
+  if (encoded == nullptr) {
+    ESP_LOGW(TAG, "Unable to allocate the %zu-byte encoded frame buffer", this->max_frame_size_);
+    return false;
+  }
+  // HTTP copies into this buffer; it is not a DMA destination. Prefer PSRAM so
+  // socket/driver control objects retain their scarce internal-memory budget.
+  auto *read =
+      static_cast<uint8_t *>(heap_caps_malloc(this->read_buffer_size_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (read == nullptr)
+    read = static_cast<uint8_t *>(heap_caps_malloc(this->read_buffer_size_, MALLOC_CAP_8BIT));
+  if (read == nullptr) {
+    heap_caps_free(encoded);
+    ESP_LOGW(TAG, "Unable to allocate the %zu-byte HTTP read buffer", this->read_buffer_size_);
+    return false;
+  }
+
+  this->encoded_buffer_ = encoded;
+  this->read_buffer_ = read;
+  this->input_buffer_bytes_.store(this->max_frame_size_ + this->read_buffer_size_, std::memory_order_release);
+  return true;
+}
+
+void NetworkCamera::release_input_buffers_() {
+  // Only setup/destruction or the idle/exiting stream worker calls this. An HTTP
+  // read, parser or JPEG consumer must have returned and disconnect reset it.
+  if (this->encoded_buffer_ != nullptr)
+    heap_caps_free(this->encoded_buffer_);
+  this->encoded_buffer_ = nullptr;
+  if (this->read_buffer_ != nullptr)
+    heap_caps_free(this->read_buffer_);
+  this->read_buffer_ = nullptr;
+  this->input_buffer_bytes_.store(0, std::memory_order_release);
 }
 
 bool NetworkCamera::get_source_(size_t index, StreamSource *source) const {

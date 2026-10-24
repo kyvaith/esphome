@@ -14,6 +14,7 @@ Communication from ESPHome (__init__.py) via build flags:
 # ruff: noqa: F821
 # pylint: disable=undefined-variable
 from contextlib import suppress
+import hashlib
 from pathlib import Path
 import re
 import sys
@@ -184,25 +185,84 @@ static esp_err_t ppa_cache_msync_external_window(uint32_t window_start, uint32_t
 }
 """
 
+PPA_CACHE_REGION_START = (
+    "    // Write back and invalidate necessary data "
+    "(note that the window content is not continuous in the buffer)\n"
+)
+PPA_CACHE_REGION_END = "\n    esp_err_t ret = ESP_OK;"
+PPA_CACHE_PREIMAGES = {
+    (5, 5, 5): {
+        "ppa_srm.c": "4d1cd887567a1f7cca3ec1a0f7272d41da9f4f350b26995adeb461ec68cb6a65",
+        "ppa_blend.c": "c10bc188d7900334fa51372c7ac68a6a4cdae545f7efde20aa210f50d8d18095",
+        "ppa_fill.c": "ae25335285c724e0599a5aaa3ad9437b641e4eb55a6ac4d12a45adfde5963223",
+    },
+    (5, 5, 6): {
+        "ppa_srm.c": "c3dbb79592dc5effd6ea49e9c9e09248c6fe8318455b5463d1a86c50b0c3ef9a",
+        "ppa_blend.c": "859c14a92cdfae5e71ab0882edaf44c838c6ab9fa7762f6aabd758fc78e0841d",
+        "ppa_fill.c": "b87f08a49ba091a273b7aa9a84e0f04b028b365f77f22e9bd4bd7e60c855ac52",
+    },
+}
+PPA_DESCRIPTOR_CACHE_CALLS = {
+    "ppa_srm.c": (
+        "esp_cache_msync((void *)srm_engine->dma_tx_desc, platform->dma_desc_mem_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
+        "esp_cache_msync((void *)srm_engine->dma_rx_desc, platform->dma_desc_mem_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
+    ),
+    "ppa_blend.c": (
+        "esp_cache_msync((void *)blend_engine->dma_tx_bg_desc, platform->dma_desc_mem_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
+        "esp_cache_msync((void *)blend_engine->dma_tx_fg_desc, platform->dma_desc_mem_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
+        "esp_cache_msync((void *)blend_engine->dma_rx_desc, platform->dma_desc_mem_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
+    ),
+    "ppa_fill.c": (
+        "esp_cache_msync((void *)blend_engine->dma_rx_desc, platform->dma_desc_mem_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
+    ),
+}
+
 
 def replace_espidf_ppa_cache_sync_helper(text):
-    # Remove declarations left by earlier runs before replacing the helper.
-    # The ESP-IDF package is cached between PlatformIO builds, so the patch
-    # must be idempotent rather than prepending another weak declaration.
-    text = re.sub(
-        r"\n*extern bool esphome_lvgl_ppa_skip_cache_msync\([^;]+?"
-        r"__attribute__\(\(weak\)\);\n",
-        "\n",
-        text,
-        flags=re.DOTALL,
+    """Canonicalize the reviewed helper without accumulating blank lines."""
+    definition = "static esp_err_t ppa_cache_msync_external_window("
+    tags = list(
+        re.finditer(r'static const char \*TAG = "ppa_(?:srm|blend|fill)";', text)
     )
-    helper_start = text.find("static esp_err_t ppa_cache_msync_external_window(")
-    if helper_start == -1:
-        return text
-    tag_start = text.find('\nstatic const char *TAG = "ppa_', helper_start)
-    if tag_start == -1:
-        return text
-    return text[:helper_start] + PPA_CACHE_SYNC_HELPER.strip() + "\n" + text[tag_start:]
+    if len(tags) != 1 or text.count(definition) > 1:
+        raise RuntimeError(
+            "Unsupported ESP-IDF PPA cache helper layout; patch needs review"
+        )
+    tag_start = tags[0].start()
+    if definition not in text:
+        if "esphome_lvgl_ppa_skip_cache_msync" in text:
+            raise RuntimeError(
+                "Incomplete ESP-IDF PPA cache helper; patch needs review"
+            )
+        prefix = text[:tag_start]
+    else:
+        helper_start = text.index(definition)
+        declarations = list(
+            re.finditer(
+                r"extern bool esphome_lvgl_ppa_skip_cache_msync\([^;]+?"
+                r"__attribute__\(\(weak\)\);",
+                text,
+                re.DOTALL,
+            )
+        )
+        expected_body = PPA_CACHE_SYNC_HELPER[
+            PPA_CACHE_SYNC_HELPER.index(definition) :
+        ].strip()
+        if (
+            len(declarations) != 1
+            or declarations[0].end() > helper_start
+            or text[declarations[0].end() : helper_start].strip()
+            or text[helper_start:tag_start].strip() != expected_body
+        ):
+            raise RuntimeError("ESP-IDF PPA cache helper changed; patch needs review")
+        prefix = text[: declarations[0].start()]
+    return (
+        prefix.rstrip()
+        + "\n\n"
+        + PPA_CACHE_SYNC_HELPER.strip()
+        + "\n\n"
+        + text[tag_start:]
+    )
 
 
 def write_atomic_shim(shim):
@@ -546,26 +606,12 @@ create_piolibdeps_atomic_shim()
 patch_piolibdeps_lvgl_sources()
 
 
-def patch_espidf_ppa_cache_sync_source(src):
-    src = Path(src)
-    if not src.exists():
-        return
-    try:
-        text = src.read_text(encoding="utf-8", errors="ignore")
-    except OSError as err:
-        print("WARNING: failed to read ESP-IDF PPA source:", err)
-        return
-
-    original = text
-    if "ppa_cache_msync_external_window" not in text:
-        text = text.replace(
-            'static const char *TAG = "ppa_',
-            PPA_CACHE_SYNC_HELPER + '\nstatic const char *TAG = "ppa_',
-            1,
-        )
-    else:
-        text = replace_espidf_ppa_cache_sync_helper(text)
-
+def _ppa_cache_sync_replacements(name):
+    preserve_output = (
+        "config->out.block_offset_x != 0 || new_block_w != config->out.pic_w"
+        if name == "ppa_srm.c"
+        else "true"
+    )
     replacements = {
         "esp_cache_msync((void *)in_ext_window, in_ext_window_len, "
         "ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);": "ppa_cache_msync_external_window(in_ext_window, in_ext_window_len, "
@@ -574,7 +620,7 @@ def patch_espidf_ppa_cache_sync_source(src):
         "PPA_ALIGN_UP(out_ext_window_len + (out_ext_window - out_ext_window_aligned), "
         "buf_alignment_size), ESP_CACHE_MSYNC_FLAG_DIR_M2C);": "ppa_cache_msync_external_window(out_ext_window, out_ext_window_len, "
         "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C, "
-        "config->out.block_offset_x != 0 || new_block_w != config->out.pic_w);",
+        f"{preserve_output});",
         "esp_cache_msync((void *)in_bg_ext_window_aligned, "
         "PPA_ALIGN_UP(in_bg_ext_window_len + (in_bg_ext_window - in_bg_ext_window_aligned), "
         "buf_alignment_size), ESP_CACHE_MSYNC_FLAG_DIR_C2M);": "ppa_cache_msync_external_window(in_bg_ext_window, in_bg_ext_window_len, "
@@ -588,54 +634,104 @@ def patch_espidf_ppa_cache_sync_source(src):
         "buf_alignment_size), ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE);": "ppa_cache_msync_external_window(out_ext_window, out_ext_window_len, "
         "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE, true);",
     }
-    for old, new in replacements.items():
-        text = text.replace(old, new)
+    if name == "ppa_srm.c":
+        indexes = (0, 1)
+    elif name == "ppa_blend.c":
+        indexes = (2, 3, 1)
+    elif name == "ppa_fill.c":
+        indexes = (4,)
+    else:
+        raise RuntimeError(f"Unsupported ESP-IDF PPA source: {name}")
+    items = list(replacements.items())
+    return [items[index] for index in indexes]
 
-    # Upgrade sources patched by an earlier version of this script. SRM can
-    # discard dirty cache lines only when it overwrites complete output rows;
-    # partial blend output must preserve pixels outside the target block.
-    text = text.replace(
-        "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);",
-        "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M, false);",
-    )
-    preserve_srm_output = (
-        "config->out.block_offset_x != 0 || new_block_w != config->out.pic_w"
-        if src.name == "ppa_srm.c"
-        else "true"
-    )
-    text = text.replace(
-        "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);",
-        f"buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C, {preserve_srm_output});",
-    )
-    if src.name != "ppa_srm.c":
-        text = text.replace(
-            "config->out.block_offset_x != 0 || new_block_w != config->out.pic_w",
-            "true",
+
+def _prepare_espidf_ppa_cache_sync_source(src, text, idf_version=None):
+    """Validate the complete touched region before changing any source."""
+    if idf_version is not None and idf_version not in PPA_CACHE_PREIMAGES:
+        raise RuntimeError(
+            f"Unsupported ESP-IDF PPA cache patch version: {idf_version}"
         )
-    text = text.replace(
-        "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE);",
-        "buf_alignment_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | "
-        "ESP_CACHE_MSYNC_FLAG_INVALIDATE, true);",
-    )
+    if text.count(PPA_CACHE_REGION_START) != 1:
+        raise RuntimeError(f"Unsupported ESP-IDF PPA cache region: {src}")
+    start = text.index(PPA_CACHE_REGION_START)
+    end = text.find(PPA_CACHE_REGION_END, start)
+    if end == -1:
+        raise RuntimeError(f"Incomplete ESP-IDF PPA cache region: {src}")
+    block = text[start:end]
+    normalized = block
+    replacements = _ppa_cache_sync_replacements(src.name)
+    for old, new in replacements:
+        legacy = new.rsplit(", ", 1)[0] + ");"
+        variants = (old, new, legacy)
+        if sum(block.count(variant) for variant in variants) != 1:
+            raise RuntimeError(f"Unsupported ESP-IDF PPA cache call: {src}")
+        normalized = normalized.replace(new, old).replace(legacy, old)
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    versions = (idf_version,) if idf_version is not None else PPA_CACHE_PREIMAGES
+    if not any(
+        digest == PPA_CACHE_PREIMAGES[version][src.name] for version in versions
+    ):
+        raise RuntimeError(f"ESP-IDF PPA cache preimage changed: {src} sha256={digest}")
+    for old, new in replacements:
+        legacy = new.rsplit(", ", 1)[0] + ");"
+        block = block.replace(old, new).replace(legacy, new)
+    text = text[:start] + block + text[end:]
+    text = replace_espidf_ppa_cache_sync_helper(text)
+    remaining = text.replace(PPA_CACHE_SYNC_HELPER.strip(), "", 1)
+    for call in PPA_DESCRIPTOR_CACHE_CALLS[src.name]:
+        if remaining.count(call) != 1:
+            raise RuntimeError(f"ESP-IDF PPA descriptor cache call changed: {src}")
+        remaining = remaining.replace(call, "", 1)
+    if "esp_cache_msync(" in remaining:
+        raise RuntimeError(
+            f"Unreviewed ESP-IDF PPA cache call outside guarded region: {src}"
+        )
+    return text
 
-    if text == original:
-        return
-    try:
-        src.write_text(text, encoding="utf-8")
+
+def patch_espidf_ppa_cache_sync_source(src, idf_version=None):
+    src = Path(src)
+    original = src.read_text(encoding="utf-8")
+    patched = _prepare_espidf_ppa_cache_sync_source(src, original, idf_version)
+    if patched != original:
+        src.write_text(patched, encoding="utf-8", newline="\n")
         print("Patched ESP-IDF PPA cache sync guards:", src)
-    except OSError as err:
-        print("WARNING: failed to patch ESP-IDF PPA source:", err)
 
 
-def patch_espidf_ppa_cache_sync():
-    if env is None:
-        return
-    framework_dir = env.PioPlatform().get_package_dir("framework-espidf")
-    if not framework_dir:
-        return
-    ppa_src = Path(framework_dir) / "components" / "esp_driver_ppa" / "src"
+def patch_espidf_ppa_cache_sync(framework_dir=None):
+    """Apply the same checked SDK patch from native IDF or PlatformIO."""
+    if framework_dir is None:
+        if env is None:
+            return
+        framework_dir = env.PioPlatform().get_package_dir("framework-espidf")
+        if not framework_dir:
+            return
+    framework_dir = Path(framework_dir)
+    version_text = (framework_dir / "version.txt").read_text(encoding="utf-8").strip()
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", version_text)
+    if match is None:
+        raise RuntimeError(f"Unsupported ESP-IDF version string: {version_text!r}")
+    idf_version = tuple(int(part) for part in match.groups())
+    if idf_version not in PPA_CACHE_PREIMAGES:
+        raise RuntimeError(
+            f"Unsupported ESP-IDF PPA cache patch version: {idf_version}"
+        )
+    ppa_src = framework_dir / "components" / "esp_driver_ppa" / "src"
+    prepared = []
     for name in ("ppa_srm.c", "ppa_blend.c", "ppa_fill.c"):
-        patch_espidf_ppa_cache_sync_source(ppa_src / name)
+        source = ppa_src / name
+        original = source.read_text(encoding="utf-8")
+        patched = _prepare_espidf_ppa_cache_sync_source(source, original, idf_version)
+        prepared.append((source, original, patched))
+    # Preflight every file first: a changed SDK must not leave a partial patch.
+    for source, original, patched in prepared:
+        if patched != original:
+            source.write_text(patched, encoding="utf-8", newline="\n")
+        print(
+            f"ESPHome PPA cache source IDF={version_text} path={source} "
+            f"sha256={hashlib.sha256(patched.encode('utf-8')).hexdigest()}"
+        )
 
 
 patch_espidf_ppa_cache_sync()
@@ -908,7 +1004,7 @@ if env is not None:
     env.AddBuildMiddleware(lvgl_src_filter)
 elif __name__ == "__main__":
     if len(sys.argv) != 3:
-        raise RuntimeError("Expected --patch-component-sources LVGL_COMPONENT_DIR")
+        raise RuntimeError("Expected a source patch command and its explicit directory")
     if sys.argv[1] == "--patch-component-sources":
         patch_component_sources(sys.argv[2])
     elif sys.argv[1] == "--patch-ppa-blocking-user-data":
@@ -920,5 +1016,7 @@ elif __name__ == "__main__":
             / "ppa"
             / "lv_draw_ppa_img.c"
         )
+    elif sys.argv[1] == "--patch-espidf-ppa-cache-sync":
+        patch_espidf_ppa_cache_sync(sys.argv[2])
     else:
         raise RuntimeError(f"Unknown LVGL source patch command: {sys.argv[1]}")

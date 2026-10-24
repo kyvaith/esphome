@@ -106,6 +106,7 @@ CMakeLists.txt
 !esphome/components/esp32_hosted/sdmmc_framework_patch/CMakeLists.txt
 !esphome/components/lvgl/lvgl_source_patch/CMakeLists.txt
 !esphome/components/mipi_dsi/mipi_dsi_framework_patch/CMakeLists.txt
+!esphome/components/sendspin/sendspin_memory_patch/CMakeLists.txt
 
 # User-specific stuff:
 .idea/**/workspace.xml
