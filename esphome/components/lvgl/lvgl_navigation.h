@@ -2,6 +2,9 @@
 
 #include "lvgl_gesture_router.h"
 #include "lvgl_esphome.h"
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+#include "navigation_admission.h"
+#endif
 
 #include "esphome/core/automation.h"
 #include "esphome/core/helpers.h"
@@ -155,6 +158,15 @@ class LvglNavigation {
   void set_external_touch_capture(bool capture);
   void loop();
 
+  // True admits the request, not animation completion or physical scanout.
+  bool try_open_application(LvglApplication *application);
+  bool try_close_application();
+  bool try_show_home();
+  bool try_refresh_home();
+  bool try_prepare_application_snapshots();
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+  bool add_admission_guard(NavigationAdmissionGuard *guard);
+#endif
   void open_application(LvglApplication *application);
   void close_application();
   void show_home();
@@ -167,6 +179,7 @@ class LvglNavigation {
   bool is_home_snapshot_prepared() const;
 
   bool is_application_open(const LvglApplication *application) const;
+  bool is_transition_active() const;
   LvglApplication *get_active_application() const;
   void activate_home_view(int index, bool preserve_scanout = false);
   void notify_home_presented(int index);
@@ -174,6 +187,16 @@ class LvglNavigation {
   void complete_application_transition(LvglApplication *application, bool opening, bool close_committed);
 
  protected:
+  void open_application_(LvglApplication *application);
+  void close_application_();
+  void show_home_();
+  void refresh_home_();
+  void prepare_application_snapshots_();
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+  bool admit_navigation_(NavigationAdmissionKind kind, LvglApplication *application);
+  NavigationAdmissionGuard *admission_guards_[ESPHOME_LVGL_NAVIGATION_ADMISSION_GUARD_COUNT]{};
+  uint8_t admission_guard_count_{};
+#endif
   enum class TouchContext : uint8_t {
     NONE,
     BLOCKED,

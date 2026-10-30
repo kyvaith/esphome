@@ -128,6 +128,12 @@ void LvglNavigation::touch_begin(int32_t x, int32_t y) {
     return;
   }
   if (this->snapshot_compositor_ != nullptr && this->snapshot_compositor_->is_home_active()) {
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+    if (!this->admit_navigation_(NavigationAdmissionKind::TAKEOVER, nullptr)) {
+      this->touch_context_ = TouchContext::BLOCKED;
+      return;
+    }
+#endif
     int page_index = -1;
     int32_t offset_x = 0;
     if (this->snapshot_compositor_->take_over_home(&page_index, &offset_x)) {
@@ -166,6 +172,12 @@ void LvglNavigation::touch_begin(int32_t x, int32_t y) {
     if (scroll_contains_touch) {
       this->gesture_application_ = application;
       this->touch_context_ = TouchContext::APPLICATION_SCROLL;
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+      if (!this->admit_navigation_(NavigationAdmissionKind::TAKEOVER, application)) {
+        this->touch_context_ = TouchContext::BLOCKED;
+        return;
+      }
+#endif
       const bool takeover = scroll->touch_begin(y);
       // A direct scroll snapshot is an optimization, not a prerequisite for
       // input. If its buffer is unavailable, leave the touch for LVGL's
@@ -192,6 +204,12 @@ void LvglNavigation::touch_begin(int32_t x, int32_t y) {
 
   const int home_index = this->find_home_view_index_();
   if (home_index >= 0) {
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+    if (!this->admit_navigation_(NavigationAdmissionKind::TAKEOVER, nullptr)) {
+      this->touch_context_ = TouchContext::BLOCKED;
+      return;
+    }
+#endif
     this->last_home_page_index_ = home_index;
     this->gesture_home_page_index_ = home_index;
     this->home_touch_base_offset_ = 0;
@@ -232,6 +250,13 @@ bool LvglNavigation::touch_update(int32_t x, int32_t y) {
                ? this->close_commit_pixels_
                : static_cast<int32_t>(std::lround(this->parent_->get_height() * this->close_commit_ratio_)));
     if (sample.delta_y <= -threshold) {
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+      if (!this->admit_navigation_(NavigationAdmissionKind::CLOSE, this->gesture_application_)) {
+        this->gesture_router_.cancel();
+        this->touch_context_ = TouchContext::BLOCKED;
+        return true;
+      }
+#endif
       this->reset_touch_();
       this->schedule_application_close_();
     }
@@ -255,8 +280,8 @@ bool LvglNavigation::touch_update(int32_t x, int32_t y) {
       const bool began = this->snapshot_compositor_->begin_home(this->gesture_home_page_index_);
       this->home_touch_primed_ = false;
       if (lvgl_esphome_get_swipe_logging_enabled()) {
-        ESP_LOGI(TAG, "home compositor begin=%uus result=%d",
-                 static_cast<unsigned>(micros() - begin_started_us), began);
+        ESP_LOGI(TAG, "home compositor begin=%uus result=%d", static_cast<unsigned>(micros() - begin_started_us),
+                 began);
       }
     }
     if (this->snapshot_compositor_->is_home_active())
@@ -264,6 +289,13 @@ bool LvglNavigation::touch_update(int32_t x, int32_t y) {
   } else if (this->touch_context_ == TouchContext::APPLICATION_CLOSE && sample.captured &&
              this->snapshot_compositor_ != nullptr) {
     if (sample.just_captured && this->gesture_application_ != nullptr) {
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+      if (!this->admit_navigation_(NavigationAdmissionKind::CLOSE, this->gesture_application_)) {
+        this->gesture_router_.cancel();
+        this->touch_context_ = TouchContext::BLOCKED;
+        return true;
+      }
+#endif
       this->gesture_application_->call_on_prepare_close_callbacks();
       this->release_application_scroll_(this->gesture_application_);
       this->snapshot_compositor_->begin_application_close(this->gesture_application_, this->last_home_page_index_);
@@ -336,9 +368,9 @@ bool LvglNavigation::touch_end() {
         target = candidate;
     }
     if (lvgl_esphome_get_swipe_logging_enabled()) {
-      ESP_LOGI(TAG, "home release current=%d target=%d offset=%d threshold=%d velocity=%d velocity_commit=%d",
-               current, target, static_cast<int>(offset_x), static_cast<int>(threshold),
-               static_cast<int>(sample.velocity_x), velocity_commit);
+      ESP_LOGI(TAG, "home release current=%d target=%d offset=%d threshold=%d velocity=%d velocity_commit=%d", current,
+               target, static_cast<int>(offset_x), static_cast<int>(threshold), static_cast<int>(sample.velocity_x),
+               velocity_commit);
     }
     if (current >= 0 && target >= 0) {
       this->last_home_page_index_ = target;
@@ -361,6 +393,10 @@ bool LvglNavigation::touch_end() {
                : static_cast<int32_t>(std::lround(this->parent_->get_height() * this->close_commit_ratio_)));
     const bool close = sample.delta_y <= -threshold;
     if (gesture_application != nullptr && gesture_application->is_close_on_threshold()) {
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+      if (close && !this->admit_navigation_(NavigationAdmissionKind::CLOSE, gesture_application))
+        return true;
+#endif
       if (close)
         this->schedule_application_close_();
       return true;
@@ -385,6 +421,10 @@ bool LvglNavigation::touch_end() {
     }
 #endif
     if (close && gesture_application != nullptr) {
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+      if (!this->admit_navigation_(NavigationAdmissionKind::CLOSE, gesture_application))
+        return true;  // Classified release stays consumed; never replay a child.
+#endif
       gesture_application->call_on_prepare_close_callbacks();
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
       this->release_application_scroll_(gesture_application);
@@ -547,8 +587,7 @@ void LvglNavigation::loop() {
     this->snapshot_compositor_->loop();
   }
 #endif
-  if (this->external_touch_release_pending_ &&
-      static_cast<int32_t>(millis() - this->external_touch_release_at_) >= 0) {
+  if (this->external_touch_release_pending_ && static_cast<int32_t>(millis() - this->external_touch_release_at_) >= 0) {
     this->clear_external_touch_capture_();
   }
   if (!this->close_deferred_ || application_was_opening)
@@ -561,13 +600,88 @@ void LvglNavigation::loop() {
   this->close_application();
 }
 
-void LvglNavigation::open_application(LvglApplication *application) {
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+bool LvglNavigation::add_admission_guard(NavigationAdmissionGuard *guard) {
+  if (guard == nullptr)
+    return false;
+  for (uint8_t i = 0; i < this->admission_guard_count_; i++)
+    if (this->admission_guards_[i] == guard)
+      return true;
+  if (this->admission_guard_count_ >= ESPHOME_LVGL_NAVIGATION_ADMISSION_GUARD_COUNT)
+    return false;
+  this->admission_guards_[this->admission_guard_count_++] = guard;
+  return true;
+}
+
+bool LvglNavigation::admit_navigation_(NavigationAdmissionKind kind, LvglApplication *application) {
+  for (uint8_t i = 0; i < this->admission_guard_count_; i++)
+    if (!this->admission_guards_[i]->prepare_navigation(kind, application))
+      return false;
+  return true;
+}
+#endif
+
+void LvglNavigation::open_application(LvglApplication *application) { (void) this->try_open_application(application); }
+void LvglNavigation::close_application() { (void) this->try_close_application(); }
+void LvglNavigation::show_home() { (void) this->try_show_home(); }
+void LvglNavigation::refresh_home() { (void) this->try_refresh_home(); }
+void LvglNavigation::prepare_application_snapshots() { (void) this->try_prepare_application_snapshots(); }
+
+bool LvglNavigation::try_open_application(LvglApplication *application) {
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+  if (application != nullptr && application->get_page() != nullptr && application->get_view() != nullptr &&
+      this->find_active_application_() == nullptr &&
+      !this->admit_navigation_(NavigationAdmissionKind::OPEN, application))
+    return false;
+#endif
+  this->open_application_(application);
+  return application != nullptr && this->find_active_application_() == application;
+}
+
+bool LvglNavigation::try_close_application() {
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+  if (!this->admit_navigation_(NavigationAdmissionKind::CLOSE, this->find_active_application_()))
+    return false;
+#endif
+  this->close_application_();
+  return true;
+}
+
+bool LvglNavigation::try_show_home() {
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+  if (!this->admit_navigation_(NavigationAdmissionKind::HOME, this->find_active_application_()))
+    return false;
+#endif
+  this->show_home_();
+  return true;
+}
+
+bool LvglNavigation::try_refresh_home() {
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+  if (!this->admit_navigation_(NavigationAdmissionKind::CAPTURE, nullptr))
+    return false;
+#endif
+  this->refresh_home_();
+  return true;
+}
+
+bool LvglNavigation::try_prepare_application_snapshots() {
+  this->last_application_snapshot_preparation_succeeded_ = false;
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+  // All guards preflight the complete batch before its first capture/mutation.
+  if (!this->admit_navigation_(NavigationAdmissionKind::CAPTURE, nullptr))
+    return false;
+#endif
+  this->prepare_application_snapshots_();
+  return this->last_application_snapshot_preparation_succeeded_;
+}
+
+void LvglNavigation::open_application_(LvglApplication *application) {
   this->clear_external_touch_capture_();
   const int home_index = this->find_home_view_index_();
   auto *active_application = this->find_active_application_();
   if (lvgl_esphome_get_swipe_logging_enabled()) {
-    ESP_LOGI(TAG, "open application request app=%p active=%p home=%d", application, active_application,
-             home_index);
+    ESP_LOGI(TAG, "open application request app=%p active=%p home=%d", application, active_application, home_index);
   }
   if (application == nullptr || application->get_page() == nullptr || application->get_view() == nullptr ||
       active_application != nullptr)
@@ -617,7 +731,7 @@ void LvglNavigation::open_application(LvglApplication *application) {
   application->call_on_opened_callbacks();
 }
 
-void LvglNavigation::close_application() {
+void LvglNavigation::close_application_() {
   this->clear_external_touch_capture_();
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->snapshot_compositor_ != nullptr) {
@@ -663,7 +777,7 @@ void LvglNavigation::close_application() {
     application->call_on_closed_callbacks();
 }
 
-void LvglNavigation::show_home() {
+void LvglNavigation::show_home_() {
   this->clear_external_touch_capture_();
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->snapshot_compositor_ != nullptr) {
@@ -699,14 +813,14 @@ void LvglNavigation::show_home() {
     application->call_on_closed_callbacks();
 }
 
-void LvglNavigation::refresh_home() {
+void LvglNavigation::refresh_home_() {
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->snapshot_compositor_ != nullptr)
     this->snapshot_compositor_->prepare_home(this->last_home_page_index_);
 #endif
 }
 
-void LvglNavigation::prepare_application_snapshots() {
+void LvglNavigation::prepare_application_snapshots_() {
   this->last_application_snapshot_preparation_succeeded_ = false;
 #if LV_USE_SNAPSHOT && LV_USE_IMAGE
   if (this->snapshot_compositor_ != nullptr)
@@ -725,6 +839,15 @@ bool LvglNavigation::is_home_snapshot_prepared() const {
 
 bool LvglNavigation::is_application_open(const LvglApplication *application) const {
   return application != nullptr && application == this->find_active_application_();
+}
+
+bool LvglNavigation::is_transition_active() const {
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+  return this->snapshot_compositor_ != nullptr &&
+         (this->snapshot_compositor_->is_application_active() || this->snapshot_compositor_->is_home_active());
+#else
+  return false;
+#endif
 }
 
 LvglApplication *LvglNavigation::get_active_application() const { return this->find_active_application_(); }

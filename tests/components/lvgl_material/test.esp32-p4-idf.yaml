@@ -206,6 +206,10 @@ lvgl_material:
         - logger.log:
             format: "Pressed tile %u"
             args: [slot]
+      on_context_press:
+        - logger.log:
+            format: "Pressed tile %u card %s revision %llu"
+            args: [slot, card_id, "static_cast<unsigned long long>(revision)"]
   notification_overlays:
     - id: test_notification_overlay
       root: material_notification_root

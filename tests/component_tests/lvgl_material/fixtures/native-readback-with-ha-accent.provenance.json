@@ -1,0 +1,11 @@
+{
+  "scope": "Derived fixture: exact sixteen-card normalized native readback plus separately observed HA accent. NOT captured HA TCP payload bytes. No entity IDs or credentials.",
+  "source_files": {
+    "C:\\aeh-build\\feature-wave2-20261024\\v9-after-live-ha-captures-readonly.json": "b70aad350062ce0dfaf42adc31b51b31a4e197c04a736671b442680543e8b6f4",
+    "C:\\aeh-build\\feature-wave2-20261024\\ha-dev3-post-ui-save-readonly.json": "62395ec92991dd589f323f1eabaa58e3d31628e67b7a6764a592527801203a8e"
+  },
+  "native_revision": 1,
+  "ha_accent": "36BCF0",
+  "device_test_override": "AEE2FF",
+  "fixture_sha256": "fe018f3dc10d88baddb2c5ecf7b3ce336461e28280949b0b780b72162f29a615"
+}

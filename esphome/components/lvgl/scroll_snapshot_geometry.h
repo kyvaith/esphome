@@ -10,6 +10,12 @@ namespace esphome::lvgl {
 // number of row-aligned pieces, derived from the configured stride and height.
 constexpr size_t SCROLL_SNAPSHOT_SEGMENT_TARGET_BYTES = 256 * 1024;
 
+// Coalescing input and integer easing can request the same pixels repeatedly.
+// Always submit the endpoint so completion retains the normal present contract.
+inline bool scroll_snapshot_should_render(int presented_y, int requested_y, bool final_frame) {
+  return final_frame || presented_y != requested_y;
+}
+
 inline size_t scroll_snapshot_rows_per_segment(size_t stride) {
   return stride == 0 ? 0 : std::max<size_t>(1, SCROLL_SNAPSHOT_SEGMENT_TARGET_BYTES / stride);
 }

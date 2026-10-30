@@ -1,5 +1,6 @@
 #include "esphome/components/lvgl_material/material_wavy_progress.h"
 #include "esphome/core/log.h"
+#include "esphome/core/hal.h"
 
 #include <math.h>
 #include <algorithm>
@@ -31,6 +32,7 @@ extern "C" uint8_t lvgl_esphome_direct_blend_argb8888_stable_async(
     int foreground_width, int foreground_height, int foreground_x, int foreground_y, int x, int y, int width,
     int height, void (*ready_callback)(void *), void *ready_arg);
 extern "C" void lvgl_esphome_direct_blit_rgb888_release(int x, int y, int width, int height);
+extern "C" bool lvgl_esphome_direct_blit_rgb888_try_release(int x, int y, int width, int height);
 extern "C" bool lvgl_esphome_direct_regions_pause(bool paused, uint32_t timeout_ms);
 #endif
 
@@ -2363,6 +2365,51 @@ void MaterialWavyProgress::set_pressed(bool pressed) { wavy_progress_internal::m
 
 void MaterialWavyProgress::set_direct_present(bool enabled) {
   wavy_progress_internal::media_wavy_arc_set_direct_present(enabled);
+}
+
+bool MaterialWavyProgress::quiesce_direct_present(uint32_t timeout_ms) {
+  auto &state = wavy_progress_internal::media_wavy_arc;
+  // Gate new submissions BEFORE waiting for the raster mutex. A producer that
+  // passed its old gate already holds that mutex; its accepted source is drained
+  // below. Owner-task callers must also fence all later legacy enable calls.
+  state.direct_present_enabled.store(false, std::memory_order_release);
+#ifdef ESP_PLATFORM
+  const uint32_t started = millis();
+  bool invalidated = false;
+  while (true) {
+    // This existing service retires completed immutable sources even disabled.
+    // It cannot submit another frame after the disabled gate is observed.
+    wavy_progress_internal::media_wavy_arc_present_ready(false);
+    const bool locked = state.render_mutex == nullptr || xSemaphoreTake(state.render_mutex, 0) == pdTRUE;
+    if (locked) {
+      if (!invalidated) {
+        state.render_generation++;
+        state.frame_ready = false;
+        state.queued_phase_delta.store(0, std::memory_order_relaxed);
+        invalidated = true;
+      }
+      const bool drained = wavy_progress_internal::present_in_flight_count(&state) == 0;
+      // Nonblocking SRM release while the render mutex still fences an older
+      // presenter. No buffer is released/freed before every source retirement.
+      const bool released = drained && lvgl_esphome_direct_blit_rgb888_try_release(state.direct_x, state.direct_y,
+                                                                                   wavy_progress_internal::WAVE_SIZE,
+                                                                                   wavy_progress_internal::WAVE_SIZE);
+      wavy_progress_internal::unlock_render_state(&state);
+      if (released)
+        return true;
+    }
+    if (millis() - started >= timeout_ms)
+      return false;
+    delay(1);
+  }
+#else
+  (void) timeout_ms;
+  return true;  // There is no direct worker or regional lease on this path.
+#endif
+}
+
+bool MaterialWavyProgress::is_direct_present_enabled() const {
+  return wavy_progress_internal::media_wavy_arc.direct_present_enabled.load(std::memory_order_acquire);
 }
 
 bool MaterialWavyProgress::is_background_ready() { return wavy_progress_internal::media_wavy_arc_background_ready(); }

@@ -586,6 +586,13 @@ void LvglDirectSnapshotCompositor::complete_direct_application_() {
   // another framebuffer owner. Keep the final frame and region pause held
   // until the destination view has been prepared below.
   this->release_external_application_transition_buffer_();
+  // The transition source is no longer borrowed, so the idle DSI buffers may
+  // now be seeded from the final presented frame. DIRECT widgets can otherwise
+  // resume onto an older application/Home base after a partial invalidation.
+  // Keep the application pause/hold until seeding succeeds; retry from loop()
+  // if its queue or a regional producer has not drained yet.
+  if (!this->parent_->direct_handoff_to_lvgl(100))
+    return;
   if (this->navigation_ != nullptr) {
     this->navigation_->prepare_application_transition(application, opening, !opening);
     if (!opening)

@@ -36,6 +36,7 @@ from ..types import (
 from ..widgets import get_widgets
 
 CONF_APPLICATION = "application"
+CONF_COLOR_FORMAT = "color_format"
 CONF_BACKEND = "backend"
 CONF_DECODED_SLOTS = "decoded_slots"
 CONF_APPLICATION_TRANSITIONS = "application_transitions"
@@ -87,6 +88,13 @@ SCROLL_REGION_SCHEMA = cv.Schema(
             BACKEND_LVGL, BACKEND_DIRECT, lower=True
         ),
         cv.Optional(CONF_PRELOAD, default=True): cv.boolean,
+        cv.Optional(CONF_COLOR_FORMAT, default="RGB565"): cv.enum(
+            {
+                "RGB565": "LV_COLOR_FORMAT_RGB565",
+                "RGB888": "LV_COLOR_FORMAT_RGB888",
+            },
+            upper=True,
+        ),
         cv.Optional(CONF_MAX_CONTENT_SIZE, default="8MB"): cv.All(
             cv.validate_bytes,
             cv.int_range(min=65536, max=64 * 1024 * 1024),
@@ -110,6 +118,12 @@ SCROLL_REGION_SCHEMA = cv.Schema(
 
 
 def _validate_scroll_regions(config):
+    for region in config[CONF_SCROLL_REGIONS]:
+        if (
+            region[CONF_BACKEND] != BACKEND_DIRECT
+            and region[CONF_COLOR_FORMAT] != "RGB565"
+        ):
+            raise cv.Invalid("RGB888 scroll snapshots require backend: direct")
     if config[CONF_USE_DISPLAY_BUFFERS_FOR_PREPARATION] and config[CONF_BACKEND] != BACKEND_DIRECT:
         raise cv.Invalid(
             "Display-buffer preparation requires snapshot_compositor.backend: direct"
@@ -367,6 +381,11 @@ async def snapshot_to_code(lv_component, config, navigation_config):
                 else "ScrollSnapshotBackend::LVGL"
             )
             cg.add(controller.set_backend(cg.RawExpression(backend)))
+            cg.add(
+                controller.set_color_format(
+                    cg.RawExpression(region_config[CONF_COLOR_FORMAT].enum_value)
+                )
+            )
             cg.add(controller.set_preload(region_config[CONF_PRELOAD]))
             cg.add(
                 controller.set_max_content_bytes(region_config[CONF_MAX_CONTENT_SIZE])

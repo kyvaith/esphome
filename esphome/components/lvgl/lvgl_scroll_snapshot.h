@@ -20,6 +20,7 @@ class LvglScrollSnapshotController {
 
   void set_preload(bool preload) { this->preload_ = preload; }
   void set_backend(ScrollSnapshotBackend backend) { this->backend_ = backend; }
+  void set_color_format(lv_color_format_t color_format) { this->color_format_ = color_format; }
   void set_max_content_bytes(size_t max_content_bytes) { this->max_content_bytes_ = max_content_bytes; }
   void set_overscroll_ratio(float ratio) { this->overscroll_ratio_ = ratio; }
   void set_momentum_duration(uint32_t duration) { this->momentum_duration_ = duration; }
@@ -42,6 +43,9 @@ class LvglScrollSnapshotController {
   void cancel();
   bool is_active() const { return this->active_; }
   bool is_prepared() const { return this->prepared_; }
+  size_t get_required_bytes() const {
+    return lvgl_esphome_snapshot_scroll_required_bytes(this->root_, this->color_format_);
+  }
   uint16_t get_start_distance() const { return this->start_distance_; }
   uint16_t get_axis_bias() const { return this->axis_bias_; }
 
@@ -98,6 +102,7 @@ class LvglScrollSnapshotController {
   bool root_was_hidden_{};
   bool bounce_pending_{};
   ScrollSnapshotBackend backend_{ScrollSnapshotBackend::LVGL};
+  lv_color_format_t color_format_{LV_COLOR_FORMAT_RGB565};
   size_t max_content_bytes_{8 * 1024 * 1024};
   float overscroll_ratio_{0.15f};
   uint32_t momentum_duration_{560};

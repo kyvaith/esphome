@@ -17,12 +17,24 @@ from esphome.const import (
     CONF_VALUE,
 )
 
+from .direct_scalar import (
+    CONF_DIRECT_SCALAR_CONTROLS,
+    DIRECT_SCALAR_SCHEMA,
+    direct_scalars_to_code,
+)
+from .entity_control import (
+    CONF_ENTITY_CONTROLS,
+    ENTITY_CONTROL_SCHEMA,
+    entity_controls_to_code,
+)
+
 AUTO_LOAD = ["json"]
 CODEOWNERS = ["@kyvaith"]
 DEPENDENCIES = ["lvgl"]
 DOMAIN = "lvgl_material"
 
 CONF_ACTIVE_COLOR = "active_color"
+CONF_ACCENT_OVERRIDE = "accent_override"
 CONF_ACTIVE_SIZE = "active_size"
 CONF_ACTIVATION_WIDGET = "activation_widget"
 CONF_ANIMATIONS = "animations"
@@ -60,6 +72,13 @@ CONF_KEY = "key"
 CONF_PAGE_INDICATORS = "page_indicators"
 CONF_NOTIFICATION_OVERLAYS = "notification_overlays"
 CONF_ON_PRESS = "on_press"
+CONF_ON_CONTEXT_PRESS = "on_context_press"
+CONF_ON_CONTROL_PRESS = "on_control_press"
+CONF_ON_ENTITY_CONTROL_PRESS = "on_entity_control_press"
+CONF_NUMBER_CONTROLS = "number_controls"
+CONF_CONTROL_PRESS_ENABLED = "control_press_enabled"
+CONF_REQUIRE_SNAPSHOT_READY = "require_snapshot_ready"
+CONF_ACTION_AVAILABILITY = "action_availability"
 CONF_ON_ANIMATION_COMPLETE = "on_animation_complete"
 CONF_PRESSED_OPACITY = "pressed_opacity"
 CONF_PRESSED_STYLES = "pressed_styles"
@@ -302,15 +321,46 @@ TILE_BINDING_SCHEMA = cv.Schema(
     }
 )
 
-TILE_SURFACE_SCHEMA = cv.Schema(
-    {
-        cv.GenerateID(): cv.declare_id(MaterialTileSurface),
-        cv.Required(CONF_TILES): cv.All(
-            cv.ensure_list(TILE_BINDING_SCHEMA), cv.Length(min=1, max=32)
-        ),
-        cv.Optional(CONF_ON_PRESS): automation.validate_automation({}),
-    }
-).extend(cv.COMPONENT_SCHEMA)
+
+def _validate_tile_surface(config):
+    if config[CONF_NUMBER_CONTROLS] != bool(config.get(CONF_ON_ENTITY_CONTROL_PRESS)):
+        raise cv.Invalid("Number tile routing requires explicit number_controls and synchronous typed callback together")
+    slots = [binding[CONF_SLOT] for binding in config[CONF_TILES]]
+    if len(set(slots)) != len(slots):
+        raise cv.Invalid("Tile slots must be unique")
+    if (
+        config[CONF_REQUIRE_SNAPSHOT_READY] or config[CONF_CONTROL_PRESS_ENABLED] or config[CONF_NUMBER_CONTROLS]
+        or config[CONF_ACTION_AVAILABILITY]
+    ) and any(slot >= 32 for slot in slots):
+        raise cv.Invalid("Snapshot readiness requires tile slots below 32")
+    return config
+
+
+TILE_SURFACE_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(MaterialTileSurface),
+            cv.Required(CONF_TILES): cv.All(
+                cv.ensure_list(TILE_BINDING_SCHEMA), cv.Length(min=1, max=32)
+            ),
+            cv.Optional(CONF_ON_PRESS): automation.validate_automation({}),
+            cv.Optional(CONF_ON_CONTEXT_PRESS): automation.validate_automation({}),
+            cv.Optional(
+                CONF_ON_CONTROL_PRESS
+            ): automation.validate_synchronous_automation(
+                "lvgl_material tile control press", "the borrowed card identity"
+            ),
+            cv.Optional(CONF_CONTROL_PRESS_ENABLED, default=False): cv.boolean,
+            cv.Optional(CONF_NUMBER_CONTROLS, default=False): cv.boolean,
+            cv.Optional(CONF_ON_ENTITY_CONTROL_PRESS): automation.validate_synchronous_automation(
+                "lvgl_material typed entity control press", "the captured card identity and control kind"
+            ),
+            cv.Optional(CONF_REQUIRE_SNAPSHOT_READY, default=False): cv.boolean,
+            cv.Optional(CONF_ACTION_AVAILABILITY, default=False): cv.boolean,
+        }
+    ).extend(cv.COMPONENT_SCHEMA),
+    _validate_tile_surface,
+)
 
 NOTIFICATION_OVERLAY_SCHEMA = cv.Schema(
     {
@@ -362,6 +412,8 @@ WEATHER_PRESENTER_SCHEMA = cv.Schema(
 def _validate_config(config):
     if (
         not config.get(CONF_STATE_LAYERS)
+        and not config.get(CONF_ENTITY_CONTROLS)
+        and not config.get(CONF_DIRECT_SCALAR_CONTROLS)
         and not config.get(CONF_DIRECT_STATE_LAYERS)
         and not config.get(CONF_DIRECT_MARQUEES)
         and not config.get(CONF_DIRECT_SPINNERS)
@@ -382,11 +434,20 @@ def _validate_config(config):
             f"{CONF_WAVY_PROGRESS}, {CONF_VOICE_ASSISTANTS}, "
             f"{CONF_PRESSED_STYLES}, "
             f"{CONF_PAGE_INDICATORS}, {CONF_TILE_SURFACES}, "
-            f"{CONF_NOTIFICATION_OVERLAYS}, {CONF_WEATHER_PRESENTERS}, or {CONF_THEMES} is required"
+            f"{CONF_NOTIFICATION_OVERLAYS}, {CONF_WEATHER_PRESENTERS}, {CONF_ENTITY_CONTROLS}, or {CONF_THEMES} is required"
         )
     for indicator in config.get(CONF_PAGE_INDICATORS, []):
         if indicator[CONF_INITIAL_PAGE] >= indicator[CONF_COUNT]:
             raise cv.Invalid(f"{CONF_INITIAL_PAGE} must be lower than {CONF_COUNT}")
+    controls = {str(item[CONF_ID]): item for item in config.get(CONF_ENTITY_CONTROLS, [])}
+    for scalar in config.get(CONF_DIRECT_SCALAR_CONTROLS, []):
+        control = controls.get(str(scalar["entity_control_id"]))
+        if control is None or str(control[CONF_LVGL_ID]) != str(scalar[CONF_LVGL_ID]):
+            raise cv.Invalid("Scalar requires an entity control on the same LVGL component")
+        if control.get("number_stepper") and any(
+            str(control[name]) != str(scalar[name]) for name in ("navigation_id", "application_id")
+        ):
+            raise cv.Invalid("Generic control and optional Scalar must share navigation and application")
     return config
 
 
@@ -430,6 +491,12 @@ CONFIG_SCHEMA = cv.All(
                 WEATHER_PRESENTER_SCHEMA
             ),
             cv.Optional(CONF_THEMES, default=list): cv.ensure_list(THEME_SCHEMA),
+            cv.Optional(CONF_ENTITY_CONTROLS, default=list): cv.All(
+                cv.ensure_list(ENTITY_CONTROL_SCHEMA), cv.Length(max=1)
+            ),
+            cv.Optional(CONF_DIRECT_SCALAR_CONTROLS, default=list): cv.All(
+                cv.ensure_list(DIRECT_SCALAR_SCHEMA), cv.Length(max=1)
+            ),
         }
     ),
     _validate_config,
@@ -489,15 +556,44 @@ async def to_code(config):
         )
 
     tile_surface_bindings = []
+    deferred_tile_control_callback_bindings = []
+    deferred_tile_entity_callback_bindings = []
     for conf in config[CONF_TILE_SURFACES]:
         var = cg.new_Pvariable(conf[CONF_ID])
         await cg.register_component(var, conf)
+        cg.add(var.set_require_snapshot_ready(conf[CONF_REQUIRE_SNAPSHOT_READY]))
+        cg.add(var.set_control_press_enabled(conf[CONF_CONTROL_PRESS_ENABLED]))
+        if conf.get(CONF_ACTION_AVAILABILITY, False):
+            cg.add_define("USE_LVGL_MATERIAL_TILE_ACTION_AVAILABILITY")
+            cg.add(var.set_action_availability_enabled(True))
+        if conf[CONF_NUMBER_CONTROLS]:
+            cg.add_define("USE_LVGL_MATERIAL_ENTITY_CONTROL_TILE_ROUTING")
+            cg.add(var.set_number_controls_enabled(True))
+        if conf.get(CONF_ON_ENTITY_CONTROL_PRESS):
+            deferred_tile_entity_callback_bindings.append((var, conf[CONF_ON_ENTITY_CONTROL_PRESS]))
         for automation_conf in conf.get(CONF_ON_PRESS, []):
             await automation.build_callback_automation(
                 var,
                 "add_on_press_callback",
                 [(cg.uint8, "slot")],
                 automation_conf,
+            )
+        for automation_conf in conf.get(CONF_ON_CONTEXT_PRESS, []):
+            await automation.build_callback_automation(
+                var,
+                "add_on_context_press_callback",
+                [
+                    (cg.uint8, "slot"),
+                    (cg.const_char_ptr, "card_id"),
+                    (cg.uint64, "revision"),
+                ],
+                automation_conf,
+            )
+        if CONF_ON_CONTROL_PRESS in conf:
+            # Control actions may reference entity/scalar IDs created below by
+            # this same coroutine. Keep legacy callback creation unchanged.
+            deferred_tile_control_callback_bindings.append(
+                (var, conf[CONF_ON_CONTROL_PRESS])
             )
         tile_surface_bindings.append((var, conf[CONF_TILES]))
 
@@ -551,6 +647,10 @@ async def to_code(config):
         wavy_progress_bindings.append((var, widget))
 
     direct_volume_overlay_bindings = []
+    deferred_scene_controller_bindings = []
+    local_scalar_ids = {
+        str(conf[CONF_ID]) for conf in config[CONF_DIRECT_SCALAR_CONTROLS]
+    }
     for conf in config[CONF_DIRECT_VOLUME_OVERLAYS]:
         lvgl = await cg.get_variable(conf[CONF_LVGL_ID])
         var = cg.new_Pvariable(conf[CONF_ID], lvgl)
@@ -562,9 +662,16 @@ async def to_code(config):
         activation_widget = None
         if CONF_ACTIVATION_WIDGET in conf:
             activation_widget = (await get_widgets(conf, CONF_ACTIVATION_WIDGET))[0]
-        for controller_id in conf[CONF_SCENE_CONTROLLERS]:
-            controller = await cg.get_variable(controller_id)
-            cg.add(var.add_scene_controller(controller))
+        controllers = conf[CONF_SCENE_CONTROLLERS]
+        if any(str(controller_id) in local_scalar_ids for controller_id in controllers):
+            # The same coroutine creates local scalars below. Awaiting one here
+            # would prevent that creation forever. Defer this complete ordered
+            # list, preserving controller order and all existing-only paths.
+            deferred_scene_controller_bindings.append((var, controllers))
+        else:
+            for controller_id in controllers:
+                controller = await cg.get_variable(controller_id)
+                cg.add(var.add_scene_controller(controller))
         direct_volume_overlay_bindings.append(
             (var, arc, knob, label, activation_widget)
         )
@@ -770,6 +877,35 @@ async def to_code(config):
         for var, container in page_indicator_bindings:
             ctx.add(var.set_container(container.obj))
 
+    await entity_controls_to_code(config[CONF_ENTITY_CONTROLS])
+    await direct_scalars_to_code(
+        config[CONF_DIRECT_SCALAR_CONTROLS],
+        generic_controls={str(conf[CONF_ID]) for conf in config[CONF_ENTITY_CONTROLS] if conf["number_stepper"]},
+    )
+    for var, automations in deferred_tile_control_callback_bindings:
+        for automation_conf in automations:
+            await automation.build_callback_automation(
+                var,
+                "add_on_control_press_callback",
+                [
+                    (cg.uint8, "slot"),
+                    (cg.const_char_ptr, "card_id"),
+                    (cg.uint64, "revision"),
+                ],
+                automation_conf,
+            )
+    for var, automations in deferred_tile_entity_callback_bindings:
+        for automation_conf in automations:
+            await automation.build_callback_automation(
+                var, "add_on_entity_control_press_callback",
+                [(cg.uint8, "slot"), (cg.const_char_ptr, "card_id"), (cg.uint64, "revision"), (cg.uint8, "control_kind")],
+                automation_conf,
+            )
+    for var, controllers in deferred_scene_controller_bindings:
+        for controller_id in controllers:
+            controller = await cg.get_variable(controller_id)
+            cg.add(var.add_scene_controller(controller))
+
 
 PAGE_INDICATOR_SET_SCHEMA = cv.Schema(
     {
@@ -797,6 +933,9 @@ TILE_SURFACE_CONFIGURE_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.use_id(MaterialTileSurface),
         cv.Required(CONF_PAYLOAD): cv.templatable(cv.string_strict),
+        cv.Optional(CONF_ACCENT_OVERRIDE): cv.templatable(
+            cv.hex_int_range(min=0, max=0xFFFFFF)
+        ),
     }
 )
 
@@ -812,6 +951,8 @@ async def tile_surface_configure_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg, parent)
     payload = await cg.templatable(config[CONF_PAYLOAD], args, cg.std_string)
     cg.add(var.set_payload(payload))
+    if (accent := config.get(CONF_ACCENT_OVERRIDE)) is not None:
+        cg.add(var.set_accent_override(await cg.templatable(accent, args, cg.uint32)))
     return var
 
 

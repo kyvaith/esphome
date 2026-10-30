@@ -19,6 +19,21 @@ struct Segment {
 };
 
 int main() {
+  // An input stream may repeat positions; retain only changed pixels and its
+  // explicit final frame, including an endpoint equal to the previous frame.
+  int presented = 0;
+  std::vector<int> rendered;
+  const int requested[] = {0, 0, 1, 1, 2, 2};
+  for (size_t i = 0; i < 6; i++) {
+    if (scroll_snapshot_should_render(presented, requested[i], i == 5)) {
+      rendered.push_back(requested[i]);
+      presented = requested[i];
+    }
+  }
+  assert((rendered == std::vector<int>{1, 2, 2}));
+  assert(scroll_snapshot_should_render(0, 0, true));
+  assert(scroll_snapshot_should_render(-10, -9, false));
+
   constexpr size_t stride = 1600;
   constexpr int height = 1436;
   constexpr int viewport = 800;
@@ -103,6 +118,50 @@ int main() {
   destroyed = 0;
   scroll_snapshot_release_segments(segments, destroy);
   assert(segments.empty() && destroyed == 0);
+
+  // The opt-in native RGB888 surface has different segment boundaries. Test
+  // every viewport against its actual larger byte budget, not the RGB565 plan.
+  constexpr size_t native_stride = 2400;
+  constexpr int native_height = 1524;
+  allocated = destroyed = 0;
+  auto native_take = [&](int, int rows) {
+    allocated++;
+    return new Buffer{native_stride * rows};
+  };
+  assert(scroll_snapshot_rows_per_segment(native_stride) == 109);
+  assert(scroll_snapshot_segment_count(native_height, native_stride) == 14);
+  assert(scroll_snapshot_capture_partition(segments, native_height, native_stride, native_take, destroy));
+  bytes = 0;
+  for (const auto &segment : segments) {
+    assert(segment.buffer->bytes <= SCROLL_SNAPSHOT_SEGMENT_TARGET_BYTES);
+    bytes += segment.buffer->bytes;
+  }
+  assert(bytes == native_stride * native_height);
+  for (int y = 0; y <= native_height - viewport; y++) {
+    int expected_row = y;
+    assert(scroll_snapshot_visit_spans(segments, y, viewport, [&](size_t index, int local, int copied, int rows) {
+      assert(segments[index].y + local == expected_row);
+      assert(copied == expected_row - y);
+      assert(static_cast<size_t>(local + rows) * native_stride <= segments[index].buffer->bytes);
+      expected_row += rows;
+      return true;
+    }));
+    assert(expected_row == y + viewport);
+  }
+  scroll_snapshot_release_segments(segments, destroy);
+  assert(allocated == 14 && destroyed == allocated);
+  for (int fail_at = 0; fail_at < 14; fail_at++) {
+    allocated = destroyed = 0;
+    int calls = 0;
+    auto failing_take = [&](int, int rows) -> Buffer * {
+      if (calls++ == fail_at)
+        return nullptr;
+      allocated++;
+      return new Buffer{native_stride * rows};
+    };
+    assert(!scroll_snapshot_capture_partition(segments, native_height, native_stride, failing_take, destroy));
+    assert(segments.empty() && allocated == fail_at && destroyed == fail_at);
+  }
 
   assert(scroll_snapshot_segment_count(0, stride) == 0);
   assert(scroll_snapshot_segment_count(height, 0) == 0);

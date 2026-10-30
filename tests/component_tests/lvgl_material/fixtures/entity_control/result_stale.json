@@ -1,0 +1,1 @@
+{"v":1,"type":"entity_control_v1","kind":"result","channel":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","open_seq":1,"slot":2,"card_id":"card-2","revision":4,"control_kind":"number","token":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","command_seq":2,"state_seq":6,"status":"rejected","reason":"stale_state"}

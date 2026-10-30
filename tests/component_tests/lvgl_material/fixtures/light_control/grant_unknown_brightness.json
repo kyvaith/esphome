@@ -1,0 +1,1 @@
+{"v":1,"type":"light_brightness_v1","kind":"grant","channel":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","open_seq":1,"slot":2,"card_id":"card-light-2","revision":7,"token":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state_seq":1,"ttl_ms":30000,"title":"Light","on":true,"brightness_pct":null,"caps":{"brightness":true,"turn_on":true,"turn_off":true}}

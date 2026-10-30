@@ -30,6 +30,10 @@ class MaterialWavyProgress : public Component {
   void set_playback_state(bool playing, bool pending);
   void set_pressed(bool pressed);
   void set_direct_present(bool enabled);
+  // Owner-task only. False keeps source storage retained and presentation
+  // disabled; caller must refuse handoff and may explicitly retry.
+  bool quiesce_direct_present(uint32_t timeout_ms = 250);
+  bool is_direct_present_enabled() const;
   bool is_background_ready();
   bool service_present();
   void set_pending(bool pending);

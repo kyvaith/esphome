@@ -489,7 +489,7 @@ bool LvglScrollSnapshotController::configure_direct_() {
   }
 
   lvgl_esphome_snapshot_scroll_configure(this->overscroll_ratio_, this->momentum_duration_, this->bounce_duration_,
-                                         this->max_inertia_duration_, this->max_content_bytes_);
+                                         this->max_inertia_duration_, this->max_content_bytes_, this->color_format_);
   return true;
 }
 

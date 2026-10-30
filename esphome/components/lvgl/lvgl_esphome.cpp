@@ -2871,6 +2871,19 @@ void LvglComponent::log_direct_buffer_state(const char *label) {
     bool scaled_background;
   };
   RegionSlotAudit region_slots[DIRECT_REGION_SLOT_COUNT]{};
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+  // Retained allocations belong to the global framework even after valid=false.
+  // Copy metadata only under SRM below; never touch pixel storage for this audit.
+  struct RegionCapacityAudit {
+    size_t persistent_copy;
+    size_t animation_overlay;
+    size_t transition_background;
+    size_t scaled_background;
+    bool valid;
+    bool copy_ready;
+  };
+  RegionCapacityAudit region_capacities[DIRECT_REGION_SLOT_COUNT]{};
+#endif
   uint32_t region_buffer_generations[3]{};
   size_t valid_region_count = 0;
   bool region_audit_available = false;
@@ -2884,6 +2897,14 @@ void LvglComponent::log_direct_buffer_state(const char *label) {
       region_buffer_generations[index] = this->direct_region_buffer_generation_[index];
     for (size_t index = 0; index < DIRECT_REGION_SLOT_COUNT; index++) {
       const auto &slot = this->direct_region_slots_[index];
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+      region_capacities[index] = {slot.persistent_copy != nullptr ? slot.persistent_copy_size : 0,
+                                  slot.animation_overlay != nullptr ? slot.animation_overlay_size : 0,
+                                  slot.transition_background != nullptr ? slot.transition_background_size : 0,
+                                  slot.scaled_background != nullptr ? slot.scaled_background_size : 0,
+                                  slot.valid,
+                                  slot.persistent_copy_valid && slot.persistent_copy != nullptr};
+#endif
       if (!slot.valid)
         continue;
       region_slots[index] = {slot.x,
@@ -2983,6 +3004,21 @@ void LvglComponent::log_direct_buffer_state(const char *label) {
                static_cast<unsigned>(slot.copy_ready), static_cast<unsigned>(slot.background),
                static_cast<unsigned>(slot.scaled_background));
     }
+  }
+#endif
+#if defined(USE_LVGL_PPA) && defined(USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION)
+  if (region_audit_available) {
+    for (size_t index = 0; index < DIRECT_REGION_SLOT_COUNT; index++) {
+      const auto &capacity = region_capacities[index];
+      ESP_LOGW("lvgl.direct.memory",
+               "%s slot=%u valid=%u copy_ready=%u persistent_b=%u overlay_b=%u transition_b=%u scaled_b=%u",
+               label != nullptr ? label : "state", static_cast<unsigned>(index), static_cast<unsigned>(capacity.valid),
+               static_cast<unsigned>(capacity.copy_ready), static_cast<unsigned>(capacity.persistent_copy),
+               static_cast<unsigned>(capacity.animation_overlay), static_cast<unsigned>(capacity.transition_background),
+               static_cast<unsigned>(capacity.scaled_background));
+    }
+  } else {
+    ESP_LOGW("lvgl.direct.memory", "%s capacity_audit=unavailable", label != nullptr ? label : "state");
   }
 #endif
   mipi_display->log_dma_ring_state(label);
@@ -5216,6 +5252,31 @@ void LvglComponent::direct_region_refresh_end_() {
   this->direct_region_full_refresh_barrier_active_ = false;
 }
 
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+bool LvglComponent::direct_region_primary_slot_compatible_(const DirectRegionRequest *requests, size_t count,
+                                                           size_t index) const {
+  const auto &request = requests[index];
+  if (!request.require_primary_slot)
+    return true;
+  auto matches = [&](int x, int y, int width, int height) {
+    return x == request.x && y == request.y && width == request.width && height == request.height;
+  };
+  // Called only with the SRM mutex held. No competing active slot and no
+  // matching slot beyond index0: the existing first-free allocator reuses0.
+  for (size_t i = 0; i < DIRECT_REGION_SLOT_COUNT; i++) {
+    const auto &slot = this->direct_region_slots_[i];
+    if (slot.valid && (i != 0 || !matches(slot.x, slot.y, slot.width, slot.height)))
+      return false;
+  }
+  for (size_t i = 0; i < count; i++) {
+    if (requests[i].operation != DirectRegionRequest::Operation::BARRIER &&
+        !matches(requests[i].x, requests[i].y, requests[i].width, requests[i].height))
+      return false;
+  }
+  return true;
+}
+#endif
+
 void LvglComponent::direct_region_task_() {
   // Pace all independent regions to the display refresh. Requests for the
   // same region are coalesced below, so a producer running ahead of VSYNC
@@ -5259,6 +5320,13 @@ void LvglComponent::direct_region_task_() {
         callback(arg);
       }
     };
+    auto defer_request_completion = [&](const DirectRegionRequest &request, bool barrier = false) {
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+      if (request.generation_result != nullptr)
+        request.generation_result->retire(false, 0);
+#endif
+      defer_completion(request.ready_callback, request.ready_arg, barrier);
+    };
     auto add_latest_request = [&](const DirectRegionRequest &request) {
       raw_request_count++;
       stable_boundary |= request.stable_carry;
@@ -5267,7 +5335,7 @@ void LvglComponent::direct_region_task_() {
         if (request_count < DIRECT_REGION_BATCH_SIZE) {
           requests[request_count++] = request;
         } else {
-          defer_completion(request.ready_callback, request.ready_arg, true);
+          defer_request_completion(request, true);
         }
         return;
       }
@@ -5283,7 +5351,7 @@ void LvglComponent::direct_region_task_() {
         // another state immediately and create a self-feeding request storm.
         // The old source stays valid until composition completes, so release
         // it together with the sources that were actually presented.
-        defer_completion(queued.ready_callback, queued.ready_arg);
+        defer_request_completion(queued);
         coalesced_request_count++;
         queued = request;
         return;
@@ -5291,7 +5359,7 @@ void LvglComponent::direct_region_task_() {
       if (request_count < DIRECT_REGION_BATCH_SIZE) {
         requests[request_count++] = request;
       } else {
-        defer_completion(request.ready_callback, request.ready_arg);
+        defer_request_completion(request);
       }
     };
     add_latest_request(incoming);
@@ -5321,6 +5389,9 @@ void LvglComponent::direct_region_task_() {
     }
     const int64_t started_us = esp_timer_get_time();
     next_present_us = pace_batch ? started_us + frame_period_us : 0;
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+    bool generation_carry_accepted[DIRECT_REGION_BATCH_SIZE]{};
+#endif
     bool presented = false;
     bool has_render_request = false;
     for (size_t i = 0; i < request_count; i++)
@@ -5333,6 +5404,22 @@ void LvglComponent::direct_region_task_() {
       // Their callbacks release producer buffers just like a presented frame.
       presented = true;
     } else if (s_region_srm_mutex != nullptr && xSemaphoreTake(s_region_srm_mutex, pdMS_TO_TICKS(60)) == pdTRUE) {
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+      // Filter each opt-in request under the compositor mutex. A stale new
+      // producer must not discard unrelated legacy requests in a mixed batch.
+      size_t retained = 0;
+      const uint32_t admitted_generation = this->get_direct_region_base_generation();
+      const bool now_paused = this->direct_region_paused_.load(std::memory_order_acquire);
+      for (size_t i = 0; i < request_count; i++) {
+        if (!direct_region_generation_matches(requests[i].expected_generation, admitted_generation, now_paused) ||
+            !this->direct_region_primary_slot_compatible_(requests, request_count, i)) {
+          defer_request_completion(requests[i]);
+        } else {
+          requests[retained++] = requests[i];
+        }
+      }
+      request_count = retained;
+#endif
       const bool cache_only = this->direct_image_animation_active_ && this->direct_image_animation_allows_regions_;
       if (cache_only) {
         // The full-scene transition owns DSI presentation. Producers may keep
@@ -5384,11 +5471,18 @@ void LvglComponent::direct_region_task_() {
         const bool weather_batch = request_count == 1 && !display_pacing_required &&
                                    requests[0].operation == DirectRegionRequest::Operation::SCALE_BLEND_ARGB8888;
         const bool target_prepared =
-            boundary_ready && this->direct_region_prepare_target_(generation, &active, &target, weather_batch ? 8 : 0);
+            request_count != 0 && boundary_ready &&
+            this->direct_region_prepare_target_(generation, &active, &target, weather_batch ? 8 : 0);
         const bool target_composed =
             target_prepared && this->direct_region_compose_to_(requests, request_count, active, target);
-        const bool generation_current =
+        bool generation_current =
             target_composed && generation == this->direct_region_base_generation_.load(std::memory_order_acquire);
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+        for (size_t i = 0; generation_current && i < request_count; i++)
+          generation_current = direct_region_generation_matches(
+              requests[i].expected_generation, this->get_direct_region_base_generation(),
+              this->direct_region_paused_.load(std::memory_order_acquire));
+#endif
         auto invalidate_target = [this, mipi_display, target]() {
           if (mipi_display == nullptr || target == nullptr)
             return;
@@ -5464,6 +5558,16 @@ void LvglComponent::direct_region_task_() {
                   slot->latest_background = nullptr;
                   slot->latest_background_stride = 0;
                   slot->transition_background_valid = false;
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+                  // This slot was reset for this request AFTER queue acceptance.
+                  // Carry failure can leave queued pixels, so retirement is
+                  // unconfirmed rather than falsely claiming no publication.
+                  generation_carry_accepted[i] =
+                      request.expected_generation != 0 && slot->persistent_carry && slot->persistent_copy_valid &&
+                      direct_region_generation_matches(request.expected_generation,
+                                                       this->get_direct_region_base_generation(),
+                                                       this->direct_region_paused_.load(std::memory_order_acquire));
+#endif
                 }
               }
             }
@@ -5560,8 +5664,13 @@ void LvglComponent::direct_region_task_() {
         deferred_completions[i].callback(deferred_completions[i].arg);
     }
     for (size_t i = 0; i < request_count; i++) {
-      if (requests[i].operation != DirectRegionRequest::Operation::BARRIER && requests[i].ready_callback != nullptr)
+      if (requests[i].operation != DirectRegionRequest::Operation::BARRIER && requests[i].ready_callback != nullptr) {
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+        if (requests[i].generation_result != nullptr)
+          requests[i].generation_result->retire(generation_carry_accepted[i], requests[i].expected_generation);
+#endif
         requests[i].ready_callback(requests[i].ready_arg);
+      }
     }
     // A priority barrier may be the first request in this batch. Acknowledge
     // it only after every source completion has returned producer ownership;
@@ -5692,6 +5801,79 @@ uint8_t LvglComponent::direct_blit_rgb888_async(const uint8_t *src, int src_stri
   return LVGL_DIRECT_BLIT_REJECTED;
 #endif
 }
+
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+uint32_t LvglComponent::get_direct_region_pause_depth() const {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  return this->direct_region_pause_depth_.load(std::memory_order_acquire);
+#else
+  return 0;
+#endif
+}
+uint8_t LvglComponent::direct_blit_rgb888_generation_async(const uint8_t *src, int src_stride, int x, int y, int width,
+                                                           int height, uint32_t expected_generation,
+                                                           DirectRegionGenerationResult *result,
+                                                           LvglDirectBlitReadyCallback ready_callback, void *ready_arg,
+                                                           bool stable_carry, bool require_primary_slot) {
+#if LV_COLOR_DEPTH == 32 && defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA)
+  if (expected_generation == 0 || result == nullptr ||
+      !direct_region_generation_matches(expected_generation, this->get_direct_region_base_generation(),
+                                        this->direct_region_paused_.load(std::memory_order_acquire)))
+    return LVGL_DIRECT_BLIT_REJECTED;
+  if (!this->direct_mode_active_ || this->rotation != display::DISPLAY_ROTATION_0_DEGREES ||
+      this->displays_.size() != 1 || src == nullptr || ready_callback == nullptr || s_snapshot_direct_active ||
+      s_snapshot_swipe_active || this->direct_image_animation_active_ || width <= 0 || height <= 0 ||
+      this->direct_region_paused_.load(std::memory_order_acquire) || src_stride != width * 3 || x < 0 || y < 0 ||
+      x + width > this->width_ || y + height > this->height_) {
+    return LVGL_DIRECT_BLIT_REJECTED;
+  }
+
+  auto *mipi_display = static_cast<mipi_dsi::MipiDsi *>(this->displays_[0]);
+  if (mipi_display == nullptr || s_region_srm_client == nullptr || s_region_srm_mutex == nullptr ||
+      this->direct_region_queue_ == nullptr)
+    return LVGL_DIRECT_BLIT_REJECTED;
+  DirectRegionRequest request{};
+  request.operation = DirectRegionRequest::Operation::COPY_RGB888;
+  request.source = src;
+  request.source_stride = src_stride;
+  request.source_width = width;
+  request.source_height = height;
+  request.x = x;
+  request.y = y;
+  request.width = width;
+  request.height = height;
+  request.stable_carry = stable_carry;
+  request.persistent_carry = true;
+  request.require_primary_slot = require_primary_slot;
+  request.expected_generation = expected_generation;
+  request.generation_result = result;
+  result->reset();
+  request.ready_callback = ready_callback;
+  request.ready_arg = ready_arg;
+  if (xQueueSend(this->direct_region_queue_, &request, 0) == pdTRUE) {
+    this->direct_region_copy_submitted_.fetch_add(1, std::memory_order_relaxed);
+    return LVGL_DIRECT_BLIT_SUBMITTED;
+  }
+  this->direct_region_submit_busy_.fetch_add(1, std::memory_order_relaxed);
+  return LVGL_DIRECT_BLIT_BUSY;
+#else
+  (void) src;
+  (void) src_stride;
+  (void) x;
+  (void) y;
+  (void) width;
+  (void) height;
+  (void) ready_callback;
+  (void) ready_arg;
+  (void) stable_carry;
+  (void) expected_generation;
+  (void) result;
+  (void) require_primary_slot;
+  return LVGL_DIRECT_BLIT_REJECTED;
+#endif
+}
+
+#endif
 
 uint8_t LvglComponent::direct_blit_xrgb8888_async(const uint8_t *src, int src_stride, int x, int y, int width,
                                                   int height, LvglDirectBlitReadyCallback ready_callback,
@@ -9809,17 +9991,23 @@ bool LvglComponent::snapshot_swipe_direct_render_panorama(const uint8_t *panoram
 bool LvglComponent::snapshot_scroll_direct_render(const std::vector<SnapshotScrollSegment> &segments, int scroll_y,
                                                   int viewport_w, int viewport_h) {
 #if LV_COLOR_DEPTH == 32 && defined(USE_ESP32)
-  constexpr lv_color_format_t SCROLL_CF = LV_COLOR_FORMAT_RGB565;
   uint64_t t0 = esp_timer_get_time();
+  const bool profile = s_swipe_logging_enabled != 0;
   if (segments.empty() || viewport_w != this->width_ || viewport_h != this->height_ || viewport_w <= 0 ||
       viewport_h <= 0)
     return false;
   int content_height = 0;
+  const auto color_format =
+      segments.front().buffer != nullptr ? segments.front().buffer->header.cf : LV_COLOR_FORMAT_UNKNOWN;
+  if (color_format != LV_COLOR_FORMAT_RGB565 && color_format != LV_COLOR_FORMAT_RGB888)
+    return false;
+  const size_t source_pixel_bytes = color_format == LV_COLOR_FORMAT_RGB888 ? 3 : 2;
   for (const auto &segment : segments) {
     const auto *buffer = segment.buffer;
-    if (buffer == nullptr || buffer->data == nullptr || buffer->header.cf != SCROLL_CF ||
-        buffer->header.w != viewport_w || buffer->header.stride != static_cast<uint32_t>(viewport_w * 2) ||
-        segment.height <= 0 || buffer->header.h != segment.height || segment.y != content_height)
+    if (buffer == nullptr || buffer->data == nullptr || buffer->header.cf != color_format ||
+        buffer->header.w != viewport_w ||
+        buffer->header.stride != static_cast<uint32_t>(viewport_w * source_pixel_bytes) || segment.height <= 0 ||
+        buffer->header.h != segment.height || segment.y != content_height)
       return false;
     content_height += segment.height;
   }
@@ -9834,6 +10022,7 @@ bool LvglComponent::snapshot_scroll_direct_render(const std::vector<SnapshotScro
   uint8_t *target = this->next_snapshot_render_buffer_(nullptr, nullptr, 20);
   if (target == nullptr)
     return false;
+  const uint64_t acquired_us = profile ? esp_timer_get_time() : 0;
 
   bool needs_sync = false;
   auto fill_rows = [&](int target_y, int rows) -> bool {
@@ -9885,7 +10074,8 @@ bool LvglComponent::snapshot_scroll_direct_render(const std::vector<SnapshotScro
       cfg.in.block_h = rows;
       cfg.in.block_offset_x = 0;
       cfg.in.block_offset_y = source_y;
-      cfg.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+      cfg.in.srm_cm =
+          source->header.cf == LV_COLOR_FORMAT_RGB888 ? PPA_SRM_COLOR_MODE_RGB888 : PPA_SRM_COLOR_MODE_RGB565;
       cfg.out.buffer = target;
       cfg.out.buffer_size = fb_bytes;
       cfg.out.pic_w = viewport_w;
@@ -9954,6 +10144,7 @@ bool LvglComponent::snapshot_scroll_direct_render(const std::vector<SnapshotScro
     lvgl_cache_msync_external(target, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   }
 
+  const uint64_t composed_us = profile ? esp_timer_get_time() : 0;
   if (!this->present_snapshot_render_buffer_(target, false))
     return false;
 #ifdef USE_LVGL_FPS_BENCHMARK
@@ -9964,7 +10155,17 @@ bool LvglComponent::snapshot_scroll_direct_render(const std::vector<SnapshotScro
   static uint32_t frames = 0;
   static uint64_t total_us = 0;
   static uint32_t max_us = 0;
+  static uint32_t profile_frames = 0;
+  static uint64_t acquire_total_us = 0;
+  static uint64_t compose_total_us = 0;
+  static uint64_t present_total_us = 0;
   uint64_t now_us = esp_timer_get_time();
+  if (profile) {
+    profile_frames++;
+    acquire_total_us += acquired_us - t0;
+    compose_total_us += composed_us - acquired_us;
+    present_total_us += now_us - composed_us;
+  }
   frames++;
   total_us += frame_us;
   if (frame_us > max_us)
@@ -9976,11 +10177,22 @@ bool LvglComponent::snapshot_scroll_direct_render(const std::vector<SnapshotScro
     if (s_swipe_logging_enabled) {
       ESP_LOGI(TAG, "snapshot scroll: fps=%u avg=%lluus max=%uus y=%d h=%d", (unsigned) fps,
                (unsigned long long) (frames == 0 ? 0 : total_us / frames), (unsigned) max_us, scroll_y, content_height);
+      if (profile_frames != 0) {
+        ESP_LOGI(TAG, "snapshot scroll stages: frames=%u acquire=%lluus compose=%lluus present=%lluus",
+                 static_cast<unsigned>(profile_frames),
+                 static_cast<unsigned long long>(acquire_total_us / profile_frames),
+                 static_cast<unsigned long long>(compose_total_us / profile_frames),
+                 static_cast<unsigned long long>(present_total_us / profile_frames));
+      }
     }
     last_log_us = now_us;
     frames = 0;
     total_us = 0;
     max_us = 0;
+    profile_frames = 0;
+    acquire_total_us = 0;
+    compose_total_us = 0;
+    present_total_us = 0;
   }
   return true;
 #else
@@ -12876,6 +13088,7 @@ struct SnapshotScrollExternalBuffer {
 };
 
 struct SnapshotScrollConfig {
+  lv_color_format_t color_format{LV_COLOR_FORMAT_RGB565};
   float overscroll_ratio{0.15f};
   uint32_t momentum_duration_ms{560};
   uint32_t bounce_duration_ms{320};
@@ -13290,9 +13503,6 @@ extern "C" void lvgl_esphome_snapshot_log_memory(const char *phase) {
 }
 
 constexpr lv_color_format_t SNAPSHOT_CF = LV_COLOR_FORMAT_RGB888;
-// Settings is the only scroll-snapshot consumer. Keep its resident content
-// surface in RGB565 and expand once into the RGB888 display surface.
-constexpr lv_color_format_t SNAPSHOT_SCROLL_CF = LV_COLOR_FORMAT_RGB565;
 constexpr int SNAPSHOT_PANORAMA_SCALE = 1;
 constexpr bool SNAPSHOT_DIRECT_COMPOSITOR_ENABLED = true;
 constexpr bool SNAPSHOT_JPEG_CACHE_ENABLED = true;
@@ -14654,9 +14864,12 @@ void snapshot_scroll_worker_task(void *) {
           const uint64_t now_us = esp_timer_get_time();
           const uint32_t elapsed_ms = static_cast<uint32_t>((now_us - start_us) / 1000ULL);
           const int scroll_y = interpolate(start_y, end_y, elapsed_ms, duration_ms);
-          if (!snapshot_scroll_render_direct_frame(scroll_y))
-            return false;
-          worker.rendered_scroll_y.store(scroll_y, std::memory_order_release);
+          if (scroll_snapshot_should_render(worker.rendered_scroll_y.load(std::memory_order_acquire), scroll_y,
+                                            elapsed_ms >= duration_ms)) {
+            if (!snapshot_scroll_render_direct_frame(scroll_y))
+              return false;
+            worker.rendered_scroll_y.store(scroll_y, std::memory_order_release);
+          }
           if (elapsed_ms >= duration_ms)
             return true;
 
@@ -14698,7 +14911,9 @@ void snapshot_scroll_worker_task(void *) {
         break;
 
       const int scroll_y = worker.requested_scroll_y.load(std::memory_order_acquire);
-      const bool success = snapshot_scroll_render_direct_frame(scroll_y);
+      const bool success =
+          !scroll_snapshot_should_render(worker.rendered_scroll_y.load(std::memory_order_acquire), scroll_y, false) ||
+          snapshot_scroll_render_direct_frame(scroll_y);
       if (success) {
         worker.rendered_scroll_y.store(scroll_y, std::memory_order_release);
       } else {
@@ -15780,7 +15995,11 @@ void snapshot_swipe_finish_now() {
     // invalidations below. This replaces the old two-buffer FULL redraw which
     // blocked touch polling for roughly 150 ms after every gesture.
     const uint64_t handoff_started_us = snapshot_diag_now_us_();
-    handoff_seeded = snapshot_swipe_state.component->realign_direct_buffer_after_manual_present(false);
+    // DIRECT mode only redraws invalidated areas. Realigning buf_act without
+    // seeding its pixels can expose a pre-swipe base on the first clock/region
+    // update. Drain the queue and seed the actual presented frame while this
+    // swipe still owns its regional pause; cleanup releases that pause below.
+    handoff_seeded = snapshot_swipe_state.component->direct_handoff_to_lvgl(100);
     if (s_swipe_logging_enabled) {
       ESP_LOGI(TAG, "snapshot swipe: handoff seeded=%s in %lluus", YESNO(handoff_seeded),
                static_cast<unsigned long long>(snapshot_diag_now_us_() - handoff_started_us));
@@ -15860,8 +16079,8 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
   if (max_scroll_y > INT32_MAX - viewport_h)
     return false;
   const int content_h = viewport_h + max_scroll_y;
-  const size_t stride = lv_draw_buf_width_to_stride(viewport_w, SNAPSHOT_SCROLL_CF);
-  if (stride != static_cast<size_t>(viewport_w) * 2 ||
+  const size_t stride = lv_draw_buf_width_to_stride(viewport_w, snapshot_scroll_config.color_format);
+  if (stride != static_cast<size_t>(viewport_w) * lv_color_format_get_size(snapshot_scroll_config.color_format) ||
       static_cast<size_t>(content_h) > snapshot_scroll_config.max_content_bytes / stride) {
     ESP_LOGW(TAG, "snapshot scroll: content needs %u bytes, configured limit is %u",
              static_cast<unsigned>(stride * content_h),
@@ -15883,7 +16102,7 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
     lv_obj_update_layout(parent == nullptr ? obj : parent);
     lv_obj_scroll_to_y(obj, segment_y, LV_ANIM_OFF);
     lv_obj_update_layout(parent == nullptr ? obj : parent);
-    return lv_snapshot_take(obj, SNAPSHOT_SCROLL_CF);
+    return lv_snapshot_take(obj, snapshot_scroll_config.color_format);
   };
   if (snapshot_scroll_external_buffer.data != nullptr && !snapshot_scroll_external_buffer.in_use &&
       snapshot_scroll_external_buffer.capacity >= required_bytes) {
@@ -15893,10 +16112,10 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
     lv_obj_update_layout(parent == nullptr ? obj : parent);
     auto &view = snapshot_scroll_external_buffer.view;
     view = {};
-    if (lv_draw_buf_init(&view, viewport_w, content_h, SNAPSHOT_SCROLL_CF, static_cast<uint32_t>(stride),
-                         snapshot_scroll_external_buffer.data,
+    if (lv_draw_buf_init(&view, viewport_w, content_h, snapshot_scroll_config.color_format,
+                         static_cast<uint32_t>(stride), snapshot_scroll_external_buffer.data,
                          snapshot_scroll_external_buffer.capacity) == LV_RESULT_OK &&
-        lv_snapshot_take_to_draw_buf(obj, SNAPSHOT_SCROLL_CF, &view) == LV_RESULT_OK) {
+        lv_snapshot_take_to_draw_buf(obj, snapshot_scroll_config.color_format, &view) == LV_RESULT_OK) {
       segments.push_back({&view, 0, content_h, false});
     }
   }
@@ -15921,9 +16140,9 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
   bool valid = !segments.empty();
   for (const auto &segment : segments) {
     const auto *buffer = segment.buffer;
-    valid = valid && buffer != nullptr && buffer->data != nullptr && buffer->header.cf == SNAPSHOT_SCROLL_CF &&
-            buffer->header.w == viewport_w && buffer->header.h == segment.height && buffer->header.stride == stride &&
-            segment.y == captured_rows;
+    valid = valid && buffer != nullptr && buffer->data != nullptr &&
+            buffer->header.cf == snapshot_scroll_config.color_format && buffer->header.w == viewport_w &&
+            buffer->header.h == segment.height && buffer->header.stride == stride && segment.y == captured_rows;
     captured_rows += segment.height;
   }
   if (!valid || captured_rows != content_h) {
@@ -15933,7 +16152,7 @@ bool snapshot_scroll_capture(lv_obj_t *obj, int viewport_w, int viewport_h, bool
     return false;
   }
 #if defined(USE_ESP32)
-  for (const auto &segment : segments) {
+  for (auto &segment : segments) {
     lvgl_cache_msync_external(segment.buffer->data, stride * segment.height, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   }
 #endif
@@ -17343,7 +17562,11 @@ extern "C" bool lvgl_esphome_snapshot_refresh_tile_regions(lv_obj_t *page, lv_ob
   if (page_visible) {
     for (size_t index = 0; index < region_count; index++) {
       auto *region = regions[index];
-      if (region == nullptr || !lv_obj_is_valid(region) || !lv_obj_is_visible(region))
+      // A card that has just been hidden still owns a stale rectangle in the
+      // cached page. Include its retained geometry so the visible page's
+      // background replaces those pixels; skipping it keeps deleted cards in
+      // swipe snapshots and can leave an all-hidden update pending forever.
+      if (region == nullptr || !lv_obj_is_valid(region))
         continue;
       lv_area_t area{};
       lv_obj_get_coords(region, &area);
@@ -18315,7 +18538,9 @@ extern "C" void lvgl_esphome_snapshot_discard_pending_refresh(void) {
 
 extern "C" void lvgl_esphome_snapshot_scroll_configure(float overscroll_ratio, uint32_t momentum_duration_ms,
                                                        uint32_t bounce_duration_ms, uint32_t max_inertia_duration_ms,
-                                                       size_t max_content_bytes) {
+                                                       size_t max_content_bytes, lv_color_format_t color_format) {
+  snapshot_scroll_config.color_format =
+      color_format == LV_COLOR_FORMAT_RGB888 ? LV_COLOR_FORMAT_RGB888 : LV_COLOR_FORMAT_RGB565;
   snapshot_scroll_config.overscroll_ratio = std::clamp(overscroll_ratio, 0.0f, 1.0f);
   snapshot_scroll_config.momentum_duration_ms = std::max<uint32_t>(1, momentum_duration_ms);
   snapshot_scroll_config.bounce_duration_ms = std::max<uint32_t>(1, bounce_duration_ms);
@@ -18323,15 +18548,15 @@ extern "C" void lvgl_esphome_snapshot_scroll_configure(float overscroll_ratio, u
   snapshot_scroll_config.max_content_bytes = std::max<size_t>(1, max_content_bytes);
 }
 
-extern "C" size_t lvgl_esphome_snapshot_scroll_required_bytes(lv_obj_t *obj) {
-  if (obj == nullptr)
+extern "C" size_t lvgl_esphome_snapshot_scroll_required_bytes(lv_obj_t *obj, lv_color_format_t color_format) {
+  if (obj == nullptr || (color_format != LV_COLOR_FORMAT_RGB565 && color_format != LV_COLOR_FORMAT_RGB888))
     return 0;
   auto *parent = lv_obj_get_parent(obj);
   lv_obj_update_layout(parent == nullptr ? obj : parent);
   const int width = lv_obj_get_width(obj);
   const int height = lv_obj_get_height(obj);
   const int max_scroll_y = std::max<int>(0, lv_obj_get_scroll_top(obj) + lv_obj_get_scroll_bottom(obj));
-  const size_t stride = width > 0 ? lv_draw_buf_width_to_stride(width, SNAPSHOT_SCROLL_CF) : 0;
+  const size_t stride = width > 0 ? lv_draw_buf_width_to_stride(width, color_format) : 0;
   return height > 0 ? stride * static_cast<size_t>(height + max_scroll_y) : 0;
 }
 
@@ -18451,7 +18676,7 @@ extern "C" bool lvgl_esphome_snapshot_scroll_refresh(lv_obj_t *obj, int viewport
     return false;
 #endif
   if (state.viewport_w != viewport_w || state.viewport_h != viewport_h ||
-      state.content_buf->header.cf != SNAPSHOT_SCROLL_CF || state.content_buf->header.w < viewport_w)
+      state.content_buf->header.cf != snapshot_scroll_config.color_format || state.content_buf->header.w < viewport_w)
     return false;
 
   auto *parent = lv_obj_get_parent(obj);
@@ -18468,7 +18693,7 @@ extern "C" bool lvgl_esphome_snapshot_scroll_refresh(lv_obj_t *obj, int viewport
     lv_obj_update_layout(parent == nullptr ? obj : parent);
     lv_obj_scroll_to_y(obj, segment_y, LV_ANIM_OFF);
     lv_obj_update_layout(parent == nullptr ? obj : parent);
-    return lv_snapshot_take_to_draw_buf(obj, SNAPSHOT_SCROLL_CF, buffer) == LV_RESULT_OK;
+    return lv_snapshot_take_to_draw_buf(obj, snapshot_scroll_config.color_format, buffer) == LV_RESULT_OK;
   };
 
   bool refreshed = true;
@@ -18492,7 +18717,7 @@ extern "C" bool lvgl_esphome_snapshot_scroll_refresh(lv_obj_t *obj, int viewport
     return false;
   }
 #if defined(USE_ESP32)
-  for (const auto &segment : state.segments) {
+  for (auto &segment : state.segments) {
     const size_t bytes = static_cast<size_t>(segment.buffer->header.stride) * segment.height;
     lvgl_cache_msync_external(segment.buffer->data, bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
   }

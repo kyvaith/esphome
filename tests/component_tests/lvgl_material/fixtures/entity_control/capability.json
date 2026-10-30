@@ -1,0 +1,1 @@
+{"v":1,"type":"entity_control_v1","kind":"capability","enabled":true,"max_payload_bytes":2048,"control_kinds":["light","number"]}

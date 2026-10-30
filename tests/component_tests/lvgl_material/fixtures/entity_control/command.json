@@ -1,0 +1,1 @@
+{"v":1,"type":"entity_control_v1","kind":"command","channel":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","open_seq":1,"slot":2,"card_id":"card-2","revision":4,"control_kind":"number","token":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","command_seq":1,"op":"step","direction":1,"expected_index":4,"expected_state_generation":1}

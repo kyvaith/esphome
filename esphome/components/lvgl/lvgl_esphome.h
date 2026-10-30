@@ -3,6 +3,9 @@
 #include "esphome/components/lvgl/slideshow.h"
 #include "esphome/components/lvgl/scroll_snapshot_geometry.h"
 #include "esphome/core/defines.h"
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+#include "direct_region_generation.h"
+#endif
 
 #ifdef USE_LVGL_HANDLER_DIAGNOSTICS
 #include "handler_diagnostics.h"
@@ -204,8 +207,10 @@ extern "C" void lvgl_esphome_snapshot_swipe_end(void);
 extern "C" void lvgl_esphome_snapshot_discard_pending_refresh(void);
 extern "C" void lvgl_esphome_snapshot_scroll_configure(float overscroll_ratio, uint32_t momentum_duration_ms,
                                                        uint32_t bounce_duration_ms, uint32_t max_inertia_duration_ms,
-                                                       size_t max_content_bytes);
-extern "C" size_t lvgl_esphome_snapshot_scroll_required_bytes(lv_obj_t *obj);
+                                                       size_t max_content_bytes,
+                                                       lv_color_format_t color_format = LV_COLOR_FORMAT_RGB565);
+extern "C" size_t lvgl_esphome_snapshot_scroll_required_bytes(lv_obj_t *obj,
+                                                              lv_color_format_t color_format = LV_COLOR_FORMAT_RGB565);
 extern "C" bool lvgl_esphome_snapshot_scroll_set_external_buffer(uint8_t *data, size_t capacity);
 extern "C" uint8_t *lvgl_esphome_snapshot_scroll_take_external_buffer(size_t *capacity);
 extern "C" bool lvgl_esphome_snapshot_scroll_prepare(lv_obj_t *obj, int viewport_w, int viewport_h);
@@ -670,6 +675,15 @@ class LvglComponent final : public PollingComponent {
   uint8_t direct_blit_rgb888_async(const uint8_t *src, int src_stride, int x, int y, int width, int height,
                                    LvglDirectBlitReadyCallback ready_callback, void *ready_arg,
                                    bool stable_carry = false, bool persistent_carry = false);
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+  // Source retirement is always signalled; only result.accepted(expected) means
+  // this request reached the software queue with its own persistent carry.
+  uint32_t get_direct_region_pause_depth() const;
+  uint8_t direct_blit_rgb888_generation_async(const uint8_t *src, int src_stride, int x, int y, int width, int height,
+                                              uint32_t expected_generation, DirectRegionGenerationResult *result,
+                                              LvglDirectBlitReadyCallback ready_callback, void *ready_arg,
+                                              bool stable_carry = false, bool require_primary_slot = false);
+#endif
   uint8_t direct_blit_xrgb8888_async(const uint8_t *src, int src_stride, int x, int y, int width, int height,
                                      LvglDirectBlitReadyCallback ready_callback, void *ready_arg);
   uint8_t direct_blit_xrgb8888_region_async(const uint8_t *src, int src_stride, int source_width, int source_height,
@@ -788,9 +802,17 @@ class LvglComponent final : public PollingComponent {
     int scale_target_height{};
     bool stable_carry{};
     bool persistent_carry{};
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+    bool require_primary_slot{};
+    uint32_t expected_generation{};  // Zero preserves all existing producers.
+    DirectRegionGenerationResult *generation_result{};
+#endif
     LvglDirectBlitReadyCallback ready_callback{};
     void *ready_arg{};
   };
+#ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
+  bool direct_region_primary_slot_compatible_(const DirectRegionRequest *requests, size_t count, size_t index) const;
+#endif
   static constexpr size_t DIRECT_REGION_SLOT_COUNT = 4;
   static constexpr size_t DIRECT_REGION_BATCH_SIZE = 8;
   bool direct_region_ppa_copy_(const uint8_t *source, int source_width, int source_height, int source_x, int source_y,
