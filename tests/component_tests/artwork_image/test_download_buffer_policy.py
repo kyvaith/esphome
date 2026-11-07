@@ -35,7 +35,7 @@ def test_download_buffer_policy():
     )
     actual += "\nDownloadBuffer::DownloadBuffer(size_t size)" + methods
     actual += (
-        "\nstatic DownloadBuffer actual_initial_buffer(size_t download_buffer_size, bool prefer_external_download_buffer) {\nconstexpr size_t DOWNLOAD_BUFFER_BASE_SIZE=32*1024;\nreturn DownloadBuffer("
+        "\nstatic DownloadBuffer actual_initial_buffer(size_t download_buffer_size, bool prefer_external_download_buffer, bool preallocate_download_buffer=false) {\nconstexpr size_t DOWNLOAD_BUFFER_BASE_SIZE=32*1024;\nconstexpr size_t MAX_DOWNLOAD_BUFFER_SIZE=2*1024*1024;\nreturn DownloadBuffer("
         + expression
         + ");\n}\n"
     )

@@ -941,11 +941,13 @@ inline bool is_color_on(const Color &color) {
 
 ArtworkImage::ArtworkImage(const std::string &url, int width, int height, ImageFormat format, ImageType type,
                            image::Transparency transparency, uint32_t download_buffer_size, bool is_big_endian,
-                           bool allow_insecure_local_urls, bool prefer_external_download_buffer)
+                           bool allow_insecure_local_urls, bool prefer_external_download_buffer,
+                           bool preallocate_download_buffer)
     : Image(nullptr, 0, 0, type, transparency, is_big_endian),
       buffer_(nullptr),
       download_buffer_(
-          std::min<size_t>(download_buffer_size, DOWNLOAD_BUFFER_BASE_SIZE),
+          std::min<size_t>(download_buffer_size,
+                           preallocate_download_buffer ? MAX_DOWNLOAD_BUFFER_SIZE : DOWNLOAD_BUFFER_BASE_SIZE),
           prefer_external_download_buffer ? RAMAllocator<uint8_t>::NONE : RAMAllocator<uint8_t>::PREFER_INTERNAL),
       download_buffer_initial_size_(download_buffer_size),
       format_(format),
@@ -2171,6 +2173,12 @@ void ArtworkImage::release(bool immediate, bool preserve_capacity) {
 }
 
 void ArtworkImage::release_unused_decode_capacity() {
+  // Explicitly releasing the idle pool ends its reservation too. Otherwise a
+  // previous larger request rejects a later smaller spare even after the old
+  // allocation has been freed. Active, decoding and pinned generations keep
+  // their existing ownership; a future reservation establishes new limits.
+  this->reserved_decode_buffer_capacity_ = 0;
+  this->reserved_decode_buffer_count_ = 1;
   // Retired buffers still leased by a presenter are deliberately skipped by
   // cleanup_retired_buffers_(). The active image and an in-progress decode are
   // independent, so another full-screen image client can reclaim only idle

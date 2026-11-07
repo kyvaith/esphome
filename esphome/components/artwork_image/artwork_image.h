@@ -68,11 +68,13 @@ class ArtworkImage : public PollingComponent,
    * @param height Desired height of the target image area.
    * @param format Format that the image is encoded in (@see ImageFormat).
    * @param buffer_size Size of the buffer used to download the image.
+   * @param preallocate_download_buffer Allocate configured encoded capacity from construction, bounded to 2 MiB.
    * @param prefer_external_download_buffer Prefer external RAM for encoded input, with internal fallback.
    */
   ArtworkImage(const std::string &url, int width, int height, ImageFormat format, image::ImageType type,
                image::Transparency transparency, uint32_t buffer_size, bool is_big_endian,
-               bool allow_insecure_local_urls, bool prefer_external_download_buffer = false);
+               bool allow_insecure_local_urls, bool prefer_external_download_buffer = false,
+               bool preallocate_download_buffer = false);
 
   void setup() override;
   void draw(int x, int y, display::Display *display, Color color_on, Color color_off) override;
@@ -136,7 +138,7 @@ class ArtworkImage : public PollingComponent,
    */
   void release(bool immediate = false, bool preserve_capacity = false);
 
-  /** Release reusable and retired decode capacity without touching the active image. */
+  /** End the idle-pool reservation, preserving active, decoding and pinned generations. */
   void release_unused_decode_capacity();
 
   /**

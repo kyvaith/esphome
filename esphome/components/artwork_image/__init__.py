@@ -65,6 +65,7 @@ CONF_DARKEN = "darken"
 CONF_HARDWARE_JPEG = "hardware_jpeg"
 CONF_PREFER_INTERNAL_TASK_STACK = "prefer_internal_task_stack"
 CONF_PREFER_EXTERNAL_DOWNLOAD_BUFFER = "prefer_external_download_buffer"
+CONF_PREALLOCATE_DOWNLOAD_BUFFER = "preallocate_download_buffer"
 CONF_REUSE_ACTIVE_BUFFER = "reuse_active_buffer"
 CONF_REUSE_ACTIVE_BUFFER_CAPACITY = "reuse_active_buffer_capacity"
 CONF_DEFER_DECODE = "defer_decode"
@@ -218,6 +219,7 @@ ARTWORK_IMAGE_SCHEMA = cv.Schema(
         cv.Optional(CONF_HARDWARE_JPEG, default=True): cv.boolean,
         cv.Optional(CONF_PREFER_INTERNAL_TASK_STACK, default=False): cv.boolean,
         cv.Optional(CONF_PREFER_EXTERNAL_DOWNLOAD_BUFFER, default=False): cv.boolean,
+        cv.Optional(CONF_PREALLOCATE_DOWNLOAD_BUFFER, default=False): cv.boolean,
         cv.Optional(CONF_REUSE_ACTIVE_BUFFER, default=True): cv.boolean,
         cv.Optional(CONF_REUSE_ACTIVE_BUFFER_CAPACITY, default=False): cv.boolean,
         cv.Optional(CONF_DEFER_DECODE, default=False): cv.boolean,
@@ -409,6 +411,7 @@ async def to_code(config):
         config.get(CONF_BYTE_ORDER, "LITTLE_ENDIAN") != "LITTLE_ENDIAN",
         config[CONF_ALLOW_INSECURE_LOCAL_URLS],
         config[CONF_PREFER_EXTERNAL_DOWNLOAD_BUFFER],
+        config[CONF_PREALLOCATE_DOWNLOAD_BUFFER],
     )
     await cg.register_component(var, config)
     await cg.register_parented(var, config[CONF_HTTP_REQUEST_ID])

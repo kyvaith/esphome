@@ -148,6 +148,59 @@ int main() {
     assert(b.resize(128) == 256 && b.shrink(512) == 256 && attempts.size() == count);
   }
   reset();
+  {
+    auto a = actual_initial_buffer(262144, true, true);
+    auto b = actual_initial_buffer(786432, true, true);
+    assert(a.size() == 262144 && b.size() == 786432 && external(a) && external(b));
+    assert(attempts.size() == 2 && allocated.size() == 2);
+    assert(attempts[0].size == 262144 && attempts[1].size == 786432);
+    auto *first = a.data();
+    auto *second = b.data();
+    fill(a);
+    // Existing boot reservation is now a no-op, without any temporary 32 KiB block.
+    assert(a.resize(262144) == 262144 && b.resize(786432) == 786432);
+    assert(attempts.size() == 2 && a.data() == first && b.data() == second);
+    check_data(a, 0, 64);
+    assert(a.resize(524288) == 524288 && external(a) && !allocated.count(first));
+    check_data(a, 0, 64);
+    assert(a.shrink(128) == 128 && external(a));
+    check_data(a, 0, 64);
+  }
+  reset();
+  {
+    auto b = actual_initial_buffer(4 * 1024 * 1024, true, true);
+    assert(b.size() == 2 * 1024 * 1024 && attempts.size() == 1 && external(b));
+  }
+  reset();
+  {
+    auto b = actual_initial_buffer(256, true, true);
+    assert(b.size() == 256 && external(b));
+  }
+  reset();
+  {
+    auto b = actual_initial_buffer(262144, false, true);
+    assert(b.size() == 262144 && !external(b));
+    assert(attempts.size() == 1 && (attempts[0].caps & MALLOC_CAP_INTERNAL));
+  }
+  reset();
+  external_available = false;
+  {
+    auto b = actual_initial_buffer(786432, true, true);
+    assert(b.size() == 786432 && !external(b) && attempts.size() == 2);
+    assert(attempts[0].size == 786432 && attempts[1].size == 786432);
+  }
+  reset();
+  external_available = internal_available = false;
+  {
+    auto b = actual_initial_buffer(262144, true, true);
+    assert(b.size() == 0 && b.unread() == 0 && b.data() == nullptr);
+    assert(attempts.size() == 2);
+    external_available = true;
+    assert(b.resize(262144) == 262144 && external(b));
+    fill(b);
+    check_data(b, 0, 64);
+  }
+  reset();
   std::puts("PASS actual RAMAllocator + DownloadBuffer: legacy, external, fallback, failure, growth/shrink data and "
-            "ownership");
+            "ownership; preallocation cap, no temporary blocks, no-op reserve and independent allocator policy");
 }
