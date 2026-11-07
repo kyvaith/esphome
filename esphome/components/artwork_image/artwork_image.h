@@ -68,10 +68,11 @@ class ArtworkImage : public PollingComponent,
    * @param height Desired height of the target image area.
    * @param format Format that the image is encoded in (@see ImageFormat).
    * @param buffer_size Size of the buffer used to download the image.
+   * @param prefer_external_download_buffer Prefer external RAM for encoded input, with internal fallback.
    */
   ArtworkImage(const std::string &url, int width, int height, ImageFormat format, image::ImageType type,
                image::Transparency transparency, uint32_t buffer_size, bool is_big_endian,
-               bool allow_insecure_local_urls);
+               bool allow_insecure_local_urls, bool prefer_external_download_buffer = false);
 
   void setup() override;
   void draw(int x, int y, display::Display *display, Color color_on, Color color_off) override;
@@ -390,6 +391,7 @@ class ArtworkImage : public PollingComponent,
    */
   bool is_big_endian_;
   bool allow_insecure_local_urls_;
+  bool prefer_external_download_buffer_;
   /**
    * Actual width of the current image. If fixed_width_ is specified,
    * this will be equal to it; otherwise it will be set once the decoding

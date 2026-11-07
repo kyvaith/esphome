@@ -430,6 +430,7 @@ void MixerSpeaker::loop() {
   if (event_group_bits & MIXER_TASK_COMMAND_START) {
     // Only start the task if it's fully stopped and cleaned up
     if (!this->status_has_error() && !this->task_.is_created()) {
+      this->task_ready_.store(false, std::memory_order_release);
       if (this->task_.create(audio_mixer_task, "mixer", TASK_STACK_SIZE, (void *) this, MIXER_TASK_PRIORITY,
                              this->task_stack_in_psram_)) {
         xEventGroupClearBits(this->event_group_, MIXER_TASK_COMMAND_START);
@@ -556,6 +557,7 @@ void MixerSpeaker::audio_mixer_task(void *params) {
     // Lease each reader and its captured format through the complete mixing pass.
     FixedVector<MixingSource> sources_with_data;
     sources_with_data.init(this_mixer->source_speakers_.size());
+    this_mixer->task_ready_.store(true, std::memory_order_release);
 
     while (true) {
       uint32_t event_group_bits = xEventGroupGetBits(this_mixer->event_group_);
@@ -697,6 +699,7 @@ void MixerSpeaker::audio_mixer_task(void *params) {
       }
     }
 
+    this_mixer->task_ready_.store(false, std::memory_order_release);
     xEventGroupSetBits(this_mixer->event_group_, MIXER_TASK_STATE_STOPPING);
   }
 

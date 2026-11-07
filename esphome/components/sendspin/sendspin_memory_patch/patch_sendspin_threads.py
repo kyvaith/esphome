@@ -24,14 +24,24 @@ AFTER = {
     "src/source_task.h": "79be1437a9602cb974a9beacb5d3165eb5b20c3ea12b5bfb358d00a50e9cb5b4",
     "src/artwork_role_impl.h": "a9b7b717557a0b128d5d85d7a5ae29089181cd62260468c57aa4bbad5f608955",
     "src/visualizer_role_impl.h": "ebc69cec9cbca2a8a1cb8074dc2e17ddd12a8990915a9b2cc9325c7a1c001246",
+    "src/protocol_task.cpp": "b6cf4db68e006b73e31ded8aa32d299a17c6e1d8bef94b33d6001e8b8795f357",
+    "src/sync_task.cpp": "9f37d18dd5b9aa56ccfa735f76b6b675fdd48a5c4aca3992da01b4a9b8a99a86",
+    "src/source_task.cpp": "cb5e83f337d51ef376800e561c002fd50ccc72f5fc981b83842a9a414e6972c5",
+    "src/artwork_role.cpp": "385600cf096bb6a79888c179dcc453ca0c29d256279385701bea0d118774ae48",
+    "src/visualizer_role.cpp": "ecd98d8a118ed6a5f031a38773f75354ddef16c5e62917242baf2417134bc532",
+    "src/client.cpp": "a2219e4a816576b8c13ee9386e3cb8761be1600b37d9a1fc79687a9becf7690a",
+    "include/sendspin/client.h": "87d72773e83da102fac028aa9f8688206f30099336f3e04fa79a8ba9037eae00",
+    "src/platform/fallible_thread.h": "81d421dbca3c67012db1a07ddcb202e458d7325758fa291c303b40de5cfa1831",
+}
+
+
+# Native109-117 checked workers: accept only these exact reviewed old outputs.
+PREVIOUS_AFTER = {
     "src/protocol_task.cpp": "aae13fdcb66da6d2f8231931eb410b061bc372e85fccb328e937c4f324018f3b",
     "src/sync_task.cpp": "6ecf8b9ba74b9933e8791e60887d187c0b0688fbcc44d4fcd1dd860ac80977bd",
     "src/source_task.cpp": "776defbec4558d253fea7f5f2431f6c5e535a4a5694e113a0e8a1d9bb255149d",
     "src/artwork_role.cpp": "e57a0fdb133de97764d3d50837cf9ce70b548746c026dfd3429b81a331a08f73",
     "src/visualizer_role.cpp": "7a27072cc4a4fe7edd25178d10920ddd6848d30e6f1e48aa68572c889d556023",
-    "src/client.cpp": "a2219e4a816576b8c13ee9386e3cb8761be1600b37d9a1fc79687a9becf7690a",
-    "include/sendspin/client.h": "87d72773e83da102fac028aa9f8688206f30099336f3e04fa79a8ba9037eae00",
-    "src/platform/fallible_thread.h": "81d421dbca3c67012db1a07ddcb202e458d7325758fa291c303b40de5cfa1831",
 }
 
 
@@ -122,7 +132,7 @@ def replacements():
         name = args.split(",")[0]
         fixed = (
             f"    if (!this->{member}.start<{entry}>(this, {args})) {{\n"
-            f'        SS_LOGW(TAG, "Worker %s start refused (phase=%u error=%d)", {name}, this->{member}.start_error_phase(), this->{member}.start_error());\n'
+            f'        SS_LOGE(TAG, "Worker %s start refused (phase=%u error=%d)", {name}, this->{member}.start_error_phase(), this->{member}.start_error());\n'
             + cleanup
             + "        return false;\n    }\n"
         )
@@ -249,9 +259,22 @@ def prepare_thread_sources(
         digest = hashlib.sha256(data).hexdigest()
         if digest == AFTER[name]:
             continue
-        if digest != BEFORE[name]:
+        if digest == PREVIOUS_AFTER.get(name):
+            # A failed startup is an error even when a bounded retry later recovers.
+            # Preserve its worker/phase/errno under the normal IDF ERROR log level.
+            fixed = transform(
+                data.decode("utf-8"),
+                [
+                    (
+                        'SS_LOGW(TAG, "Worker %s start refused',
+                        'SS_LOGE(TAG, "Worker %s start refused',
+                    )
+                ],
+            ).encode("utf-8")
+        elif digest == BEFORE[name]:
+            fixed = transform(data.decode("utf-8"), changes).encode("utf-8")
+        else:
             raise RuntimeError(f"Unreviewed Sendspin thread preimage: {name}")
-        fixed = transform(data.decode("utf-8"), changes).encode("utf-8")
         if hashlib.sha256(fixed).hexdigest() != AFTER[name]:
             raise RuntimeError(f"Unreviewed Sendspin thread postimage: {name}")
         outputs[path] = fixed

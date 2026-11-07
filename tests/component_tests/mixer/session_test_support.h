@@ -34,7 +34,7 @@ static constexpr TickType_t portMAX_DELAY = UINT32_MAX;
 namespace host {
 inline uint32_t now = 100;
 inline int locks = 0, rings_created = 0, rings_deleted = 0, items_returned = 0;
-inline bool fail_storage = false, fail_ring_init = false;
+inline bool fail_storage = false, fail_ring_init = false, fail_task_create = false;
 inline int fail_nothrow_after = -1;
 inline std::function<void()> writing, destroying, delaying, pcm;
 struct Parked {};
@@ -170,7 +170,11 @@ inline void delay(uint32_t ms) { vTaskDelay(ms); }
 class StaticTask {
  public:
   bool is_created() const { return created_; }
-  bool create(void (*)(void *), const char *, uint32_t, void *, UBaseType_t, bool) { return created_ = true; }
+  bool create(void (*)(void *), const char *, uint32_t, void *, UBaseType_t, bool) {
+    if (host::fail_task_create)
+      return false;
+    return created_ = true;
+  }
   bool deallocate() {
     created_ = false;
     return true;

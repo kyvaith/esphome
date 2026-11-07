@@ -341,7 +341,67 @@ void finish_and_timeout(bool finish) {
   assert(f.source.is_stopped() && f.source.ring_buffer_ == nullptr);
 }
 
+void mixer_task_readiness() {
+  Fixture f;
+  assert(!f.mixer.is_task_ready());
+  f.start();
+  // Source admission and parent START are not proof that the mixer task exists.
+  assert(f.source.state_ == speaker::STATE_RUNNING && !f.mixer.is_task_ready());
+  host::fail_task_create = true;
+  f.mixer.loop();
+  assert(!f.mixer.task_.is_created() && !f.mixer.is_task_ready());
+  host::fail_task_create = false;
+  f.mixer.status_clear_error();
+  f.mixer.loop();
+  assert(f.mixer.task_.is_created() && !f.mixer.is_task_ready());
+
+  for (unsigned cycle = 0; cycle < 2; ++cycle) {
+    unsigned passes = 0;
+    host::delaying = [&]() {
+      ++passes;
+      assert(f.mixer.is_task_ready());
+      // Another source/start request must not clear the running worker's readiness.
+      auto other_stream = audio::AudioStreamInfo(16, 1, 48000);
+      assert(f.mixer.start(other_stream) == ESP_OK && f.mixer.is_task_ready());
+      f.mixer.loop();  // Consumes the legacy STATE_RUNNING bit without losing readiness.
+      assert(f.mixer.is_task_ready());
+      xEventGroupSetBits(f.mixer.event_group_, 2);  // Existing STOP command.
+    };
+    try {
+      MixerSpeaker::audio_mixer_task(&f.mixer);
+    } catch (const host::Parked &) {
+    }
+    host::delaying = {};
+    assert(passes == 1 && !f.mixer.is_task_ready());
+    f.mixer.loop();  // Retires the stopped task, preserving the queued new START.
+    assert(!f.mixer.task_.is_created() && !f.mixer.is_task_ready());
+    if (cycle == 0) {
+      f.mixer.loop();
+      assert(f.mixer.task_.is_created() && !f.mixer.is_task_ready());
+    }
+  }
+}
+
+void mixer_task_buffer_failure_not_ready() {
+  Fixture f;
+  f.start();
+  f.mixer.loop();
+  assert(f.mixer.task_.is_created() && !f.mixer.is_task_ready());
+  host::fail_storage = true;
+  try {
+    MixerSpeaker::audio_mixer_task(&f.mixer);
+    assert(false);  // A worker with no transfer storage must park.
+  } catch (const host::Parked &) {
+  }
+  host::fail_storage = false;
+  assert(!f.mixer.is_task_ready());
+  f.mixer.loop();
+  assert(f.mixer.status_has_error() && !f.mixer.task_.is_created() && !f.mixer.is_task_ready());
+}
+
 int main() {
+  mixer_task_readiness();
+  mixer_task_buffer_failure_not_ready();
   two_leases(true);
   two_leases(false);
   blocking_producer();

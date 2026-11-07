@@ -941,17 +941,19 @@ inline bool is_color_on(const Color &color) {
 
 ArtworkImage::ArtworkImage(const std::string &url, int width, int height, ImageFormat format, ImageType type,
                            image::Transparency transparency, uint32_t download_buffer_size, bool is_big_endian,
-                           bool allow_insecure_local_urls)
+                           bool allow_insecure_local_urls, bool prefer_external_download_buffer)
     : Image(nullptr, 0, 0, type, transparency, is_big_endian),
       buffer_(nullptr),
-      download_buffer_(std::min<size_t>(download_buffer_size, DOWNLOAD_BUFFER_BASE_SIZE),
-                       RAMAllocator<uint8_t>::PREFER_INTERNAL),
+      download_buffer_(
+          std::min<size_t>(download_buffer_size, DOWNLOAD_BUFFER_BASE_SIZE),
+          prefer_external_download_buffer ? RAMAllocator<uint8_t>::NONE : RAMAllocator<uint8_t>::PREFER_INTERNAL),
       download_buffer_initial_size_(download_buffer_size),
       format_(format),
       fixed_width_(width),
       fixed_height_(height),
       is_big_endian_(is_big_endian),
       allow_insecure_local_urls_(allow_insecure_local_urls),
+      prefer_external_download_buffer_(prefer_external_download_buffer),
       buffer_width_(0),
       buffer_height_(0),
       start_time_(0) {
@@ -1032,6 +1034,20 @@ void ArtworkImage::log_memory_usage(const char *phase) const {
 }
 
 void ArtworkImage::setup() {
+#ifdef USE_ESP32
+  if (this->prefer_external_download_buffer_) {
+    const auto *buffer = this->download_buffer_.data();
+    const bool external = buffer != nullptr && esp_ptr_external_ram(buffer);
+    const bool internal = buffer != nullptr && esp_ptr_internal(buffer);
+    ESP_LOGI(TAG, "Initial download buffer: bytes=%zu placement=%s preference=external", this->download_buffer_.size(),
+             buffer == nullptr ? "none"
+             : external        ? "psram"
+             : internal        ? "internal"
+                               : "other");
+    if (internal)
+      ESP_LOGW(TAG, "External download buffer unavailable; initial buffer fell back to internal RAM");
+  }
+#endif
 #if defined(USE_ESP_IDF) && defined(CONFIG_SOC_PPA_SUPPORTED) && defined(USE_ESP32_JPEG)
   if (this->scrim_opacity_ > 0 && this->type_ == image::IMAGE_TYPE_RGB565) {
     ensure_artwork_ppa_blend_resources(this->fixed_width_, this->fixed_height_);

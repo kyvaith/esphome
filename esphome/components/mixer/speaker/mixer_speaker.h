@@ -161,6 +161,10 @@ class MixerSpeaker final : public Component {
 
   speaker::Speaker *get_output_speaker() const { return this->output_speaker_; }
 
+  /// True after the mixer worker owns its transfer buffer and source workspace.
+  /// A queued start alone is not ready; readiness ends before worker resources retire.
+  bool is_task_ready() const { return this->task_ready_.load(std::memory_order_acquire); }
+
   /// @brief Returns the current number of frames in the output pipeline (written but not yet played)
   uint32_t get_frames_in_pipeline() const { return this->frames_in_pipeline_.load(std::memory_order_acquire); }
 
@@ -178,6 +182,7 @@ class MixerSpeaker final : public Component {
   bool task_stack_in_psram_{false};
 
   StaticTask task_;
+  std::atomic<bool> task_ready_{false};
 
   optional<audio::AudioStreamInfo> audio_stream_info_;
 

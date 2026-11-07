@@ -2,8 +2,8 @@
 
 import hashlib
 import importlib.util
-from pathlib import Path
 import sys
+from pathlib import Path
 
 _THREAD_SPEC = importlib.util.spec_from_file_location(
     "sendspin_checked_threads", Path(__file__).with_name("patch_sendspin_threads.py")
@@ -12,6 +12,7 @@ assert _THREAD_SPEC and _THREAD_SPEC.loader
 _THREAD_PATCH = importlib.util.module_from_spec(_THREAD_SPEC)
 _THREAD_SPEC.loader.exec_module(_THREAD_PATCH)
 THREAD_AFTER = _THREAD_PATCH.AFTER
+THREAD_PREVIOUS_AFTER = _THREAD_PATCH.PREVIOUS_AFTER
 prepare_thread_sources = _THREAD_PATCH.prepare_thread_sources
 
 GUARD = "CONFIG_ESPHOME_SENDSPIN_MEMORY_OPTIMIZATIONS"
@@ -216,7 +217,11 @@ def prepare_sources(component_dir: Path) -> dict[Path, bytes]:
         target = component_dir / name
         original = target.read_bytes()
         digest = hashlib.sha256(original).hexdigest()
-        if digest in (GUARDED_SHA256[name], THREAD_AFTER.get(name)):
+        if digest in (
+            GUARDED_SHA256[name],
+            THREAD_AFTER.get(name),
+            THREAD_PREVIOUS_AFTER.get(name),
+        ):
             continue
         if digest != PRISTINE_SHA256[name]:
             raise RuntimeError(f"Unreviewed Sendspin source: {name}")
