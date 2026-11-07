@@ -16,6 +16,18 @@ namespace esphome::lvgl {
 
 static const char *const TAG = "lvgl.navigation";
 
+bool LvglNavigation::is_home_view(lv_obj_t *object) const {
+  for (auto *widget : this->registered_home_widgets_) {
+    if (widget == object)
+      return true;
+  }
+  for (auto *page : this->home_pages_) {
+    if (page != nullptr && page->obj == object)
+      return true;
+  }
+  return false;
+}
+
 // A touch release can arrive in the same LVGL tick in which a tile arms an
 // application transition. The source tile then keeps its pressed state while
 // the compositor is already presenting the opening animation. Clear only the
@@ -42,6 +54,62 @@ void LvglNavigation::add_home_widget(lv_obj_t *widget) {
   else
     lv_obj_add_flag(widget, LV_OBJ_FLAG_HIDDEN);
   this->home_widgets_.push_back(widget);
+  this->registered_home_widgets_.push_back(widget);
+}
+
+uint16_t LvglNavigation::home_view_id(size_t index) const {
+  if (this->registered_home_widgets_.empty())
+    return static_cast<uint16_t>(index + 1);
+  if (index >= this->home_widgets_.size())
+    return 0;
+  auto it = std::find(this->registered_home_widgets_.begin(), this->registered_home_widgets_.end(),
+                      this->home_widgets_[index]);
+  return static_cast<uint16_t>(it - this->registered_home_widgets_.begin() + 1);
+}
+
+int LvglNavigation::home_route_index(uint8_t id) const {
+  if (id == 0 || id > this->registered_home_widgets_.size())
+    return -1;
+  auto it = std::find(this->home_widgets_.begin(), this->home_widgets_.end(),
+                      this->registered_home_widgets_[id - 1]);
+  return it == this->home_widgets_.end() ? -1 : static_cast<int>(it - this->home_widgets_.begin());
+}
+
+bool LvglNavigation::replace_home_route(const uint8_t *ids, size_t count) {
+  if (count == 0 || count > 32 || count > this->registered_home_widgets_.size())
+    return false;
+  lv_obj_t *views[32];
+  uint32_t seen = 0;
+  bool unchanged = count == this->home_widgets_.size();
+  for (size_t i = 0; i < count; i++) {
+    const uint8_t id = ids[i];
+    if (id == 0 || id > this->registered_home_widgets_.size() || id > 32 || (seen & (1UL << (id - 1))))
+      return false;
+    seen |= 1UL << (id - 1);
+    views[i] = this->registered_home_widgets_[id - 1];
+    unchanged = unchanged && views[i] == this->home_widgets_[i];
+  }
+  if (unchanged)
+    return true;
+  if (!this->is_idle_home())
+    return false;
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+  if (!this->admit_navigation_(NavigationAdmissionKind::HOME, nullptr))
+    return false;
+#endif
+  const uint16_t current = this->home_view_id(this->find_home_view_index_());
+  auto next = std::find(ids, ids + count, current);
+  const int index = next == ids + count ? 0 : static_cast<int>(next - ids);
+  if (this->snapshot_compositor_ != nullptr) {
+    this->snapshot_compositor_->cancel_home_prime();
+    this->snapshot_compositor_->replace_home_views(views, count);
+  }
+  for (auto *widget : this->registered_home_widgets_)
+    lv_obj_add_flag(widget, LV_OBJ_FLAG_HIDDEN);
+  this->home_widgets_.assign(views, views + count);
+  this->last_notified_home_index_ = -1;
+  this->activate_home_view(index);
+  return true;
 }
 
 void LvglNavigation::add_home_indicator(lv_obj_t *indicator) {
@@ -149,6 +217,10 @@ void LvglNavigation::touch_begin(int32_t x, int32_t y) {
   }
 #endif
 
+  if (this->touch_delegate_ != nullptr && this->touch_delegate_->touch_begin(x, y)) {
+    this->touch_context_ = TouchContext::DELEGATE;
+    return;
+  }
   auto *application = this->find_active_application_();
   if (lvgl_esphome_get_swipe_logging_enabled())
     ESP_LOGI(TAG, "touch begin x=%d y=%d application=%p", static_cast<int>(x), static_cast<int>(y), application);
@@ -234,6 +306,8 @@ void LvglNavigation::touch_begin(int32_t x, int32_t y) {
 bool LvglNavigation::touch_update(int32_t x, int32_t y) {
   if (this->external_touch_capture_)
     return true;
+  if (this->touch_context_ == TouchContext::DELEGATE)
+    return this->touch_delegate_->touch_update(x, y);
   if (this->touch_context_ == TouchContext::BLOCKED)
     return true;
   if (this->touch_context_ == TouchContext::NONE)
@@ -322,6 +396,12 @@ bool LvglNavigation::touch_end() {
   if (this->external_touch_capture_) {
     this->clear_external_touch_capture_();
     return true;
+  }
+  if (this->touch_context_ == TouchContext::DELEGATE) {
+    const bool consumed = this->touch_delegate_->touch_end();
+    this->touch_context_ = TouchContext::NONE;
+    this->reset_touch_();
+    return consumed;
   }
   if (this->touch_context_ == TouchContext::NONE)
     return false;
@@ -522,6 +602,8 @@ void LvglNavigation::clear_external_touch_capture_() {
 }
 
 void LvglNavigation::reset_touch_() {
+  if (this->touch_context_ == TouchContext::DELEGATE && this->touch_delegate_ != nullptr)
+    this->touch_delegate_->touch_cancel();
   this->gesture_router_.cancel();
   this->gesture_application_ = nullptr;
   this->touch_context_ = TouchContext::NONE;
@@ -533,6 +615,8 @@ void LvglNavigation::reset_touch_() {
 }
 
 bool LvglNavigation::should_defer_press(lv_obj_t *target) const {
+  if (this->touch_context_ == TouchContext::DELEGATE)
+    return true;
   if (this->external_touch_capture_)
     return true;
   if (this->touch_context_ == TouchContext::BLOCKED)
@@ -673,6 +757,46 @@ bool LvglNavigation::try_prepare_application_snapshots() {
     return false;
 #endif
   this->prepare_application_snapshots_();
+  return this->last_application_snapshot_preparation_succeeded_;
+}
+
+bool LvglNavigation::try_prepare_application_snapshots([[maybe_unused]] const std::vector<LvglApplication *> &applications) {
+  this->last_application_snapshot_preparation_succeeded_ = false;
+#if LV_USE_SNAPSHOT && LV_USE_IMAGE
+  if (this->snapshot_compositor_ == nullptr || applications.empty() || this->is_transition_active() ||
+      this->is_touch_active() || this->external_touch_capture_)
+    return false;
+  const auto *active = this->find_active_application_();
+  // A background refresh must not borrow another application's display lifecycle.
+  if (active != nullptr && (applications.size() != 1 || applications.front() != active))
+    return false;
+  const auto valid_subset = [&]() {
+    if (applications.empty())
+      return false;
+    if (active != nullptr && (applications.size() != 1 || applications.front() != active))
+      return false;
+    for (auto current = applications.begin(); current != applications.end(); ++current) {
+      auto *application = *current;
+      if (application == nullptr || application->get_page() == nullptr || application->get_view() == nullptr ||
+          std::find(this->applications_.begin(), this->applications_.end(), application) == this->applications_.end() ||
+          std::find(applications.begin(), current, application) != current)
+        return false;
+    }
+    return true;
+  };
+  if (!valid_subset())
+    return false;
+#ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
+  if (!this->admit_navigation_(NavigationAdmissionKind::CAPTURE, nullptr))
+    return false;
+#endif
+  // Admission callbacks can retire a view. Do not capture under changed ownership.
+  if (this->find_active_application_() != active || this->is_transition_active() || this->is_touch_active() ||
+      this->external_touch_capture_ || !valid_subset())
+    return false;
+  this->last_application_snapshot_preparation_succeeded_ =
+      this->snapshot_compositor_->prepare_applications(applications);
+#endif
   return this->last_application_snapshot_preparation_succeeded_;
 }
 
@@ -852,6 +976,11 @@ bool LvglNavigation::is_transition_active() const {
 
 LvglApplication *LvglNavigation::get_active_application() const { return this->find_active_application_(); }
 
+bool LvglNavigation::is_idle_home() const {
+  return this->find_active_application_() == nullptr && this->find_home_view_index_() >= 0 &&
+         !this->is_transition_active() && !this->is_touch_active() && !this->is_blocked_();
+}
+
 void LvglNavigation::prepare_application_transition(LvglApplication *application, bool opening, bool close_committed) {
   if (application == nullptr)
     return;
@@ -962,6 +1091,11 @@ void LvglNavigation::update_home_indicators_(int index) {
     auto *indicator = this->home_indicators_[indicator_index];
     if (indicator == nullptr)
       continue;
+    if (indicator_index >= this->get_home_view_count_()) {
+      lv_obj_add_flag(indicator, LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+    lv_obj_remove_flag(indicator, LV_OBJ_FLAG_HIDDEN);
     if (indicator_index == static_cast<size_t>(index))
       lv_obj_add_state(indicator, LV_STATE_CHECKED);
     else
@@ -972,7 +1106,7 @@ void LvglNavigation::update_home_indicators_(int index) {
   if (parent != nullptr)
     lv_obj_update_layout(parent);
   if (!this->home_indicators_.empty())
-    lvgl_esphome_snapshot_swipe_set_page_indicator(index + 1, static_cast<int>(this->home_indicators_.size()));
+    lvgl_esphome_snapshot_swipe_set_page_indicator(index + 1, static_cast<int>(this->get_home_view_count_()));
 }
 
 void LvglNavigation::notify_home_changed_(int index) {
@@ -982,33 +1116,33 @@ void LvglNavigation::notify_home_changed_(int index) {
   if (index == this->last_notified_home_index_)
     return;
   this->last_notified_home_index_ = index;
-  this->home_changed_callbacks_.call(static_cast<uint16_t>(index + 1));
+  this->home_changed_callbacks_.call(this->home_view_id(index));
 }
 
 void LvglNavigation::notify_home_swipe_start_(int index) {
   if (this->home_swipe_active_ || index < 0)
     return;
   this->home_swipe_active_ = true;
-  this->home_swipe_start_callbacks_.call(static_cast<uint16_t>(index + 1));
+  this->home_swipe_start_callbacks_.call(this->home_view_id(index));
 }
 
 void LvglNavigation::notify_home_touch_start_(int index) {
   if (index < 0)
     return;
-  this->home_touch_start_callbacks_.call(static_cast<uint16_t>(index + 1));
+  this->home_touch_start_callbacks_.call(this->home_view_id(index));
 }
 
 void LvglNavigation::notify_home_touch_end_(int index) {
   if (index < 0)
     return;
-  this->home_touch_end_callbacks_.call(static_cast<uint16_t>(index + 1));
+  this->home_touch_end_callbacks_.call(this->home_view_id(index));
 }
 
 void LvglNavigation::notify_home_presented(int index) {
   if (index < 0)
     return;
   this->home_swipe_active_ = false;
-  this->home_presented_callbacks_.call(static_cast<uint16_t>(index + 1));
+  this->home_presented_callbacks_.call(this->home_view_id(index));
 }
 
 }  // namespace esphome::lvgl

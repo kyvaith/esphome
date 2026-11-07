@@ -70,10 +70,12 @@ def test_reclaim_preserves_actual_reader_identities_and_invalidates_generation()
         encoding="utf-8"
     )
     reclaim = source.split(
-        "SnapshotPreviewReclaimStats snapshot_reclaim_idle_application_previews(lv_obj_t **home_pages, int page_count) {",
+        "static SnapshotPreviewReclaimStats snapshot_reclaim_idle_application_previews_impl(",
         1,
     )[1].split('extern "C" bool lvgl_esphome_snapshot_cache_tile_window(', 1)[0]
     for protected in (
+        "navigation->get_active_application() != nullptr",
+        "navigation->is_home_view(obj)",
         "snapshot_app_state.background_root",
         "snapshot_app_prepared_close_obj",
         "snapshot_app_work_obj",

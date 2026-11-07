@@ -1,0 +1,579 @@
+[
+  {
+    "id": "extra_control_root",
+    "parent": "BASE",
+    "type": "obj",
+    "props": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 800,
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 0,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true,
+      "bg_color": "0x000000"
+    }
+  },
+  {
+    "id": "extra_control_kind",
+    "parent": "extra_control_root",
+    "type": "label",
+    "props": {
+      "x": 200,
+      "y": 72,
+      "width": 400,
+      "height": 26,
+      "text": "",
+      "text_font": "roboto_20",
+      "text_color": "0xC4C7C5",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_control_title",
+    "parent": "extra_control_root",
+    "type": "label",
+    "props": {
+      "x": 132,
+      "y": 104,
+      "width": 536,
+      "height": 42,
+      "text": "",
+      "text_font": "roboto_30",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_sensor_root",
+    "parent": "extra_control_root",
+    "type": "obj",
+    "props": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 800,
+      "bg_opa": "TRANSP",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 0,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true
+    }
+  },
+  {
+    "id": "extra_sensor_value",
+    "parent": "extra_sensor_root",
+    "type": "label",
+    "props": {
+      "x": 130,
+      "y": 320,
+      "width": 540,
+      "height": 112,
+      "text": "",
+      "text_font": "wear_title_53",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_sensor_unit",
+    "parent": "extra_sensor_root",
+    "type": "label",
+    "props": {
+      "x": 190,
+      "y": 438,
+      "width": 420,
+      "height": 64,
+      "text": "",
+      "text_font": "roboto_24",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_sensor_icon_unknown",
+    "parent": "extra_sensor_root",
+    "type": "svg_icon",
+    "props": {
+      "x": 352,
+      "y": 200,
+      "width": 96,
+      "height": 96,
+      "file": "assets/icons/extra-sensor-neutral.svg",
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_sensor_icon_temperature",
+    "parent": "extra_sensor_root",
+    "type": "svg_icon",
+    "props": {
+      "x": 352,
+      "y": 200,
+      "width": 96,
+      "height": 96,
+      "file": "assets/icons/detail-thermometer.svg",
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_sensor_icon_humidity",
+    "parent": "extra_sensor_root",
+    "type": "svg_icon",
+    "props": {
+      "x": 352,
+      "y": 200,
+      "width": 96,
+      "height": 96,
+      "file": "assets/icons/humidity.svg",
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_state_root",
+    "parent": "extra_control_root",
+    "type": "obj",
+    "props": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 800,
+      "bg_opa": "TRANSP",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 0,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true
+    }
+  },
+  {
+    "id": "extra_surface_binary",
+    "parent": "extra_state_root",
+    "type": "obj",
+    "props": {
+      "x": 288,
+      "y": 200,
+      "width": 224,
+      "height": 224,
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 112,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true,
+      "bg_color": "0x1D2833"
+    }
+  },
+  {
+    "id": "extra_surface_alarm",
+    "parent": "extra_state_root",
+    "type": "obj",
+    "props": {
+      "x": 208,
+      "y": 200,
+      "width": 384,
+      "height": 224,
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 48,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true,
+      "bg_color": "0x1D2833"
+    }
+  },
+  {
+    "id": "extra_surface_lock",
+    "parent": "extra_state_root",
+    "type": "obj",
+    "props": {
+      "x": 296,
+      "y": 184,
+      "width": 208,
+      "height": 256,
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 72,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true,
+      "bg_color": "0x1D2833"
+    }
+  },
+  {
+    "id": "extra_state_value",
+    "parent": "extra_state_root",
+    "type": "label",
+    "props": {
+      "x": 130,
+      "y": 452,
+      "width": 540,
+      "height": 84,
+      "text": "",
+      "text_font": "roboto_30",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_lock_button",
+    "parent": "extra_state_root",
+    "type": "button",
+    "props": {
+      "x": 210,
+      "y": 556,
+      "width": 380,
+      "height": 72,
+      "radius": 36,
+      "bg_color": "0xD3E3FD",
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true,
+      "pressed": {
+        "bg_opa": "80%"
+      },
+      "disabled": {
+        "text_opa": "80%"
+      }
+    }
+  },
+  {
+    "id": "extra_lock_label",
+    "parent": "extra_lock_button",
+    "type": "label",
+    "props": {
+      "width": 340,
+      "height": 40,
+      "text": "",
+      "text_font": "roboto_24",
+      "text_color": "0x071018",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "extra_state_icon_unknown",
+    "parent": "extra_state_root",
+    "type": "svg_icon",
+    "props": {
+      "x": 336,
+      "y": 248,
+      "width": 128,
+      "height": 128,
+      "file": "assets/icons/extra-status-neutral.svg",
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_state_icon_moisture",
+    "parent": "extra_state_root",
+    "type": "svg_icon",
+    "props": {
+      "x": 336,
+      "y": 248,
+      "width": 128,
+      "height": 128,
+      "file": "assets/icons/humidity.svg",
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_state_icon_alarm",
+    "parent": "extra_state_root",
+    "type": "svg_icon",
+    "props": {
+      "x": 336,
+      "y": 248,
+      "width": 128,
+      "height": 128,
+      "file": "assets/icons/extra-alarm-shield.svg",
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_state_icon_lock_closed",
+    "parent": "extra_state_root",
+    "type": "svg_icon",
+    "props": {
+      "x": 336,
+      "y": 248,
+      "width": 128,
+      "height": 128,
+      "file": "assets/icons/extra-lock-closed.svg",
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_state_icon_lock_open",
+    "parent": "extra_state_root",
+    "type": "svg_icon",
+    "props": {
+      "x": 336,
+      "y": 248,
+      "width": 128,
+      "height": 128,
+      "file": "assets/icons/extra-lock-open.svg",
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_state_icon_calendar",
+    "parent": "extra_state_root",
+    "type": "svg_icon",
+    "props": {
+      "x": 336,
+      "y": 248,
+      "width": 128,
+      "height": 128,
+      "file": "assets/icons/extra-calendar.svg",
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_root",
+    "parent": "extra_control_root",
+    "type": "obj",
+    "props": {
+      "x": 116,
+      "y": 170,
+      "width": 568,
+      "height": 474,
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 40,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true,
+      "bg_color": "0x1D2833"
+    }
+  },
+  {
+    "id": "extra_calendar_icon",
+    "parent": "extra_calendar_root",
+    "type": "svg_icon",
+    "props": {
+      "x": 24,
+      "y": 20,
+      "width": 32,
+      "height": 32,
+      "file": "assets/icons/extra-calendar.svg",
+      "text_color": "0xD3E3FD",
+      "hidden": false,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_badge",
+    "parent": "extra_calendar_root",
+    "type": "label",
+    "props": {
+      "x": 72,
+      "y": 22,
+      "width": 472,
+      "height": 28,
+      "text": "",
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_summary",
+    "parent": "extra_calendar_root",
+    "type": "label",
+    "props": {
+      "x": 24,
+      "y": 66,
+      "width": 520,
+      "height": 120,
+      "text": "",
+      "text_font": "roboto_24",
+      "text_color": "0xF2F2F2",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_start",
+    "parent": "extra_calendar_root",
+    "type": "label",
+    "props": {
+      "x": 24,
+      "y": 192,
+      "width": 520,
+      "height": 42,
+      "text": "",
+      "text_font": "roboto_18",
+      "text_color": "0xF2F2F2",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_end",
+    "parent": "extra_calendar_root",
+    "type": "label",
+    "props": {
+      "x": 24,
+      "y": 236,
+      "width": 520,
+      "height": 42,
+      "text": "",
+      "text_font": "roboto_18",
+      "text_color": "0xF2F2F2",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_zone",
+    "parent": "extra_calendar_root",
+    "type": "label",
+    "props": {
+      "x": 24,
+      "y": 280,
+      "width": 520,
+      "height": 38,
+      "text": "",
+      "text_font": "roboto_16",
+      "text_color": "0xC4C7C5",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_location",
+    "parent": "extra_calendar_root",
+    "type": "label",
+    "props": {
+      "x": 24,
+      "y": 324,
+      "width": 520,
+      "height": 58,
+      "text": "",
+      "text_font": "roboto_16",
+      "text_color": "0xF2F2F2",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_description",
+    "parent": "extra_calendar_root",
+    "type": "label",
+    "props": {
+      "x": 24,
+      "y": 388,
+      "width": 520,
+      "height": 42,
+      "text": "",
+      "text_font": "roboto_16",
+      "text_color": "0xF2F2F2",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_excerpt",
+    "parent": "extra_calendar_root",
+    "type": "label",
+    "props": {
+      "x": 24,
+      "y": 436,
+      "width": 520,
+      "height": 24,
+      "text": "",
+      "text_font": "roboto_16",
+      "text_color": "0xC4C7C5",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_control_updated",
+    "parent": "extra_control_root",
+    "type": "label",
+    "props": {
+      "x": 160,
+      "y": 650,
+      "width": 480,
+      "height": 48,
+      "text": "",
+      "text_font": "roboto_16",
+      "text_color": "0xC4C7C5",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_control_status",
+    "parent": "extra_control_root",
+    "type": "label",
+    "props": {
+      "x": 200,
+      "y": 700,
+      "width": 400,
+      "height": 42,
+      "text": "",
+      "text_font": "roboto_16",
+      "text_color": "0xC4C7C5",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  }
+]

@@ -16,6 +16,7 @@
 #include <freertos/event_groups.h>
 
 #include <atomic>
+#include <utility>
 
 namespace esphome::mixer_speaker {
 
@@ -30,12 +31,10 @@ namespace esphome::mixer_speaker {
  *    the number of channels required for the output speaker.
  *  - In queue mode, the audio sent to the SourceSpeakers can have different sample rates.
  *  - In non-queue mode, the audio sent to the SourceSpeakers must have the same sample rates.
- *  - SourceSpeaker has an internal ring buffer. It also allocates a shared_ptr for an AudioTranserBuffer object.
+ *  - SourceSpeaker publishes a ring buffer and its zero-copy reader for each playback session.
  *  - Audio Data Flow:
  *      - Audio data played on a SourceSpeaker first writes to its internal ring buffer.
- *      - MixerSpeaker task temporarily takes shared ownership of each SourceSpeaker's AudioTransferBuffer.
- *      - MixerSpeaker calls SourceSpeaker's `process_data_from_source`, which transfers audio from the SourceSpeaker's
- *        ring buffer to its AudioTransferBuffer. Audio ducking is applied at this step.
+ *      - The mixer task leases the uniquely owned reader for one pass and applies ducking to the exposed samples.
  *      - In queue mode, MixerSpeaker prioritizes the earliest configured SourceSpeaker with audio data. Audio data is
  *        sent to the output speaker.
  *      - In non-queue mode, MixerSpeaker adds all the audio data in each SourceSpeaker into one stream that is written
@@ -70,15 +69,6 @@ class SourceSpeaker final : public speaker::Speaker, public Component {
   void set_pause_state(bool pause_state) override { this->pause_state_ = pause_state; }
   bool get_pause_state() const override { return this->pause_state_; }
 
-  /// @brief Exposes the next ring buffer chunk (zero-copy) and ducks the freshly exposed bytes in place.
-  /// If the source still has bytes from a prior partial consume, this is a no-op (those bytes were already
-  /// ducked on the fill that exposed them).
-  /// @param audio_source Locked shared_ptr to the audio source (must be valid, not null)
-  /// @param ticks_to_wait FreeRTOS ticks to wait while waiting to read from the ring buffer.
-  /// @return Number of bytes newly exposed from the ring buffer.
-  size_t process_data_from_source(std::shared_ptr<audio::RingBufferAudioSource> &audio_source,
-                                  TickType_t ticks_to_wait);
-
   /// @brief Sets the ducking level for the source speaker.
   /// @param decibel_reduction The dB reduction level. For example, 0 is no change, 10 is a reduction by 10 dB
   /// @param duration The number of milliseconds to transition from the current level to the new level
@@ -88,25 +78,53 @@ class SourceSpeaker final : public speaker::Speaker, public Component {
   void set_parent(MixerSpeaker *parent) { this->parent_ = parent; }
   void set_timeout(uint32_t ms) { this->timeout_ms_ = ms; }
 
-  std::weak_ptr<audio::RingBufferAudioSource> get_audio_source() { return this->audio_source_; }
-
  protected:
   friend class MixerSpeaker;
   esp_err_t start_();
   void enter_stopping_state_();
   void send_command_(uint32_t command_bit, bool wake_loop = false);
+  // A lease never owns or destroys a session. The main loop withdraws publication and waits for all leases
+  // before retiring the reader and then its ring. Moving a lease transfers exactly one outstanding use.
+  class SourceLease {
+   public:
+    SourceLease() = default;
+    SourceLease(const SourceLease &) = delete;
+    SourceLease &operator=(const SourceLease &) = delete;
+    SourceLease(SourceLease &&other) noexcept : owner_(std::exchange(other.owner_, nullptr)) {}
+    SourceLease &operator=(SourceLease &&other) noexcept;
+    ~SourceLease();
+    explicit operator bool() const { return this->owner_ != nullptr; }
+    audio::RingBufferAudioSource *reader() const { return this->owner_->audio_source_.get(); }
+    ring_buffer::RingBuffer *ring() const { return this->owner_->ring_buffer_.get(); }
+
+   private:
+    friend class SourceSpeaker;
+    explicit SourceLease(SourceSpeaker *owner) : owner_(owner) {}
+    SourceSpeaker *owner_{nullptr};
+  };
+  SourceLease acquire_source_(audio::AudioStreamInfo *stream_info = nullptr);
+  void release_source_();
+  bool retire_source_();
+  void expose_source_data_(audio::RingBufferAudioSource &source, const audio::AudioStreamInfo &stream_info);
+  void consume_source_data_(audio::RingBufferAudioSource &source, size_t bytes);
 
   MixerSpeaker *parent_;
 
-  std::shared_ptr<audio::RingBufferAudioSource> audio_source_;
-  std::weak_ptr<ring_buffer::RingBuffer> ring_buffer_;
+  // Protects session publication and buffered-data queries, never PCM processing or a blocking write.
+  mutable Mutex source_mutex_;
+  std::unique_ptr<ring_buffer::RingBuffer> ring_buffer_;
+  std::unique_ptr<audio::RingBufferAudioSource> audio_source_;
+  uint16_t source_leases_{0};
+  bool source_published_{false};
+  bool source_retiring_{false};
+  audio::AudioStreamInfo source_stream_info_;
 
   uint32_t buffer_duration_ms_;
-  uint32_t last_seen_data_ms_{0};
+  std::atomic<uint32_t> last_seen_data_ms_{0};
   optional<uint32_t> timeout_ms_;
   bool stop_gracefully_{false};
 
-  bool pause_state_{false};
+  std::atomic<bool> pause_state_{false};
   std::atomic<bool> has_contributed_{false};  // Tracks if source has contributed during this session
 
   esp_audio_libs::gain::GainRamp ducking_ramp_;

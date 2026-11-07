@@ -105,11 +105,13 @@ class TileAvailabilityCodegenTests(unittest.TestCase):
         self.assertEqual(default, explicit)
         self.assertEqual(default_defines, explicit_defines)
         self.assertNotIn(FEATURE, default_defines)
+        self.assertNotIn("USE_LVGL_DEFERRED_PRESS_CONTEXT", default_defines)
         self.assertNotIn("set_action_availability_enabled", default)
 
     def test_true_emits_exact_feature_and_opt_in_setter(self):
         generated, defines = self.generate([self.surface(enabled=True)])
         self.assertIn(FEATURE, defines)
+        self.assertIn("USE_LVGL_DEFERRED_PRESS_CONTEXT", defines)
         self.assertEqual(
             generated.count("tiles->set_action_availability_enabled(true)"), 1
         )

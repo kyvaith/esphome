@@ -21,6 +21,7 @@ def _config(
         df.CONF_CHECK_ARGS: check_args,
         "color_depth": 16,
         "byte_order": "big_endian",
+        "rgb888_dma2d_image_copy": False,
         df.CONF_TRANSPARENCY_KEY: 0x000400,
         df.CONF_DEBUG_OUTLINE: debug_outline,
     }
@@ -81,4 +82,13 @@ class TestDebugOutlineOnMultipleInstances:
 
 def test_check_args_may_differ_between_instances() -> None:
     configs = [_config(["disp_a"], check_args=True), _config(["disp_b"])]
+    multi_conf_validate(configs)
+
+
+def test_rgb888_copy_option_must_match_between_instances() -> None:
+    configs = [_config(["disp_a"]), _config(["disp_b"])]
+    configs[0]["rgb888_dma2d_image_copy"] = True
+    with pytest.raises(Invalid, match="'rgb888_dma2d_image_copy' must be the same"):
+        multi_conf_validate(configs)
+    configs[1]["rgb888_dma2d_image_copy"] = True
     multi_conf_validate(configs)

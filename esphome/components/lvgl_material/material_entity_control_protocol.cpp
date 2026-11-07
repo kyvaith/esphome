@@ -233,7 +233,7 @@ bool control_valid_hex(const ControlText<32> &text) {
 
 bool control_valid_context(const ControlContext &context) {
   const auto card = context.card_id.view();
-  if (context.slot < 2 || context.slot > 15 || context.revision > CONTROL_MAX_REVISION || card.empty() ||
+  if (context.slot < 2 || context.slot > 31 || context.revision > CONTROL_MAX_REVISION || card.empty() ||
       card.size() > 64)
     return false;
   for (size_t i = 0; i < card.size(); i++) {
@@ -246,6 +246,14 @@ bool control_valid_context(const ControlContext &context) {
 }
 
 bool control_valid_snapshot(const ControlSnapshot &snapshot) {
+#ifdef USE_LVGL_MATERIAL_NUMBER_STEPPER
+  if (!snapshot.has_no_family())
+    return false;
+#endif
+  return control_valid_light_fields(snapshot);
+}
+
+bool control_valid_light_fields(const ControlSnapshot &snapshot) {
   return snapshot.state_seq >= 1 && snapshot.state_seq <= CONTROL_MAX_SEQUENCE && snapshot.ttl_ms == CONTROL_LEASE_MS &&
          snapshot.title.view().size() <= 160 && plain_utf8(snapshot.title.view()) &&
          (!snapshot.brightness_known || snapshot.brightness_pct <= 100) &&
@@ -341,6 +349,11 @@ bool control_serialize_json_allocated(const ControlMessage &message, char *outpu
         !control_valid_hex(message.identity.token))
       return false;
   }
+#ifdef USE_LVGL_MATERIAL_NUMBER_STEPPER
+  if ((message.kind == ControlKind::CONTROL_KIND_GRANT || message.kind == ControlKind::CONTROL_KIND_STATE) &&
+      !message.state.has_no_family())
+    return false;
+#endif
   if ((message.kind == ControlKind::CONTROL_KIND_GRANT || message.kind == ControlKind::CONTROL_KIND_STATE) &&
       !control_valid_snapshot(message.state))
     return false;

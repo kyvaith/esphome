@@ -40,7 +40,8 @@ struct Fixture {
     this->grant.identity.token.assign("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     this->grant.state.state_seq = 1;
     this->grant.state.title.assign("Number");
-    auto &number = this->grant.state.number;
+    this->grant.state.emplace_family<ControlNumberSnapshot>();
+    auto &number = (*this->grant.state.family_if<ControlNumberSnapshot>());
     number.domain.minimum = -1000000;
     number.domain.maximum = 1000000;
     number.domain.step = 250000;
@@ -56,13 +57,13 @@ struct Fixture {
     auto message = this->grant;
     message.kind = ControlKind::CONTROL_KIND_STATE;
     message.state.state_seq = sequence;
-    message.state.number.index = index;
-    message.state.number.state_generation = generation;
+    (*message.state.family_if<ControlNumberSnapshot>()).index = index;
+    (*message.state.family_if<ControlNumberSnapshot>()).state_generation = generation;
     int64_t value;
     char text[24];
-    assert(message.state.number.domain.value_at(index, value));
+    assert((*message.state.family_if<ControlNumberSnapshot>()).domain.value_at(index, value));
     assert(number_format_decimal(value, text, sizeof(text)));
-    message.state.number.value_text.assign(text);
+    (*message.state.family_if<ControlNumberSnapshot>()).value_text.assign(text);
     return message;
   }
   ControlMessage result(uint32_t state_seq, ControlResult status = ControlResult::CONTROL_RESULT_STATE_MATCHES) {
@@ -157,8 +158,8 @@ static void run(int scenario) {
   if (scenario == 6) {
     assert(owner.begin_step(7, 1, 103));
     auto state = fixture.state(2, 1, 4);
-    state.state.number.domain.maximum = 2000000;
-    state.state.number.domain.max_index = 12;
+    (*state.state.family_if<ControlNumberSnapshot>()).domain.maximum = 2000000;
+    (*state.state.family_if<ControlNumberSnapshot>()).domain.max_index = 12;
     assert(!owner.receive(state, 104) && !owner.has_selection());
     assert(fixture.sink.messages[1].reason == ControlReason::CONTROL_REASON_CAPABILITIES_CHANGED);
     assert(!owner.release_step(7, 105));
@@ -176,8 +177,8 @@ static void run(int scenario) {
     assert(owner.receive(fixture.state(3, 3, 8), 104));
     assert(owner.can_step(-1) && !owner.can_step(1));
     auto unknown = fixture.state(4, 4, 0);
-    unknown.state.number.available = false;
-    unknown.state.number.value_text.assign("--");
+    (*unknown.state.family_if<ControlNumberSnapshot>()).available = false;
+    (*unknown.state.family_if<ControlNumberSnapshot>()).value_text.assign("--");
     assert(owner.receive(unknown, 105));
     assert(!owner.begin_step(7, -1, 106) && !owner.begin_step(7, 1, 106));
     return;
@@ -190,7 +191,8 @@ static void run(int scenario) {
     assert(owner.receive(fixture.state(2, 2, 5), 107));
     assert(owner.is_command_pending());
     assert(owner.receive(fixture.result(2), 108));
-    assert(!owner.is_command_pending() && owner.state().number.index == 5 && owner.begin_step(7, 1, 109));
+    assert(!owner.is_command_pending() && (*owner.state().family_if<ControlNumberSnapshot>()).index == 5 &&
+           owner.begin_step(7, 1, 109));
     return;
   }
   if (scenario == 10) {
@@ -250,7 +252,7 @@ static void run(int scenario) {
     auto state = fixture.state(2, 3, 4);
     assert(owner.receive(state, 103));
     assert(!owner.receive(fixture.state(3, 2, 5), 104));
-    assert(owner.state().state_seq == 2 && owner.state().number.index == 4);
+    assert(owner.state().state_seq == 2 && (*owner.state().family_if<ControlNumberSnapshot>()).index == 4);
     assert(owner.begin_step(7, 1, 105));
     assert(!owner.receive(fixture.state(2, 4, 5), 106));
     assert(owner.is_dragging() && owner.release_step(7, 107));

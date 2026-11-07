@@ -45,8 +45,9 @@ class RuntimeStatsCollector;
 #endif
 
 // Forward declarations for friend access from codegen-generated setup()
-void setup();           // NOLINT(readability-redundant-declaration) - may be declared in Arduino.h
-void original_setup();  // NOLINT(readability-redundant-declaration) - used by cpp unit tests
+void setup();            // NOLINT(readability-redundant-declaration) - may be declared in Arduino.h
+void setup_generated();  // NOLINT(readability-redundant-declaration) - codegen configuration helper
+void original_setup();   // NOLINT(readability-redundant-declaration) - used by cpp unit tests
 
 namespace esphome {
 
@@ -395,6 +396,7 @@ class Application {
   friend class runtime_stats::RuntimeStatsCollector;
 #endif
   friend void ::setup();
+  friend void ::setup_generated();
   friend void ::original_setup();
 
   /// Freshen the cached loop component start time. Called by Scheduler before each dispatch.

@@ -3,6 +3,9 @@
 // Host-only ESPHome/RTOS/display-lease facade. Every lv_* type and API below
 // comes from the unchanged, separately compiled LVGL dependency.
 #include <lvgl.h>
+#ifdef USE_LVGL_DEFERRED_PRESS_CONTEXT
+#include "deferred_press_context.h"
+#endif
 #include "direct_region_generation.h"
 #include "navigation_admission.h"
 #include <algorithm>
@@ -11,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -106,6 +110,21 @@ using LvglDirectBlitReadyCallback = void (*)(void *);
 inline constexpr uint8_t LVGL_DIRECT_BLIT_REJECTED = 0, LVGL_DIRECT_BLIT_BUSY = 1, LVGL_DIRECT_BLIT_SUBMITTED = 2;
 
 namespace esphome {
+#ifdef USE_LVGL_MATERIAL_TEXT_CONTROLS
+inline size_t text_external_allocations = 0;
+inline bool text_fail_allocation = false;
+template<typename T> using RAMUniquePtr = std::unique_ptr<T>;
+template<typename T> class RAMAllocator {
+ public:
+  enum { ALLOC_EXTERNAL = 1 };
+  explicit RAMAllocator(int flags) { assert(flags == ALLOC_EXTERNAL); }
+  RAMUniquePtr<T> make_unique() {
+    text_external_allocations++;
+    return text_fail_allocation ? RAMUniquePtr<T>{} : std::make_unique<T>();
+  }
+};
+#endif
+
 inline uint32_t millis() { return lv_tick_get(); }
 inline void delay(uint32_t duration) {
   lv_tick_inc(duration);
@@ -163,6 +182,8 @@ template<typename... Ts> class Action {
 };
 template<typename T> struct TestValue {
   T stored{};
+  bool present{false};
+  bool has_value() const { return this->present; }
   T value(...) const { return this->stored; }
 };
 namespace esp32 {
@@ -351,7 +372,7 @@ class APIServer {
 
 #define TEMPLATABLE_VALUE(type, name) \
  protected: esphome::TestValue<type> name##_; \
- public: void set_##name(type value) { this->name##_.stored = value; }
+ public: void set_##name(type value) { this->name##_.stored = value; this->name##_.present = true; }
 #define LOG_STR(x) x
 template<typename... Args> inline void real_lvgl_test_log(const Args &...) {}
 #define ESP_LOGCONFIG(...) real_lvgl_test_log(__VA_ARGS__)

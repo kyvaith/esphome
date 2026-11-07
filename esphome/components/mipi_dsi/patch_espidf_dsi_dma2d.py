@@ -3449,7 +3449,12 @@ static bool IRAM_ATTR mipi_dsi_dma_invalid_block_cb(dw_gdma_channel_handle_t cha
 #endif
         const uint32_t expected_source = (uint32_t)(uintptr_t)dpi_panel->fbs[slot == 0 ? top_fb : bottom_fb] +
                                          (slot == 0 ? 0 : first_half_bytes);
-        if (lli == NULL || lli->ctrl_hi.shadowreg_or_lli_valid || lli->ctrl_hi.shadowreg_or_lli_last ||
+        // The stopped channel can have a rearmed top descriptor while the
+        // bottom is still invalid. At blocked slot 0 the earlier checks require
+        // both descriptors to reference the same protected active buffer.
+        const bool may_already_be_valid = blocked_slot == 0 && slot == 0;
+        if (lli == NULL || (lli->ctrl_hi.shadowreg_or_lli_valid && !may_already_be_valid) ||
+            lli->ctrl_hi.shadowreg_or_lli_last ||
             !lli->ctrl_hi.ioc_blktfr || lli->sar_lo.val != expected_source ||
             ((uintptr_t)lli->llp_lo.loc0 << 6) != next_addr ||
             (slot == blocked_slot && dw_gdma_ll_channel_get_current_link_list_item_addr(dev, channel_id) != own_addr)) {

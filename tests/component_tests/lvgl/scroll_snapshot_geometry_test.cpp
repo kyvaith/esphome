@@ -163,6 +163,77 @@ int main() {
     assert(segments.empty() && allocated == fail_at && destroyed == fail_at);
   }
 
+  // The opt-in target preserves the exact RGB888 payload while reducing a
+  // viewport to at most two hardware spans. Check every native scroll offset.
+  allocated = destroyed = 0;
+  assert(scroll_snapshot_capture_partition(segments, native_height, native_stride, native_take, destroy, 2000000));
+  assert(allocated == 2 && segments[0].height == 833 && segments[1].height == 691);
+  bytes = 0;
+  for (const auto &segment : segments)
+    bytes += segment.buffer->bytes;
+  assert(bytes == native_stride * native_height);
+  for (int y = 0; y <= native_height - viewport; y++) {
+    int expected_row = y;
+    int spans = 0;
+    assert(scroll_snapshot_visit_spans(segments, y, viewport, [&](size_t index, int local, int copied, int rows) {
+      assert(segments[index].y + local == expected_row && copied == expected_row - y);
+      assert(rows > 0 && static_cast<size_t>(local + rows) * native_stride <= segments[index].buffer->bytes);
+      expected_row += rows;
+      spans++;
+      return true;
+    }));
+    assert(expected_row == y + viewport && spans >= 1 && spans <= 2);
+  }
+  scroll_snapshot_release_segments(segments, destroy);
+  assert(destroyed == allocated);
+
+  // Fragmented allocations shrink once per failed target; the successful
+  // bound is retained for later pieces instead of repeating large failures.
+  for (size_t limit : {size_t{1000000}, size_t{524288}, SCROLL_SNAPSHOT_SEGMENT_TARGET_BYTES}) {
+    allocated = destroyed = 0;
+    int failed = 0;
+    auto fragmented_take = [&](int, int rows) -> Buffer * {
+      if (native_stride * rows > limit) {
+        failed++;
+        return nullptr;
+      }
+      allocated++;
+      return new Buffer{native_stride * rows};
+    };
+    assert(
+        scroll_snapshot_capture_partition(segments, native_height, native_stride, fragmented_take, destroy, 2000000));
+    assert(failed >= 1 && failed <= 3);
+    bytes = 0;
+    for (const auto &segment : segments) {
+      assert(segment.buffer->bytes <= limit);
+      bytes += segment.buffer->bytes;
+    }
+    assert(bytes == native_stride * native_height);
+    for (int y = 0; y <= native_height - viewport; y++) {
+      int expected = y;
+      assert(scroll_snapshot_visit_spans(segments, y, viewport, [&](size_t index, int local, int copied, int rows) {
+        assert(segments[index].y + local == expected && copied == expected - y);
+        expected += rows;
+        return true;
+      }));
+      assert(expected == y + viewport);
+    }
+    scroll_snapshot_release_segments(segments, destroy);
+    assert(destroyed == allocated);
+  }
+  allocated = destroyed = 0;
+  int failures = 0;
+  auto exhausted_take = [&](int y, int rows) -> Buffer * {
+    if (y != 0) {
+      failures++;
+      return nullptr;
+    }
+    allocated++;
+    return new Buffer{native_stride * rows};
+  };
+  assert(!scroll_snapshot_capture_partition(segments, native_height, native_stride, exhausted_take, destroy, 2000000));
+  assert(segments.empty() && allocated == 1 && destroyed == 1 && failures <= 4);
+
   assert(scroll_snapshot_segment_count(0, stride) == 0);
   assert(scroll_snapshot_segment_count(height, 0) == 0);
   assert(!scroll_snapshot_capture_partition(segments, 0, stride, take, destroy));

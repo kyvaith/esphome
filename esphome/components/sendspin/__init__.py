@@ -54,6 +54,7 @@ CONF_SUPPORTED_CHANNELS = "supported_channels"
 CONF_REQUIRE_FRAME_DONE = "require_frame_done"
 CONF_MAX_IMAGE_BYTES = "max_image_bytes"
 CONF_OPTIMIZE_MEMORY = "optimize_memory"
+CONF_STARTUP_RETRIES = "startup_retries"
 
 CONF_STATIC_PAIRING_CODE = "static_pairing_code"
 CONF_UNPAIRED_ACCESS = "unpaired_access"
@@ -278,6 +279,8 @@ def _request_high_performance_networking(config: ConfigType) -> ConfigType:
 def _validate_memory_optimization(config: ConfigType) -> ConfigType:
     if config[CONF_OPTIMIZE_MEMORY] and not CORE.using_toolchain_esp_idf:
         raise cv.Invalid("optimize_memory requires the native ESP-IDF toolchain")
+    if config[CONF_STARTUP_RETRIES] and not CORE.using_toolchain_esp_idf:
+        raise cv.Invalid("startup_retries requires the native ESP-IDF toolchain")
     return config
 
 
@@ -287,6 +290,7 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(): cv.declare_id(SendspinHub),
             cv.Optional(CONF_TASK_STACK_IN_PSRAM): psram.validate_task_stack_in_psram,
             cv.Optional(CONF_OPTIMIZE_MEMORY, default=False): cv.boolean,
+            cv.Optional(CONF_STARTUP_RETRIES, default=0): cv.int_range(min=0, max=4),
             cv.Optional(CONF_MANUFACTURER): DEVICE_INFO_STRING,
             cv.Optional(CONF_MODEL): DEVICE_INFO_STRING,
             cv.Optional(CONF_FIRMWARE_VERSION): DEVICE_INFO_STRING,
@@ -397,6 +401,9 @@ async def to_code(config: ConfigType) -> None:
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
+    if startup_retries := config[CONF_STARTUP_RETRIES]:
+        cg.add(var.set_startup_retries(startup_retries))
+
     if config.get(CONF_TASK_STACK_IN_PSRAM):
         cg.add(var.set_task_stack_in_psram(True))
         psram.request_external_task_stack()
@@ -434,11 +441,13 @@ async def to_code(config: ConfigType) -> None:
 
     # sendspin-cpp library
     esp32.add_idf_component(name="sendspin/sendspin-cpp", ref="0.9.3")
-    if config[CONF_OPTIMIZE_MEMORY]:
+    if CORE.using_toolchain_esp_idf:
         esp32.add_idf_component(
             name="sendspin_memory_patch",
             path=Path(__file__).with_name("sendspin_memory_patch").as_posix(),
         )
+        esp32.add_idf_sdkconfig_option("CONFIG_ESPHOME_SENDSPIN_CHECKED_THREADS", True)
+    if config[CONF_OPTIMIZE_MEMORY]:
         esp32.add_idf_sdkconfig_option(
             "CONFIG_ESPHOME_SENDSPIN_MEMORY_OPTIMIZATIONS", True
         )

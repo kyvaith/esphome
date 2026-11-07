@@ -30,7 +30,7 @@ namespace lvgl {
 inline bool lvgl_esphome_get_swipe_logging_enabled() { return false; }
 class HomeNavigation {
  public:
-  enum class TouchContext { NONE, BLOCKED, HOME, APPLICATION_SCROLL };
+  enum class TouchContext { NONE, DELEGATE, BLOCKED, HOME, APPLICATION_SCROLL };
   struct Page {
     lv_obj_t *obj{};
   };
@@ -144,11 +144,11 @@ struct Fixture {
       lv_obj_remove_event_cb_with_user_data(buttons[i], nullptr, surface.binding_data(i));
     lv_obj_delete(root);
   }
-  void configure(unsigned slot, bool enabled) {
+  void configure(unsigned slot, bool enabled, const char *subtitle = "42.5%") {
     const std::string payload = std::string(R"({"version":1,"revision":6,"cards":[{"slot":)") + std::to_string(slot) +
                                 R"(,"id":")" + (slot == 7 ? "action" : "other") +
                                 R"(","visible":true,"title":"Action","press_enabled":)" + (enabled ? "true" : "false") +
-                                "}]}";
+                                R"(,"subtitle":")" + subtitle + "\"}]}";
     assert(surface.configure(payload));
   }
   bool refresh() {
@@ -236,6 +236,31 @@ int main(int argc, char **argv) {
     f.release();
     real_lvgl_test::advance(60);
     assert(f.ack && f.commands == 1);  // Another card cannot cancel this permitted tap.
+  } else if (name == "held_caption_aba" || name == "held_rebind_acknowledged") {
+    f.down();
+    if (name == "held_caption_aba") {
+      f.configure(7, true, "80%");
+      f.configure(7, true, "42.5%");
+    } else {
+      f.configure(7, false);
+      f.configure(7, true);
+      // Even if another owner acknowledges the new snapshot before release,
+      // the identity observed by the original contact cannot be regained.
+      f.surface.mark_slots_ready(1U << 7);
+    }
+    assert(!f.surface.press_seen() && !lv_obj_has_state(f.buttons[0], LV_STATE_PRESSED));
+    f.release();
+    real_lvgl_test::advance(1000);  // Longer than the40ms replay and500ms snapshot quiet time.
+    assert(f.commands == 0 && "Raw held context must not replay a command");
+    assert(f.refresh());
+    f.tap();
+    assert(f.commands == 1);
+  } else if (name == "unrelated_caption_update") {
+    f.down();
+    f.configure(8, true, "80%");
+    f.release();
+    real_lvgl_test::advance(1000);
+    assert(f.commands == 1);
   } else {
     assert(false && "Unknown Home case");
   }

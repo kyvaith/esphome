@@ -119,6 +119,16 @@ void MaterialTileSurface::set_control_press_enabled(bool enabled) {
       tile.press_valid = false;
 }
 
+#ifdef USE_LVGL_MATERIAL_DETAIL_TILE_ROUTING
+void MaterialTileSurface::set_light_detail_controls_enabled(bool enabled) {
+  if (this->light_detail_controls_enabled_ == enabled)
+    return;
+  this->light_detail_controls_enabled_ = enabled;
+  for (auto &tile : this->tiles_)
+    if (tile.control_detail)
+      tile.press_valid = false;
+}
+#endif
 #ifdef USE_LVGL_MATERIAL_ENTITY_CONTROL_TILE_ROUTING
 void MaterialTileSurface::set_number_controls_enabled(bool enabled) {
   if (this->number_controls_enabled_ == enabled)
@@ -126,6 +136,66 @@ void MaterialTileSurface::set_number_controls_enabled(bool enabled) {
   this->number_controls_enabled_ = enabled;
   for (auto &tile : this->tiles_)
     if (tile.control_number)
+      tile.press_valid = false;
+}
+#endif
+#ifdef USE_LVGL_MATERIAL_CHOICE_TILE_ROUTING
+void MaterialTileSurface::set_choice_controls_enabled(bool enabled) {
+  if (this->choice_controls_enabled_ == enabled)
+    return;
+  this->choice_controls_enabled_ = enabled;
+  for (auto &tile : this->tiles_)
+    if (tile.control_choice)
+      tile.press_valid = false;
+}
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_TILE_ROUTING
+void MaterialTileSurface::set_cover_controls_enabled(bool enabled) {
+  if (this->cover_controls_enabled_ == enabled)
+    return;
+  this->cover_controls_enabled_ = enabled;
+  for (auto &tile : this->tiles_)
+    if (tile.control_cover)
+      tile.press_valid = false;
+}
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_TILE_ROUTING
+void MaterialTileSurface::set_fan_controls_enabled(bool enabled) {
+  if (this->fan_controls_enabled_ == enabled)
+    return;
+  this->fan_controls_enabled_ = enabled;
+  for (auto &tile : this->tiles_)
+    if (tile.control_fan)
+      tile.press_valid = false;
+}
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_TILE_ROUTING
+void MaterialTileSurface::set_humidifier_controls_enabled(bool enabled) {
+  if (this->humidifier_controls_enabled_ == enabled)
+    return;
+  this->humidifier_controls_enabled_ = enabled;
+  for (auto &tile : this->tiles_)
+    if (tile.control_humidifier)
+      tile.press_valid = false;
+}
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_TILE_ROUTING
+void MaterialTileSurface::set_robot_controls_enabled(bool enabled) {
+  if (this->robot_controls_enabled_ == enabled)
+    return;
+  this->robot_controls_enabled_ = enabled;
+  for (auto &tile : this->tiles_)
+    if (tile.control_robot)
+      tile.press_valid = false;
+}
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_TILE_ROUTING
+void MaterialTileSurface::set_panel_controls_enabled(bool enabled) {
+  if (this->panel_controls_enabled_ == enabled)
+    return;
+  this->panel_controls_enabled_ = enabled;
+  for (auto &tile : this->tiles_)
+    if (tile.control_panel)
       tile.press_valid = false;
 }
 #endif
@@ -193,11 +263,29 @@ bool MaterialTileSurface::configure_(const std::string &payload, const uint32_t 
       }
       if (!card["control_kind"].isUnbound()) {
 #ifdef USE_LVGL_MATERIAL_ENTITY_CONTROL_TILE_ROUTING
-        if (!valid_text(card["control_kind"], 6))
+        if (!valid_text(card["control_kind"], 10))
           return false;
         const char *kind = card["control_kind"].as<const char *>();
-        if ((std::strcmp(kind, "light") != 0 &&
-             !(this->number_controls_enabled_ && std::strcmp(kind, "number") == 0)) ||
+        if ((std::strcmp(kind, "light") != 0 && !(this->number_controls_enabled_ && std::strcmp(kind, "number") == 0)
+#ifdef USE_LVGL_MATERIAL_CHOICE_TILE_ROUTING
+             && !(this->choice_controls_enabled_ && std::strcmp(kind, "choice") == 0)
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_TILE_ROUTING
+             && !(this->cover_controls_enabled_ && std::strcmp(kind, "cover") == 0)
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_TILE_ROUTING
+             && !(this->fan_controls_enabled_ && std::strcmp(kind, "fan") == 0)
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_TILE_ROUTING
+             && !(this->humidifier_controls_enabled_ && std::strcmp(kind, "humidifier") == 0)
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_TILE_ROUTING
+             && !(this->robot_controls_enabled_ && std::strcmp(kind, "robot") == 0)
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_TILE_ROUTING
+             && !(this->panel_controls_enabled_ && std::strcmp(kind, "panel") == 0)
+#endif
+                 ) ||
             !has_revision ||
 #else
         if (!valid_text(card["control_kind"], 5) ||
@@ -206,6 +294,16 @@ bool MaterialTileSurface::configure_(const std::string &payload, const uint32_t 
             !valid_card_id(card["id"]) || card["id"].as<const char *>()[0] == '\0' ||
             this->find_tile_(slot) == nullptr || slot >= 32)
           return false;
+      }
+      if (!card["control_detail_version"].isUnbound()) {
+#ifdef USE_LVGL_MATERIAL_DETAIL_TILE_ROUTING
+        if (!this->light_detail_controls_enabled_ || !card["control_detail_version"].is<uint8_t>() ||
+            card["control_detail_version"].as<uint8_t>() != 1 || !card["control_kind"].is<const char *>() ||
+            std::strcmp(card["control_kind"].as<const char *>(), "light") != 0)
+          return false;
+#else
+        return false;
+#endif
       }
     }
 
@@ -232,6 +330,56 @@ bool MaterialTileSurface::configure_(const std::string &payload, const uint32_t 
       const char *card_id = card["id"] | "";
       const bool context = contextual && card_id[0] != '\0';
       const bool control_light = !card["control_kind"].isUnbound();
+#ifdef USE_LVGL_MATERIAL_DETAIL_TILE_ROUTING
+      const bool control_detail = !card["control_detail_version"].isUnbound();
+      if (tile->control_detail != control_detail) {
+        tile->control_detail = control_detail;
+        changed = context_changed = true;
+      }
+#endif
+#ifdef USE_LVGL_MATERIAL_CHOICE_TILE_ROUTING
+      const bool control_choice = control_light && std::strcmp(card["control_kind"].as<const char *>(), "choice") == 0;
+      if (tile->control_choice != control_choice) {
+        tile->control_choice = control_choice;
+        changed = context_changed = true;
+      }
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_TILE_ROUTING
+      const bool control_cover = control_light && std::strcmp(card["control_kind"].as<const char *>(), "cover") == 0;
+      if (tile->control_cover != control_cover) {
+        tile->control_cover = control_cover;
+        changed = context_changed = true;
+      }
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_TILE_ROUTING
+      const bool control_fan = control_light && std::strcmp(card["control_kind"].as<const char *>(), "fan") == 0;
+      if (tile->control_fan != control_fan) {
+        tile->control_fan = control_fan;
+        changed = context_changed = true;
+      }
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_TILE_ROUTING
+      const bool control_humidifier =
+          control_light && std::strcmp(card["control_kind"].as<const char *>(), "humidifier") == 0;
+      if (tile->control_humidifier != control_humidifier) {
+        tile->control_humidifier = control_humidifier;
+        changed = context_changed = true;
+      }
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_TILE_ROUTING
+      const bool control_robot = control_light && std::strcmp(card["control_kind"].as<const char *>(), "robot") == 0;
+      if (tile->control_robot != control_robot) {
+        tile->control_robot = control_robot;
+        changed = context_changed = true;
+      }
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_TILE_ROUTING
+      const bool control_panel = control_light && std::strcmp(card["control_kind"].as<const char *>(), "panel") == 0;
+      if (tile->control_panel != control_panel) {
+        tile->control_panel = control_panel;
+        changed = context_changed = true;
+      }
+#endif
 #ifdef USE_LVGL_MATERIAL_ENTITY_CONTROL_TILE_ROUTING
       const bool control_number = control_light && std::strcmp(card["control_kind"].as<const char *>(), "number") == 0;
       if (tile->control_number != control_number) {
@@ -405,6 +553,22 @@ void MaterialTileSurface::tile_event_cb_(lv_event_t *event) {
   if (tile == nullptr || tile->owner == nullptr)
     return;
   auto *owner = tile->owner;
+#ifdef USE_LVGL_DEFERRED_PRESS_CONTEXT
+  if (lv_event_get_code(event) == lvgl::deferred_press_context_event()) {
+#ifdef USE_LVGL_MATERIAL_TILE_ACTION_AVAILABILITY
+    if (owner->action_availability_enabled_) {
+      auto *context = static_cast<lvgl::DeferredPressContext *>(lv_event_get_param(event));
+      if (context != nullptr) {
+        context->valid = context->valid && owner->can_press_(*tile) &&
+                         (context->capturing || context->generation == tile->generation);
+        if (context->capturing)
+          context->generation = tile->generation;
+      }
+    }
+#endif
+    return;
+  }
+#endif
   if (lv_event_get_code(event) == LV_EVENT_PRESSED) {
     tile->press_seen = true;
     tile->press_valid = owner->can_press_(*tile);
@@ -413,6 +577,9 @@ void MaterialTileSurface::tile_event_cb_(lv_event_t *event) {
     tile->pressed_context_generation = tile->context_generation;
     tile->pressed_card_id = tile->card_id;
     tile->pressed_control_light = tile->control_light;
+#ifdef USE_LVGL_MATERIAL_DETAIL_TILE_ROUTING
+    tile->pressed_control_detail = tile->control_detail;
+#endif
 #ifdef USE_LVGL_MATERIAL_TILE_ACTION_AVAILABILITY
     tile->pressed_indev = owner->action_availability_enabled_ && !tile->control_light && tile->press_valid
                               ? lv_event_get_indev(event)
@@ -420,6 +587,24 @@ void MaterialTileSurface::tile_event_cb_(lv_event_t *event) {
 #endif
 #ifdef USE_LVGL_MATERIAL_ENTITY_CONTROL_TILE_ROUTING
     tile->pressed_control_number = tile->control_number;
+#endif
+#ifdef USE_LVGL_MATERIAL_CHOICE_TILE_ROUTING
+    tile->pressed_control_choice = tile->control_choice;
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_TILE_ROUTING
+    tile->pressed_control_cover = tile->control_cover;
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_TILE_ROUTING
+    tile->pressed_control_fan = tile->control_fan;
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_TILE_ROUTING
+    tile->pressed_control_humidifier = tile->control_humidifier;
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_TILE_ROUTING
+    tile->pressed_control_robot = tile->control_robot;
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_TILE_ROUTING
+    tile->pressed_control_panel = tile->control_panel;
 #endif
     return;
   }
@@ -444,8 +629,29 @@ void MaterialTileSurface::tile_event_cb_(lv_event_t *event) {
       (legacy_synthetic || (tile->press_valid && tile->pressed_context_generation == tile->context_generation &&
                             tile->pressed_revision == tile->revision && tile->pressed_context == tile->context &&
                             tile->pressed_card_id == tile->card_id && tile->pressed_control_light == tile->control_light
+#ifdef USE_LVGL_MATERIAL_DETAIL_TILE_ROUTING
+                            && tile->pressed_control_detail == tile->control_detail
+#endif
 #ifdef USE_LVGL_MATERIAL_ENTITY_CONTROL_TILE_ROUTING
                             && tile->pressed_control_number == tile->control_number
+#endif
+#ifdef USE_LVGL_MATERIAL_CHOICE_TILE_ROUTING
+                            && tile->pressed_control_choice == tile->control_choice
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_TILE_ROUTING
+                            && tile->pressed_control_cover == tile->control_cover
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_TILE_ROUTING
+                            && tile->pressed_control_fan == tile->control_fan
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_TILE_ROUTING
+                            && tile->pressed_control_humidifier == tile->control_humidifier
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_TILE_ROUTING
+                            && tile->pressed_control_robot == tile->control_robot
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_TILE_ROUTING
+                            && tile->pressed_control_panel == tile->control_panel
 #endif
                             ));
   tile->press_valid = false;
@@ -456,14 +662,69 @@ void MaterialTileSurface::tile_event_cb_(lv_event_t *event) {
   if (!valid)
     return;
   if (tile->control_light) {
+#ifdef USE_LVGL_MATERIAL_DETAIL_TILE_ROUTING
+    if (tile->control_detail) {
+      owner->entity_detail_control_press_callback_.call(tile->slot, tile->pressed_card_id.data(),
+                                                        tile->pressed_revision);
+      return;
+    }
+#endif
 #ifdef USE_LVGL_MATERIAL_ENTITY_CONTROL_TILE_ROUTING
     if (owner->entity_control_callback_registered_) {
       owner->entity_control_press_callback_.call(tile->slot, tile->pressed_card_id.data(), tile->pressed_revision,
-                                                 tile->pressed_control_number ? 1 : 0);
+#ifdef USE_LVGL_MATERIAL_CHOICE_TILE_ROUTING
+                                                 tile->pressed_control_choice ? 2 :
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_TILE_ROUTING
+                                                 tile->pressed_control_cover ? 3
+                                                 :
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_TILE_ROUTING
+                                                 tile->pressed_control_fan ? 4
+                                                 :
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_TILE_ROUTING
+                                                 tile->pressed_control_humidifier ? 5
+                                                 :
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_TILE_ROUTING
+                                                 tile->pressed_control_robot ? 6
+                                                 :
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_TILE_ROUTING
+                                                 tile->pressed_control_panel ? 7
+                                                 :
+#endif
+                                                 tile->pressed_control_number ? 1
+                                                                              : 0);
       return;
     }
     if (tile->control_number)
       return;  // Unsupported Number must never fall through to Light or toggle.
+#endif
+#ifdef USE_LVGL_MATERIAL_CHOICE_TILE_ROUTING
+    if (tile->control_choice)
+      return;
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_TILE_ROUTING
+    if (tile->control_cover)
+      return;
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_TILE_ROUTING
+    if (tile->control_fan)
+      return;
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_TILE_ROUTING
+    if (tile->control_humidifier)
+      return;
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_TILE_ROUTING
+    if (tile->control_robot)
+      return;
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_TILE_ROUTING
+    if (tile->control_panel)
+      return;
 #endif
     owner->control_press_callback_.call(tile->slot, tile->pressed_card_id.data(), tile->pressed_revision);
     return;
@@ -484,8 +745,30 @@ bool MaterialTileSurface::can_press_(const TileBinding &tile) const {
 #endif
          (!tile.control_light || (this->control_press_enabled_ && tile.slot < 32 && this->context_version_ == 1 &&
                                   tile.context && tile.revision == this->configured_revision_ && tile.context_ready)) &&
+#ifdef USE_LVGL_MATERIAL_DETAIL_TILE_ROUTING
+         (!tile.control_detail || (this->light_detail_controls_enabled_ && this->entity_detail_callback_registered_)) &&
+#endif
 #ifdef USE_LVGL_MATERIAL_ENTITY_CONTROL_TILE_ROUTING
          (!tile.control_number || (this->number_controls_enabled_ && this->entity_control_callback_registered_)) &&
+#endif
+#ifdef USE_LVGL_MATERIAL_CHOICE_TILE_ROUTING
+         (!tile.control_choice || (this->choice_controls_enabled_ && this->entity_control_callback_registered_)) &&
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_TILE_ROUTING
+         (!tile.control_cover || (this->cover_controls_enabled_ && this->entity_control_callback_registered_)) &&
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_TILE_ROUTING
+         (!tile.control_fan || (this->fan_controls_enabled_ && this->entity_control_callback_registered_)) &&
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_TILE_ROUTING
+         (!tile.control_humidifier ||
+          (this->humidifier_controls_enabled_ && this->entity_control_callback_registered_)) &&
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_TILE_ROUTING
+         (!tile.control_robot || (this->robot_controls_enabled_ && this->entity_control_callback_registered_)) &&
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_TILE_ROUTING
+         (!tile.control_panel || (this->panel_controls_enabled_ && this->entity_control_callback_registered_)) &&
 #endif
          (!this->require_snapshot_ready_ || tile.context_ready);
 }
@@ -600,9 +883,38 @@ bool MaterialTileSurface::serialize_presentation(std::string &output, size_t max
 #endif
     if (tile.control_light)
 #ifdef USE_LVGL_MATERIAL_ENTITY_CONTROL_TILE_ROUTING
-      card["control_kind"] = tile.control_number ? "number" : "light";
+      card["control_kind"] =
+#ifdef USE_LVGL_MATERIAL_CHOICE_TILE_ROUTING
+          tile.control_choice ? "choice" :
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_TILE_ROUTING
+          tile.control_cover ? "cover"
+          :
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_TILE_ROUTING
+          tile.control_fan ? "fan"
+          :
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_TILE_ROUTING
+          tile.control_humidifier ? "humidifier"
+          :
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_TILE_ROUTING
+          tile.control_robot ? "robot"
+          :
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_TILE_ROUTING
+          tile.control_panel ? "panel"
+          :
+#endif
+          tile.control_number ? "number"
+                              : "light";
 #else
       card["control_kind"] = "light";
+#endif
+#ifdef USE_LVGL_MATERIAL_DETAIL_TILE_ROUTING
+    if (tile.control_detail)
+      card["control_detail_version"] = 1;
 #endif
     if (!valid_text(card["icon"], 16) || !valid_text(card["title"], 160) || !valid_text(card["subtitle"], 160))
       return false;

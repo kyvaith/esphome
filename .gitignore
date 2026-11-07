@@ -103,6 +103,7 @@ venv-*/
 CMakeListsPrivate.txt
 CMakeLists.txt
 !esphome/components/esp32/cache_restart_framework_patch/CMakeLists.txt
+!esphome/components/esp32/fast_heap_query_framework_patch/CMakeLists.txt
 !esphome/components/esp32_hosted/sdmmc_framework_patch/CMakeLists.txt
 !esphome/components/lvgl/lvgl_source_patch/CMakeLists.txt
 !esphome/components/mipi_dsi/mipi_dsi_framework_patch/CMakeLists.txt

@@ -7,3 +7,11 @@ config ESPHOME_SENDSPIN_MEMORY_OPTIMIZATIONS
         codec is offered. Allocate encoded artwork assemblies only during a
         transfer or a parked acknowledgement, and release after the synchronous
         decode callback or discard. The original 0.9.3 behavior remains when off.
+
+config ESPHOME_SENDSPIN_CHECKED_THREADS
+    bool "Return worker creation failure without throwing C++ exceptions"
+    default n
+    help
+        Preserve worker stack sizes and capabilities while checking ESP-IDF
+        configuration and pthread_create results. Partial starts are cleaned
+        before returning failure. Automatic retries are configured separately.

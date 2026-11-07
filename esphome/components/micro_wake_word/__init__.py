@@ -51,6 +51,7 @@ CONF_MODELS = "models"
 CONF_RING_BUFFER_DURATION = "ring_buffer_duration"
 CONF_ON_WAKE_WORD_DETECTED = "on_wake_word_detected"
 CONF_PREFER_INTERNAL_RAM = "prefer_internal_ram"
+CONF_PREALLOCATE_TASK_RESOURCES = "preallocate_task_resources"
 CONF_PROBABILITY_CUTOFF = "probability_cutoff"
 CONF_SLIDING_WINDOW_AVERAGE_SIZE = "sliding_window_average_size"
 CONF_SLIDING_WINDOW_SIZE = "sliding_window_size"
@@ -461,6 +462,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_STOP_AFTER_DETECTION, default=True): cv.boolean,
             cv.Optional(CONF_TASK_CORE, default=-1): cv.int_range(min=-1, max=1),
             cv.Optional(CONF_PREFER_INTERNAL_RAM, default=False): cv.boolean,
+            cv.Optional(CONF_PREALLOCATE_TASK_RESOURCES, default=False): cv.boolean,
             cv.Optional(CONF_RING_BUFFER_DURATION): cv.All(
                 cv.positive_time_period_milliseconds,
                 cv.Range(min=MIN_RING_BUFFER_DURATION, max=MAX_RING_BUFFER_DURATION),
@@ -572,6 +574,11 @@ async def to_code(config):
     if config.get(CONF_TASK_STACK_IN_PSRAM):
         cg.add(var.set_task_stack_in_psram(True))
         psram.request_external_task_stack()
+
+    if config[CONF_PREALLOCATE_TASK_RESOURCES]:
+        # Runs before App.setup(), with the configured memory type already set.
+        # No inference task starts here; the reservation is reused across stops.
+        cg.add(var.preallocate_task_resources())
 
     esp32.add_idf_component(name="espressif/esp-tflite-micro", ref="1.3.3~1")
     # Pin esp-nn for stable future builds (esp-tflite-micro depends on esp-nn)

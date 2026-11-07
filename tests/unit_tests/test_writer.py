@@ -1206,6 +1206,73 @@ def test_write_cpp_creates_new_file(
     assert "void loop()" in written_content
     assert "App.setup();" in written_content
     assert "App.loop();" in written_content
+    assert "__attribute__((noinline)) void setup_generated()" in written_content
+    helper_end = written_content.index("void setup()")
+    assert written_content.index(CPP_AUTO_GENERATE_END) < helper_end
+    assert written_content.index(
+        "setup_generated();", helper_end
+    ) < written_content.index("App.setup();", helper_end)
+
+
+@pytest.mark.parametrize("attribute", ["", '__attribute__((optimize("O1"))) '])
+@patch("esphome.writer.write_file_if_changed")
+@patch("esphome.writer.copy_src_tree")
+@patch("esphome.writer.CORE")
+def test_write_cpp_migrates_stock_setup_frame_once(
+    mock_core: MagicMock,
+    mock_copy_src_tree: MagicMock,
+    mock_write_file: MagicMock,
+    tmp_path: Path,
+    attribute: str,
+) -> None:
+    """Retire generated temporaries before component setup on incremental builds."""
+    main_cpp = tmp_path / "main.cpp"
+    main_cpp.write_text(
+        f'// Keep outer header\n{CPP_INCLUDE_BEGIN}\n// old\n{CPP_INCLUDE_END}"\n\n'
+        f"{attribute}void setup() {{\n{CPP_AUTO_GENERATE_BEGIN}\n// old\n{CPP_AUTO_GENERATE_END}\n"
+        "  App.setup();\n}\n\nvoid loop() {\n  App.loop();\n}\n"
+    )
+    mock_core.relative_src_path.return_value = main_cpp
+    mock_core.cpp_global_section = "// globals"
+    write_cpp("  register_components();\n")
+    generated = mock_write_file.call_args.args[1]
+    assert generated.startswith("// Keep outer header\n")
+    assert generated.count("void setup_generated()") == 1
+    assert generated.count("void setup()") == 1
+    assert generated.index("register_components();") < generated.index("void setup()")
+    assert generated.index("setup_generated();") < generated.index("App.setup();")
+    assert f"{attribute}__attribute__((noinline))" in generated
+    main_cpp.write_text(generated)
+    write_cpp("  register_components();\n")
+    assert mock_write_file.call_args.args[1] == generated
+
+
+@patch("esphome.writer.write_file_if_changed")
+@patch("esphome.writer.copy_src_tree")
+@patch("esphome.writer.CORE")
+def test_write_cpp_preserves_custom_setup_scope(
+    mock_core: MagicMock,
+    mock_copy_src_tree: MagicMock,
+    mock_write_file: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """Do not move generated code away from custom local variables."""
+    main_cpp = tmp_path / "main.cpp"
+    main_cpp.write_text(
+        f"{CPP_INCLUDE_BEGIN}\n// old\n{CPP_INCLUDE_END}\n"
+        f"void setup() {{\n  int custom = 1;\n{CPP_AUTO_GENERATE_BEGIN}\n// old\n{CPP_AUTO_GENERATE_END}\n"
+        "  App.setup();\n}\n\nvoid loop() {\n  App.loop();\n}\n"
+    )
+    mock_core.relative_src_path.return_value = main_cpp
+    mock_core.cpp_global_section = "// globals"
+    write_cpp("  use(custom);\n")
+    generated = mock_write_file.call_args.args[1]
+    assert "setup_generated" not in generated
+    assert (
+        generated.index("int custom = 1;")
+        < generated.index("use(custom);")
+        < generated.index("App.setup();")
+    )
 
 
 @pytest.mark.usefixtures("mock_copy_src_tree")

@@ -168,6 +168,90 @@ void MaterialEntityControlComponent::setup() {
     return;
   }
 #endif
+#ifdef USE_LVGL_MATERIAL_CHOICE_SELECTOR
+  if (!this->setup_choice_profile_()) {
+    this->mark_failed(LOG_STR("Invalid choice profile"));
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_CONTROLS
+  if (!this->setup_fan_profile_()) {
+    this->mark_failed(LOG_STR("Invalid fan profile"));
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_CONTROLS
+  if (!this->setup_humidifier_profile_()) {
+    this->mark_failed(LOG_STR("Invalid humidifier profile"));
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_CONTROLS
+  if (!this->setup_robot_profile_()) {
+    this->mark_failed(LOG_STR("Invalid robot profile"));
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_EXTRA_CONTROLS
+  if (!this->setup_extra_profile_()) {
+    this->mark_failed(LOG_STR("Invalid extra panel profile"));
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_CONTROLS
+  if (!this->setup_panel_profile_()) {
+    this->mark_failed(LOG_STR("Invalid panel profile"));
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_CONTROLS
+  if (!this->setup_cover_profile_()) {
+    this->mark_failed(LOG_STR("Invalid cover profile"));
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_DETAIL_CONTROLS
+  if (!this->setup_detail_profile_()) {
+    this->mark_failed(LOG_STR("Invalid detail profile"));
+    return;
+  }
+#ifdef USE_LVGL_MATERIAL_CLIMATE_RANGE
+  if (!this->setup_climate_range_profile_()) {
+    this->mark_failed(LOG_STR("Invalid Climate Range profile"));
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_LIGHT_COLOR
+  if (!this->setup_light_color_profile_()) {
+    this->mark_failed(LOG_STR("Invalid Light Color profile"));
+    return;
+  }
+#endif
+#endif
+#ifdef USE_LVGL_MATERIAL_DATETIME_CONTROLS
+  if (!this->setup_datetime_profile_()) {
+    this->mark_failed(LOG_STR("Invalid datetime profile"));
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_ACTION_CONTROLS
+  if (!this->setup_action_profile_()) {
+    this->mark_failed(LOG_STR("Invalid action profile"));
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_MEDIA_CONTROLS
+  if (!this->setup_media_profile_()) {
+    this->mark_failed(LOG_STR("Invalid media profile"));
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_TEXT_CONTROLS
+  if (!this->setup_text_profile_()) {
+    this->mark_failed(LOG_STR("Invalid text profile"));
+    return;
+  }
+#endif
   this->setup_ready_ = true;
   this->enable(this->initial_enabled_);
   this->update_static_();
@@ -182,10 +266,29 @@ void MaterialEntityControlComponent::loop() {
     // must not paint or enable an application that is no longer presented.
     this->invalidate(ControlReason::CONTROL_REASON_NAVIGATION);
   }
+#ifdef USE_LVGL_MATERIAL_DETAIL_CONTROLS
+  this->dispatch_detail_facet_();
+#endif
+#ifdef USE_LVGL_MATERIAL_MEDIA_CONTROLS
+  this->dispatch_media_facet_();
+#endif
   this->process_events_();
 #ifdef USE_LVGL_MATERIAL_NUMBER_STEPPER
   if (this->number_profile_ && this->view_lifecycle_.is_backend(this))
     this->view_lifecycle_.loop();
+#endif
+#ifdef USE_LVGL_MATERIAL_TEXT_CONTROLS
+  if (this->text_preview_pending_)
+    this->service_text_preview_();
+#endif
+#ifdef USE_LVGL_MATERIAL_TIMER_PANEL
+  const auto *panel = this->owner_.state().family_if<ControlSnapshot::Panel>();
+  if (App.get_loop_component_start_time() - this->timer_clock_updated_ >= 1000 && this->owner_.is_panel() &&
+      panel != nullptr && panel->type == 0 && this->owner_.is_view_ready() && !this->owner_.is_dragging() &&
+      this->is_presented_()) {
+    this->timer_clock_updated_ = App.get_loop_component_start_time();
+    this->update_timer_clock_();
+  }
 #endif
 }
 
@@ -214,9 +317,11 @@ bool MaterialEntityControlComponent::serialize_(const ControlMessage &message) {
   size_t length = 0;
 #ifdef USE_LVGL_MATERIAL_NUMBER_STEPPER
   const bool accepted =
-      message.generic ? this->number_profile_ &&
-                            this->codec_.serialize_entity(message, this->output_.data(), this->output_.size(), length)
-                      : this->codec_.serialize(message, this->output_.data(), this->output_.size(), length);
+      message.generic
+          ? this->number_profile_ &&
+                this->codec_.serialize_entity(message, this->output_.data(), this->output_.size(), length,
+                                              this->owner_.choice_empty_active(), this->owner_.cover_panel_active())
+          : this->codec_.serialize(message, this->output_.data(), this->output_.size(), length);
   if (!accepted)
 #else
   if (!this->codec_.serialize(message, this->output_.data(), this->output_.size(), length))
@@ -318,7 +423,7 @@ bool MaterialEntityControlComponent::open(uint32_t slot, std::string_view card_i
   if (this->number_profile_)
     return this->open_entity_(slot, card_id, revision, ControlEntityKind::CONTROL_ENTITY_LIGHT);
 #endif
-  if (!this->setup_ready_ || this->output_callback_active_ || slot < 2 || slot > 15)
+  if (!this->setup_ready_ || this->output_callback_active_ || slot < 2 || slot > 31)
     return false;
   ControlContext context;
   context.slot = static_cast<uint8_t>(slot);
@@ -394,6 +499,23 @@ bool MaterialEntityControlComponent::refresh_texts() {
   return true;
 }
 
+#ifdef USE_LVGL_MATERIAL_TEXT_CONTROLS
+bool MaterialEntityControlComponent::emit_text(const ControlMessage &message, ControlTextValueView value) {
+  if (this->output_callback_active_ || this->message_callbacks_.empty() || !this->number_profile_ || !message.generic ||
+      this->text_storage_ == nullptr)
+    return false;
+  size_t length = 0;
+  if (!this->codec_.serialize_entity(message, this->output_.data(), this->output_.size(), length,
+                                     this->owner_.choice_empty_active(), this->owner_.cover_panel_active(), value))
+    return false;
+  this->output_[length] = 0;
+  this->output_callback_active_ = true;
+  this->message_callbacks_.call(this->output_.data());
+  this->output_callback_active_ = false;
+  return true;
+}
+#endif
+
 bool MaterialEntityControlComponent::emit(const ControlMessage &message) {
   if (this->output_callback_active_ || this->message_callbacks_.empty() || !this->serialize_(message))
     return false;
@@ -422,7 +544,11 @@ void MaterialEntityControlComponent::cancel_render_() {
 
 void MaterialEntityControlComponent::request_render_() {
 #ifdef USE_LVGL_MATERIAL_NUMBER_STEPPER
-  if (this->owner_.is_number())
+  if (this->owner_.is_discrete()
+#ifdef USE_LVGL_MATERIAL_MEDIA_CONTROLS
+      && !this->media_volume_active_()
+#endif
+  )
     return;
 #endif
   if (!this->owner_.has_selection() || !this->owner_.is_view_ready() || !this->is_presented_())
@@ -450,8 +576,26 @@ void MaterialEntityControlComponent::process_events_() {
     }
     if ((events & EVENT_BIT(ControlViewEvent::CONTROL_VIEW_EVENT_GRANTED)) && this->owner_.has_selection())
       this->granted_callbacks_.call(this->selection_generation_);
-    if (events & ~EVENT_BIT(ControlViewEvent::CONTROL_VIEW_EVENT_PREVIEW))
+#ifdef USE_LVGL_MATERIAL_DETAIL_CONTROLS
+    this->reconcile_detail_backend_();
+#endif
+#ifdef USE_LVGL_MATERIAL_MEDIA_CONTROLS
+    this->reconcile_media_backend_();
+#endif
+    bool native_update = (events & ~EVENT_BIT(ControlViewEvent::CONTROL_VIEW_EVENT_PREVIEW)) != 0;
+#ifdef USE_LVGL_MATERIAL_CHOICE_SELECTOR
+    native_update = native_update || this->owner_.is_choice();
+#endif
+    if (native_update)
       this->update_static_();
+#ifdef USE_LVGL_MATERIAL_DETAIL_CONTROLS
+    // The chosen root must be visible before its presenter can resume. A
+    // facet receipt is not an application grant and has no on_granted action.
+    this->finish_detail_handoff_();
+#endif
+#ifdef USE_LVGL_MATERIAL_MEDIA_CONTROLS
+    this->finish_media_handoff_();
+#endif
     if ((events & (EVENT_BIT(ControlViewEvent::CONTROL_VIEW_EVENT_PREVIEW) |
                    EVENT_BIT(ControlViewEvent::CONTROL_VIEW_EVENT_SENDING))) ||
         ((events & (EVENT_BIT(ControlViewEvent::CONTROL_VIEW_EVENT_CANCELLED) |
@@ -486,6 +630,18 @@ const char *MaterialEntityControlComponent::text_(uint8_t index, const char *fal
 }
 
 void MaterialEntityControlComponent::update_status_() {
+  bool scalar_view = true;
+  bool scalar_control = this->owner_.state().caps.brightness;
+#ifdef USE_LVGL_MATERIAL_MEDIA_CONTROLS
+  if (this->owner_.is_media())
+    scalar_control = this->media_volume_active_();
+#endif
+#ifdef USE_LVGL_MATERIAL_DETAIL_CONTROLS
+  if (this->owner_.is_detail()) {
+    const auto *detail = this->owner_.state().family_if<ControlDetailSnapshot>();
+    scalar_view = detail != nullptr && !detail->climate && detail->facet == ControlFacet::CONTROL_FACET_MAIN;
+  }
+#endif
   if (!this->owner_.is_enabled())
     this->status_ = ControlUiStatus::CONTROL_UI_STATUS_DISABLED;
   else if (!this->owner_.is_bound())
@@ -506,7 +662,7 @@ void MaterialEntityControlComponent::update_status_() {
     this->status_ = ControlUiStatus::CONTROL_UI_STATUS_NOT_CONFIRMED;
   else if (this->owner_.last_result() == ControlResult::CONTROL_RESULT_REJECTED)
     this->status_ = ControlUiStatus::CONTROL_UI_STATUS_REJECTED;
-  else if (this->owner_.is_view_ready() && this->owner_.state().caps.brightness && !this->owner_.is_scalar_ready())
+  else if (scalar_view && this->owner_.is_view_ready() && scalar_control && !this->owner_.is_scalar_ready())
     this->status_ = ControlUiStatus::CONTROL_UI_STATUS_RENDERER_UNAVAILABLE;
   else
     this->status_ = ControlUiStatus::CONTROL_UI_STATUS_READY;
@@ -546,6 +702,149 @@ const char *MaterialEntityControlComponent::get_status_key() const {
 void MaterialEntityControlComponent::update_static_() {
   if (!this->setup_ready_ || this->owner_.is_dragging())
     return;
+#ifdef USE_LVGL_MATERIAL_TEXT_CONTROLS
+  if (!this->owner_.is_text()) {
+    this->restore_text_widgets_();
+    if (this->text_widgets_active_)
+      return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_DATETIME_CONTROLS
+  if (!this->owner_.is_datetime()) {
+    this->restore_datetime_widgets_();
+    if (this->datetime_widgets_active_)
+      return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_ACTION_CONTROLS
+  if (!this->owner_.is_action()) {
+    this->restore_action_widgets_();
+    if (this->action_widgets_active_)
+      return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_MEDIA_CONTROLS
+  if (!this->owner_.is_media()) {
+    this->restore_media_widgets_();
+    if (this->media_widgets_active_)
+      return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_DETAIL_CONTROLS
+  if (!this->owner_.is_detail()) {
+    this->restore_detail_widgets_();
+    // A pending OPEN is not fresh state. Keep the retired Detail neutral until
+    // GRANT restores its original flags before the next family takes ownership.
+    if (this->detail_widgets_active_)
+      return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_EXTRA_CONTROLS
+  if (!this->owner_.is_extra()) {
+    this->restore_extra_widgets_();
+    if (this->extra_widgets_active_)
+      return;
+  }
+#endif
+  // Retire the previous child group before another group saves base visibility.
+#ifdef USE_LVGL_MATERIAL_PANEL_CONTROLS
+  if (!this->owner_.is_panel())
+    this->restore_panel_widgets_();
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_CONTROLS
+  if (!this->owner_.is_robot())
+    this->restore_robot_widgets_();
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_CONTROLS
+  if (!this->owner_.is_humidifier())
+    this->restore_humidifier_widgets_();
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_CONTROLS
+  if (!this->owner_.is_fan())
+    this->restore_fan_widgets_();
+#endif
+#ifdef USE_LVGL_MATERIAL_CHOICE_SELECTOR
+  if (!this->owner_.is_choice())
+    this->restore_choice_widgets_();
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_CONTROLS
+  if (!this->owner_.is_cover())
+    this->restore_cover_widgets_();
+#endif
+#ifdef USE_LVGL_MATERIAL_NUMBER_STEPPER
+  if (!this->owner_.is_number())
+    this->restore_light_widgets_();
+#endif
+#ifdef USE_LVGL_MATERIAL_TEXT_CONTROLS
+  if (this->owner_.is_text()) {
+    this->update_text_static_();
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_DATETIME_CONTROLS
+  if (this->owner_.is_datetime()) {
+    this->update_datetime_static_();
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_ACTION_CONTROLS
+  if (this->owner_.is_action()) {
+    this->update_action_static_();
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_MEDIA_CONTROLS
+  if (this->owner_.is_media()) {
+    this->update_media_static_();
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_DETAIL_CONTROLS
+  if (this->owner_.is_detail() && this->update_detail_static_())
+    return;
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_CONTROLS
+  if (this->owner_.is_robot()) {
+    this->update_robot_static_();
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_EXTRA_CONTROLS
+  if (this->owner_.is_extra()) {
+    this->update_extra_static_();
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_CONTROLS
+  if (this->owner_.is_panel()) {
+    this->update_panel_static_();
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_CONTROLS
+  if (this->owner_.is_humidifier()) {
+    this->update_humidifier_static_();
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_CONTROLS
+  if (this->owner_.is_fan()) {
+    this->update_fan_static_();
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_CHOICE_SELECTOR
+  if (this->owner_.is_choice()) {
+    this->update_choice_static_();
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_CONTROLS
+  if (this->owner_.is_cover()) {
+    this->update_cover_static_();
+    return;
+  }
+#endif
 #ifdef USE_LVGL_MATERIAL_NUMBER_STEPPER
   if (this->number_profile_) {
     if (this->owner_.is_number()) {
@@ -578,9 +877,15 @@ void MaterialEntityControlComponent::update_static_() {
     std::snprintf(number, sizeof(number), "%u%%", static_cast<unsigned>(this->owner_.state().brightness_pct));
     set_label(this->value_, number);
   }
-  if (selected)
-    set_label(this->state_label_, this->owner_.state().on ? this->text_(0, this->on_text_.c_str())
-                                                          : this->text_(1, this->off_text_.c_str()));
+  if (selected) {
+    uint8_t state_text = this->owner_.state().on ? 0 : 1;
+#ifdef USE_LVGL_MATERIAL_DETAIL_CONTROLS
+    if (this->owner_.is_detail())
+      state_text += 55;
+#endif
+    set_label(this->state_label_,
+              this->text_(state_text, this->owner_.state().on ? this->on_text_.c_str() : this->off_text_.c_str()));
+  }
   const bool ready = selected && this->owner_.is_view_ready() && !this->owner_.is_command_pending();
   for (auto *button : {this->on_button_, this->off_button_}) {
     const bool supported =
@@ -618,6 +923,9 @@ bool MaterialEntityControlComponent::pointer_value_(lv_indev_t *indev, int32_t &
 }
 
 void MaterialEntityControlComponent::cancel_pointer_() {
+#ifdef USE_LVGL_MATERIAL_LIGHT_COLOR
+  this->light_color_axis_ = 255;
+#endif
 #ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
   if (this->captured_target_ == this->on_button_ || this->captured_target_ == this->off_button_)
     this->view_lifecycle_.finish_native_power_input(this->captured_generation_);
@@ -645,6 +953,9 @@ void MaterialEntityControlComponent::input_event_(lv_event_t *event) {
     return;
   auto *indev = lv_event_get_indev(event);
   const uint32_t now = millis();
+#ifdef USE_LVGL_MATERIAL_THERMOSTAT
+  const bool thermostat_knob = target == this->thermostat_knob_;
+#endif
   if (code == LV_EVENT_PRESS_LOST) {
     if (target == this->captured_target_) {
       this->cancel_pointer_();
@@ -652,10 +963,56 @@ void MaterialEntityControlComponent::input_event_(lv_event_t *event) {
     }
     return;
   }
+#ifdef USE_LVGL_MATERIAL_INFO_AGENDA
+  if (this->owner_.is_agenda()) {
+    this->agenda_input_event_(code, target, indev, now);
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_TEXT_CONTROLS
+  if (this->owner_.is_text()) {
+    this->text_input_event_(code, target, indev, now);
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_DATETIME_CONTROLS
+  if (this->owner_.is_datetime()) {
+    this->datetime_input_event_(code, target, indev, now);
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_ACTION_CONTROLS
+  if (this->owner_.is_action()) {
+    this->action_input_event_(code, target, indev, now);
+    return;
+  }
+#endif
+#ifdef USE_LVGL_MATERIAL_MEDIA_CONTROLS
+  if (this->owner_.is_media()) {
+    this->media_input_event_(code, target, indev, now);
+    return;
+  }
+#endif
   if (code == LV_EVENT_PRESSED) {
+    bool priority_stop = false;
+#ifdef USE_LVGL_MATERIAL_ROBOT_CONTROLS
+    priority_stop =
+        this->owner_.is_robot() && ((target == this->robot_action_buttons_[1] &&
+                                     this->owner_.can_robot(ControlOperation::CONTROL_OPERATION_ROBOT_PAUSE)) ||
+                                    (target == this->robot_action_buttons_[2] &&
+                                     this->owner_.can_robot(ControlOperation::CONTROL_OPERATION_ROBOT_STOP)));
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_PRIORITY_STOP
+    priority_stop |= this->owner_.is_cover() && target == this->cover_buttons_[1] &&
+                     this->owner_.can_cover(ControlOperation::CONTROL_OPERATION_COVER_STOP);
+#ifdef USE_LVGL_MATERIAL_COVER_PANEL
+    priority_stop |= this->owner_.is_cover() && target == this->cover_tilt_buttons_[1] &&
+                     this->owner_.can_cover(ControlOperation::CONTROL_OPERATION_COVER_STOP_TILT);
+#endif
+#endif
     if (this->captured_target_ != nullptr || indev == nullptr || lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER ||
         !this->is_presented_() || !lv_obj_is_visible(target) || !this->owner_.is_view_ready() ||
-        !this->owner_.has_selection() || this->owner_.is_command_pending() ||
+        !this->owner_.has_selection() || (this->owner_.is_command_pending() && !priority_stop) ||
         this->pointer_sequence_ == std::numeric_limits<uint32_t>::max())
       return;
 #ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
@@ -666,10 +1023,82 @@ void MaterialEntityControlComponent::input_event_(lv_event_t *event) {
       return;
 #endif
     const uint32_t pointer = ++this->pointer_sequence_;
+#ifdef USE_LVGL_MATERIAL_DETAIL_CONTROLS
+    if (this->owner_.is_detail() && !this->begin_detail_input_(target, indev, pointer, now)) {
+      if (target == this->on_button_ || target == this->off_button_)
+        this->view_lifecycle_.finish_native_power_input(this->owner_.admission_generation());
+      return;
+    }
+#endif
+#ifdef USE_LVGL_MATERIAL_EXTRA_CONTROLS
+    if (this->owner_.is_extra() && (target != this->extra_state_[11] || !this->owner_.begin_extra_lock(pointer, now)))
+      return;
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_CONTROLS
+    if (this->owner_.is_panel() && !this->begin_panel_input_(target, pointer, now))
+      return;
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_CONTROLS
+    if (this->owner_.is_robot() && !this->begin_robot_input_(target, pointer, now))
+      return;
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_CONTROLS
+    if (this->owner_.is_humidifier() && !this->begin_humidifier_input_(target, indev, pointer, now))
+      return;
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_CONTROLS
+    if (this->owner_.is_fan() && !this->begin_fan_input_(target, pointer, now))
+      return;
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_CONTROLS
+    if (this->owner_.is_cover()) {
+#ifdef USE_LVGL_MATERIAL_COVER_PANEL
+      if (this->owner_.cover_panel_active()) {
+        if (!this->begin_cover_panel_input_(target, indev, pointer, now))
+          return;
+      } else {
+#endif
+        size_t index = 0;
+        while (index < this->cover_buttons_.size() && this->cover_buttons_[index] != target)
+          index++;
+        if (index == this->cover_buttons_.size() ||
+            !this->owner_.begin_cover(pointer,
+                                      static_cast<ControlOperation>(
+                                          static_cast<uint8_t>(ControlOperation::CONTROL_OPERATION_COVER_OPEN) + index),
+                                      now))
+          return;
+#ifdef USE_LVGL_MATERIAL_COVER_PANEL
+      }
+#endif
+    }
+#endif
+#ifdef USE_LVGL_MATERIAL_CHOICE_SELECTOR
+    if (this->owner_.is_choice()) {
+      if (!this->choice_glyphs_available_())
+        return;
+      if (target == this->choice_apply_) {
+        if (!this->owner_.begin_choice_apply(pointer, now))
+          return;
+      } else {
+        const size_t index = this->choice_target_index_(target);
+        if (index >= this->choice_buttons_.size() ||
+            !this->owner_.begin_choice(pointer, static_cast<uint8_t>(index), now))
+          return;
+      }
+    }
+#endif
 #ifdef USE_LVGL_MATERIAL_NUMBER_STEPPER
     if (this->owner_.is_number()) {
-      if ((target != this->on_button_ && target != this->off_button_) ||
-          !this->owner_.begin_step(pointer, target == this->on_button_ ? -1 : 1, now))
+      bool minus = target == this->on_button_, plus = target == this->off_button_;
+#ifdef USE_LVGL_MATERIAL_THERMOSTAT
+      minus |= target == this->thermostat_minus_;
+      plus |= target == this->thermostat_plus_;
+      if (thermostat_knob) {
+        if (!this->begin_thermostat_input_(indev, pointer, now))
+          return;
+      } else
+#endif
+          if ((!minus && !plus) || !this->owner_.begin_step(pointer, minus ? -1 : 1, now))
         return;
     }
 #endif
@@ -700,7 +1129,54 @@ void MaterialEntityControlComponent::input_event_(lv_event_t *event) {
     if (!this->unknown_drag_waiting_ && this->pointer_value_(indev, value))
       this->owner_.update_candidate(this->pointer_sequence_, value, now);
   }
+#ifdef USE_LVGL_MATERIAL_THERMOSTAT
+  if (thermostat_knob && (code == LV_EVENT_PRESSING || code == LV_EVENT_RELEASED))
+    this->update_thermostat_input_(indev);
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_CONTROLS
+  if (this->owner_.is_humidifier() && this->is_humidifier_track_(target) &&
+      (code == LV_EVENT_PRESSING || code == LV_EVENT_RELEASED))
+    this->update_humidifier_input_(indev, this->pointer_sequence_, now);
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_PANEL
+  if (this->owner_.is_cover() && this->owner_.cover_panel_active() && this->is_cover_track_(target) &&
+      (code == LV_EVENT_PRESSING || code == LV_EVENT_RELEASED))
+    this->update_cover_input_(target, indev, this->pointer_sequence_, now);
+#endif
+#ifdef USE_LVGL_MATERIAL_DETAIL_CONTROLS
+  if (this->is_detail_drag_(target) && (code == LV_EVENT_PRESSING || code == LV_EVENT_RELEASED))
+    this->update_detail_input_(indev);
+#endif
   if (code == LV_EVENT_RELEASED) {
+#if defined(USE_LVGL_MATERIAL_ROBOT_CONTROLS) || defined(USE_LVGL_MATERIAL_PANEL_CONTROLS)
+    bool bounded_button = false;
+#ifdef USE_LVGL_MATERIAL_ROBOT_CONTROLS
+    bounded_button |= this->owner_.is_robot();
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_CONTROLS
+    bounded_button |= this->owner_.is_panel();
+#ifdef USE_LVGL_MATERIAL_EXTRA_CONTROLS
+    bounded_button |= this->owner_.is_extra();
+#endif
+#endif
+#ifdef USE_LVGL_MATERIAL_DETAIL_CONTROLS
+    if (this->owner_.is_detail())
+      bounded_button = target != this->hit_ && !this->is_detail_drag_(target);
+#endif
+    if (bounded_button) {
+      // LVGL's press lock can deliver RELEASED outside the original button.
+      // A drag away must retire this captured intent, not execute it.
+      lv_point_t point;
+      lv_area_t bounds;
+      lv_indev_get_point(indev, &point);
+      lv_obj_get_coords(target, &bounds);
+      if (point.x < bounds.x1 || point.x > bounds.x2 || point.y < bounds.y1 || point.y > bounds.y2) {
+        this->cancel_pointer_();
+        this->process_events_();
+        return;
+      }
+    }
+#endif
     if (target == this->hit_) {
       lv_point_t point;
       lv_indev_get_point(indev, &point);
@@ -712,10 +1188,61 @@ void MaterialEntityControlComponent::input_event_(lv_event_t *event) {
     }
     this->captured_target_ = nullptr;
     this->captured_indev_ = nullptr;
-#ifdef USE_LVGL_MATERIAL_NUMBER_STEPPER
-    if (this->owner_.is_number())
-      this->owner_.release_step(this->pointer_sequence_, now);
+#ifdef USE_LVGL_MATERIAL_DETAIL_CONTROLS
+    if (this->owner_.is_detail())
+      this->release_detail_input_(target, this->pointer_sequence_, now);
     else
+#endif
+#ifdef USE_LVGL_MATERIAL_EXTRA_CONTROLS
+        if (this->owner_.is_extra())
+      this->owner_.release_extra_lock(this->pointer_sequence_, now);
+    else
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_CONTROLS
+        if (this->owner_.is_panel())
+      this->release_panel_input_(target, this->pointer_sequence_, now);
+    else
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_CONTROLS
+        if (this->owner_.is_robot())
+      this->release_robot_input_(target, this->pointer_sequence_, now);
+    else
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_CONTROLS
+        if (this->owner_.is_humidifier())
+      this->release_humidifier_input_(target, this->pointer_sequence_, now);
+    else
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_CONTROLS
+        if (this->owner_.is_fan())
+      this->release_fan_input_(target, this->pointer_sequence_, now);
+    else
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_CONTROLS
+        if (this->owner_.is_cover())
+      this->owner_.release_cover(this->pointer_sequence_, now);
+    else
+#endif
+#ifdef USE_LVGL_MATERIAL_CHOICE_SELECTOR
+        if (this->owner_.is_choice()) {
+      if (target == this->choice_apply_)
+        this->owner_.release_choice_apply(this->pointer_sequence_, now);
+      else
+        this->owner_.release_choice(this->pointer_sequence_, now);
+    } else
+#endif
+#ifdef USE_LVGL_MATERIAL_NUMBER_STEPPER
+        if (this->owner_.is_number()) {
+#ifdef USE_LVGL_MATERIAL_THERMOSTAT
+      if (thermostat_knob) {
+        this->thermostat_pending_preview_ =
+            this->owner_.release_thermostat_drag(this->pointer_sequence_, this->thermostat_preview_index_, now);
+        if (!this->thermostat_pending_preview_)
+          this->update_static_();
+      } else
+#endif
+        this->owner_.release_step(this->pointer_sequence_, now);
+    } else
 #endif
         if (target == this->hit_)
       this->owner_.release(this->pointer_sequence_, now);

@@ -1,6 +1,7 @@
 #include "material_notification.h"
 
 #include "esphome/core/hal.h"
+#include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
 #include <algorithm>
@@ -20,20 +21,33 @@ void MaterialNotificationOverlay::setup() {
 
   lv_obj_update_layout(this->root_);
   this->panel_hidden_translate_y_ = lv_obj_get_height(this->panel_);
+  if (this->from_top_)
+    this->panel_hidden_translate_y_ = -lv_obj_get_y(this->panel_) - lv_obj_get_height(this->panel_);
   lv_obj_set_style_translate_y(this->panel_, this->panel_hidden_translate_y_, LV_PART_MAIN);
   lv_obj_add_flag(this->root_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_event_cb(this->root_, root_event_cb_, LV_EVENT_CLICKED, this);
 }
 
 void MaterialNotificationOverlay::loop() {
+  const uint32_t now = App.get_loop_component_start_time();
+#ifdef USE_LVGL_MATERIAL_NOTIFICATION_CENTER
+  if (this->center_open_)
+    return;
+#endif
+  if (!this->active_ && !this->closing_ && this->queue_size_ != 0 &&
+      static_cast<int32_t>(now - this->retry_at_) >= 0) {
+    this->retry_at_ = now + 500;
+    this->display_next_();
+    return;
+  }
   if (this->closing_ && (this->close_animation_ready_ ||
-                         (this->close_deadline_ != 0 && static_cast<int32_t>(millis() - this->close_deadline_) >= 0))) {
+                         (this->close_deadline_ != 0 && static_cast<int32_t>(now - this->close_deadline_) >= 0))) {
     this->finish_close_();
     return;
   }
   if (!this->active_ || this->closing_ || this->deadline_ == 0)
     return;
-  if (static_cast<int32_t>(millis() - this->deadline_) >= 0)
+  if (static_cast<int32_t>(now - this->deadline_) >= 0)
     this->dismiss();
 }
 
@@ -58,6 +72,10 @@ void MaterialNotificationOverlay::show(const std::string &title, const std::stri
                                        uint32_t duration) {
   if (this->is_failed())
     return;
+#ifdef USE_LVGL_MATERIAL_NOTIFICATION_CENTER
+  if (this->center_open_)
+    return;  // The archive already owns attention; do not replay banners after it closes.
+#endif
 
   if (this->queue_size_ == QUEUE_CAPACITY) {
     this->queue_head_ = (this->queue_head_ + 1U) % QUEUE_CAPACITY;
@@ -82,7 +100,10 @@ void MaterialNotificationOverlay::dismiss() {
   this->close_animation_ready_ = false;
   this->deadline_ = 0;
   this->close_deadline_ = millis() + 300;
-  this->animate_scrim_(this->scrim_opacity_, LV_OPA_TRANSP, 180);
+#ifdef USE_LVGL_MATERIAL_NOTIFICATION_CENTER
+  if (this->scene_ == nullptr || !this->scene_->direct())
+#endif
+    this->animate_scrim_(lv_obj_get_style_bg_opa(this->root_, LV_PART_MAIN), LV_OPA_TRANSP, 180);
   this->animate_panel_(lv_obj_get_style_translate_y(this->panel_, LV_PART_MAIN), this->panel_hidden_translate_y_, 220,
                        true);
 }
@@ -90,6 +111,12 @@ void MaterialNotificationOverlay::dismiss() {
 void MaterialNotificationOverlay::display_next_() {
   if (this->queue_size_ == 0 || this->root_ == nullptr)
     return;
+#ifdef USE_LVGL_MATERIAL_NOTIFICATION_CENTER
+  if (this->center_open_)
+    return;
+  if (this->scene_ != nullptr && !this->scene_->begin())
+    return;
+#endif
 
   if (!this->direct_regions_paused_ && this->lvgl_component_ != nullptr) {
     if (this->lvgl_component_->direct_regions_pause(true, 120)) {
@@ -97,6 +124,7 @@ void MaterialNotificationOverlay::display_next_() {
     } else {
       this->lvgl_component_->direct_regions_pause(false, 0);
       ESP_LOGW(TAG, "Unable to pause direct regions before showing notification");
+      return;
     }
   }
 
@@ -118,7 +146,14 @@ void MaterialNotificationOverlay::display_next_() {
   this->close_animation_ready_ = false;
   this->close_deadline_ = 0;
   this->deadline_ = millis() + notification.duration;
-  this->animate_scrim_(LV_OPA_TRANSP, this->scrim_opacity_, 180);
+#ifdef USE_LVGL_MATERIAL_NOTIFICATION_CENTER
+  if (++this->generation_ == 0)
+    ++this->generation_;
+  if (this->scene_ != nullptr && this->scene_->direct())
+    this->scene_->set_overlay(this->root_);
+  else
+#endif
+    this->animate_scrim_(LV_OPA_TRANSP, this->scrim_opacity_, 180);
   this->animate_panel_(this->panel_hidden_translate_y_, 0, 260, false);
 }
 
@@ -133,10 +168,23 @@ void MaterialNotificationOverlay::finish_close_() {
     this->display_next_();
     return;
   }
+#ifdef USE_LVGL_MATERIAL_NOTIFICATION_CENTER
+  if (this->scene_ != nullptr && !this->scene_->end()) {
+    this->closing_ = true;
+    this->close_animation_ready_ = true;
+    return;
+  }
+#endif
 
   if (this->direct_regions_paused_ && this->lvgl_component_ != nullptr) {
     auto *display = this->lvgl_component_->get_disp();
-    if (display != nullptr) {
+    bool refresh_underlying = true;
+#ifdef USE_LVGL_MATERIAL_NOTIFICATION_CENTER
+    // The modal owner has already restored and seeded the complete base. A
+    // synchronous LVGL refresh here would overwrite a resumed full-screen scene.
+    refresh_underlying = this->scene_ == nullptr;
+#endif
+    if (display != nullptr && refresh_underlying) {
       lv_obj_invalidate(lv_display_get_screen_active(display));
       lv_refr_now(display);
       if (!this->lvgl_component_->wait_for_direct_frame_presented(80))
@@ -175,10 +223,36 @@ void MaterialNotificationOverlay::root_event_cb_(lv_event_t *event) {
 void MaterialNotificationOverlay::copy_text_(char *destination, size_t capacity, const std::string &source) {
   if (capacity == 0)
     return;
-  const size_t length = std::min(capacity - 1U, source.size());
+  size_t length = std::min(capacity - 1U, source.size());
+  // Truncate at a UTF-8 boundary (the HA sender already sanitizes text).
+  if (length < source.size()) {
+    while (length > 0 && (static_cast<uint8_t>(source[length]) & 0xC0) == 0x80)
+      length--;
+  }
   std::memcpy(destination, source.data(), length);
   destination[length] = '\0';
 }
+
+#ifdef USE_LVGL_MATERIAL_NOTIFICATION_CENTER
+void MaterialNotificationOverlay::hold_for_center(bool hold) {
+  this->center_open_ = hold;
+  if (!hold)
+    return;
+  lv_anim_delete(this->root_, scrim_animation_cb_);
+  lv_anim_delete(this->panel_, panel_translate_animation_cb_);
+  lv_obj_add_flag(this->root_, LV_OBJ_FLAG_HIDDEN);
+  this->active_ = false;
+  this->closing_ = false;
+  this->deadline_ = 0;
+  this->queue_size_ = 0;
+  this->queue_head_ = 0;
+  // The center keeps the scene lease, but this overlay's pause is independent.
+  if (this->direct_regions_paused_) {
+    this->lvgl_component_->direct_regions_pause(false, 0);
+    this->direct_regions_paused_ = false;
+  }
+}
+#endif
 
 void MaterialNotificationOverlay::animate_panel_(int32_t from, int32_t to, uint32_t duration, bool closing) {
   lv_anim_delete(this->panel_, panel_translate_animation_cb_);

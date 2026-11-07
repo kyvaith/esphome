@@ -271,11 +271,11 @@ class TestColorPickerCodeGeneration:
 
     def test_hue_only_picker_starts_saturated(self, main_cpp: str) -> None:
         """With no way to change saturation, a grey start would leave it stuck at grey."""
-        assert "picker_hue->set_color(lv_color_make(255, 0, 0));" in main_cpp
+        assert "picker_hue->set_color(lv_color_t{0, 0, 255});" in main_cpp
 
     def test_black_is_applied(self, main_cpp: str) -> None:
         """A hex colour validates to a plain int, and black must not read as absent."""
-        assert "picker_black->set_color(lv_color_make(0, 0, 0))" in main_cpp
+        assert "picker_black->set_color(lv_color_t{0, 0, 0})" in main_cpp
 
     def test_trigger_uses_color_type(self, main_cpp: str) -> None:
         """The on_value trigger is declared with the Color the widget reports."""

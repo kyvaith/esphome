@@ -2,6 +2,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
+#include "esphome/core/defines.h"
 
 #include <array>
 #include <cstddef>
@@ -13,10 +14,10 @@ namespace esphome::i18n {
 
 class I18nComponent : public Component {
  public:
-  // Keep the table bounded while leaving room for product UI, status labels,
-  // and several local language packs. Entries point at flash-resident string
-  // literals, so this does not allocate per-translation storage.
-  static constexpr size_t MAX_TRANSLATIONS = 512;
+  // Code generation bounds every configured entry. Strings remain literals;
+  // the optional immutable table also keeps their pointers in flash on ESP32.
+  static constexpr size_t MAX_TRANSLATIONS = I18N_TRANSLATION_CAPACITY;
+  static_assert(MAX_TRANSLATIONS > 0 && MAX_TRANSLATIONS <= UINT16_MAX);
   struct Translation {
     const char *locale;
     const char *key;
@@ -25,6 +26,11 @@ class I18nComponent : public Component {
 
   void set_default_locale(const char *locale) { this->copy_locale_(this->default_locale_, locale); }
   void add_translation(const char *locale, const char *key, const char *value);
+#ifdef USE_I18N_FLASH_TABLE
+  // The caller owns the immutable table and strings for the component lifetime.
+  // Generated tables have static storage. Invalid bindings leave the old table.
+  void set_translation_table(const Translation *table, size_t count);
+#endif
   bool set_locale(const std::string &locale);
   const char *translate(const char *key) const;
   // Translate a locally-owned current label by matching its source value in
@@ -36,7 +42,11 @@ class I18nComponent : public Component {
   static void copy_locale_(char *destination, const char *source);
   const char *find_(const char *locale, const char *key) const;
 
+#ifdef USE_I18N_FLASH_TABLE
+  const Translation *translations_{nullptr};
+#else
   std::array<Translation, MAX_TRANSLATIONS> translations_{};
+#endif
   uint16_t translation_count_{0};
   char default_locale_[9]{"en-US"};
   char locale_[9]{"en-US"};

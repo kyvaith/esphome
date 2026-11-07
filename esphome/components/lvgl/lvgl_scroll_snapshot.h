@@ -22,6 +22,7 @@ class LvglScrollSnapshotController {
   void set_backend(ScrollSnapshotBackend backend) { this->backend_ = backend; }
   void set_color_format(lv_color_format_t color_format) { this->color_format_ = color_format; }
   void set_max_content_bytes(size_t max_content_bytes) { this->max_content_bytes_ = max_content_bytes; }
+  void set_segment_target_bytes(size_t target_bytes) { this->segment_target_bytes_ = target_bytes; }
   void set_overscroll_ratio(float ratio) { this->overscroll_ratio_ = ratio; }
   void set_momentum_duration(uint32_t duration) { this->momentum_duration_ = duration; }
   void set_bounce_duration(uint32_t duration) { this->bounce_duration_ = duration; }
@@ -104,6 +105,7 @@ class LvglScrollSnapshotController {
   ScrollSnapshotBackend backend_{ScrollSnapshotBackend::LVGL};
   lv_color_format_t color_format_{LV_COLOR_FORMAT_RGB565};
   size_t max_content_bytes_{8 * 1024 * 1024};
+  size_t segment_target_bytes_{0};
   float overscroll_ratio_{0.15f};
   uint32_t momentum_duration_{560};
   uint32_t bounce_duration_{320};

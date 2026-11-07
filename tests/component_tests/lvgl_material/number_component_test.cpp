@@ -127,7 +127,8 @@ struct GenericFixture {
     message.identity.token.assign(token);
     message.state.state_seq = 1;
     message.state.title.assign("Number");
-    auto &number = message.state.number;
+    message.state.emplace_family<ControlNumberSnapshot>();
+    auto &number = (*message.state.family_if<ControlNumberSnapshot>());
     number.domain.minimum = -1000000;
     number.domain.maximum = 1000000;
     number.domain.step = 250000;
@@ -201,7 +202,7 @@ static void run_decimal_locale(int scenario) {
   if (scenario == 15) {
     assert(f.component.open_number(2, "card-2", 4));
     auto grant = f.number_message();
-    auto &number = grant.state.number;
+    auto &number = (*grant.state.family_if<ControlNumberSnapshot>());
     number.domain.minimum = 999999999999000000LL;
     number.domain.maximum = 1000000000000000000LL;
     number.domain.step = 1;
@@ -211,7 +212,8 @@ static void run_decimal_locale(int scenario) {
     assert(f.receive(grant));
     assert(f.component.resume_control_view(f.component.get_selection_generation()));
     assert(f.value.text == "999999999999,999999");
-    assert(f.component.owner().state().number.value_text.view() == "999999999999.999999");
+    assert((*f.component.owner().state().family_if<ControlNumberSnapshot>()).value_text.view() ==
+           "999999999999.999999");
     assert(f.commands() == 0 && f.renders == 0);
     return;
   }
@@ -222,9 +224,9 @@ static void run_decimal_locale(int scenario) {
     auto update = f.number_message(ControlKind::CONTROL_KIND_STATE);
     update.state = f.component.owner().state();
     update.state.state_seq++;
-    update.state.number.index = index;
-    update.state.number.state_generation++;
-    assert(update.state.number.value_text.assign(canonical));
+    (*update.state.family_if<ControlNumberSnapshot>()).index = index;
+    (*update.state.family_if<ControlNumberSnapshot>()).state_generation++;
+    assert((*update.state.family_if<ControlNumberSnapshot>()).value_text.assign(canonical));
     assert(f.receive(update));
   };
   publish(5, "0.25");
@@ -243,7 +245,7 @@ static void run_decimal_locale(int scenario) {
     for (const auto &sample : samples) {
       publish(sample.index, sample.canonical);
       assert(f.value.text == sample.displayed);
-      assert(f.component.owner().state().number.value_text.view() == sample.canonical);
+      assert((*f.component.owner().state().family_if<ControlNumberSnapshot>()).value_text.view() == sample.canonical);
     }
     separator = ".";
     publish(5, "0.25");
@@ -279,10 +281,10 @@ static void run_decimal_locale(int scenario) {
     auto unknown = f.number_message(ControlKind::CONTROL_KIND_STATE);
     unknown.state = f.component.owner().state();
     unknown.state.state_seq++;
-    unknown.state.number.state_generation++;
-    unknown.state.number.available = false;
-    unknown.state.number.index = 0;
-    unknown.state.number.value_text.assign("--");
+    (*unknown.state.family_if<ControlNumberSnapshot>()).state_generation++;
+    (*unknown.state.family_if<ControlNumberSnapshot>()).available = false;
+    (*unknown.state.family_if<ControlNumberSnapshot>()).index = 0;
+    (*unknown.state.family_if<ControlNumberSnapshot>()).value_text.assign("--");
     assert(f.receive(unknown) && f.component.refresh_texts());
     assert(f.value.text == "--" && !lv_obj_has_flag(&f.unknown, LV_OBJ_FLAG_HIDDEN));
     assert((f.on.state & LV_STATE_DISABLED) && (f.off.state & LV_STATE_DISABLED));
@@ -330,9 +332,9 @@ static void run(int scenario) {
           state.state.state_seq++;
           if (result == ControlResult::CONTROL_RESULT_STATE_MATCHES) {
             if (first_number) {
-              state.state.number.index = 5;
-              state.state.number.state_generation++;
-              state.state.number.value_text.assign("0.25");
+              (*state.state.family_if<ControlNumberSnapshot>()).index = 5;
+              (*state.state.family_if<ControlNumberSnapshot>()).state_generation++;
+              (*state.state.family_if<ControlNumberSnapshot>()).value_text.assign("0.25");
             } else
               state.state.on = false;
           }
@@ -380,9 +382,9 @@ static void run(int scenario) {
           state.state.state_seq++;
           if (result == ControlResult::CONTROL_RESULT_STATE_MATCHES) {
             if (next_number) {
-              state.state.number.index = 5;
-              state.state.number.state_generation++;
-              state.state.number.value_text.assign("0.25");
+              (*state.state.family_if<ControlNumberSnapshot>()).index = 5;
+              (*state.state.family_if<ControlNumberSnapshot>()).state_generation++;
+              (*state.state.family_if<ControlNumberSnapshot>()).value_text.assign("0.25");
             } else
               state.state.on = false;
           }
@@ -436,7 +438,7 @@ static void run(int scenario) {
       test_event(f.off, LV_EVENT_PRESSED, &f.pointer);
       auto changed = f.number_message(ControlKind::CONTROL_KIND_STATE);
       changed.state.state_seq = 2;
-      changed.state.number.state_generation = 3;
+      (*changed.state.family_if<ControlNumberSnapshot>()).state_generation = 3;
       assert(f.receive(changed));
       test_event(f.off, LV_EVENT_RELEASED, &f.pointer);
       assert(f.commands() == 0 && !f.component.owner().is_dragging());
@@ -445,10 +447,10 @@ static void run(int scenario) {
     if (scenario == 4) {
       auto unknown = f.number_message(ControlKind::CONTROL_KIND_STATE);
       unknown.state.state_seq = 2;
-      unknown.state.number.state_generation = 2;
-      unknown.state.number.available = false;
-      unknown.state.number.index = 0;
-      unknown.state.number.value_text.assign("--");
+      (*unknown.state.family_if<ControlNumberSnapshot>()).state_generation = 2;
+      (*unknown.state.family_if<ControlNumberSnapshot>()).available = false;
+      (*unknown.state.family_if<ControlNumberSnapshot>()).index = 0;
+      (*unknown.state.family_if<ControlNumberSnapshot>()).value_text.assign("--");
       assert(f.receive(unknown));
       assert((f.on.state & LV_STATE_DISABLED) && (f.off.state & LV_STATE_DISABLED));
       test_event(f.off, LV_EVENT_PRESSED, &f.pointer);

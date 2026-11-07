@@ -21,6 +21,7 @@ class NavigationAdmissionTests(unittest.TestCase):
             "lvgl_navigation.h",
             "lvgl_navigation.cpp",
             "navigation_admission.h",
+            "navigation_touch_delegate.h",
             "direct_region_generation.h",
         ):
             shutil.copy2(SOURCE / name, cls.root / name)
@@ -92,7 +93,7 @@ class NavigationAdmissionTests(unittest.TestCase):
         self.assertIn("navigation case 0 PASS", result.stdout)
 
     def test_actual_guarded_programmatic_gesture_and_capture_paths(self):
-        for case in range(11):
+        for case in range(21):
             with self.subTest(case=case):
                 result = subprocess.run(
                     [str(self.executables[True]), str(case)],

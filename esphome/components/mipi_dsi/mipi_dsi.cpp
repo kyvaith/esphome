@@ -5,6 +5,7 @@
 #include <cstring>
 #include <utility>
 #include "mipi_dsi.h"
+#include "memory_fault_diagnostics.h"
 #include "esphome/core/helpers.h"
 #include "esp_cache.h"
 #include "esp_heap_caps.h"
@@ -116,6 +117,9 @@ extern "C" void IRAM_ATTR esphome_mipi_dsi_note_underrun(void) {
   dsi_underrun_count++;
   dsi_underrun_total++;
   dsi_underrun_last_tick = static_cast<uint32_t>(xTaskGetTickCountFromISR());
+#ifdef USE_MIPI_DSI_MEMORY_FAULT_DIAGNOSTICS
+  note_memory_fault_from_isr(dsi_underrun_last_tick);
+#endif
 }
 
 extern "C" void IRAM_ATTR esphome_mipi_dsi_note_status(uint32_t bridge_status, uint32_t bridge_raw, uint32_t fifo_depth,
@@ -955,6 +959,8 @@ void MipiDsi::record_direct_frame_trace_(char event, const uint8_t *frame_buffer
   }
   const uint32_t position = this->direct_frame_trace_position_.fetch_add(1, std::memory_order_relaxed);
   if (position < DIRECT_FRAME_TRACE_CAPACITY) {
+    this->direct_frame_trace_us_[position].store(static_cast<uint32_t>(esp_timer_get_time()),
+                                                 std::memory_order_relaxed);
     this->direct_frame_trace_events_[position].store(
         static_cast<uint16_t>(static_cast<uint8_t>(event)) | (static_cast<uint16_t>(frame_index) << 8U),
         std::memory_order_relaxed);
@@ -1039,6 +1045,24 @@ void MipiDsi::log_direct_frame_trace(const char *label) {
            static_cast<unsigned>(this->direct_frame_trace_rejected_.load(std::memory_order_relaxed)), sequence);
   ESP_LOGW(TAG, "frame trace %s queued samples @400,460: %s", label == nullptr ? "" : label, queued_samples);
   ESP_LOGW(TAG, "frame trace %s active samples @400,460: %s", label == nullptr ? "" : label, active_samples);
+  uint32_t previous_us = 0;
+  char intervals[DIRECT_FRAME_TRACE_CAPACITY * 11 + 1]{};
+  size_t interval_offset = 0;
+  for (uint32_t index = 0; index < event_count; index++) {
+    const uint16_t event = this->direct_frame_trace_events_[index].load(std::memory_order_relaxed);
+    if (static_cast<char>(event & 0xFFU) != 'A')
+      continue;
+    const uint32_t timestamp = this->direct_frame_trace_us_[index].load(std::memory_order_relaxed);
+    if (previous_us != 0) {
+      const int written = snprintf(intervals + interval_offset, sizeof(intervals) - interval_offset, "%s%u",
+                                   interval_offset == 0 ? "" : ",", static_cast<unsigned>(timestamp - previous_us));
+      if (written <= 0 || static_cast<size_t>(written) >= sizeof(intervals) - interval_offset)
+        break;
+      interval_offset += static_cast<size_t>(written);
+    }
+    previous_us = timestamp;
+  }
+  ESP_LOGW(TAG, "frame trace %s active intervals us: %s", label == nullptr ? "" : label, intervals);
 }
 
 uint8_t *MipiDsi::get_direct_render_frame_buffer(const uint8_t *exclude_a, const uint8_t *exclude_b) const {
@@ -1684,6 +1708,9 @@ void MipiDsi::log_dma_ring_state(const char *label, bool only_new_invalid) {
 }
 
 void MipiDsi::log_dsi_diagnostics_() {
+#ifdef USE_MIPI_DSI_MEMORY_FAULT_DIAGNOSTICS
+  emit_memory_fault_diagnostics();
+#endif
 #if CONFIG_ESPHOME_DSI_STRESS_DIAGNOSTICS
   const uint32_t dma_now = millis();
   if (this->last_dma_diagnostics_poll_ms_ == 0 || dma_now - this->last_dma_diagnostics_poll_ms_ >= 250) {

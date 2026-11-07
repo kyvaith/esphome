@@ -415,6 +415,7 @@ class MipiDsi : public display::Display {
   std::atomic<uint32_t> direct_frame_trace_active_{0};
   std::atomic<uint32_t> direct_frame_trace_rejected_{0};
   std::atomic<uint16_t> direct_frame_trace_events_[DIRECT_FRAME_TRACE_CAPACITY]{};
+  std::atomic<uint32_t> direct_frame_trace_us_[DIRECT_FRAME_TRACE_CAPACITY]{};
   std::atomic<uint32_t> direct_frame_trace_samples_[DIRECT_FRAME_TRACE_CAPACITY]{};
   uint8_t *buffer_{nullptr};
   uint16_t x_low_{1};

@@ -92,7 +92,10 @@ def color_retmapper(value):
     if isinstance(value, cv.Lambda):
         return cv.returning_lambda(value)
     r, g, b = get_component_colors(value)
-    return literal(f"lv_color_make({r}, {g}, {b})")
+    # LVGL 9's public color aggregate is BGR8. Constant initialization avoids
+    # a separate call-result stack slot for every generated style color.
+    # Preserve lv_color_make's uint8_t conversion for accepted integer inputs.
+    return literal(f"lv_color_t{{{b & 0xFF}, {g & 0xFF}, {r & 0xFF}}}")
 
 
 class LvColor(LValidator):

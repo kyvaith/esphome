@@ -203,6 +203,6 @@ def test_bottom_layer_styling_applied(main_cpp: str) -> None:
     keys of ``lvgl.update`` were silently ignored)."""
     assert "lv_display_get_layer_bottom(lvgl_id->get_disp())" in main_cpp
     assert (
-        "lv_obj_set_style_bg_color(bottom_layer_VAR_, lv_color_make(18, 52, 86), "
+        "lv_obj_set_style_bg_color(bottom_layer_VAR_, lv_color_t{86, 52, 18}, "
         "LV_PART_MAIN)" in main_cpp
     )

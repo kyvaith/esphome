@@ -71,7 +71,7 @@ NetworkCamera::~NetworkCamera() {
 
 void NetworkCamera::add_source(const std::string &name, const std::string &url) {
   LockGuard lock(this->source_mutex_);
-  this->sources_.push_back({name, url, {}});
+  this->sources_.push_back({name, url, {}, {}});
 }
 
 void NetworkCamera::add_source_header(size_t source_index, const std::string &name, const std::string &value) {
@@ -164,9 +164,9 @@ void NetworkCamera::loop() {
 
   if (this->source_event_pending_.exchange(false, std::memory_order_acq_rel)) {
     const size_t index = this->active_source_.load(std::memory_order_acquire);
-    const std::string name = this->source_name(index);
+    const std::string name = this->active_source_name();
     if (!name.empty()) {
-      if (this->source_select_ != nullptr && index < this->source_select_->size() &&
+      if (this->preview_key_.empty() && this->source_select_ != nullptr && index < this->source_select_->size() &&
           strcmp(this->source_select_->option_at(index), name.c_str()) == 0)
         this->source_select_->publish_state(index);
       this->source_callback_.call(name);
@@ -249,10 +249,15 @@ void NetworkCamera::select_source(size_t index) {
       ESP_LOGW(TAG, "Ignoring out-of-range source index %zu", index);
       return;
     }
-    if (this->active_source_.exchange(index, std::memory_order_acq_rel) == index && this->is_running())
+    if ((this->active_source_.exchange(index, std::memory_order_acq_rel) == index && this->is_running()) ||
+        !this->preview_key_.empty())
       return;
+    this->source_revision_.fetch_add(1, std::memory_order_acq_rel);
   }
-  this->source_revision_.fetch_add(1, std::memory_order_acq_rel);
+  this->notify_source_changed_();
+}
+
+void NetworkCamera::notify_source_changed_() {
   this->first_frame_pending_.store(false, std::memory_order_release);
   this->awaiting_first_frame_.store(true, std::memory_order_release);
   this->queue_source_event_();
@@ -263,7 +268,25 @@ void NetworkCamera::select_source(size_t index) {
 }
 
 bool NetworkCamera::replace_sources(const std::vector<std::string> &names, const std::vector<std::string> &urls) {
-  if (names.empty() || names.size() != urls.size() || names.size() > this->max_runtime_sources_) {
+  return this->replace_sources_(nullptr, names, urls);
+}
+
+bool NetworkCamera::replace_keyed_sources(const std::vector<std::string> &keys,
+                                         const std::vector<std::string> &names,
+                                         const std::vector<std::string> &urls) {
+  if (keys.size() != names.size() || keys.size() > this->max_runtime_sources_)
+    return false;
+  for (size_t i = 0; i < keys.size(); i++) {
+    if (keys[i].empty() || keys[i].size() > 64 ||
+        std::find(keys.begin(), keys.begin() + i, keys[i]) != keys.begin() + i)
+      return false;
+  }
+  return this->replace_sources_(&keys, names, urls);
+}
+
+bool NetworkCamera::replace_sources_(const std::vector<std::string> *keys, const std::vector<std::string> &names,
+                                     const std::vector<std::string> &urls) {
+  if ((names.empty() && keys == nullptr) || names.size() != urls.size() || names.size() > this->max_runtime_sources_) {
     ESP_LOGW(TAG, "Rejected runtime source catalog: names=%zu urls=%zu maximum=%zu", names.size(), urls.size(),
              this->max_runtime_sources_);
     return false;
@@ -275,20 +298,14 @@ bool NetworkCamera::replace_sources(const std::vector<std::string> &names, const
     }
   }
 
-  size_t selected_index = 0;
-  bool catalog_changed = false;
   {
     LockGuard lock(this->source_mutex_);
-    std::string active_name;
-    if (!this->sources_.empty()) {
-      const size_t current = std::min(this->active_source_.load(std::memory_order_acquire), this->sources_.size() - 1U);
-      active_name = this->sources_[current].name;
-    }
-
     bool same_catalog = this->sources_.size() == names.size();
     if (same_catalog) {
       for (size_t index = 0; index < names.size(); index++) {
-        if (this->sources_[index].name != names[index] || !this->sources_[index].headers.empty()) {
+        const auto &old = this->sources_[index];
+        if (old.name != names[index] || !old.headers.empty() ||
+            (keys != nullptr ? old.key != (*keys)[index] : !old.key.empty())) {
           same_catalog = false;
           break;
         }
@@ -304,29 +321,67 @@ bool NetworkCamera::replace_sources(const std::vector<std::string> &names, const
     std::vector<StreamSource> replacement;
     replacement.reserve(this->max_runtime_sources_);
     for (size_t index = 0; index < names.size(); index++)
-      replacement.push_back({names[index], urls[index], {}});
-    for (size_t index = 0; index < replacement.size(); index++) {
-      if (replacement[index].name == active_name) {
-        selected_index = index;
-        break;
+      replacement.push_back({names[index], urls[index], {}, keys == nullptr ? std::string{} : (*keys)[index]});
+    size_t selected_index = 0;
+    const size_t current = this->active_source_index();
+    if (current < this->sources_.size()) {
+      const auto &old = this->sources_[current];
+      for (size_t index = 0; index < replacement.size(); index++) {
+        const auto &next = replacement[index];
+        if ((!old.key.empty() && !next.key.empty()) ? next.key == old.key : next.name == old.name) {
+          selected_index = index;
+          break;
+        }
       }
     }
     this->sources_.swap(replacement);
     this->active_source_.store(selected_index, std::memory_order_release);
     this->source_revision_.fetch_add(1, std::memory_order_acq_rel);
-    catalog_changed = true;
   }
-
-  if (catalog_changed) {
-    this->first_frame_pending_.store(false, std::memory_order_release);
-    this->awaiting_first_frame_.store(true, std::memory_order_release);
-    this->queue_source_event_();
-#ifdef USE_ESP_IDF
-    if (this->stream_task_handle_ != nullptr)
-      xTaskNotifyGive(this->stream_task_handle_);
-#endif
-  }
+  this->notify_source_changed_();
   return true;
+}
+
+size_t NetworkCamera::find_source_key_(const std::string &key) const {
+  for (size_t i = 0; i < this->sources_.size(); i++) {
+    if (this->sources_[i].key == key)
+      return i;
+  }
+  return this->sources_.size();
+}
+
+size_t NetworkCamera::stream_source_index_() const {
+  return this->preview_key_.empty() ? this->active_source_index() : this->find_source_key_(this->preview_key_);
+}
+
+bool NetworkCamera::begin_preview(const std::string &key) {
+  if (key.empty() || key.size() > 64 || this->is_failed())
+    return false;
+  {
+    LockGuard lock(this->source_mutex_);
+    if (this->is_running() || !this->preview_key_.empty() || this->find_source_key_(key) == this->sources_.size())
+      return false;
+    this->preview_key_ = key;
+    this->source_revision_.fetch_add(1, std::memory_order_acq_rel);
+  }
+  this->notify_source_changed_();
+  return true;
+}
+
+void NetworkCamera::end_preview() {
+  {
+    LockGuard lock(this->source_mutex_);
+    if (this->preview_key_.empty())
+      return;
+    this->preview_key_.clear();
+    this->source_revision_.fetch_add(1, std::memory_order_acq_rel);
+  }
+  this->notify_source_changed_();
+}
+
+bool NetworkCamera::preview_available() const {
+  LockGuard lock(this->source_mutex_);
+  return !this->preview_key_.empty() && this->stream_source_index_() < this->sources_.size();
 }
 
 size_t NetworkCamera::source_count() const {
@@ -352,10 +407,8 @@ std::vector<std::string> NetworkCamera::source_names() const {
 
 std::string NetworkCamera::active_source_name() const {
   LockGuard lock(this->source_mutex_);
-  if (this->sources_.empty())
-    return {};
-  const size_t index = std::min(this->active_source_index(), this->sources_.size() - 1U);
-  return this->sources_[index].name;
+  const size_t index = this->stream_source_index_();
+  return index < this->sources_.size() ? this->sources_[index].name : std::string{};
 }
 
 const char *NetworkCamera::state_name() const { return state_to_string(this->state_.load(std::memory_order_acquire)); }
@@ -445,17 +498,16 @@ void NetworkCamera::stream_task_() {
       continue;
     }
 
-    const uint32_t revision = this->source_revision_.load(std::memory_order_acquire);
-    const size_t source_index = this->active_source_.load(std::memory_order_acquire);
-    StreamSource source;
-    if (!this->get_source_(source_index, &source)) {
-      this->set_state_(StreamState::ERROR);
-      this->wait_for_task_wakeup_(this->reconnect_interval_ms_);
-      continue;
-    }
-
+    uint32_t revision = this->source_revision_.load(std::memory_order_acquire);
     if (this->http_client_ == nullptr || connected_revision != revision) {
       this->disconnect_stream_();
+      StreamSource source;
+      if (!this->get_stream_source_(revision, &source)) {
+        connected_revision = UINT32_MAX;
+        this->set_state_(StreamState::ERROR);
+        this->wait_for_task_wakeup_(this->reconnect_interval_ms_);
+        continue;
+      }
       if (!this->ensure_input_buffers_()) {
         this->input_allocation_failed_.store(true, std::memory_order_release);
         this->set_state_(StreamState::RETRY_WAIT);
@@ -474,7 +526,7 @@ void NetworkCamera::stream_task_() {
       this->reset_parser_();
     }
 
-    if (!this->read_stream_()) {
+    if (!this->read_stream_(connected_revision)) {
       this->disconnect_stream_();
       connected_revision = UINT32_MAX;
       this->reconnects_.fetch_add(1, std::memory_order_relaxed);
@@ -532,12 +584,14 @@ void NetworkCamera::release_input_buffers_() {
   this->input_buffer_bytes_.store(0, std::memory_order_release);
 }
 
-bool NetworkCamera::get_source_(size_t index, StreamSource *source) const {
+bool NetworkCamera::get_stream_source_(uint32_t &revision, StreamSource *source) const {
   if (source == nullptr)
     return false;
   LockGuard lock(this->source_mutex_);
+  const size_t index = this->stream_source_index_();
   if (index >= this->sources_.size())
     return false;
+  revision = this->source_revision_.load(std::memory_order_acquire);
   *source = this->sources_[index];
   return true;
 }
@@ -588,10 +642,13 @@ void NetworkCamera::disconnect_stream_() {
   this->reset_parser_();
 }
 
-bool NetworkCamera::read_stream_() {
+bool NetworkCamera::read_stream_(uint32_t revision) {
   const int received =
       esp_http_client_read(this->http_client_, reinterpret_cast<char *>(this->read_buffer_), this->read_buffer_size_);
   if (received > 0) {
+    // A source change or close can arrive while the HTTP read is blocked.
+    if (!this->is_running() || revision != this->source_revision_.load(std::memory_order_acquire))
+      return true;
     const uint32_t frames_before = this->received_frames_.load(std::memory_order_relaxed);
     const bool consumed = this->consume_stream_bytes_(this->read_buffer_, static_cast<size_t>(received));
     // Some live endpoints keep every socket read ready. Yield after a complete

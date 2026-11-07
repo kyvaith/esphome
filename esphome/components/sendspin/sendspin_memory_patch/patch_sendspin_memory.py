@@ -1,8 +1,18 @@
 """Guarded, default-off memory policy for the reviewed Sendspin 0.9.3 sources."""
 
 import hashlib
+import importlib.util
 from pathlib import Path
 import sys
+
+_THREAD_SPEC = importlib.util.spec_from_file_location(
+    "sendspin_checked_threads", Path(__file__).with_name("patch_sendspin_threads.py")
+)
+assert _THREAD_SPEC and _THREAD_SPEC.loader
+_THREAD_PATCH = importlib.util.module_from_spec(_THREAD_SPEC)
+_THREAD_SPEC.loader.exec_module(_THREAD_PATCH)
+THREAD_AFTER = _THREAD_PATCH.AFTER
+prepare_thread_sources = _THREAD_PATCH.prepare_thread_sources
 
 GUARD = "CONFIG_ESPHOME_SENDSPIN_MEMORY_OPTIMIZATIONS"
 
@@ -206,7 +216,7 @@ def prepare_sources(component_dir: Path) -> dict[Path, bytes]:
         target = component_dir / name
         original = target.read_bytes()
         digest = hashlib.sha256(original).hexdigest()
-        if digest == GUARDED_SHA256[name]:
+        if digest in (GUARDED_SHA256[name], THREAD_AFTER.get(name)):
             continue
         if digest != PRISTINE_SHA256[name]:
             raise RuntimeError(f"Unreviewed Sendspin source: {name}")
@@ -214,12 +224,13 @@ def prepare_sources(component_dir: Path) -> dict[Path, bytes]:
         if hashlib.sha256(output).hexdigest() != GUARDED_SHA256[name]:
             raise RuntimeError(f"Unreviewed Sendspin postimage: {name}")
         outputs[target] = output
-    return outputs
+    return prepare_thread_sources(component_dir, outputs)
 
 
 def patch_component(component_dir: Path) -> int:
     outputs = prepare_sources(component_dir)
     for target, data in outputs.items():
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
     return len(outputs)
 

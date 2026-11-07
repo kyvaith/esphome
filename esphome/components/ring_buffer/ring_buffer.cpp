@@ -1,5 +1,7 @@
 #include "ring_buffer.h"
 
+#include <new>
+
 #ifdef USE_ESP32
 
 #include "esphome/core/helpers.h"
@@ -19,7 +21,10 @@ RingBuffer::~RingBuffer() {
 }
 
 std::unique_ptr<RingBuffer> RingBuffer::create(size_t len, MemoryPreference preference) {
-  std::unique_ptr<RingBuffer> rb = make_unique<RingBuffer>();
+  std::unique_ptr<RingBuffer> rb(new (std::nothrow) RingBuffer());
+  if (rb == nullptr) {
+    return nullptr;
+  }
 
   rb->size_ = len;
 

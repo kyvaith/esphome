@@ -1,0 +1,619 @@
+[
+  {
+    "id": "extra_control_root",
+    "type": "obj",
+    "parent": "BASE",
+    "props": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 800,
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 0,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true,
+      "bg_color": "0x000000"
+    }
+  },
+  {
+    "id": "extra_control_kind",
+    "type": "label",
+    "parent": "extra_control_root",
+    "props": {
+      "x": 200,
+      "y": 72,
+      "width": 400,
+      "height": 26,
+      "text_font": "roboto_20",
+      "text_color": "0xC4C7C5",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_control_title",
+    "type": "label",
+    "parent": "extra_control_root",
+    "props": {
+      "x": 132,
+      "y": 104,
+      "width": 536,
+      "height": 42,
+      "text_font": "roboto_30",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_sensor_root",
+    "type": "obj",
+    "parent": "extra_control_root",
+    "props": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 800,
+      "bg_opa": "TRANSP",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 0,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true
+    }
+  },
+  {
+    "id": "extra_sensor_value",
+    "type": "label",
+    "parent": "extra_sensor_root",
+    "props": {
+      "x": 130,
+      "y": 320,
+      "width": 540,
+      "height": 112,
+      "text_font": "wear_title_53",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_sensor_unit",
+    "type": "label",
+    "parent": "extra_sensor_root",
+    "props": {
+      "x": 190,
+      "y": 438,
+      "width": 420,
+      "height": 64,
+      "text_font": "roboto_24",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_sensor_icon_unknown",
+    "type": "svg_icon",
+    "parent": "extra_sensor_root",
+    "props": {
+      "x": 352,
+      "y": 200,
+      "width": 96,
+      "height": 96,
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_sensor_icon_temperature",
+    "type": "svg_icon",
+    "parent": "extra_sensor_root",
+    "props": {
+      "x": 352,
+      "y": 200,
+      "width": 96,
+      "height": 96,
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_sensor_icon_humidity",
+    "type": "svg_icon",
+    "parent": "extra_sensor_root",
+    "props": {
+      "x": 352,
+      "y": 200,
+      "width": 96,
+      "height": 96,
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_state_root",
+    "type": "obj",
+    "parent": "extra_control_root",
+    "props": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 800,
+      "bg_opa": "TRANSP",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 0,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true
+    }
+  },
+  {
+    "id": "extra_surface_binary",
+    "type": "obj",
+    "parent": "extra_state_root",
+    "props": {
+      "x": 288,
+      "y": 200,
+      "width": 224,
+      "height": 224,
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 112,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true,
+      "bg_color": "0x1D2833"
+    }
+  },
+  {
+    "id": "extra_surface_alarm",
+    "type": "obj",
+    "parent": "extra_state_root",
+    "props": {
+      "x": 208,
+      "y": 200,
+      "width": 384,
+      "height": 224,
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 48,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true,
+      "bg_color": "0x1D2833"
+    }
+  },
+  {
+    "id": "extra_surface_lock",
+    "type": "obj",
+    "parent": "extra_state_root",
+    "props": {
+      "x": 296,
+      "y": 184,
+      "width": 208,
+      "height": 256,
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 72,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true,
+      "bg_color": "0x1D2833"
+    }
+  },
+  {
+    "id": "extra_state_value",
+    "type": "label",
+    "parent": "extra_state_root",
+    "props": {
+      "x": 130,
+      "y": 452,
+      "width": 540,
+      "height": 84,
+      "text_font": "roboto_30",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_lock_button",
+    "type": "button",
+    "parent": "extra_state_root",
+    "props": {
+      "x": 210,
+      "y": 556,
+      "width": 380,
+      "height": 72,
+      "radius": 36,
+      "bg_color": "0xD3E3FD",
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true,
+      "pressed": {
+        "bg_opa": "80%"
+      },
+      "disabled": {
+        "text_opa": "80%"
+      }
+    }
+  },
+  {
+    "id": "extra_lock_label",
+    "type": "label",
+    "parent": "extra_lock_button",
+    "props": {
+      "width": 340,
+      "height": 40,
+      "text_font": "roboto_24",
+      "text_color": "0x071018",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "extra_state_icon_unknown",
+    "type": "svg_icon",
+    "parent": "extra_state_root",
+    "props": {
+      "x": 336,
+      "y": 248,
+      "width": 128,
+      "height": 128,
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_state_icon_moisture",
+    "type": "svg_icon",
+    "parent": "extra_state_root",
+    "props": {
+      "x": 336,
+      "y": 248,
+      "width": 128,
+      "height": 128,
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_state_icon_alarm",
+    "type": "svg_icon",
+    "parent": "extra_state_root",
+    "props": {
+      "x": 336,
+      "y": 248,
+      "width": 128,
+      "height": 128,
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_state_icon_lock_closed",
+    "type": "svg_icon",
+    "parent": "extra_state_root",
+    "props": {
+      "x": 336,
+      "y": 248,
+      "width": 128,
+      "height": 128,
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_state_icon_lock_open",
+    "type": "svg_icon",
+    "parent": "extra_state_root",
+    "props": {
+      "x": 336,
+      "y": 248,
+      "width": 128,
+      "height": 128,
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_state_icon_calendar",
+    "type": "svg_icon",
+    "parent": "extra_state_root",
+    "props": {
+      "x": 336,
+      "y": 248,
+      "width": 128,
+      "height": 128,
+      "text_color": "0xD3E3FD",
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_root",
+    "type": "obj",
+    "parent": "extra_control_root",
+    "props": {
+      "x": 116,
+      "y": 170,
+      "width": 568,
+      "height": 474,
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 40,
+      "clickable": false,
+      "scrollable": false,
+      "hidden": true,
+      "bg_color": "0x1D2833"
+    }
+  },
+  {
+    "id": "extra_calendar_icon",
+    "type": "svg_icon",
+    "parent": "extra_calendar_root",
+    "props": {
+      "x": 24,
+      "y": 20,
+      "width": 32,
+      "height": 32,
+      "text_color": "0xD3E3FD",
+      "hidden": false,
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_badge",
+    "type": "label",
+    "parent": "extra_calendar_root",
+    "props": {
+      "x": 72,
+      "y": 22,
+      "width": 472,
+      "height": 28,
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_summary",
+    "type": "label",
+    "parent": "extra_calendar_root",
+    "props": {
+      "x": 24,
+      "y": 66,
+      "width": 520,
+      "height": 120,
+      "text_font": "roboto_24",
+      "text_color": "0xF2F2F2",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_start",
+    "type": "label",
+    "parent": "extra_calendar_root",
+    "props": {
+      "x": 24,
+      "y": 192,
+      "width": 520,
+      "height": 42,
+      "text_font": "roboto_18",
+      "text_color": "0xF2F2F2",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_end",
+    "type": "label",
+    "parent": "extra_calendar_root",
+    "props": {
+      "x": 24,
+      "y": 236,
+      "width": 520,
+      "height": 42,
+      "text_font": "roboto_18",
+      "text_color": "0xF2F2F2",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_zone",
+    "type": "label",
+    "parent": "extra_calendar_root",
+    "props": {
+      "x": 24,
+      "y": 280,
+      "width": 520,
+      "height": 38,
+      "text_font": "roboto_16",
+      "text_color": "0xC4C7C5",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_location",
+    "type": "label",
+    "parent": "extra_calendar_root",
+    "props": {
+      "x": 24,
+      "y": 324,
+      "width": 520,
+      "height": 58,
+      "text_font": "roboto_16",
+      "text_color": "0xF2F2F2",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_description",
+    "type": "label",
+    "parent": "extra_calendar_root",
+    "props": {
+      "x": 24,
+      "y": 388,
+      "width": 520,
+      "height": 42,
+      "text_font": "roboto_16",
+      "text_color": "0xF2F2F2",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_calendar_excerpt",
+    "type": "label",
+    "parent": "extra_calendar_root",
+    "props": {
+      "x": 24,
+      "y": 436,
+      "width": 520,
+      "height": 24,
+      "text_font": "roboto_16",
+      "text_color": "0xC4C7C5",
+      "text_align": "LEFT",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_agenda_previous",
+    "type": "button",
+    "parent": "extra_control_root",
+    "props": {
+      "x": 146,
+      "y": 650,
+      "width": 244,
+      "height": 48,
+      "radius": 24,
+      "styles": "m3_text_control_inset",
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true
+    }
+  },
+  {
+    "id": "extra_agenda_previous_label",
+    "type": "label",
+    "parent": "extra_agenda_previous",
+    "props": {
+      "width": 220,
+      "height": 28,
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "CLIP",
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "extra_agenda_next",
+    "type": "button",
+    "parent": "extra_control_root",
+    "props": {
+      "x": 410,
+      "y": 650,
+      "width": 244,
+      "height": 48,
+      "radius": 24,
+      "styles": "m3_text_control_inset",
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true
+    }
+  },
+  {
+    "id": "extra_agenda_next_label",
+    "type": "label",
+    "parent": "extra_agenda_next",
+    "props": {
+      "width": 220,
+      "height": 28,
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "CLIP",
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "extra_control_updated",
+    "type": "label",
+    "parent": "extra_control_root",
+    "props": {
+      "x": 160,
+      "y": 650,
+      "width": 480,
+      "height": 48,
+      "text_font": "roboto_16",
+      "text_color": "0xC4C7C5",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "extra_control_status",
+    "type": "label",
+    "parent": "extra_control_root",
+    "props": {
+      "x": 200,
+      "y": 700,
+      "width": 400,
+      "height": 42,
+      "text_font": "roboto_16",
+      "text_color": "0xC4C7C5",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  }
+]

@@ -1,0 +1,66 @@
+{
+  "components/heap/tlsf/tlsf.c": {
+    "before": "ca8f8c1941e0e34a4b127a7d2bd7c77e66ad39d02450111087f32b552b2f3628",
+    "after": "1c0387be5e8bb0d41efd9512681266683dcde901b99bd52b3fbac9f658c63dff",
+    "replacements": [
+      [
+        "size_t tlsf_fit_size(tlsf_t tlsf, size_t size)",
+        "size_t tlsf_largest_free_block(tlsf_t tlsf)\r\n{\r\n    if (tlsf == NULL) {\r\n        return 0;\r\n    }\r\n    control_t* control = tlsf_cast(control_t*, tlsf);\r\n    if (control->fl_bitmap == 0) {\r\n        return 0;\r\n    }\r\n    const int fl = tlsf_fls(control->fl_bitmap);\r\n    const int sl = tlsf_fls(control->sl_bitmap[fl]);\r\n    tlsf_assert(sl >= 0 && \"occupied first-level bin has no second-level bin\");\r\n    const block_header_t* block = control->blocks[fl * control->sl_index_count + sl];\r\n    tlsf_assert(block != &control->block_null && block_is_free(block));\r\n    /* All blocks in this highest occupied bin have the same fit-rounded size. */\r\n    return tlsf_fit_size(tlsf, block_size(block));\r\n}\r\n\r\nsize_t tlsf_fit_size(tlsf_t tlsf, size_t size)"
+      ]
+    ]
+  },
+  "components/heap/tlsf/include/tlsf.h": {
+    "before": "69799f4f1e7c5f8d3a35e89f5efb8014aa00e6e49f96939b93fc39ceb95d0e8b",
+    "after": "731653966e77af2fd000f60d8898bc9fada000560f63494e1577785430d84000",
+    "replacements": [
+      [
+        "size_t tlsf_fit_size(tlsf_t tlsf, size_t size);",
+        "size_t tlsf_fit_size(tlsf_t tlsf, size_t size);\r\n\r\n/* Same fit-rounded largest free size as a full pool walk. Caller owns the heap lock. */\r\nsize_t tlsf_largest_free_block(tlsf_t tlsf);"
+      ]
+    ]
+  },
+  "components/heap/multi_heap.c": {
+    "before": "2647ff6bb7284a70c94491d003acbc3cd821c02a9f7d49d643aaf7241ac5f74b",
+    "after": "e6475f767306c00d27af7fcbe811ef132733581d1a18037c1b4ceb7dac52186d",
+    "replacements": [
+      [
+        "size_t multi_heap_reset_minimum_free_bytes(multi_heap_handle_t heap)",
+        "size_t multi_heap_get_largest_free_block(multi_heap_handle_t heap)\n{\n#if CONFIG_HEAP_TLSF_USE_ROM_IMPL || defined(MULTI_HEAP_POISONING)\n    /* Preserve ROM ABI and poisoning overhead without relying on private layout. */\n    multi_heap_info_t info;\n    multi_heap_get_info(heap, &info);\n    return info.largest_free_block;\n#else\n    if (heap == NULL) {\n        return 0;\n    }\n    multi_heap_internal_lock(heap);\n    const size_t largest = tlsf_largest_free_block(heap->heap_data);\n    multi_heap_internal_unlock(heap);\n    return largest;\n#endif\n}\n\nsize_t multi_heap_reset_minimum_free_bytes(multi_heap_handle_t heap)"
+      ]
+    ]
+  },
+  "components/heap/include/multi_heap.h": {
+    "before": "6d9e960ee883f081b7217e71ba3071b17782ab2ec156c78c9ded045b3333ff21",
+    "after": "b1bd2736d41d6bc856d8076f736b4206e8c891fe5512bc7735a62405b9ab9799",
+    "replacements": [
+      [
+        "void multi_heap_get_info(multi_heap_handle_t heap, multi_heap_info_t *info);",
+        "void multi_heap_get_info(multi_heap_handle_t heap, multi_heap_info_t *info);\n\n/** Return the same usable largest-block size as multi_heap_get_info. */\nsize_t multi_heap_get_largest_free_block(multi_heap_handle_t heap);"
+      ]
+    ]
+  },
+  "components/heap/heap_caps.c": {
+    "before": "a1ddc96cda0df2758552c611e409bde6358b8b18145470f928a33cb59628f2a1",
+    "after": "64a5e33b05c844cc8a5af9c898490dcbcb2c882811785875d2241eb534cc0b23",
+    "replacements": [
+      [
+        "#include \"esp_heap_caps.h\"",
+        "#include \"esp_heap_caps.h\"\n#if CONFIG_ESPHOME_HEAP_FAST_LARGEST_BLOCK\n#include <stdatomic.h>\n#endif"
+      ],
+      [
+        "size_t heap_caps_get_largest_free_block( uint32_t caps )\n{\n    multi_heap_info_t info;\n    heap_caps_get_info(&info, caps);\n    return info.largest_free_block;\n}",
+        "#if CONFIG_ESPHOME_HEAP_FAST_LARGEST_BLOCK\n/* Opt-in runtime comparison starts with the unchanged implementation. */\nstatic atomic_bool fast_largest_free_block_enabled = ATOMIC_VAR_INIT(false);\n\nvoid heap_caps_set_fast_largest_free_block(bool enabled)\n{\n    atomic_store_explicit(&fast_largest_free_block_enabled, enabled, memory_order_relaxed);\n}\n\nbool heap_caps_get_fast_largest_free_block_enabled(void)\n{\n    return atomic_load_explicit(&fast_largest_free_block_enabled, memory_order_relaxed);\n}\n#endif\n\nsize_t heap_caps_get_largest_free_block( uint32_t caps )\n{\n#if CONFIG_ESPHOME_HEAP_FAST_LARGEST_BLOCK\n    /* Select one implementation for this complete call, including all heaps. */\n    if (atomic_load_explicit(&fast_largest_free_block_enabled, memory_order_relaxed)) {\n        size_t largest = 0;\n        heap_t *heap;\n        SLIST_FOREACH(heap, &registered_heaps, next) {\n            if (heap_caps_match(heap, caps)) {\n                const size_t candidate = multi_heap_get_largest_free_block(heap->heap);\n                largest = MAX(largest, candidate);\n                /* Keep the existing per-iteration accumulated owner adjustment. */\n                largest -= largest ? MULTI_HEAP_BLOCK_OWNER_SIZE() : 0;\n            }\n        }\n        return largest;\n    }\n#endif\n    multi_heap_info_t info;\n    heap_caps_get_info(&info, caps);\n    return info.largest_free_block;\n}"
+      ]
+    ]
+  },
+  "components/heap/include/esp_heap_caps.h": {
+    "before": "5fd9bf5e089788bc91b81474047379c96826c768607f0f7ad4b8e0930a7de3ec",
+    "after": "d61b8876662f53380085cd9c659aec38e2428ecd71171c5eb6c95154ef51ab08",
+    "replacements": [
+      [
+        "size_t heap_caps_get_largest_free_block( uint32_t caps );",
+        "size_t heap_caps_get_largest_free_block( uint32_t caps );\n\n#if CONFIG_ESPHOME_HEAP_FAST_LARGEST_BLOCK\n/** Select the opt-in bounded largest-block query. Defaults to false at boot. */\nvoid heap_caps_set_fast_largest_free_block(bool enabled);\nbool heap_caps_get_fast_largest_free_block_enabled(void);\n#endif"
+      ]
+    ]
+  }
+}

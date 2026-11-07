@@ -20,6 +20,7 @@ def test_default_format_preserves_rgb565_and_memory_cap():
     assert result["color_format"] == "RGB565"
     assert result["color_format"].enum_value == "LV_COLOR_FORMAT_RGB565"
     assert result["max_content_size"] == 8_000_000
+    assert "segment_target_size" not in result
 
 
 def test_native_format_is_explicit_and_does_not_raise_memory_cap():
@@ -48,3 +49,26 @@ def test_native_format_rejects_unsupported_lvgl_backend():
 def test_unsupported_formats_are_rejected(color_format):
     with pytest.raises(cv.Invalid):
         region(color_format=color_format)
+
+
+def test_larger_segment_target_is_explicit_and_does_not_raise_content_cap():
+    result = region(segment_target_size="2MB")
+    assert result["segment_target_size"] == 2_000_000
+    assert result["max_content_size"] == 8_000_000
+    config = {
+        "backend": "direct",
+        "use_display_buffers_for_preparation": False,
+        "scroll_regions": [result],
+    }
+    assert _validate_scroll_regions(config) is config
+    config["scroll_regions"] = [region(backend="lvgl", segment_target_size="2MB")]
+    with pytest.raises(
+        cv.Invalid, match="segment_target_size requires backend: direct"
+    ):
+        _validate_scroll_regions(config)
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 262143, "9MB", "bad"])
+def test_segment_target_bounds_are_validated(value):
+    with pytest.raises(cv.Invalid):
+        region(segment_target_size=value)

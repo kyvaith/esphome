@@ -1,0 +1,9 @@
+config ESPHOME_HEAP_FAST_LARGEST_BLOCK
+    bool "Enable runtime-selectable bounded largest free block query"
+    depends on IDF_TARGET_ESP32P4 && !HEAP_TLSF_USE_ROM_IMPL && HEAP_POISONING_DISABLED
+    default n
+    help
+        Compile the reviewed ESP-IDF 5.5.6 source-TLSF largest-block query.
+        Runtime selection starts disabled and requires an explicit setter.
+        The original allocator and full heap-info queries remain unchanged.
+        Only the fit-rounded largest size is read through the TLSF bitmaps.

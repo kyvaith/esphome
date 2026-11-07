@@ -1,0 +1,451 @@
+[
+  {
+    "name": "public",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"known\",\"value\":\"Hello Ąą Żż\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}"
+  },
+  {
+    "name": "empty",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"known\",\"value\":\"\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}"
+  },
+  {
+    "name": "spaces",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"known\",\"value\":\"  a  b  \",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}"
+  },
+  {
+    "name": "readonly",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":false},\"panel_state\":{\"source\":\"known\",\"value\":\"Public\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}"
+  },
+  {
+    "name": "unknown",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"unknown\",\"value\":null,\"reason\":\"none\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}"
+  },
+  {
+    "name": "unavailable",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"unavailable\",\"value\":null,\"reason\":\"none\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}"
+  },
+  {
+    "name": "password",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":false},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"password\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}"
+  },
+  {
+    "name": "mode",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":false},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"mode\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}"
+  },
+  {
+    "name": "pattern",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":false},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"pattern\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}"
+  },
+  {
+    "name": "pattern-regex",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":false},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"pattern\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}"
+  },
+  {
+    "name": "bounds",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":null,\"max\":null,\"can_set\":false},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"bounds\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}"
+  },
+  {
+    "name": "length",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":2,\"can_set\":true},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"length\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}"
+  },
+  {
+    "name": "characters",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"characters\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}"
+  },
+  {
+    "name": "encoding",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"encoding\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}"
+  },
+  {
+    "name": "max-pl",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":255,\"can_set\":true},\"panel_state\":{\"source\":\"known\",\"value\":\"ŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻ\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}"
+  },
+  {
+    "name": "max-escaped",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":255,\"can_set\":true},\"panel_state\":{\"source\":\"known\",\"value\":\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}"
+  },
+  {
+    "name": "save",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text_version\":1,\"command_seq\":1,\"op\":\"set_value\",\"value\":\"Witaj świecie\",\"expected_state_generation\":1}"
+  },
+  {
+    "name": "save-empty",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text_version\":1,\"command_seq\":1,\"op\":\"set_value\",\"value\":\"\",\"expected_state_generation\":1}"
+  },
+  {
+    "name": "save-max",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text_version\":1,\"command_seq\":1,\"op\":\"set_value\",\"value\":\"ŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻ\",\"expected_state_generation\":1}"
+  },
+  {
+    "name": "save-escaped",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text_version\":1,\"command_seq\":1,\"op\":\"set_value\",\"value\":\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\",\"expected_state_generation\":1}"
+  },
+  {
+    "name": "first_scope_grant_max255_quote_backslash_or_PL_content",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"ffffffffffffffffffffffffffffffff\",\"open_seq\":2147483647,\"slot\":31,\"card_id\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"revision\":9007199254740991,\"control_kind\":\"panel\",\"token\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"state_seq\":2147483647,\"ttl_ms\":30000,\"title\":\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":255,\"max\":255,\"can_set\":false},\"panel_state\":{\"source\":\"known\",\"value\":\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":2147483647}"
+  },
+  {
+    "name": "first_scope_state_max255_quote_backslash_or_PL_content",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"ffffffffffffffffffffffffffffffff\",\"open_seq\":2147483647,\"slot\":31,\"card_id\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"revision\":9007199254740991,\"control_kind\":\"panel\",\"token\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"state_seq\":2147483647,\"ttl_ms\":30000,\"title\":\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":255,\"max\":255,\"can_set\":false},\"panel_state\":{\"source\":\"known\",\"value\":\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":2147483647}"
+  },
+  {
+    "name": "first_scope_command_max255_quote_backslash_or_PL_content",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"ffffffffffffffffffffffffffffffff\",\"open_seq\":2147483647,\"slot\":31,\"card_id\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"revision\":9007199254740991,\"control_kind\":\"panel\",\"token\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"kind\":\"command\",\"command_seq\":2147483647,\"text_version\":1,\"op\":\"set_value\",\"value\":\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\",\"expected_state_generation\":2147483647}"
+  },
+  {
+    "name": "generic_buffer_grant_max255_four_byte_codepoints_not_first_scope_admitted",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"ffffffffffffffffffffffffffffffff\",\"open_seq\":2147483647,\"slot\":31,\"card_id\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"revision\":9007199254740991,\"control_kind\":\"panel\",\"token\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"state_seq\":2147483647,\"ttl_ms\":30000,\"title\":\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":255,\"max\":255,\"can_set\":false},\"panel_state\":{\"source\":\"known\",\"value\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":2147483647}"
+  },
+  {
+    "name": "generic_buffer_state_max255_four_byte_codepoints_not_first_scope_admitted",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"ffffffffffffffffffffffffffffffff\",\"open_seq\":2147483647,\"slot\":31,\"card_id\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"revision\":9007199254740991,\"control_kind\":\"panel\",\"token\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"state_seq\":2147483647,\"ttl_ms\":30000,\"title\":\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":255,\"max\":255,\"can_set\":false},\"panel_state\":{\"source\":\"known\",\"value\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":2147483647}"
+  },
+  {
+    "name": "generic_buffer_command_max255_four_byte_codepoints_not_first_scope_admitted",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"ffffffffffffffffffffffffffffffff\",\"open_seq\":2147483647,\"slot\":31,\"card_id\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"revision\":9007199254740991,\"control_kind\":\"panel\",\"token\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"kind\":\"command\",\"command_seq\":2147483647,\"text_version\":1,\"op\":\"set_value\",\"value\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\"expected_state_generation\":2147483647}"
+  },
+  {
+    "name": "legacy-date-grant",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":11,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000b\",\"kind\":\"grant\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Date helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"date\",\"can_set\":true,\"zone_text\":\"\"},\"panel_state\":{\"source\":\"known\",\"year\":2028,\"month\":2,\"day\":28,\"hour\":null,\"minute\":null,\"second\":null,\"updated_text\":\"2026-11-05T21:00:00+01:00\"},\"eligible_actions\":1,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-date-command",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":11,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000b\",\"kind\":\"command\",\"datetime_version\":1,\"command_seq\":1,\"expected_state_generation\":1,\"op\":\"set_datetime\",\"target\":{\"year\":2028,\"month\":2,\"day\":29,\"hour\":null,\"minute\":null,\"second\":null}}",
+    "text": false
+  },
+  {
+    "name": "legacy-date-pending",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":11,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000b\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"pending\",\"reason\":\"none\"}",
+    "text": false
+  },
+  {
+    "name": "legacy-date-ha_accepted",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":11,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000b\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"ha_accepted\",\"reason\":\"none\"}",
+    "text": false
+  },
+  {
+    "name": "legacy-date-state",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":11,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000b\",\"kind\":\"state\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Date helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"date\",\"can_set\":true,\"zone_text\":\"\"},\"panel_state\":{\"source\":\"known\",\"year\":2028,\"month\":2,\"day\":29,\"hour\":null,\"minute\":null,\"second\":null,\"updated_text\":\"2026-11-05T21:00:01+01:00\"},\"eligible_actions\":1,\"state_generation\":2}",
+    "text": false
+  },
+  {
+    "name": "legacy-date-state_matches",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":11,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000b\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":2,\"status\":\"state_matches\",\"reason\":\"none\"}",
+    "text": false
+  },
+  {
+    "name": "legacy-time-grant",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"grant\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Time helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"time\",\"can_set\":true,\"zone_text\":\"\"},\"panel_state\":{\"source\":\"known\",\"year\":null,\"month\":null,\"day\":null,\"hour\":12,\"minute\":34,\"second\":56,\"updated_text\":\"2026-11-05T21:00:00+01:00\"},\"eligible_actions\":1,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-time-command",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"command\",\"datetime_version\":1,\"command_seq\":1,\"expected_state_generation\":1,\"op\":\"set_datetime\",\"target\":{\"year\":null,\"month\":null,\"day\":null,\"hour\":12,\"minute\":35,\"second\":7}}",
+    "text": false
+  },
+  {
+    "name": "legacy-time-pending",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"pending\",\"reason\":\"none\"}",
+    "text": false
+  },
+  {
+    "name": "legacy-time-ha_accepted",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"ha_accepted\",\"reason\":\"none\"}",
+    "text": false
+  },
+  {
+    "name": "legacy-time-state",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"state\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Time helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"time\",\"can_set\":true,\"zone_text\":\"\"},\"panel_state\":{\"source\":\"known\",\"year\":null,\"month\":null,\"day\":null,\"hour\":12,\"minute\":35,\"second\":7,\"updated_text\":\"2026-11-05T21:00:01+01:00\"},\"eligible_actions\":1,\"state_generation\":2}",
+    "text": false
+  },
+  {
+    "name": "legacy-time-state_matches",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":2,\"status\":\"state_matches\",\"reason\":\"none\"}",
+    "text": false
+  },
+  {
+    "name": "legacy-datetime-grant",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"grant\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Date and time helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"datetime\",\"can_set\":true,\"zone_text\":\"Europe/Warsaw\"},\"panel_state\":{\"source\":\"known\",\"year\":2026,\"month\":11,\"day\":5,\"hour\":20,\"minute\":15,\"second\":37,\"updated_text\":\"2026-11-05T21:00:00+01:00\"},\"eligible_actions\":1,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-datetime-command",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"command\",\"datetime_version\":1,\"command_seq\":1,\"expected_state_generation\":1,\"op\":\"set_datetime\",\"target\":{\"year\":2026,\"month\":11,\"day\":6,\"hour\":7,\"minute\":30,\"second\":9}}",
+    "text": false
+  },
+  {
+    "name": "legacy-datetime-pending",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"pending\",\"reason\":\"none\"}",
+    "text": false
+  },
+  {
+    "name": "legacy-datetime-ha_accepted",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"ha_accepted\",\"reason\":\"none\"}",
+    "text": false
+  },
+  {
+    "name": "legacy-datetime-state",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"state\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Date and time helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"datetime\",\"can_set\":true,\"zone_text\":\"Europe/Warsaw\"},\"panel_state\":{\"source\":\"known\",\"year\":2026,\"month\":11,\"day\":6,\"hour\":7,\"minute\":30,\"second\":9,\"updated_text\":\"2026-11-05T21:00:01+01:00\"},\"eligible_actions\":1,\"state_generation\":2}",
+    "text": false
+  },
+  {
+    "name": "legacy-datetime-state_matches",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":2,\"status\":\"state_matches\",\"reason\":\"none\"}",
+    "text": false
+  },
+  {
+    "name": "legacy-metadata-only same-generation update preserves draft",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"state\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Date and time helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"datetime\",\"can_set\":true,\"zone_text\":\"Europe/Warsaw\"},\"panel_state\":{\"source\":\"known\",\"year\":2026,\"month\":11,\"day\":5,\"hour\":20,\"minute\":15,\"second\":37,\"updated_text\":\"2026-11-05T21:00:02+01:00\"},\"eligible_actions\":1,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-source unknown clears all fields and draft",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"state\",\"state_seq\":3,\"ttl_ms\":30000,\"title\":\"Date and time helper\",\"panel_type\":\"datetime\",\"available\":false,\"panel_caps\":{\"mode\":\"datetime\",\"can_set\":true,\"zone_text\":\"Europe/Warsaw\"},\"panel_state\":{\"source\":\"unknown\",\"year\":null,\"month\":null,\"day\":null,\"hour\":null,\"minute\":null,\"second\":null,\"updated_text\":\"2026-11-05T21:00:00+01:00\"},\"eligible_actions\":0,\"state_generation\":2}",
+    "text": false
+  },
+  {
+    "name": "legacy-source unavailable clears all fields and draft",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"state\",\"state_seq\":3,\"ttl_ms\":30000,\"title\":\"Time helper\",\"panel_type\":\"datetime\",\"available\":false,\"panel_caps\":{\"mode\":\"time\",\"can_set\":true,\"zone_text\":\"\"},\"panel_state\":{\"source\":\"unavailable\",\"year\":null,\"month\":null,\"day\":null,\"hour\":null,\"minute\":null,\"second\":null,\"updated_text\":\"2026-11-05T21:00:00+01:00\"},\"eligible_actions\":0,\"state_generation\":2}",
+    "text": false
+  },
+  {
+    "name": "legacy-new read-only grant when service is absent",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":14,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000e\",\"kind\":\"grant\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Date helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"date\",\"can_set\":false,\"zone_text\":\"\"},\"panel_state\":{\"source\":\"known\",\"year\":2028,\"month\":2,\"day\":28,\"hour\":null,\"minute\":null,\"second\":null,\"updated_text\":\"2026-11-05T21:00:00+01:00\"},\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-equal target before dispatch, no service",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"already_matched\",\"reason\":\"none\"}",
+    "text": false
+  },
+  {
+    "name": "legacy-stale expected generation, no service",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":2,\"status\":\"rejected\",\"reason\":\"stale_state\"}",
+    "text": false
+  },
+  {
+    "name": "legacy-service raised before confirmation",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"rejected\",\"reason\":\"service_error\"}",
+    "text": false
+  },
+  {
+    "name": "legacy-service completed but no matching authoritative state",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"not_confirmed\",\"reason\":\"state_timeout\"}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:alarm_control_panel.atmosfera_demo_alarm/disarmed",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"alarm\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:29:12+01:00\",\"text_status\":\"value\",\"state_text\":\"disarmed\",\"phase\":\"disarmed\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:alarm_control_panel.atmosfera_demo_alarm/unknown",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"alarm\",\"device_class\":null},\"panel_state\":{\"source\":\"unknown\",\"updated_text\":\"2026-11-04T19:29:12+01:00\",\"text_status\":\"unknown\",\"state_text\":\"\",\"phase\":\"unknown\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:alarm_control_panel.atmosfera_demo_alarm/unavailable",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"alarm\",\"device_class\":null},\"panel_state\":{\"source\":\"unavailable\",\"updated_text\":\"2026-11-04T19:29:12+01:00\",\"text_status\":\"unknown\",\"state_text\":\"\",\"phase\":\"unknown\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:binary_sensor.atmosfera_demo_contact/off",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"binary_sensor\",\"device_class\":\"moisture\"},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:29:12+01:00\",\"text_status\":\"value\",\"state_text\":\"Sucho\",\"active\":false},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:binary_sensor.atmosfera_demo_contact/unknown",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"binary_sensor\",\"device_class\":\"moisture\"},\"panel_state\":{\"source\":\"unknown\",\"updated_text\":\"2026-11-04T19:29:12+01:00\",\"text_status\":\"unknown\",\"state_text\":\"\",\"active\":null},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:binary_sensor.atmosfera_demo_contact/unavailable",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"binary_sensor\",\"device_class\":\"moisture\"},\"panel_state\":{\"source\":\"unavailable\",\"updated_text\":\"2026-11-04T19:29:12+01:00\",\"text_status\":\"unknown\",\"state_text\":\"\",\"active\":null},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:calendar.atmosfera_demo_agenda/off",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"calendar\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:29:12+01:00\",\"event\":\"present\",\"active\":false,\"summary\":\"Future Event\",\"start_text\":\"2026-11-04 19:59:12\",\"end_text\":\"2026-11-04 20:59:12\",\"zone_text\":\"Europe/Warsaw\",\"all_day\":false,\"location\":\"Future Location\",\"description\":\"Future Description\",\"truncated_fields\":0},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:calendar.atmosfera_demo_agenda/unknown",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"calendar\",\"device_class\":null},\"panel_state\":{\"source\":\"unknown\",\"updated_text\":\"2026-11-04T19:29:12+01:00\",\"event\":\"unknown\",\"active\":null,\"summary\":\"\",\"start_text\":\"\",\"end_text\":\"\",\"zone_text\":\"\",\"all_day\":null,\"location\":\"\",\"description\":\"\",\"truncated_fields\":0},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:calendar.atmosfera_demo_agenda/unavailable",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"calendar\",\"device_class\":null},\"panel_state\":{\"source\":\"unavailable\",\"updated_text\":\"2026-11-04T19:29:12+01:00\",\"event\":\"unknown\",\"active\":null,\"summary\":\"\",\"start_text\":\"\",\"end_text\":\"\",\"zone_text\":\"\",\"all_day\":null,\"location\":\"\",\"description\":\"\",\"truncated_fields\":0},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:lock.atmosfera_demo_lock/locked",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"lock\",\"panel_caps\":{\"lock\":true},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:29:13+01:00\",\"phase\":\"locked\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:lock.atmosfera_demo_lock/unknown",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"lock\",\"panel_caps\":{\"lock\":true},\"panel_state\":{\"source\":\"unknown\",\"updated_text\":\"2026-11-04T19:29:13+01:00\",\"phase\":\"unknown\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:lock.atmosfera_demo_lock/unavailable",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"lock\",\"panel_caps\":{\"lock\":true},\"panel_state\":{\"source\":\"unavailable\",\"updated_text\":\"2026-11-04T19:29:13+01:00\",\"phase\":\"unknown\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:sensor.atmosfera_demo_sensor/15.6",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"sensor\",\"device_class\":\"temperature\"},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:29:13+01:00\",\"value_status\":\"value\",\"value_text\":\"15.6\",\"unit_text\":\"°C\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:sensor.atmosfera_demo_sensor/unknown",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"sensor\",\"device_class\":\"temperature\"},\"panel_state\":{\"source\":\"unknown\",\"updated_text\":\"2026-11-04T19:29:13+01:00\",\"value_status\":\"unknown\",\"value_text\":\"\",\"unit_text\":\"°C\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:sensor.atmosfera_demo_sensor/unavailable",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"sensor\",\"device_class\":\"temperature\"},\"panel_state\":{\"source\":\"unavailable\",\"updated_text\":\"2026-11-04T19:29:13+01:00\",\"value_status\":\"unknown\",\"value_text\":\"\",\"unit_text\":\"°C\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:sensor",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":2147483647,\"slot\":31,\"card_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"revision\":9007199254740991,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":2147483647,\"ttl_ms\":30000,\"title\":\"\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"sensor\",\"device_class\":\"cccccccccccccccccccccccccccccccc\"},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"value_status\":\"value\",\"value_text\":\"\\\"\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"unit_text\":\"\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":2147483647}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:binary_sensor",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":2147483647,\"slot\":31,\"card_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"revision\":9007199254740991,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":2147483647,\"ttl_ms\":30000,\"title\":\"\\\"\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"binary_sensor\",\"device_class\":\"cccccccccccccccccccccccccccccccc\"},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"\\\\\\\"\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"text_status\":\"value\",\"state_text\":\"\\\"\\\"\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"active\":false},\"available\":true,\"eligible_actions\":0,\"state_generation\":2147483647}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:alarm_control_panel",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":2147483647,\"slot\":31,\"card_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"revision\":9007199254740991,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":2147483647,\"ttl_ms\":30000,\"title\":\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"alarm\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"\\\"\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"text_status\":\"value\",\"state_text\":\"\\\\\\\"\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"phase\":\"armed_custom_bypass\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":2147483647}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:calendar",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":2147483647,\"slot\":31,\"card_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"revision\":9007199254740991,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":2147483647,\"ttl_ms\":30000,\"title\":\"\\\"\\\"\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"calendar\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"\\\\\\\\\\\"\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"event\":\"present\",\"active\":false,\"summary\":\"\\\"\\\\\\\"\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"start_text\":\"\\\\\\\"\\\"\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"end_text\":\"\\\"\\\"\\\"\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"zone_text\":\"\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"all_day\":false,\"location\":\"\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"description\":\"\\\\\\\"\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"truncated_fields\":7},\"available\":true,\"eligible_actions\":0,\"state_generation\":2147483647}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-golden:lock",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":2147483647,\"slot\":31,\"card_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"revision\":9007199254740991,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":2147483647,\"ttl_ms\":30000,\"title\":\"\\\"\\\"\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"panel_type\":\"lock\",\"panel_caps\":{\"lock\":true},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"\\\\\\\\\\\"\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",\"phase\":\"unlocked\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":2147483647}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-sensor:state",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"sensor\",\"device_class\":\"temperature\"},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"value_status\":\"value\",\"value_text\":\"15.6\",\"unit_text\":\"°C\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-sensor:explicit-empty",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"sensor\",\"device_class\":\"temperature\"},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"value_status\":\"empty\",\"value_text\":\"\",\"unit_text\":\"°C\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-sensor:explicit-invalid",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"sensor\",\"device_class\":\"temperature\"},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"value_status\":\"invalid\",\"value_text\":\"\",\"unit_text\":\"°C\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-sensor:explicit-too_long",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"sensor\",\"device_class\":\"temperature\"},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"value_status\":\"too_long\",\"value_text\":\"\",\"unit_text\":\"°C\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-binary_sensor:state",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"binary_sensor\",\"device_class\":\"moisture\"},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"text_status\":\"value\",\"state_text\":\"Dry\",\"active\":false},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-binary_sensor:explicit-empty",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"binary_sensor\",\"device_class\":\"moisture\"},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"text_status\":\"empty\",\"state_text\":\"\",\"active\":false},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-binary_sensor:explicit-invalid",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"binary_sensor\",\"device_class\":\"moisture\"},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"text_status\":\"invalid\",\"state_text\":\"\",\"active\":false},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-binary_sensor:explicit-too_long",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"binary_sensor\",\"device_class\":\"moisture\"},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"text_status\":\"too_long\",\"state_text\":\"\",\"active\":false},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-alarm_control_panel:state",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"alarm\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"text_status\":\"value\",\"state_text\":\"disarmed\",\"phase\":\"disarmed\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-alarm_control_panel:explicit-empty",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"alarm\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"text_status\":\"empty\",\"state_text\":\"\",\"phase\":\"disarmed\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-alarm_control_panel:explicit-invalid",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"alarm\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"text_status\":\"invalid\",\"state_text\":\"\",\"phase\":\"disarmed\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-alarm_control_panel:explicit-too_long",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"alarm\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"text_status\":\"too_long\",\"state_text\":\"\",\"phase\":\"disarmed\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-calendar:state",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"info\",\"panel_caps\":{\"info_type\":\"calendar\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"event\":\"present\",\"active\":false,\"summary\":\"Future event\",\"start_text\":\"2026-11-04 22:00:00\",\"end_text\":\"2026-11-04 23:00:00\",\"zone_text\":\"Europe/Warsaw\",\"all_day\":false,\"location\":\"\",\"description\":\"\",\"truncated_fields\":0},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-lock:state",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"lock\",\"panel_caps\":{\"lock\":true},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"phase\":\"unlocked\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-lock:phase:locked",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"lock\",\"panel_caps\":{\"lock\":true},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"phase\":\"locked\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-lock:phase:locking",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"lock\",\"panel_caps\":{\"lock\":true},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"phase\":\"locking\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-lock:phase:unlocking",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"lock\",\"panel_caps\":{\"lock\":true},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"phase\":\"unlocking\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-lock:phase:open",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"lock\",\"panel_caps\":{\"lock\":true},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"phase\":\"open\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-lock:phase:opening",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"lock\",\"panel_caps\":{\"lock\":true},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"phase\":\"opening\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-lock:phase:jammed",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"lock\",\"panel_caps\":{\"lock\":true},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"phase\":\"jammed\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-lock:phase:unknown",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"lock\",\"panel_caps\":{\"lock\":true},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"phase\":\"unknown\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-lock:passive-no-service",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Full observation\",\"panel_type\":\"lock\",\"panel_caps\":{\"lock\":false},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-04T19:00:00+01:00\",\"phase\":\"unlocked\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "text": false
+  },
+  {
+    "name": "legacy-extra-lock:absolute-command",
+    "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"control_kind\":\"panel\",\"open_seq\":1,\"slot\":2,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"card_id\":\"card-2\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":4,\"command_seq\":1,\"op\":\"lock\",\"expected_state_generation\":1}",
+    "text": false
+  }
+]

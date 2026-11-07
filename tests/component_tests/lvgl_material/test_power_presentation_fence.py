@@ -53,6 +53,8 @@ class PowerPresentationFenceTests(unittest.TestCase):
         if "#if 1 /* Real native input host configuration */" not in config:
             raise AssertionError("Unexpected LVGL template activation guard")
         config = re.sub(r"#define LV_MEM_SIZE .*", "#define LV_MEM_SIZE (8 * 1024 * 1024U)", config)
+        for option, value in getattr(cls, "extra_lvgl_options", {}).items():
+            config = re.sub(r"#define " + option + r" .*", f"#define {option} {value}", config)
         for option in ("LV_USE_LOG", "LV_USE_SYSMON", "LV_USE_ANIMIMG", "LV_THEME_DEFAULT_GROW"):
             config = re.sub(r"#define " + option + r" .*", "#define " + option + " 0", config)
         for directory in (cls.library / "src/widgets").iterdir():

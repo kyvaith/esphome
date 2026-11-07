@@ -54,6 +54,8 @@ void MaterialWeatherPresenter::setup() {
 }
 
 void MaterialWeatherPresenter::loop() {
+  if (this->direct_overlay_suspended_)
+    return;
   if (!this->ensure_animation_bindings_())
     return;
   const uint32_t now = millis();
@@ -474,6 +476,9 @@ void MaterialWeatherPresenter::log_state(const char *reason) {
 bool MaterialWeatherPresenter::suspend_for_direct_overlay() {
   if (this->direct_overlay_suspended_)
     return true;
+  // Retire pressed-state ownership before another scene borrows its base.
+  if (this->interaction_pressed_ || this->interaction_release_pending_)
+    return false;
 
   auto *selected = this->find_animation_(this->selected_animation_);
   this->direct_overlay_suspended_ = true;
@@ -583,6 +588,7 @@ bool MaterialWeatherPresenter::prepare_snapshot_frame(uint32_t timeout_ms) {
 bool MaterialWeatherPresenter::refresh_snapshot_now(bool force_widget_render) {
   if (this->snapshot_page_ == nullptr || this->snapshot_region_ == nullptr || !this->page_visible_ ||
       !this->is_root_presented_() || this->navigation_suspended_ || this->navigation_resume_pending_ ||
+      this->direct_overlay_suspended_ ||
       ::lvgl_esphome_snapshot_is_active())
     return false;
   const auto *selected = this->find_animation_(this->selected_animation_);

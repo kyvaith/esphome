@@ -73,6 +73,7 @@ CONF_LANE_BIT_RATE = "lane_bit_rate"
 CONF_LANES = "lanes"
 CONF_USE_DMA2D = "use_dma2d"
 CONF_ASYNC_LVGL_FLUSH = "async_lvgl_flush"
+CONF_MEMORY_FAULT_DIAGNOSTICS = "memory_fault_diagnostics"
 
 DsiDriverChip("CUSTOM")
 
@@ -134,6 +135,7 @@ def model_schema(config: ConfigType) -> cv.All:
             ),
             model.option(CONF_USE_DMA2D, False): cv.boolean,
             model.option(CONF_ASYNC_LVGL_FLUSH, False): cv.boolean,
+            model.option(CONF_MEMORY_FAULT_DIAGNOSTICS, False): cv.boolean,
             iseqconf: cv.ensure_list(map_sequence),
             model.option(CONF_BYTE_ORDER, BYTE_ORDER_LITTLE): cv.one_of(
                 BYTE_ORDER_LITTLE, BYTE_ORDER_BIG, lower=True
@@ -197,6 +199,8 @@ FINAL_VALIDATE_SCHEMA = _final_validate
 
 async def to_code(config: ConfigType) -> None:
     cg.add_define("USE_MIPI_DSI")
+    if config[CONF_MEMORY_FAULT_DIAGNOSTICS]:
+        cg.add_define("USE_MIPI_DSI_MEMORY_FAULT_DIAGNOSTICS")
     if config[CONF_ASYNC_LVGL_FLUSH]:
         patch_script = Path(__file__).with_name("patch_espidf_dsi_dma2d.py")
         if CORE.using_toolchain_esp_idf:

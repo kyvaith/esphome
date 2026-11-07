@@ -69,6 +69,13 @@ static const uint32_t MODELS_RESUME_TIMEOUT_MS = 1000;
 
 float MicroWakeWord::get_setup_priority() const { return setup_priority::AFTER_CONNECTION; }
 
+void MicroWakeWord::preallocate_task_resources() {
+  this->preallocate_task_resources_ = true;
+  if (!this->inference_task_.reserve(INFERENCE_TASK_STACK_SIZE, this->task_stack_in_psram_)) {
+    ESP_LOGE(TAG, "Failed to reserve inference task resources before setup");
+  }
+}
+
 static const LogString *micro_wake_word_state_to_string(State state) {
   switch (state) {
     case State::STARTING:
@@ -456,8 +463,10 @@ void MicroWakeWord::loop() {
   }
 
   // Retries on a subsequent loop if the task is still running on the other core
-  if ((event_group_bits & EventGroupBits::TASK_STOPPED) && this->inference_task_.deallocate()) {
-    ESP_LOGD(TAG, "Inference task is finished, freeing task resources");
+  if ((event_group_bits & EventGroupBits::TASK_STOPPED) &&
+      (this->preallocate_task_resources_ ? this->inference_task_.destroy() : this->inference_task_.deallocate())) {
+    ESP_LOGD(TAG, "Inference task is finished, %s task resources",
+             this->preallocate_task_resources_ ? "retaining" : "freeing");
     xEventGroupClearBits(this->event_group_, ALL_BITS);
     xQueueReset(this->detection_queue_);
     this->set_state_(State::STOPPED);
@@ -480,13 +489,17 @@ void MicroWakeWord::loop() {
         // uses floating point operations.
         if (!FrontendPopulateState(&this->frontend_config_, &this->frontend_state_,
                                    this->microphone_source_->get_audio_stream_info().get_sample_rate())) {
+          ESP_LOGE(TAG, "Failed to initialize inference frontend");
           this->status_momentary_error(1000);
           return;
         }
 
         if (!this->inference_task_.create(MicroWakeWord::inference_task, "mww", INFERENCE_TASK_STACK_SIZE,
                                           (void *) this, INFERENCE_TASK_PRIORITY, this->task_stack_in_psram_,
-                                          MICRO_WAKE_WORD_TASK_CORE)) {
+                                          MICRO_WAKE_WORD_TASK_CORE, this->preallocate_task_resources_)) {
+          ESP_LOGE(TAG, "Failed to start inference task with %u-byte %s stack",
+                   static_cast<unsigned>(INFERENCE_TASK_STACK_SIZE),
+                   this->task_stack_in_psram_ ? "external" : "internal");
           FrontendFreeStateContents(&this->frontend_state_);  // Deallocate frontend state
           this->status_momentary_error(1000);
         }

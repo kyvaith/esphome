@@ -142,12 +142,8 @@ void SourceSpeaker::loop() {
     case speaker::STATE_STARTING: {
       esp_err_t err = this->start_();
       if (err == ESP_OK) {
-        this->pending_playback_frames_.store(0, std::memory_order_release);  // reset pending playback frames
-        this->playback_delay_frames_.store(0, std::memory_order_release);    // reset playback delay
-        this->has_contributed_.store(false, std::memory_order_release);      // reset contribution tracking
         this->state_ = speaker::STATE_RUNNING;
         this->stop_gracefully_ = false;
-        this->last_seen_data_ms_ = millis();
         this->status_clear_error();
       } else {
         switch (err) {
@@ -173,10 +169,10 @@ void SourceSpeaker::loop() {
       break;
     }
     case speaker::STATE_RUNNING:
-      if (!this->audio_source_->has_buffered_data() &&
-          (this->pending_playback_frames_.load(std::memory_order_acquire) == 0)) {
+      if (!this->has_buffered_data() && (this->pending_playback_frames_.load(std::memory_order_acquire) == 0)) {
         // No audio data in buffer waiting to get mixed and no frames are pending playback
-        if ((this->timeout_ms_.has_value() && ((millis() - this->last_seen_data_ms_) > this->timeout_ms_.value())) ||
+        if ((this->timeout_ms_.has_value() &&
+             ((millis() - this->last_seen_data_ms_.load(std::memory_order_relaxed)) > this->timeout_ms_.value())) ||
             this->stop_gracefully_) {
           // Timeout exceeded or graceful stop requested
           this->enter_stopping_state_();
@@ -190,8 +186,9 @@ void SourceSpeaker::loop() {
         this->parent_->get_output_speaker()->stop();
       }
 
-      if (this->parent_->get_output_speaker()->is_stopped() ||
-          (this->pending_playback_frames_.load(std::memory_order_acquire) == 0)) {
+      // Finish retiring the old reader and any producer writes before publishing a new session.
+      if (this->retire_source_() && (this->parent_->get_output_speaker()->is_stopped() ||
+                                     this->pending_playback_frames_.load(std::memory_order_acquire) == 0)) {
         // Output speaker is stopped OR all pending playback frames have played
         this->pending_playback_frames_.store(0, std::memory_order_release);
         this->stop_gracefully_ = false;
@@ -217,12 +214,12 @@ size_t SourceSpeaker::play(const uint8_t *data, size_t length, TickType_t ticks_
     this->start();
   }
   size_t bytes_written = 0;
-  std::shared_ptr<ring_buffer::RingBuffer> temp_ring_buffer = this->ring_buffer_.lock();
-  if (temp_ring_buffer != nullptr) {
-    // Only write to the ring buffer if the reference is valid
-    bytes_written = temp_ring_buffer->write_without_replacement(data, length, ticks_to_wait);
+  auto source = this->acquire_source_();
+  if (source) {
+    // The producer lease survives the blocking write. STOP can withdraw publication without freeing its buffer.
+    bytes_written = source.ring()->write_without_replacement(data, length, ticks_to_wait);
     if (bytes_written > 0) {
-      this->last_seen_data_ms_ = millis();
+      this->last_seen_data_ms_.store(millis(), std::memory_order_relaxed);
     }
   } else {
     // Delay to avoid repeatedly hammering while waiting for the speaker to start
@@ -245,32 +242,47 @@ void SourceSpeaker::send_command_(uint32_t command_bit, bool wake_loop) {
 void SourceSpeaker::start() { this->send_command_(SOURCE_SPEAKER_COMMAND_START, true); }
 
 esp_err_t SourceSpeaker::start_() {
-  const size_t bytes_per_frame = this->audio_stream_info_.frames_to_bytes(1);
+  {
+    LockGuard lock(this->source_mutex_);
+    if (this->source_published_ || this->source_retiring_ || this->source_leases_ != 0 ||
+        this->audio_source_ != nullptr || this->ring_buffer_ != nullptr) {
+      return ESP_ERR_INVALID_STATE;
+    }
+  }
+  auto stream_info = this->audio_stream_info_;
+  const size_t bytes_per_frame = stream_info.frames_to_bytes(1);
+  if (bytes_per_frame == 0 || bytes_per_frame > audio::RingBufferAudioSource::MAX_ALIGNMENT_BYTES) {
+    return ESP_ERR_NOT_SUPPORTED;
+  }
   // Round the ring buffer size down to a multiple of bytes_per_frame so the wrap boundary stays frame-aligned and
   // avoids unnecessary single-frame splices.
   const size_t ring_buffer_size =
-      (this->audio_stream_info_.ms_to_bytes(this->buffer_duration_ms_) / bytes_per_frame) * bytes_per_frame;
-  if (this->audio_source_ == nullptr) {
-    std::shared_ptr<ring_buffer::RingBuffer> temp_ring_buffer = this->ring_buffer_.lock();
-    if (temp_ring_buffer == nullptr) {
-      temp_ring_buffer = ring_buffer::RingBuffer::create(ring_buffer_size);
-      this->ring_buffer_ = temp_ring_buffer;
-    }
-
-    if (temp_ring_buffer == nullptr) {
-      return ESP_ERR_NO_MEM;
-    }
-
-    std::unique_ptr<audio::RingBufferAudioSource> source = audio::RingBufferAudioSource::create(
-        temp_ring_buffer, this->audio_stream_info_.ms_to_bytes(TRANSFER_BUFFER_DURATION_MS),
-        static_cast<uint8_t>(bytes_per_frame));
-    if (source == nullptr) {
-      return ESP_ERR_NO_MEM;
-    }
-    this->audio_source_ = std::move(source);
+      (stream_info.ms_to_bytes(this->buffer_duration_ms_) / bytes_per_frame) * bytes_per_frame;
+  auto ring_buffer = ring_buffer::RingBuffer::create(ring_buffer_size);
+  if (ring_buffer == nullptr) {
+    return ESP_ERR_NO_MEM;
   }
-
-  return this->parent_->start(this->audio_stream_info_);
+  auto source = audio::RingBufferAudioSource::create_borrowed(
+      ring_buffer.get(), stream_info.ms_to_bytes(TRANSFER_BUFFER_DURATION_MS), static_cast<uint8_t>(bytes_per_frame));
+  if (source == nullptr) {
+    return ESP_ERR_NO_MEM;
+  }
+  const esp_err_t err = this->parent_->start(stream_info);
+  if (err != ESP_OK) {
+    return err;
+  }
+  this->pending_playback_frames_.store(0, std::memory_order_release);
+  this->playback_delay_frames_.store(0, std::memory_order_release);
+  this->has_contributed_.store(false, std::memory_order_release);
+  this->last_seen_data_ms_.store(millis(), std::memory_order_relaxed);
+  {
+    LockGuard lock(this->source_mutex_);
+    this->source_stream_info_ = stream_info;
+    this->ring_buffer_ = std::move(ring_buffer);
+    this->audio_source_ = std::move(source);
+    this->source_published_ = true;
+  }
+  return ESP_OK;
 }
 
 void SourceSpeaker::stop() { this->send_command_(SOURCE_SPEAKER_COMMAND_STOP); }
@@ -278,7 +290,69 @@ void SourceSpeaker::stop() { this->send_command_(SOURCE_SPEAKER_COMMAND_STOP); }
 void SourceSpeaker::finish() { this->send_command_(SOURCE_SPEAKER_COMMAND_FINISH); }
 
 bool SourceSpeaker::has_buffered_data() const {
-  return ((this->audio_source_ != nullptr) && this->audio_source_->has_buffered_data());
+  LockGuard lock(this->source_mutex_);
+  return this->source_published_ && this->audio_source_->has_buffered_data();
+}
+
+SourceSpeaker::SourceLease &SourceSpeaker::SourceLease::operator=(SourceLease &&other) noexcept {
+  if (this != &other) {
+    if (this->owner_ != nullptr) {
+      this->owner_->release_source_();
+    }
+    this->owner_ = std::exchange(other.owner_, nullptr);
+  }
+  return *this;
+}
+
+SourceSpeaker::SourceLease::~SourceLease() {
+  if (this->owner_ != nullptr) {
+    this->owner_->release_source_();
+  }
+}
+
+SourceSpeaker::SourceLease SourceSpeaker::acquire_source_(audio::AudioStreamInfo *stream_info) {
+  LockGuard lock(this->source_mutex_);
+  if (!this->source_published_ || this->source_leases_ == UINT16_MAX) {
+    return {};
+  }
+  this->source_leases_++;
+  if (stream_info != nullptr) {
+    *stream_info = this->source_stream_info_;
+  }
+  return SourceLease(this);
+}
+
+void SourceSpeaker::release_source_() {
+  LockGuard lock(this->source_mutex_);
+  this->source_leases_--;
+}
+
+bool SourceSpeaker::retire_source_() {
+  std::unique_ptr<ring_buffer::RingBuffer> ring_buffer;
+  std::unique_ptr<audio::RingBufferAudioSource> source;
+  {
+    LockGuard lock(this->source_mutex_);
+    if (this->source_published_ || this->source_leases_ != 0 || this->source_retiring_) {
+      return false;
+    }
+    this->source_retiring_ = true;
+    source = std::move(this->audio_source_);
+    ring_buffer = std::move(this->ring_buffer_);
+  }
+  // Only the main loop destroys session storage. The reader returns its acquired item before the ring is freed.
+  // Keep retirement fenced until both destructors finish, including any scheduling inside the ring destructor.
+  source.reset();
+  ring_buffer.reset();
+  {
+    LockGuard lock(this->source_mutex_);
+    this->source_retiring_ = false;
+  }
+  return true;
+}
+
+void SourceSpeaker::consume_source_data_(audio::RingBufferAudioSource &source, size_t bytes) {
+  LockGuard lock(this->source_mutex_);
+  source.consume(bytes);
 }
 
 void SourceSpeaker::set_mute_state(bool mute_state) {
@@ -295,23 +369,24 @@ void SourceSpeaker::set_volume(float volume) {
 
 float SourceSpeaker::get_volume() { return this->parent_->get_output_speaker()->get_volume(); }
 
-size_t SourceSpeaker::process_data_from_source(std::shared_ptr<audio::RingBufferAudioSource> &audio_source,
-                                               TickType_t ticks_to_wait) {
-  if (audio_source->available() > 0) {
+void SourceSpeaker::expose_source_data_(audio::RingBufferAudioSource &source,
+                                        const audio::AudioStreamInfo &stream_info) {
+  if (source.available() > 0) {
     // Existing exposure was ducked when fill() promoted it; do not re-duck on partial-consume re-entry.
-    return 0;
+    return;
   }
 
-  size_t bytes_read = audio_source->fill(ticks_to_wait);
+  size_t bytes_read;
+  {
+    LockGuard lock(this->source_mutex_);
+    bytes_read = source.fill(0);
+  }
 
-  uint32_t samples_to_duck = this->audio_stream_info_.bytes_to_samples(bytes_read);
+  const uint32_t samples_to_duck = stream_info.bytes_to_samples(bytes_read);
   if (samples_to_duck > 0) {
-    this->ducking_ramp_.process(audio_source->mutable_data(),
-                                static_cast<uint8_t>(this->audio_stream_info_.get_bits_per_sample() / 8),
+    this->ducking_ramp_.process(source.mutable_data(), static_cast<uint8_t>(stream_info.get_bits_per_sample() / 8),
                                 samples_to_duck);
   }
-
-  return bytes_read;
 }
 
 void SourceSpeaker::apply_ducking(uint8_t decibel_reduction, uint32_t duration) {
@@ -322,7 +397,8 @@ void SourceSpeaker::apply_ducking(uint8_t decibel_reduction, uint32_t duration) 
 void SourceSpeaker::enter_stopping_state_() {
   this->state_ = speaker::STATE_STOPPING;
   this->stopping_start_ms_ = millis();
-  this->audio_source_.reset();
+  LockGuard lock(this->source_mutex_);
+  this->source_published_ = false;
 }
 
 void MixerSpeaker::dump_config() {
@@ -472,11 +548,14 @@ void MixerSpeaker::audio_mixer_task(void *params) {
 
     bool sent_finished = false;
 
-    // Pre-allocate vectors to avoid heap allocation in the loop (max 8 source speakers per schema)
-    FixedVector<SourceSpeaker *> speakers_with_data;
-    FixedVector<std::shared_ptr<audio::RingBufferAudioSource>> audio_sources_with_data;
-    speakers_with_data.init(this_mixer->source_speakers_.size());
-    audio_sources_with_data.init(this_mixer->source_speakers_.size());
+    struct MixingSource {
+      SourceSpeaker *speaker;
+      SourceSpeaker::SourceLease lease;
+      audio::AudioStreamInfo format;
+    };
+    // Lease each reader and its captured format through the complete mixing pass.
+    FixedVector<MixingSource> sources_with_data;
+    sources_with_data.init(this_mixer->source_speakers_.size());
 
     while (true) {
       uint32_t event_group_bits = xEventGroupGetBits(this_mixer->event_group_);
@@ -490,28 +569,25 @@ void MixerSpeaker::audio_mixer_task(void *params) {
       const uint32_t output_frames_free =
           this_mixer->audio_stream_info_.value().bytes_to_frames(output_transfer_buffer->free());
 
-      speakers_with_data.clear();
-      audio_sources_with_data.clear();
+      sources_with_data.clear();
 
       for (auto &speaker : this_mixer->source_speakers_) {
-        if (speaker->is_running() && !speaker->get_pause_state()) {
-          // Speaker is running and not paused, so it possibly can provide audio data
-          std::shared_ptr<audio::RingBufferAudioSource> audio_source = speaker->get_audio_source().lock();
-          if (audio_source == nullptr) {
+        if (!speaker->get_pause_state()) {
+          audio::AudioStreamInfo stream_info;
+          auto source = speaker->acquire_source_(&stream_info);
+          if (!source) {
             // No audio source allocated, so skip processing this speaker
             continue;
           }
-          speaker->process_data_from_source(audio_source, 0);  // Exposes and ducks audio from source ring buffers
+          speaker->expose_source_data_(*source.reader(), stream_info);
 
-          if (audio_source->available() > 0) {
-            // Retain shared ownership across the mixing pass so the source isn't released mid-mix
-            audio_sources_with_data.push_back(audio_source);
-            speakers_with_data.push_back(speaker);
+          if (source.reader()->available() > 0) {
+            sources_with_data.push_back({speaker, std::move(source), stream_info});
           }
         }
       }
 
-      if (audio_sources_with_data.empty()) {
+      if (sources_with_data.empty()) {
         // No audio available for transferring, block task temporarily
         delay(TASK_DELAY_MS);
         continue;
@@ -523,33 +599,35 @@ void MixerSpeaker::audio_mixer_task(void *params) {
       const uint8_t output_bps = output_info.get_bits_per_sample() / 8;
       const uint8_t output_channels = output_info.get_channels();
 
-      if ((audio_sources_with_data.size() == 1) || this_mixer->queue_mode_) {
+      if ((sources_with_data.size() == 1) || this_mixer->queue_mode_) {
         // Only one speaker has audio data, just copy samples over
 
-        audio::AudioStreamInfo active_stream_info = speakers_with_data[0]->get_audio_stream_info();
+        auto &active = sources_with_data[0];
+        const auto &active_stream_info = active.format;
 
         if (active_stream_info.get_sample_rate() ==
             this_mixer->output_speaker_->get_audio_stream_info().get_sample_rate()) {
           // Speaker's sample rate matches the output speaker's, convert directly into the output buffer
 
           const uint32_t frames_available_in_buffer =
-              active_stream_info.bytes_to_frames(audio_sources_with_data[0]->available());
+              active_stream_info.bytes_to_frames(active.lease.reader()->available());
           frames_to_mix = std::min(frames_to_mix, frames_available_in_buffer);
           esp_audio_libs::pcm_convert::copy_frames(
-              audio_sources_with_data[0]->data(), output_transfer_buffer->get_buffer_end(),
+              active.lease.reader()->data(), output_transfer_buffer->get_buffer_end(),
               static_cast<uint8_t>(active_stream_info.get_bits_per_sample() / 8), active_stream_info.get_channels(),
               output_bps, output_channels, frames_to_mix);
 
           // Set playback delay for newly contributing source
-          if (!speakers_with_data[0]->has_contributed_.load(std::memory_order_acquire)) {
-            speakers_with_data[0]->playback_delay_frames_.store(
+          if (!active.speaker->has_contributed_.load(std::memory_order_acquire)) {
+            active.speaker->playback_delay_frames_.store(
                 this_mixer->frames_in_pipeline_.load(std::memory_order_acquire), std::memory_order_release);
-            speakers_with_data[0]->has_contributed_.store(true, std::memory_order_release);
+            active.speaker->has_contributed_.store(true, std::memory_order_release);
           }
 
           // Update source speaker pending frames
-          speakers_with_data[0]->pending_playback_frames_.fetch_add(frames_to_mix, std::memory_order_release);
-          audio_sources_with_data[0]->consume(active_stream_info.frames_to_bytes(frames_to_mix));
+          active.speaker->pending_playback_frames_.fetch_add(frames_to_mix, std::memory_order_release);
+          active.speaker->consume_source_data_(*active.lease.reader(),
+                                               active_stream_info.frames_to_bytes(frames_to_mix));
 
           // Update output transfer buffer length and pipeline frame count
           output_transfer_buffer->increase_buffer_length(output_info.frames_to_bytes(frames_to_mix));
@@ -575,24 +653,23 @@ void MixerSpeaker::audio_mixer_task(void *params) {
         }
       } else {
         // Determine how many frames to mix
-        for (size_t i = 0; i < audio_sources_with_data.size(); ++i) {
-          const uint32_t frames_available_in_buffer =
-              speakers_with_data[i]->get_audio_stream_info().bytes_to_frames(audio_sources_with_data[i]->available());
+        for (const auto &source : sources_with_data) {
+          const uint32_t frames_available_in_buffer = source.format.bytes_to_frames(source.lease.reader()->available());
           frames_to_mix = std::min(frames_to_mix, frames_available_in_buffer);
         }
-        const uint8_t *primary_buffer = audio_sources_with_data[0]->data();
-        audio::AudioStreamInfo primary_stream_info = speakers_with_data[0]->get_audio_stream_info();
+        const uint8_t *primary_buffer = sources_with_data[0].lease.reader()->data();
+        audio::AudioStreamInfo primary_stream_info = sources_with_data[0].format;
 
         // Mix two streams together at a time, accumulating into the output buffer.
-        for (size_t i = 1; i < audio_sources_with_data.size(); ++i) {
+        for (size_t i = 1; i < sources_with_data.size(); ++i) {
+          const auto &secondary = sources_with_data[i];
           esp_audio_libs::mixer::mix_frames(
               primary_buffer, static_cast<uint8_t>(primary_stream_info.get_bits_per_sample() / 8),
-              primary_stream_info.get_channels(), audio_sources_with_data[i]->data(),
-              static_cast<uint8_t>(speakers_with_data[i]->get_audio_stream_info().get_bits_per_sample() / 8),
-              speakers_with_data[i]->get_audio_stream_info().get_channels(), output_transfer_buffer->get_buffer_end(),
-              output_bps, output_channels, frames_to_mix);
+              primary_stream_info.get_channels(), secondary.lease.reader()->data(),
+              static_cast<uint8_t>(secondary.format.get_bits_per_sample() / 8), secondary.format.get_channels(),
+              output_transfer_buffer->get_buffer_end(), output_bps, output_channels, frames_to_mix);
 
-          if (i != audio_sources_with_data.size() - 1) {
+          if (i != sources_with_data.size() - 1) {
             // Need to mix more streams together, point primary buffer and stream info to the already mixed output
             primary_buffer = output_transfer_buffer->get_buffer_end();
             primary_stream_info = output_info;
@@ -603,16 +680,15 @@ void MixerSpeaker::audio_mixer_task(void *params) {
         uint32_t current_pipeline_frames = this_mixer->frames_in_pipeline_.load(std::memory_order_acquire);
 
         // Update source audio source consumption and add new audio durations to the source speaker pending playbacks
-        for (size_t i = 0; i < audio_sources_with_data.size(); ++i) {
+        for (const auto &source : sources_with_data) {
           // Set playback delay for newly contributing sources
-          if (!speakers_with_data[i]->has_contributed_.load(std::memory_order_acquire)) {
-            speakers_with_data[i]->playback_delay_frames_.store(current_pipeline_frames, std::memory_order_release);
-            speakers_with_data[i]->has_contributed_.store(true, std::memory_order_release);
+          if (!source.speaker->has_contributed_.load(std::memory_order_acquire)) {
+            source.speaker->playback_delay_frames_.store(current_pipeline_frames, std::memory_order_release);
+            source.speaker->has_contributed_.store(true, std::memory_order_release);
           }
 
-          speakers_with_data[i]->pending_playback_frames_.fetch_add(frames_to_mix, std::memory_order_release);
-          audio_sources_with_data[i]->consume(
-              speakers_with_data[i]->get_audio_stream_info().frames_to_bytes(frames_to_mix));
+          source.speaker->pending_playback_frames_.fetch_add(frames_to_mix, std::memory_order_release);
+          source.speaker->consume_source_data_(*source.lease.reader(), source.format.frames_to_bytes(frames_to_mix));
         }
 
         // Update output transfer buffer length and pipeline frame count (once, not per source)

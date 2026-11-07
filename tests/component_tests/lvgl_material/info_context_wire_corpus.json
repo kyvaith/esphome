@@ -1,0 +1,210 @@
+{
+  "source_manifest_sha256": "7b322c58987202fbcf0dcba9f3becde3baad3250edc5b98abc6c6cab2b768a9d",
+  "fixtures": [
+    {
+      "id": "person-home-pl",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"home\",\"text_status\":\"value\",\"state_text\":\"W domu\",\"changed_status\":\"value\",\"changed_text\":\"2026-11-05T19:56:46+01:00\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "0c7f807da590a555f3c4a017db99daf5749d8a45bce9b8433a32a3b4896584b6"
+    },
+    {
+      "id": "person-home-en",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"home\",\"text_status\":\"value\",\"state_text\":\"Home\",\"changed_status\":\"value\",\"changed_text\":\"2026-11-05T19:56:46+01:00\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "9d43994291eaeeca7c6c43669ac2ee9060978db8f652759e21c71c7690377e2c"
+    },
+    {
+      "id": "person-away",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"away\",\"text_status\":\"value\",\"state_text\":\"Poza domem\",\"changed_status\":\"value\",\"changed_text\":\"2026-11-05T19:56:46+01:00\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "eadbc0e08547cb45eec405386b4485e71dc3fc6d87b9bde2ec8f9d8e8a5ff0a3"
+    },
+    {
+      "id": "person-zone",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"zone\",\"text_status\":\"value\",\"state_text\":\"Pracownia_Łódź\",\"changed_status\":\"value\",\"changed_text\":\"2026-11-05T19:56:46+01:00\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "a9eea7799f9bd186e2004d885035240713f8807ee1c5ea7c3f25e61481aacf48"
+    },
+    {
+      "id": "person-empty",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"unknown\",\"text_status\":\"empty\",\"state_text\":\"\",\"changed_status\":\"value\",\"changed_text\":\"2026-11-05T19:56:46+01:00\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "4aa1d0a7a4969bc51a464bcac65ec5af27983a975999a61f4b73c6f342dc49b0"
+    },
+    {
+      "id": "person-invalid",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"unknown\",\"text_status\":\"invalid\",\"state_text\":\"\",\"changed_status\":\"value\",\"changed_text\":\"2026-11-05T19:56:46+01:00\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "8c43541269a7f6455245837495c4ac17b1b32d67fc87254ab7e538e9c52896e7"
+    },
+    {
+      "id": "person-zone-too-long",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"zone\",\"text_status\":\"too_long\",\"state_text\":\"\",\"changed_status\":\"value\",\"changed_text\":\"2026-11-05T19:56:46+01:00\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "46ff87eaa1b394bda127089bb3ff9bc696d8d173fe339b9de0f3985eba0baae1"
+    },
+    {
+      "id": "person-zone-max-utf8",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"zone\",\"text_status\":\"value\",\"state_text\":\"ŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻ\",\"changed_status\":\"value\",\"changed_text\":\"2026-11-05T19:56:46+01:00\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "4e2e3b00602743eeeec40e404907f97e751b4d8582c9604bab9573141e125cfc"
+    },
+    {
+      "id": "person-zone-max-escaped",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"zone\",\"text_status\":\"value\",\"state_text\":\"\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\",\"changed_status\":\"value\",\"changed_text\":\"2026-11-05T19:56:46+01:00\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "9b0f2e82011d638c4e6c30ec9529af5a21bf3d824d710338f0c7fcf99db1d168"
+    },
+    {
+      "id": "person-changed-unknown",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"home\",\"text_status\":\"value\",\"state_text\":\"W domu\",\"changed_status\":\"unknown\",\"changed_text\":\"\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "f2b304d3f8fc395b231821a897bd3df289ab0811c744f072da787f23d7214b27"
+    },
+    {
+      "id": "person-changed-invalid",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"home\",\"text_status\":\"value\",\"state_text\":\"W domu\",\"changed_status\":\"invalid\",\"changed_text\":\"\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "ca071ab909bc9f36d354a6f1029f9f5464752f0fe18c1090462f354af2c10227"
+    },
+    {
+      "id": "person-changed-too_long",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"home\",\"text_status\":\"value\",\"state_text\":\"W domu\",\"changed_status\":\"too_long\",\"changed_text\":\"\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "35f00db267e6b1cfc5470ced99d37d6958645bbad8ddd1d5ba4625c92d5e6e15"
+    },
+    {
+      "id": "person-dst-fold-02",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"home\",\"text_status\":\"value\",\"state_text\":\"W domu\",\"changed_status\":\"value\",\"changed_text\":\"2026-10-25T02:30:00+02:00\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "dedf29cf04d93321fd39a0060c4e2fcc2fceecec1d097afa1adbcbf7ab61e821"
+    },
+    {
+      "id": "person-dst-fold-01",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"home\",\"text_status\":\"value\",\"state_text\":\"W domu\",\"changed_status\":\"value\",\"changed_text\":\"2026-10-25T02:30:00+01:00\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "6ebc24d8a5f5fcbabee1e7dc3b2cba967a9e896ae1da3306b5dfab44d6b82664"
+    },
+    {
+      "id": "person-invalid-zone",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"home\",\"text_status\":\"value\",\"state_text\":\"W domu\",\"changed_status\":\"invalid\",\"changed_text\":\"\",\"zone_text\":\"\"}}",
+      "sha256": "f3cfc60198a9429564116466dc624f3de8a4ff7a2e4f83aa7841d1865773073e"
+    },
+    {
+      "id": "person-unknown",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":false,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"unknown\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"unknown\",\"text_status\":\"unknown\",\"state_text\":\"\",\"changed_status\":\"unknown\",\"changed_text\":\"\",\"zone_text\":\"\"}}",
+      "sha256": "4bee62b283449c2d0dcab722bab9a731283382bdb0bcf53d48f03cddc1511ee9"
+    },
+    {
+      "id": "person-unavailable",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":false,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"unavailable\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"unknown\",\"text_status\":\"unknown\",\"state_text\":\"\",\"changed_status\":\"unknown\",\"changed_text\":\"\",\"zone_text\":\"\"}}",
+      "sha256": "0b9a2062653caa5a3dce1274b19486aca4a9988f1df83aa736672034ce0f3e98"
+    },
+    {
+      "id": "sun-night",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "0bbc09faffd6c8fe1d6bd78c238b463a86031a6afabc5f0c9e195e19e803961d"
+    },
+    {
+      "id": "sun-day",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"above_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"value\",\"elevation_text\":\"23.45\",\"azimuth_status\":\"value\",\"azimuth_text\":\"0.0\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "f7064dfed612ea3bc2fe1466adb17fd2ceb2fe29613ef51d38fab4b19cebef9a"
+    },
+    {
+      "id": "sun-unrecognized-phase",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"unknown\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "64e33b6010de52b0726b0d5172374d399fdc35074e12363b845d55c705da166d"
+    },
+    {
+      "id": "sun-future-year",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2027-02-01T09:04:00+01:00\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "9a4e048136b986545ec4d6312520f6c0543524ccc76713f207248d9cb83f3ea7"
+    },
+    {
+      "id": "sun-angle-max",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"value\",\"elevation_text\":\"-0.123456789012345678901\",\"azimuth_status\":\"value\",\"azimuth_text\":\"0.1234567890123456789012\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "14bc0a6f676c8a39d01e254c4077d9750fbf68759a285e7ca5c48f2da890ee41"
+    },
+    {
+      "id": "sun-subnormal",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"value\",\"elevation_text\":\"5e-324\",\"azimuth_status\":\"value\",\"azimuth_text\":\"360\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "d314acd20c2c6aab1c88d22e11caf4093dcbc7c2b1cd9cc2c20f51a838548251"
+    },
+    {
+      "id": "sun-next_rising-unknown",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"unknown\",\"next_rising_text\":\"\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "042a1e205d00bb81c861c37a464d98197ccdcdd205a572d66211b8368c9e08ac"
+    },
+    {
+      "id": "sun-next_rising-invalid",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"invalid\",\"next_rising_text\":\"\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "59cca0106e79b48b05e400e758a5f5cdb90874318f0cdf5008ae6de46ac8f447"
+    },
+    {
+      "id": "sun-next_rising-too_long",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"too_long\",\"next_rising_text\":\"\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "4eea6914b1b541a8c8e1d301f0ab49cf46c42922b77baed51e81bb5b7a6482d2"
+    },
+    {
+      "id": "sun-next_rising-stale",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"stale\",\"next_rising_text\":\"\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "d16866abc8a1fb5911d6d7e47298db67deb970a688684e6f04a9cec05a5e1442"
+    },
+    {
+      "id": "sun-next_setting-unknown",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"unknown\",\"next_setting_text\":\"\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "e08b2ef6fcbc292dce2b7e2f4d34c2b68a911263906128ce51701e35855e4d32"
+    },
+    {
+      "id": "sun-next_setting-invalid",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"invalid\",\"next_setting_text\":\"\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "08083a81251523882c6e7aa4abb10f3e47b297cfd49cada125442e1854a01650"
+    },
+    {
+      "id": "sun-next_setting-too_long",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"too_long\",\"next_setting_text\":\"\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "677defe8da4d76bce956d473f6a7766d9ae14cc5dc7c4eeded31c7cc872aac71"
+    },
+    {
+      "id": "sun-next_setting-stale",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"stale\",\"next_setting_text\":\"\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "687c60de4c766c676421c721e9cbe0100afed4c95cc72c9105d0991b40ce3930"
+    },
+    {
+      "id": "sun-elevation-unknown",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"unknown\",\"elevation_text\":\"\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "0f864f9bed2e9a9393f682798ac0dc6106783b794461378169fa7a5e349807dc"
+    },
+    {
+      "id": "sun-elevation-invalid",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"invalid\",\"elevation_text\":\"\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "fa4e2dfc9187f128aa23d8cc82792503b6380c473ce29074717d92f705873e77"
+    },
+    {
+      "id": "sun-elevation-too_long",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"too_long\",\"elevation_text\":\"\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "36733c2ddc7f3c4e17388928df4642dab3d2673d167976ee04a09358d3aea5b2"
+    },
+    {
+      "id": "sun-azimuth-unknown",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"unknown\",\"azimuth_text\":\"\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "e212ad1690fcacbe2520f6c5421c5a1019baf81fd9edaee4690c74039a40ab55"
+    },
+    {
+      "id": "sun-azimuth-invalid",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"invalid\",\"azimuth_text\":\"\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "2c0945962d16a77dd4b4a96a7bbd5589560cd57e0c5c14e3d4d12a3c8340c304"
+    },
+    {
+      "id": "sun-azimuth-too_long",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"value\",\"next_rising_text\":\"2026-11-06T06:38:19+01:00\",\"next_setting_status\":\"value\",\"next_setting_text\":\"2026-11-06T15:53:55+01:00\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"too_long\",\"azimuth_text\":\"\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "62b479b8a760ee72fec744b512d9546d1323b3da5eeb0a7af8b6c415fdcabd2d"
+    },
+    {
+      "id": "sun-invalid-zone",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"below_horizon\",\"next_rising_status\":\"invalid\",\"next_rising_text\":\"\",\"next_setting_status\":\"invalid\",\"next_setting_text\":\"\",\"elevation_status\":\"value\",\"elevation_text\":\"-36.43\",\"azimuth_status\":\"value\",\"azimuth_text\":\"293.83\",\"zone_text\":\"\"}}",
+      "sha256": "7c10017e0a1b4e10e36102c2c146ea8afea9bd8f3a992aa0a504cdf876ec3844"
+    },
+    {
+      "id": "sun-unknown",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":false,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"unknown\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"unknown\",\"next_rising_status\":\"unknown\",\"next_rising_text\":\"\",\"next_setting_status\":\"unknown\",\"next_setting_text\":\"\",\"elevation_status\":\"unknown\",\"elevation_text\":\"\",\"azimuth_status\":\"unknown\",\"azimuth_text\":\"\",\"zone_text\":\"\"}}",
+      "sha256": "3843188803839404eb71d14dc03e7416ae9d09b506949f1752197354521a9f8e"
+    },
+    {
+      "id": "sun-unavailable",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":false,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"sun\",\"device_class\":null},\"panel_state\":{\"source\":\"unavailable\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"unknown\",\"next_rising_status\":\"unknown\",\"next_rising_text\":\"\",\"next_setting_status\":\"unknown\",\"next_setting_text\":\"\",\"elevation_status\":\"unknown\",\"elevation_text\":\"\",\"azimuth_status\":\"unknown\",\"azimuth_text\":\"\",\"zone_text\":\"\"}}",
+      "sha256": "56e0f48fe6f6f6485d5f4f22ff1a48839f934973b4eabfed580915b787e59477"
+    },
+    {
+      "id": "person-renewal-state",
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":15,\"card_id\":\"context-fixture\",\"revision\":376,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Observation\",\"panel_type\":\"info\",\"available\":true,\"eligible_actions\":0,\"state_generation\":1,\"panel_caps\":{\"info_type\":\"person\",\"device_class\":null},\"panel_state\":{\"source\":\"known\",\"updated_text\":\"2026-11-05T20:16:32+01:00\",\"phase\":\"home\",\"text_status\":\"value\",\"state_text\":\"W domu\",\"changed_status\":\"value\",\"changed_text\":\"2026-11-05T19:56:46+01:00\",\"zone_text\":\"Europe/Warsaw\"}}",
+      "sha256": "56517a218969b14e4f76c16dd54720396113cf107406e327da360a20e33f7f11"
+    }
+  ]
+}

@@ -3,6 +3,9 @@
 #include "esphome/components/lvgl/slideshow.h"
 #include "esphome/components/lvgl/scroll_snapshot_geometry.h"
 #include "esphome/core/defines.h"
+#ifdef USE_LVGL_DEFERRED_PRESS_CONTEXT
+#include "deferred_press_context.h"
+#endif
 #ifdef USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
 #include "direct_region_generation.h"
 #endif
@@ -208,7 +211,8 @@ extern "C" void lvgl_esphome_snapshot_discard_pending_refresh(void);
 extern "C" void lvgl_esphome_snapshot_scroll_configure(float overscroll_ratio, uint32_t momentum_duration_ms,
                                                        uint32_t bounce_duration_ms, uint32_t max_inertia_duration_ms,
                                                        size_t max_content_bytes,
-                                                       lv_color_format_t color_format = LV_COLOR_FORMAT_RGB565);
+                                                       lv_color_format_t color_format = LV_COLOR_FORMAT_RGB565,
+                                                       size_t segment_target_bytes = 0);
 extern "C" size_t lvgl_esphome_snapshot_scroll_required_bytes(lv_obj_t *obj,
                                                               lv_color_format_t color_format = LV_COLOR_FORMAT_RGB565);
 extern "C" bool lvgl_esphome_snapshot_scroll_set_external_buffer(uint8_t *data, size_t capacity);
@@ -444,6 +448,8 @@ class LvglComponent final : public PollingComponent {
   static void direct_region_refresh_end_cb(lv_event_t *event);
   void dump_config() override;
   lv_display_t *get_disp() { return this->disp_; }
+  // Memory-pressure admission only: never releases raw, active or in-flight previews.
+  size_t reclaim_idle_application_previews();
   lv_obj_t *get_screen_active() { return lv_display_get_screen_active(this->disp_); }
   // Pause or resume the display.
   // @param paused If true, pause the display. If false, resume the display.
@@ -478,9 +484,17 @@ class LvglComponent final : public PollingComponent {
   bool present_presentation_frame(display::FrameBufferLease *lease, uint32_t timeout_ms = 50,
                                   bool wait_for_active = true);
   bool release_presentation_frame(display::FrameBufferLease *lease);
+  bool render_presentation_overlay_rgb888(lv_obj_t *root, const display::FrameBufferLease &lease,
+                                           const lv_area_t &clip);
+  bool blend_presentation_overlay_argb8888(const display::FrameBufferLease &lease, const lv_image_dsc_t &image,
+                                            const lv_area_t &destination, const lv_area_t &clip);
   bool reserve_presentation_frame(const uint8_t *frame);
   void release_reserved_presentation_frame(const uint8_t *frame);
   bool copy_presentation_frame_rgb888(const uint8_t *source, uint8_t *target, int width, int height);
+  // Copy a crop into a tightly packed RGB888 target during an exclusive session.
+  // A destination may be an aligned band inside an idle framebuffer lease.
+  bool copy_presentation_region_rgb888(const uint8_t *source, int source_width, int source_height, int source_x,
+                                       int source_y, uint8_t *target, int width, int height);
   bool end_frame_buffer_presentation(uint32_t timeout_ms = 50);
   bool end_frame_buffer_presentation(uint32_t timeout_ms, uint32_t expected_generation);
   uint32_t get_frame_buffer_presentation_generation() const {
@@ -731,6 +745,7 @@ class LvglComponent final : public PollingComponent {
                                           int height);
 
  protected:
+  bool direct_handoff_to_lvgl_(uint32_t timeout_ms, bool release_existing_pause, bool closing_session);
 #if defined(USE_ESP32) && defined(USE_MIPI_DSI) && defined(USE_LVGL_PPA) && LV_COLOR_DEPTH == 32
   bool direct_present_rgb888_crossfade_banded_(const lv_image_dsc_t *source, int source_x, int source_y,
                                                int source_width, int source_height, const uint8_t *background,
@@ -834,7 +849,8 @@ class LvglComponent final : public PollingComponent {
   bool direct_region_ppa_overlay_argb8888_(const uint8_t *foreground, int foreground_stride, int foreground_width,
                                            int foreground_height, int foreground_x, int foreground_y, int blend_width,
                                            int blend_height, uint8_t *target, size_t target_size, int target_width,
-                                           int target_height, int target_x, int target_y);
+                                           int target_height, int target_x, int target_y,
+                                           bool foreground_coherent = false);
   bool direct_region_ensure_scale_scratch_(size_t size);
   bool direct_region_capture_scaled_background_(DirectRegionSlot *slot, const uint8_t *active, size_t active_size,
                                                 int active_width, int active_height);
@@ -1096,6 +1112,9 @@ class LVTouchListener : public touchscreen::TouchListener, public Parented<LvglC
   bool navigation_press_deferred_{};
   bool synthetic_tap_active_{};
   lv_obj_t *navigation_deferred_target_{};
+#ifdef USE_LVGL_DEFERRED_PRESS_CONTEXT
+  DeferredPressContext navigation_deferred_context_{};
+#endif
   lv_obj_t *synthetic_tap_target_{};
   uint32_t raw_touch_started_ms_{};
   uint32_t raw_touch_last_sample_ms_{};

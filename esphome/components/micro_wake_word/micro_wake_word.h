@@ -54,6 +54,13 @@ class MicroWakeWord final : public Component
 
   bool is_running() const { return this->state_ != State::STOPPED; }
 
+  /// True only after the inference task has allocated its buffers and entered detection.
+  bool is_detecting() const { return this->state_ == State::DETECTING_WAKE_WORD; }
+
+  /// Reserve the configured task resources during generated initialization, without starting inference.
+  /// Opted-in instances retain this reservation across stops to avoid later heap fragmentation.
+  void preallocate_task_resources();
+
   void set_features_step_size(uint8_t step_size) { this->features_step_size_ = step_size; }
 
   void set_ring_buffer_duration_ms(uint16_t duration_ms) { this->ring_buffer_duration_ms_ = duration_ms; }
@@ -128,6 +135,7 @@ class MicroWakeWord final : public Component
   bool stop_after_detection_;
 
   bool task_stack_in_psram_{false};
+  bool preallocate_task_resources_{false};
 
   uint8_t features_step_size_;
   uint16_t ring_buffer_duration_ms_{DEFAULT_RING_BUFFER_DURATION_MS};  // at most a second, see the schema

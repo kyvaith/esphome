@@ -1,0 +1,171 @@
+{
+  "status": "HOST_ACTUAL_ADAPTER_CODEC_PASS_NO_DEVICE",
+  "integration": 126,
+  "contract_sha256": "cc1084c0e905d1a7ee78ad5bca4fc9fc9a86d28a314ed3bcab31ca16a0428c42",
+  "source_sha256": {
+    "climate_range_domain.py": "d7bab81e6e6c14f21359a4ceadf3bad0c3f8452ed235fd7709b8cb73f256a607",
+    "climate_range_codec.py": "d940baf8a049a9cc6da91d8c897e308db8dc65d4562705339696008e33ee59f8",
+    "climate_range_features.py": "9dc83439980780c4421266997bb484a4274e731e51eb6e49026dd1401e64c166",
+    "detail_domain.py": "ac1a01178124bfa7de34a84868a179f5c2b0c43c6a2b1c1d4c367a059ae2ee53",
+    "detail_codec.py": "b2cdd26174f4e853e217a3d9e0d834984a7675a1d05a3a31a16b70512b3a963b",
+    "entity_control_codec.py": "00cb0a2db9b3a1a31e51caa2c8f7e16b4efccf5abf56b20aca4b554456cabd02"
+  },
+  "rows": [
+    {
+      "name": "range-inactive_mode",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":true,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"range\",\"view_seq\":1,\"domain\":{\"schema\":\"numeric_steps_v1\",\"min\":\"7\",\"max\":\"35\",\"step\":\"0.5\",\"unit\":\"°C\",\"max_index\":56},\"low_index\":28,\"high_index\":34,\"mode\":\"off\",\"activity\":\"idle\",\"current_text\":\"23\",\"editable\":false,\"reason\":\"inactive_mode\"},\"eligible_actions\":0,\"state_generation\":1}",
+      "utf8_bytes": 640
+    },
+    {
+      "name": "range-invalid_range",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":true,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"range\",\"view_seq\":1,\"domain\":{\"schema\":\"numeric_steps_v1\",\"min\":\"7\",\"max\":\"35\",\"step\":\"0.5\",\"unit\":\"°C\",\"max_index\":56},\"low_index\":null,\"high_index\":null,\"mode\":\"heat_cool\",\"activity\":\"idle\",\"current_text\":\"23\",\"editable\":false,\"reason\":\"invalid_range\"},\"eligible_actions\":0,\"state_generation\":1}",
+      "utf8_bytes": 650
+    },
+    {
+      "name": "range-none",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":true,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"range\",\"view_seq\":1,\"domain\":{\"schema\":\"numeric_steps_v1\",\"min\":\"7\",\"max\":\"35\",\"step\":\"0.5\",\"unit\":\"°C\",\"max_index\":56},\"low_index\":28,\"high_index\":34,\"mode\":\"heat_cool\",\"activity\":\"idle\",\"current_text\":\"23\",\"editable\":true,\"reason\":\"none\"},\"eligible_actions\":1,\"state_generation\":1}",
+      "utf8_bytes": 636
+    },
+    {
+      "name": "range-source_unavailable",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":false,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"range\",\"view_seq\":1,\"domain\":{\"schema\":\"numeric_steps_v1\",\"min\":\"7\",\"max\":\"35\",\"step\":\"0.5\",\"unit\":\"°C\",\"max_index\":56},\"low_index\":null,\"high_index\":null,\"mode\":\"unknown\",\"activity\":\"unknown\",\"current_text\":\"\",\"editable\":false,\"reason\":\"source_unavailable\"},\"eligible_actions\":0,\"state_generation\":1}",
+      "utf8_bytes": 655
+    },
+    {
+      "name": "main-grant-negotiated-range",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":true,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"main\",\"view_seq\":0,\"unit\":\"°C\",\"mode\":\"heat_cool\",\"activity\":\"idle\",\"target\":\"\",\"current\":\"23\",\"low\":\"21\",\"high\":\"24\",\"min\":\"7\",\"max\":\"35\",\"domain\":null,\"index\":null,\"editable\":false},\"eligible_actions\":0,\"state_generation\":1}",
+      "utf8_bytes": 579
+    },
+    {
+      "name": "open-climate",
+      "direction": "device_to_ha",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"open\",\"control_kind\":\"panel\",\"open_seq\":1,\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
+      "utf8_bytes": 170
+    },
+    {
+      "name": "range-request",
+      "direction": "device_to_ha",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"facet\",\"control_kind\":\"panel\",\"open_seq\":1,\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"facet\":\"range\",\"view_seq\":1}",
+      "utf8_bytes": 243
+    },
+    {
+      "name": "range-ready",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"facet_result\",\"control_kind\":\"panel\",\"open_seq\":1,\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"facet\":\"range\",\"view_seq\":1,\"state_seq\":1,\"status\":\"ready\",\"reason\":\"none\"}",
+      "utf8_bytes": 297
+    },
+    {
+      "name": "lower-target",
+      "direction": "device_to_ha",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"command_seq\":1,\"op\":\"facet_range\",\"facet\":\"range\",\"view_seq\":1,\"expected_state_generation\":1,\"target_low_index\":29,\"target_high_index\":34}",
+      "utf8_bytes": 355
+    },
+    {
+      "name": "upper-target",
+      "direction": "device_to_ha",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"command_seq\":1,\"op\":\"facet_range\",\"facet\":\"range\",\"view_seq\":1,\"expected_state_generation\":1,\"target_low_index\":28,\"target_high_index\":35}",
+      "utf8_bytes": 355
+    },
+    {
+      "name": "equal-target",
+      "direction": "device_to_ha",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"command_seq\":1,\"op\":\"facet_range\",\"facet\":\"range\",\"view_seq\":1,\"expected_state_generation\":1,\"target_low_index\":28,\"target_high_index\":28}",
+      "utf8_bytes": 355
+    },
+    {
+      "name": "minimum-zero-index",
+      "direction": "device_to_ha",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"command_seq\":1,\"op\":\"facet_range\",\"facet\":\"range\",\"view_seq\":1,\"expected_state_generation\":1,\"target_low_index\":0,\"target_high_index\":0}",
+      "utf8_bytes": 353
+    },
+    {
+      "name": "equal-zero-temperature",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":true,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"range\",\"view_seq\":1,\"domain\":{\"schema\":\"numeric_steps_v1\",\"min\":\"-10\",\"max\":\"35\",\"step\":\"0.5\",\"unit\":\"°C\",\"max_index\":90},\"low_index\":20,\"high_index\":20,\"mode\":\"heat_cool\",\"activity\":\"idle\",\"current_text\":\"23\",\"editable\":true,\"reason\":\"none\"},\"eligible_actions\":1,\"state_generation\":1}",
+      "utf8_bytes": 638
+    },
+    {
+      "name": "negative-pair",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":true,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"range\",\"view_seq\":1,\"domain\":{\"schema\":\"numeric_steps_v1\",\"min\":\"-10\",\"max\":\"35\",\"step\":\"0.5\",\"unit\":\"°C\",\"max_index\":90},\"low_index\":9,\"high_index\":18,\"mode\":\"heat_cool\",\"activity\":\"idle\",\"current_text\":\"23\",\"editable\":true,\"reason\":\"none\"},\"eligible_actions\":1,\"state_generation\":1}",
+      "utf8_bytes": 637
+    },
+    {
+      "name": "matching-fahrenheit",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":true,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"range\",\"view_seq\":1,\"domain\":{\"schema\":\"numeric_steps_v1\",\"min\":\"40\",\"max\":\"100\",\"step\":\"1\",\"unit\":\"°F\",\"max_index\":60},\"low_index\":25,\"high_index\":35,\"mode\":\"heat_cool\",\"activity\":\"idle\",\"current_text\":\"23\",\"editable\":true,\"reason\":\"none\"},\"eligible_actions\":1,\"state_generation\":1}",
+      "utf8_bytes": 636
+    },
+    {
+      "name": "million-step-domain",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":true,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"range\",\"view_seq\":1,\"domain\":{\"schema\":\"numeric_steps_v1\",\"min\":\"-100\",\"max\":\"300\",\"step\":\"0.0004\",\"unit\":\"°C\",\"max_index\":1000000},\"low_index\":0,\"high_index\":1000000,\"mode\":\"heat_cool\",\"activity\":\"idle\",\"current_text\":\"23\",\"editable\":true,\"reason\":\"none\"},\"eligible_actions\":1,\"state_generation\":1}",
+      "utf8_bytes": 652
+    },
+    {
+      "name": "readonly-auto",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":true,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"range\",\"view_seq\":1,\"domain\":{\"schema\":\"numeric_steps_v1\",\"min\":\"7\",\"max\":\"35\",\"step\":\"0.5\",\"unit\":\"°C\",\"max_index\":56},\"low_index\":28,\"high_index\":34,\"mode\":\"auto\",\"activity\":\"idle\",\"current_text\":\"23\",\"editable\":false,\"reason\":\"inactive_mode\"},\"eligible_actions\":0,\"state_generation\":1}",
+      "utf8_bytes": 641
+    },
+    {
+      "name": "readonly-heat",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":true,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"range\",\"view_seq\":1,\"domain\":{\"schema\":\"numeric_steps_v1\",\"min\":\"7\",\"max\":\"35\",\"step\":\"0.5\",\"unit\":\"°C\",\"max_index\":56},\"low_index\":28,\"high_index\":34,\"mode\":\"heat\",\"activity\":\"idle\",\"current_text\":\"23\",\"editable\":false,\"reason\":\"inactive_mode\"},\"eligible_actions\":0,\"state_generation\":1}",
+      "utf8_bytes": 641
+    },
+    {
+      "name": "readonly-cool",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":true,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"range\",\"view_seq\":1,\"domain\":{\"schema\":\"numeric_steps_v1\",\"min\":\"7\",\"max\":\"35\",\"step\":\"0.5\",\"unit\":\"°C\",\"max_index\":56},\"low_index\":28,\"high_index\":34,\"mode\":\"cool\",\"activity\":\"idle\",\"current_text\":\"23\",\"editable\":false,\"reason\":\"inactive_mode\"},\"eligible_actions\":0,\"state_generation\":1}",
+      "utf8_bytes": 641
+    },
+    {
+      "name": "readonly-dry",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":true,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"range\",\"view_seq\":1,\"domain\":{\"schema\":\"numeric_steps_v1\",\"min\":\"7\",\"max\":\"35\",\"step\":\"0.5\",\"unit\":\"°C\",\"max_index\":56},\"low_index\":28,\"high_index\":34,\"mode\":\"dry\",\"activity\":\"idle\",\"current_text\":\"23\",\"editable\":false,\"reason\":\"inactive_mode\"},\"eligible_actions\":0,\"state_generation\":1}",
+      "utf8_bytes": 640
+    },
+    {
+      "name": "readonly-fan_only",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Zakres\",\"panel_type\":\"climate\",\"available\":true,\"panel_caps\":{\"facets\":140},\"panel_state\":{\"facet\":\"range\",\"view_seq\":1,\"domain\":{\"schema\":\"numeric_steps_v1\",\"min\":\"7\",\"max\":\"35\",\"step\":\"0.5\",\"unit\":\"°C\",\"max_index\":56},\"low_index\":28,\"high_index\":34,\"mode\":\"fan_only\",\"activity\":\"idle\",\"current_text\":\"23\",\"editable\":false,\"reason\":\"inactive_mode\"},\"eligible_actions\":0,\"state_generation\":1}",
+      "utf8_bytes": 645
+    },
+    {
+      "name": "result-ha_accepted",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"result\",\"control_kind\":\"panel\",\"open_seq\":1,\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"command_seq\":1,\"state_seq\":2,\"status\":\"ha_accepted\",\"reason\":\"none\"}",
+      "utf8_bytes": 284
+    },
+    {
+      "name": "result-state_matches",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"result\",\"control_kind\":\"panel\",\"open_seq\":1,\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"command_seq\":1,\"state_seq\":2,\"status\":\"state_matches\",\"reason\":\"none\"}",
+      "utf8_bytes": 286
+    },
+    {
+      "name": "result-already_matched",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"result\",\"control_kind\":\"panel\",\"open_seq\":1,\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"command_seq\":1,\"state_seq\":2,\"status\":\"already_matched\",\"reason\":\"none\"}",
+      "utf8_bytes": 288
+    },
+    {
+      "name": "result-not_confirmed",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"result\",\"control_kind\":\"panel\",\"open_seq\":1,\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"command_seq\":1,\"state_seq\":2,\"status\":\"not_confirmed\",\"reason\":\"state_timeout\"}",
+      "utf8_bytes": 295
+    },
+    {
+      "name": "close-navigation",
+      "direction": "device_to_ha",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"close\",\"control_kind\":\"panel\",\"open_seq\":1,\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"reason\":\"navigation\"}",
+      "utf8_bytes": 236
+    }
+  ]
+}

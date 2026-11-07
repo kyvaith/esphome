@@ -27,12 +27,37 @@ class MaterialTileSurface : public Component {
   template<typename F> void add_on_control_press_callback(F &&callback) {
     this->control_press_callback_.add(std::forward<F>(callback));
   }
+#ifdef USE_LVGL_MATERIAL_DETAIL_TILE_ROUTING
+  template<typename F> void add_on_entity_detail_control_press_callback(F &&callback) {
+    this->entity_detail_control_press_callback_.add(std::forward<F>(callback));
+    this->entity_detail_callback_registered_ = true;
+  }
+  void set_light_detail_controls_enabled(bool enabled);
+#endif
 #ifdef USE_LVGL_MATERIAL_ENTITY_CONTROL_TILE_ROUTING
   template<typename F> void add_on_entity_control_press_callback(F &&callback) {
     this->entity_control_press_callback_.add(std::forward<F>(callback));
     this->entity_control_callback_registered_ = true;
   }
   void set_number_controls_enabled(bool enabled);
+#ifdef USE_LVGL_MATERIAL_CHOICE_TILE_ROUTING
+  void set_choice_controls_enabled(bool enabled);
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_TILE_ROUTING
+  void set_cover_controls_enabled(bool enabled);
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_TILE_ROUTING
+  void set_fan_controls_enabled(bool enabled);
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_TILE_ROUTING
+  void set_humidifier_controls_enabled(bool enabled);
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_TILE_ROUTING
+  void set_robot_controls_enabled(bool enabled);
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_TILE_ROUTING
+  void set_panel_controls_enabled(bool enabled);
+#endif
 #endif
   // A recognized control marker is always passive on the ordinary callbacks.
   // Product policy explicitly opts into the separate synchronous control route.
@@ -104,11 +129,39 @@ class MaterialTileSurface : public Component {
     bool context_ready{true};
     bool control_light{false};
     bool pressed_control_light{false};
+#ifdef USE_LVGL_MATERIAL_DETAIL_TILE_ROUTING
+    bool control_detail{false};
+    bool pressed_control_detail{false};
+#endif
 #ifdef USE_LVGL_MATERIAL_ENTITY_CONTROL_TILE_ROUTING
     // The legacy control_light bit remains the passive-control gate for both
     // supported kinds. This captured tag prevents Number falling into Light.
     bool control_number{false};
     bool pressed_control_number{false};
+#endif
+#ifdef USE_LVGL_MATERIAL_CHOICE_TILE_ROUTING
+    bool control_choice{false};
+    bool pressed_control_choice{false};
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_TILE_ROUTING
+    bool control_cover{false};
+    bool pressed_control_cover{false};
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_TILE_ROUTING
+    bool control_fan{false};
+    bool pressed_control_fan{false};
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_TILE_ROUTING
+    bool control_humidifier{false};
+    bool pressed_control_humidifier{false};
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_TILE_ROUTING
+    bool control_robot{false};
+    bool pressed_control_robot{false};
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_TILE_ROUTING
+    bool control_panel{false};
+    bool pressed_control_panel{false};
 #endif
 #ifdef USE_LVGL_MATERIAL_TILE_ACTION_AVAILABILITY
     // One byte preserves optional-field/disabled-state ownership; absence is
@@ -136,10 +189,33 @@ class MaterialTileSurface : public Component {
   LazyCallbackManager<void(uint8_t)> press_callback_;
   LazyCallbackManager<void(uint8_t, const char *, uint64_t)> context_press_callback_;
   LazyCallbackManager<void(uint8_t, const char *, uint64_t)> control_press_callback_;
+#ifdef USE_LVGL_MATERIAL_DETAIL_TILE_ROUTING
+  LazyCallbackManager<void(uint8_t, const char *, uint64_t)> entity_detail_control_press_callback_;
+  bool entity_detail_callback_registered_{false};
+  bool light_detail_controls_enabled_{false};
+#endif
 #ifdef USE_LVGL_MATERIAL_ENTITY_CONTROL_TILE_ROUTING
   LazyCallbackManager<void(uint8_t, const char *, uint64_t, uint8_t)> entity_control_press_callback_;
   bool entity_control_callback_registered_{false};
   bool number_controls_enabled_{false};
+#endif
+#ifdef USE_LVGL_MATERIAL_CHOICE_TILE_ROUTING
+  bool choice_controls_enabled_{false};
+#endif
+#ifdef USE_LVGL_MATERIAL_COVER_TILE_ROUTING
+  bool cover_controls_enabled_{false};
+#endif
+#ifdef USE_LVGL_MATERIAL_FAN_TILE_ROUTING
+  bool fan_controls_enabled_{false};
+#endif
+#ifdef USE_LVGL_MATERIAL_HUMIDIFIER_TILE_ROUTING
+  bool humidifier_controls_enabled_{false};
+#endif
+#ifdef USE_LVGL_MATERIAL_ROBOT_TILE_ROUTING
+  bool robot_controls_enabled_{false};
+#endif
+#ifdef USE_LVGL_MATERIAL_PANEL_TILE_ROUTING
+  bool panel_controls_enabled_{false};
 #endif
   uint32_t last_changed_slots_{0};
   uint32_t accent_color_{0x36BCF0};

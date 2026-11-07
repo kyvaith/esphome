@@ -3,7 +3,9 @@ idf_component_register(REQUIRES sendspin__sendspin-cpp)
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)
     set(esphome_sendspin_patch "${CMAKE_CURRENT_LIST_DIR}/patch_sendspin_memory.py")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-                 "${esphome_sendspin_patch}")
+                 "${esphome_sendspin_patch}"
+                 "${CMAKE_CURRENT_LIST_DIR}/patch_sendspin_threads.py"
+                 "${CMAKE_CURRENT_LIST_DIR}/fallible_thread.h")
     idf_component_get_property(esphome_sendspin_component_dir sendspin__sendspin-cpp COMPONENT_DIR)
     execute_process(
         COMMAND "${PYTHON}" "${esphome_sendspin_patch}" "${esphome_sendspin_component_dir}"

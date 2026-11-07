@@ -1,0 +1,1802 @@
+[
+  {
+    "id": "light_detail_root",
+    "type": "obj",
+    "parent": "BASE",
+    "props": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 800,
+      "bg_opa": "TRANSP",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 0,
+      "clickable": false,
+      "scrollable": false,
+      "bg_color": "0x000000",
+      "hidden": true
+    }
+  },
+  {
+    "id": "light_detail_icon",
+    "type": "svg_icon",
+    "parent": "light_detail_root",
+    "props": {
+      "x": 380,
+      "y": 66,
+      "width": 40,
+      "height": 40,
+      "text_color": "0xD3E3FD",
+      "hidden": false,
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_detail_actions",
+    "type": "obj",
+    "parent": "light_detail_root",
+    "props": {
+      "x": 146,
+      "y": 650,
+      "width": 508,
+      "height": 56,
+      "bg_opa": "TRANSP",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 0,
+      "clickable": false,
+      "scrollable": false,
+      "layout": {
+        "type": "FLEX",
+        "flex_flow": "ROW",
+        "flex_align_main": "CENTER",
+        "flex_align_cross": "CENTER",
+        "flex_align_track": "CENTER",
+        "pad_column": 20,
+        "pad_row": 12
+      }
+    }
+  },
+  {
+    "id": "light_detail_kelvin",
+    "type": "button",
+    "parent": "light_detail_actions",
+    "props": {
+      "width": 244,
+      "flex_grow": 1,
+      "height": 56,
+      "radius": 28,
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true,
+      "pressed": {
+        "bg_opa": "80%"
+      },
+      "disabled": {
+        "text_opa": "80%"
+      }
+    }
+  },
+  {
+    "id": "light_detail_kelvin_label",
+    "type": "label",
+    "parent": "light_detail_kelvin",
+    "props": {
+      "width": "85%",
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "light_detail_effect",
+    "type": "button",
+    "parent": "light_detail_actions",
+    "props": {
+      "width": 244,
+      "flex_grow": 1,
+      "height": 56,
+      "radius": 28,
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true,
+      "pressed": {
+        "bg_opa": "80%"
+      },
+      "disabled": {
+        "text_opa": "80%"
+      }
+    }
+  },
+  {
+    "id": "light_detail_effect_label",
+    "type": "label",
+    "parent": "light_detail_effect",
+    "props": {
+      "width": "85%",
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "light_detail_color",
+    "type": "button",
+    "parent": "light_detail_actions",
+    "props": {
+      "width": 244,
+      "flex_grow": 1,
+      "height": 56,
+      "radius": 28,
+      "styles": "m3_text_control_inset",
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true
+    }
+  },
+  {
+    "id": "light_detail_color_label",
+    "type": "label",
+    "parent": "light_detail_color",
+    "props": {
+      "width": "85%",
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "light_detail_status",
+    "type": "label",
+    "parent": "light_detail_root",
+    "props": {
+      "x": 220,
+      "y": 714,
+      "width": 360,
+      "height": 40,
+      "text_font": "roboto_16",
+      "text_color": "0xC4C7C5",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_root",
+    "type": "obj",
+    "parent": "BASE",
+    "props": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 800,
+      "bg_color": 0,
+      "bg_opa": "COVER",
+      "styles": "m3_text_control_inset",
+      "radius": 0,
+      "clickable": true,
+      "scrollable": false,
+      "hidden": true
+    }
+  },
+  {
+    "id": "light_color_kind",
+    "type": "label",
+    "parent": "light_color_root",
+    "props": {
+      "x": 200,
+      "y": 68,
+      "width": 400,
+      "height": 28,
+      "text_font": "roboto_20",
+      "text_color": 12896197,
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_title",
+    "type": "label",
+    "parent": "light_color_root",
+    "props": {
+      "x": 130,
+      "y": 104,
+      "width": 540,
+      "height": 42,
+      "text_font": "roboto_30",
+      "text_color": 15921906,
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_preview",
+    "type": "label",
+    "parent": "light_color_root",
+    "props": {
+      "text_font": "roboto_24",
+      "text_color": 15921906,
+      "text_align": "CENTER",
+      "long_mode": "CLIP",
+      "x": 310,
+      "y": 164,
+      "width": 180,
+      "height": 104,
+      "radius": 32,
+      "bg_color": 2437433,
+      "bg_opa": "COVER",
+      "border_width": 2,
+      "border_color": 6779258,
+      "pad_all": 0,
+      "pad_top": 36,
+      "pad_bottom": 36,
+      "pad_left": 12,
+      "pad_right": 12,
+      "scrollable": false,
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_status",
+    "type": "label",
+    "parent": "light_color_root",
+    "props": {
+      "x": 170,
+      "y": 284,
+      "width": 460,
+      "height": 56,
+      "text_font": "roboto_20",
+      "text_color": 12896197,
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_hue_label",
+    "type": "label",
+    "parent": "light_color_root",
+    "props": {
+      "x": 130,
+      "y": 354,
+      "width": 540,
+      "height": 28,
+      "text_font": "roboto_20",
+      "text_color": 15921906,
+      "long_mode": "CLIP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_hue_slider",
+    "type": "slider",
+    "parent": "light_color_root",
+    "props": {
+      "x": 130,
+      "y": 400,
+      "width": 540,
+      "height": 28,
+      "min_value": 0,
+      "max_value": 359999,
+      "value": 0,
+      "animated": false,
+      "styles": "m3_text_control_inset",
+      "radius": 14,
+      "bg_color": 2437433,
+      "bg_opa": "COVER",
+      "clickable": false,
+      "scrollable": false,
+      "indicator": {
+        "radius": 14,
+        "bg_color": 11461375,
+        "bg_opa": "COVER"
+      },
+      "knob": {
+        "bg_color": 15921906,
+        "bg_opa": "COVER",
+        "border_color": 1053720,
+        "border_width": 3,
+        "radius": 20,
+        "pad_all": 6
+      }
+    }
+  },
+  {
+    "id": "light_color_saturation_label",
+    "type": "label",
+    "parent": "light_color_root",
+    "props": {
+      "x": 130,
+      "y": 478,
+      "width": 540,
+      "height": 28,
+      "text_font": "roboto_20",
+      "text_color": 15921906,
+      "long_mode": "CLIP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_saturation_slider",
+    "type": "slider",
+    "parent": "light_color_root",
+    "props": {
+      "x": 130,
+      "y": 524,
+      "width": 540,
+      "height": 28,
+      "min_value": 0,
+      "max_value": 100000,
+      "value": 0,
+      "animated": false,
+      "styles": "m3_text_control_inset",
+      "radius": 14,
+      "bg_color": 2437433,
+      "bg_opa": "COVER",
+      "clickable": false,
+      "scrollable": false,
+      "indicator": {
+        "radius": 14,
+        "bg_color": 11461375,
+        "bg_opa": "COVER"
+      },
+      "knob": {
+        "bg_color": 15921906,
+        "bg_opa": "COVER",
+        "border_color": 1053720,
+        "border_width": 3,
+        "radius": 20,
+        "pad_all": 6
+      }
+    }
+  },
+  {
+    "id": "light_color_cancel",
+    "type": "button",
+    "parent": "light_color_root",
+    "props": {
+      "x": 174,
+      "y": 646,
+      "width": 208,
+      "height": 72,
+      "radius": 36,
+      "styles": "m3_text_control_inset",
+      "bg_color": 1910835,
+      "bg_opa": "COVER",
+      "shadow_width": 0,
+      "scrollable": false
+    }
+  },
+  {
+    "id": "light_color_cancel_label",
+    "type": "label",
+    "parent": "light_color_cancel",
+    "props": {
+      "width": 188,
+      "height": 44,
+      "align": "CENTER",
+      "text_font": "roboto_24",
+      "text_color": 15921906,
+      "text_align": "CENTER",
+      "long_mode": "CLIP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_apply",
+    "type": "button",
+    "parent": "light_color_root",
+    "props": {
+      "x": 418,
+      "y": 646,
+      "width": 208,
+      "height": 72,
+      "radius": 36,
+      "styles": "m3_text_control_inset",
+      "bg_color": 1910835,
+      "bg_opa": "COVER",
+      "shadow_width": 0,
+      "scrollable": false
+    }
+  },
+  {
+    "id": "light_color_apply_label",
+    "type": "label",
+    "parent": "light_color_apply",
+    "props": {
+      "width": 188,
+      "height": 44,
+      "align": "CENTER",
+      "text_font": "roboto_20",
+      "text_color": 15921906,
+      "text_align": "CENTER",
+      "long_mode": "CLIP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "climate_detail_root",
+    "type": "obj",
+    "parent": "BASE",
+    "props": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 800,
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 0,
+      "clickable": false,
+      "scrollable": false,
+      "bg_color": "0x000000",
+      "hidden": true
+    }
+  },
+  {
+    "id": "climate_detail_dial",
+    "type": "obj",
+    "parent": "climate_detail_root",
+    "props": {
+      "x": 70,
+      "y": 66,
+      "width": 660,
+      "height": 656,
+      "bg_opa": "0%",
+      "border_width": 0,
+      "pad_all": 0,
+      "scrollable": false,
+      "clickable": false,
+      "hidden": false
+    }
+  },
+  {
+    "id": "climate_detail_title",
+    "type": "label",
+    "parent": "climate_detail_dial",
+    "props": {
+      "align": "TOP_MID",
+      "width": 500,
+      "height": 32,
+      "text_align": "CENTER",
+      "text_font": "roboto_24",
+      "text_color": 12896197,
+      "long_mode": "DOT"
+    }
+  },
+  {
+    "id": "climate_detail_arc",
+    "type": "arc",
+    "parent": "climate_detail_dial",
+    "props": {
+      "align": "TOP_MID",
+      "y": 44,
+      "width": 600,
+      "height": 600,
+      "min_value": 0,
+      "max_value": 1000,
+      "value": 0,
+      "start_angle": 135,
+      "end_angle": 45,
+      "adjustable": false,
+      "arc_color": 462872,
+      "arc_width": 28,
+      "arc_rounded": true,
+      "bg_opa": "0%",
+      "indicator": {
+        "arc_color": 13886461,
+        "arc_width": 28,
+        "arc_rounded": true
+      },
+      "knob": {
+        "bg_opa": "0%",
+        "border_width": 0,
+        "width": 0,
+        "height": 0
+      }
+    }
+  },
+  {
+    "id": "climate_detail_activity",
+    "type": "label",
+    "parent": "climate_detail_dial",
+    "props": {
+      "align": "TOP_MID",
+      "y": 203,
+      "width": 270,
+      "height": 34,
+      "text_align": "CENTER",
+      "text_font": "roboto_24",
+      "text_color": 13886461,
+      "long_mode": "CLIP"
+    }
+  },
+  {
+    "id": "climate_detail_target",
+    "type": "label",
+    "parent": "climate_detail_dial",
+    "props": {
+      "align": "TOP_MID",
+      "y": 259,
+      "width": 440,
+      "height": 82,
+      "text_align": "CENTER",
+      "text_font": "wear_title_53",
+      "text_color": 16119802,
+      "long_mode": "CLIP"
+    }
+  },
+  {
+    "id": "climate_detail_current",
+    "type": "label",
+    "parent": "climate_detail_dial",
+    "props": {
+      "align": "TOP_MID",
+      "y": 348,
+      "width": 420,
+      "height": 38,
+      "text_align": "CENTER",
+      "text_font": "roboto_24",
+      "text_color": 12896197,
+      "long_mode": "CLIP"
+    }
+  },
+  {
+    "id": "climate_detail_limits",
+    "type": "label",
+    "parent": "climate_detail_dial",
+    "props": {
+      "align": "TOP_MID",
+      "y": 424,
+      "width": 440,
+      "height": 34,
+      "text_align": "CENTER",
+      "text_font": "roboto_18",
+      "text_color": 12896197,
+      "long_mode": "CLIP"
+    }
+  },
+  {
+    "id": "climate_detail_minus",
+    "type": "button",
+    "parent": "climate_detail_dial",
+    "props": {
+      "x": 236,
+      "y": 488,
+      "width": 76,
+      "height": 76,
+      "radius": 38,
+      "bg_color": 462872,
+      "border_color": 13886461,
+      "border_width": 2,
+      "shadow_width": 0,
+      "pad_all": 0,
+      "scrollable": false,
+      "disabled": {
+        "text_opa": "80%"
+      }
+    }
+  },
+  {
+    "id": "unnamed_17",
+    "type": "label",
+    "parent": "climate_detail_minus",
+    "props": {
+      "align": "CENTER",
+      "text_color": 13886461,
+      "text_font": "roboto_30"
+    }
+  },
+  {
+    "id": "climate_detail_plus",
+    "type": "button",
+    "parent": "climate_detail_dial",
+    "props": {
+      "x": 348,
+      "y": 488,
+      "width": 76,
+      "height": 76,
+      "radius": 38,
+      "bg_color": 462872,
+      "border_color": 13886461,
+      "border_width": 2,
+      "shadow_width": 0,
+      "pad_all": 0,
+      "scrollable": false,
+      "disabled": {
+        "text_opa": "80%"
+      }
+    }
+  },
+  {
+    "id": "unnamed_19",
+    "type": "label",
+    "parent": "climate_detail_plus",
+    "props": {
+      "align": "CENTER",
+      "text_color": 13886461,
+      "text_font": "roboto_30"
+    }
+  },
+  {
+    "id": "climate_detail_knob",
+    "type": "obj",
+    "parent": "climate_detail_dial",
+    "props": {
+      "width": 46,
+      "height": 46,
+      "radius": 23,
+      "bg_color": 13886461,
+      "border_width": 4,
+      "border_color": 16119802,
+      "pad_all": 0,
+      "scrollable": false,
+      "clickable": false,
+      "hidden": true,
+      "disabled": {
+        "opa": "65%"
+      }
+    }
+  },
+  {
+    "id": "climate_detail_state",
+    "type": "label",
+    "parent": "climate_detail_root",
+    "props": {
+      "x": 200,
+      "y": 207,
+      "width": 400,
+      "height": 30,
+      "text_font": "roboto_20",
+      "text_color": "0xC4C7C5",
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false
+    }
+  },
+  {
+    "id": "climate_detail_actions",
+    "type": "obj",
+    "parent": "climate_detail_root",
+    "props": {
+      "x": 146,
+      "y": 646,
+      "width": 508,
+      "height": 56,
+      "bg_opa": "TRANSP",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 0,
+      "clickable": false,
+      "scrollable": false,
+      "layout": {
+        "type": "FLEX",
+        "flex_flow": "ROW",
+        "flex_align_main": "CENTER",
+        "flex_align_cross": "CENTER",
+        "flex_align_track": "CENTER",
+        "pad_column": 20,
+        "pad_row": 12
+      }
+    }
+  },
+  {
+    "id": "climate_detail_mode",
+    "type": "button",
+    "parent": "climate_detail_actions",
+    "props": {
+      "width": 244,
+      "flex_grow": 1,
+      "height": 56,
+      "radius": 28,
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true,
+      "pressed": {
+        "bg_opa": "80%"
+      },
+      "disabled": {
+        "text_opa": "80%"
+      }
+    }
+  },
+  {
+    "id": "climate_detail_mode_label",
+    "type": "label",
+    "parent": "climate_detail_mode",
+    "props": {
+      "width": "85%",
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "climate_detail_parameters",
+    "type": "button",
+    "parent": "climate_detail_actions",
+    "props": {
+      "width": 244,
+      "flex_grow": 1,
+      "height": 56,
+      "radius": 28,
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true,
+      "pressed": {
+        "bg_opa": "80%"
+      },
+      "disabled": {
+        "text_opa": "80%"
+      }
+    }
+  },
+  {
+    "id": "climate_detail_parameters_label",
+    "type": "label",
+    "parent": "climate_detail_parameters",
+    "props": {
+      "width": "85%",
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "climate_detail_range",
+    "type": "button",
+    "parent": "climate_detail_actions",
+    "props": {
+      "width": 244,
+      "flex_grow": 1,
+      "height": 56,
+      "radius": 28,
+      "styles": "m3_text_control_inset",
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true
+    }
+  },
+  {
+    "id": "climate_detail_range_label",
+    "type": "label",
+    "parent": "climate_detail_range",
+    "props": {
+      "width": "85%",
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "climate_detail_status",
+    "type": "label",
+    "parent": "climate_detail_root",
+    "props": {
+      "x": 200,
+      "y": 706,
+      "width": 400,
+      "height": 40,
+      "text_font": "roboto_16",
+      "text_color": "0xC4C7C5",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "climate_detail_parameters_root",
+    "type": "obj",
+    "parent": "climate_detail_root",
+    "props": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 800,
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 0,
+      "clickable": true,
+      "scrollable": false,
+      "bg_color": "0x000000",
+      "hidden": true
+    }
+  },
+  {
+    "id": "climate_detail_parameters_title",
+    "type": "label",
+    "parent": "climate_detail_parameters_root",
+    "props": {
+      "x": 130,
+      "y": 104,
+      "width": 540,
+      "height": 42,
+      "text_font": "roboto_30",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false
+    }
+  },
+  {
+    "id": "climate_detail_parameters_icon",
+    "type": "svg_icon",
+    "parent": "climate_detail_parameters_root",
+    "props": {
+      "x": 352,
+      "y": 164,
+      "width": 96,
+      "height": 96,
+      "text_color": "0xD3E3FD",
+      "hidden": false,
+      "clickable": false
+    }
+  },
+  {
+    "id": "climate_detail_parameter_grid",
+    "type": "obj",
+    "parent": "climate_detail_parameters_root",
+    "props": {
+      "x": 146,
+      "y": 280,
+      "width": 508,
+      "height": 312,
+      "bg_opa": "TRANSP",
+      "border_width": 0,
+      "pad_all": 0,
+      "radius": 0,
+      "clickable": false,
+      "scrollable": false,
+      "layout": {
+        "type": "FLEX",
+        "flex_flow": "ROW_WRAP",
+        "flex_align_main": "CENTER",
+        "flex_align_cross": "CENTER",
+        "flex_align_track": "CENTER",
+        "pad_column": 20,
+        "pad_row": 12
+      }
+    }
+  },
+  {
+    "id": "climate_detail_parameter_humidity",
+    "type": "button",
+    "parent": "climate_detail_parameter_grid",
+    "props": {
+      "width": 244,
+      "height": 96,
+      "radius": 32,
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true,
+      "pressed": {
+        "bg_opa": "80%"
+      },
+      "disabled": {
+        "text_opa": "80%"
+      }
+    }
+  },
+  {
+    "id": "climate_detail_parameter_humidity_icon",
+    "type": "svg_icon",
+    "parent": "climate_detail_parameter_humidity",
+    "props": {
+      "x": 106,
+      "y": 12,
+      "width": 32,
+      "height": 32,
+      "text_color": "0xD3E3FD",
+      "hidden": false,
+      "clickable": false
+    }
+  },
+  {
+    "id": "climate_detail_parameter_humidity_label",
+    "type": "label",
+    "parent": "climate_detail_parameter_humidity",
+    "props": {
+      "width": 220,
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false,
+      "x": 12,
+      "y": 50,
+      "height": 38
+    }
+  },
+  {
+    "id": "climate_detail_parameter_preset",
+    "type": "button",
+    "parent": "climate_detail_parameter_grid",
+    "props": {
+      "width": 244,
+      "height": 96,
+      "radius": 32,
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true,
+      "pressed": {
+        "bg_opa": "80%"
+      },
+      "disabled": {
+        "text_opa": "80%"
+      }
+    }
+  },
+  {
+    "id": "climate_detail_parameter_preset_icon",
+    "type": "svg_icon",
+    "parent": "climate_detail_parameter_preset",
+    "props": {
+      "x": 106,
+      "y": 12,
+      "width": 32,
+      "height": 32,
+      "text_color": "0xD3E3FD",
+      "hidden": false,
+      "clickable": false
+    }
+  },
+  {
+    "id": "climate_detail_parameter_preset_label",
+    "type": "label",
+    "parent": "climate_detail_parameter_preset",
+    "props": {
+      "width": 220,
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false,
+      "x": 12,
+      "y": 50,
+      "height": 38
+    }
+  },
+  {
+    "id": "climate_detail_parameter_fan",
+    "type": "button",
+    "parent": "climate_detail_parameter_grid",
+    "props": {
+      "width": 244,
+      "height": 96,
+      "radius": 32,
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true,
+      "pressed": {
+        "bg_opa": "80%"
+      },
+      "disabled": {
+        "text_opa": "80%"
+      }
+    }
+  },
+  {
+    "id": "climate_detail_parameter_fan_icon",
+    "type": "svg_icon",
+    "parent": "climate_detail_parameter_fan",
+    "props": {
+      "x": 106,
+      "y": 12,
+      "width": 32,
+      "height": 32,
+      "text_color": "0xD3E3FD",
+      "hidden": false,
+      "clickable": false
+    }
+  },
+  {
+    "id": "climate_detail_parameter_fan_label",
+    "type": "label",
+    "parent": "climate_detail_parameter_fan",
+    "props": {
+      "width": 220,
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false,
+      "x": 12,
+      "y": 50,
+      "height": 38
+    }
+  },
+  {
+    "id": "climate_detail_parameter_swing",
+    "type": "button",
+    "parent": "climate_detail_parameter_grid",
+    "props": {
+      "width": 244,
+      "height": 96,
+      "radius": 32,
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true,
+      "pressed": {
+        "bg_opa": "80%"
+      },
+      "disabled": {
+        "text_opa": "80%"
+      }
+    }
+  },
+  {
+    "id": "climate_detail_parameter_swing_icon",
+    "type": "svg_icon",
+    "parent": "climate_detail_parameter_swing",
+    "props": {
+      "x": 106,
+      "y": 12,
+      "width": 32,
+      "height": 32,
+      "text_color": "0xD3E3FD",
+      "hidden": false,
+      "clickable": false
+    }
+  },
+  {
+    "id": "climate_detail_parameter_swing_label",
+    "type": "label",
+    "parent": "climate_detail_parameter_swing",
+    "props": {
+      "width": 220,
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false,
+      "x": 12,
+      "y": 50,
+      "height": 38
+    }
+  },
+  {
+    "id": "climate_detail_parameter_swing_horizontal",
+    "type": "button",
+    "parent": "climate_detail_parameter_grid",
+    "props": {
+      "width": 244,
+      "height": 96,
+      "radius": 32,
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true,
+      "pressed": {
+        "bg_opa": "80%"
+      },
+      "disabled": {
+        "text_opa": "80%"
+      }
+    }
+  },
+  {
+    "id": "climate_detail_parameter_swing_horizontal_icon",
+    "type": "svg_icon",
+    "parent": "climate_detail_parameter_swing_horizontal",
+    "props": {
+      "x": 106,
+      "y": 12,
+      "width": 32,
+      "height": 32,
+      "text_color": "0xD3E3FD",
+      "hidden": false,
+      "clickable": false
+    }
+  },
+  {
+    "id": "climate_detail_parameter_swing_horizontal_label",
+    "type": "label",
+    "parent": "climate_detail_parameter_swing_horizontal",
+    "props": {
+      "width": 220,
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false,
+      "x": 12,
+      "y": 50,
+      "height": 38
+    }
+  },
+  {
+    "id": "climate_detail_parameters_back",
+    "type": "button",
+    "parent": "climate_detail_parameters_root",
+    "props": {
+      "width": 212,
+      "height": 64,
+      "radius": 32,
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "border_width": 0,
+      "pad_all": 0,
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": false,
+      "pressed": {
+        "bg_opa": "80%"
+      },
+      "disabled": {
+        "text_opa": "80%"
+      },
+      "x": 294,
+      "y": 654
+    }
+  },
+  {
+    "id": "climate_detail_parameters_back_label",
+    "type": "label",
+    "parent": "climate_detail_parameters_back",
+    "props": {
+      "width": 188,
+      "text_font": "roboto_24",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "detail_numeric_root",
+    "type": "obj",
+    "parent": "BASE",
+    "props": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 800,
+      "bg_opa": "COVER",
+      "radius": 0,
+      "clickable": true,
+      "scrollable": false,
+      "hidden": true
+    }
+  },
+  {
+    "id": "detail_numeric_kind",
+    "type": "label",
+    "parent": "detail_numeric_root",
+    "props": {
+      "x": 200,
+      "y": 68,
+      "width": 400,
+      "height": 28,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_numeric_title",
+    "type": "label",
+    "parent": "detail_numeric_root",
+    "props": {
+      "x": 130,
+      "y": 104,
+      "width": 540,
+      "height": 42,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_numeric_icon_kelvin",
+    "type": "svg_icon",
+    "parent": "detail_numeric_root",
+    "props": {
+      "x": 352,
+      "y": 158,
+      "width": 96,
+      "height": 96,
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_numeric_icon_humidity",
+    "type": "svg_icon",
+    "parent": "detail_numeric_root",
+    "props": {
+      "x": 352,
+      "y": 158,
+      "width": 96,
+      "height": 96,
+      "hidden": true,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_numeric_target_caption",
+    "type": "label",
+    "parent": "detail_numeric_root",
+    "props": {
+      "x": 200,
+      "y": 266,
+      "width": 400,
+      "height": 26,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_numeric_value",
+    "type": "label",
+    "parent": "detail_numeric_root",
+    "props": {
+      "x": 146,
+      "y": 296,
+      "width": 508,
+      "height": 68,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_numeric_current",
+    "type": "label",
+    "parent": "detail_numeric_root",
+    "props": {
+      "x": 180,
+      "y": 366,
+      "width": 440,
+      "height": 28,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_numeric_track",
+    "type": "obj",
+    "parent": "detail_numeric_root",
+    "props": {
+      "x": 146,
+      "y": 394,
+      "width": 508,
+      "height": 72,
+      "bg_opa": "TRANSP",
+      "radius": 0,
+      "clickable": true,
+      "scrollable": false
+    }
+  },
+  {
+    "id": "detail_numeric_inactive_track",
+    "type": "obj",
+    "parent": "detail_numeric_track",
+    "props": {
+      "x": 20,
+      "y": 30,
+      "width": 468,
+      "height": 12,
+      "bg_opa": "COVER",
+      "radius": 6,
+      "clickable": false,
+      "scrollable": false
+    }
+  },
+  {
+    "id": "detail_numeric_fill",
+    "type": "obj",
+    "parent": "detail_numeric_track",
+    "props": {
+      "x": 20,
+      "y": 30,
+      "width": 0,
+      "height": 12,
+      "bg_opa": "COVER",
+      "radius": 6,
+      "clickable": false,
+      "scrollable": false
+    }
+  },
+  {
+    "id": "detail_numeric_knob",
+    "type": "obj",
+    "parent": "detail_numeric_track",
+    "props": {
+      "x": 0,
+      "y": 16,
+      "width": 40,
+      "height": 40,
+      "bg_opa": "COVER",
+      "radius": 20,
+      "clickable": false,
+      "scrollable": false
+    }
+  },
+  {
+    "id": "detail_numeric_minimum",
+    "type": "label",
+    "parent": "detail_numeric_root",
+    "props": {
+      "x": 126,
+      "y": 474,
+      "width": 160,
+      "height": 24,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_numeric_maximum",
+    "type": "label",
+    "parent": "detail_numeric_root",
+    "props": {
+      "x": 514,
+      "y": 474,
+      "width": 160,
+      "height": 24,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_numeric_minus",
+    "type": "button",
+    "parent": "detail_numeric_root",
+    "props": {
+      "width": 76,
+      "height": 64,
+      "radius": 32,
+      "bg_opa": "COVER",
+      "scrollable": false,
+      "hidden": false,
+      "x": 254,
+      "y": 506
+    }
+  },
+  {
+    "id": "detail_numeric_minus_label",
+    "type": "label",
+    "parent": "detail_numeric_minus",
+    "props": {
+      "width": 52,
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "detail_numeric_plus",
+    "type": "button",
+    "parent": "detail_numeric_root",
+    "props": {
+      "width": 76,
+      "height": 64,
+      "radius": 32,
+      "bg_opa": "COVER",
+      "scrollable": false,
+      "hidden": false,
+      "x": 470,
+      "y": 506
+    }
+  },
+  {
+    "id": "detail_numeric_plus_label",
+    "type": "label",
+    "parent": "detail_numeric_plus",
+    "props": {
+      "width": 52,
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "detail_numeric_status",
+    "type": "label",
+    "parent": "detail_numeric_root",
+    "props": {
+      "x": 180,
+      "y": 586,
+      "width": 440,
+      "height": 48,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_numeric_back",
+    "type": "button",
+    "parent": "detail_numeric_root",
+    "props": {
+      "width": 212,
+      "height": 64,
+      "radius": 32,
+      "bg_opa": "COVER",
+      "scrollable": false,
+      "hidden": false,
+      "x": 294,
+      "y": 654
+    }
+  },
+  {
+    "id": "detail_numeric_back_label",
+    "type": "label",
+    "parent": "detail_numeric_back",
+    "props": {
+      "width": 188,
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "detail_choice_root",
+    "type": "obj",
+    "parent": "BASE",
+    "props": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 800,
+      "bg_opa": "COVER",
+      "radius": 0,
+      "clickable": true,
+      "scrollable": false,
+      "hidden": true
+    }
+  },
+  {
+    "id": "detail_choice_kind",
+    "type": "label",
+    "parent": "detail_choice_root",
+    "props": {
+      "x": 200,
+      "y": 68,
+      "width": 400,
+      "height": 28,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_choice_title",
+    "type": "label",
+    "parent": "detail_choice_root",
+    "props": {
+      "x": 130,
+      "y": 104,
+      "width": 540,
+      "height": 42,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_choice_current",
+    "type": "label",
+    "parent": "detail_choice_root",
+    "props": {
+      "x": 130,
+      "y": 154,
+      "width": 540,
+      "height": 52,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_choice_option_0",
+    "type": "button",
+    "parent": "detail_choice_root",
+    "props": {
+      "width": 264,
+      "height": 84,
+      "radius": 32,
+      "bg_opa": "COVER",
+      "scrollable": false,
+      "hidden": true,
+      "x": 130,
+      "y": 220
+    }
+  },
+  {
+    "id": "detail_choice_option_label_0",
+    "type": "label",
+    "parent": "detail_choice_option_0",
+    "props": {
+      "width": 240,
+      "clickable": false,
+      "align": "CENTER",
+      "height": "SIZE_CONTENT"
+    }
+  },
+  {
+    "id": "detail_choice_option_1",
+    "type": "button",
+    "parent": "detail_choice_root",
+    "props": {
+      "width": 264,
+      "height": 84,
+      "radius": 32,
+      "bg_opa": "COVER",
+      "scrollable": false,
+      "hidden": true,
+      "x": 406,
+      "y": 220
+    }
+  },
+  {
+    "id": "detail_choice_option_label_1",
+    "type": "label",
+    "parent": "detail_choice_option_1",
+    "props": {
+      "width": 240,
+      "clickable": false,
+      "align": "CENTER",
+      "height": "SIZE_CONTENT"
+    }
+  },
+  {
+    "id": "detail_choice_option_2",
+    "type": "button",
+    "parent": "detail_choice_root",
+    "props": {
+      "width": 264,
+      "height": 84,
+      "radius": 32,
+      "bg_opa": "COVER",
+      "scrollable": false,
+      "hidden": true,
+      "x": 130,
+      "y": 320
+    }
+  },
+  {
+    "id": "detail_choice_option_label_2",
+    "type": "label",
+    "parent": "detail_choice_option_2",
+    "props": {
+      "width": 240,
+      "clickable": false,
+      "align": "CENTER",
+      "height": "SIZE_CONTENT"
+    }
+  },
+  {
+    "id": "detail_choice_option_3",
+    "type": "button",
+    "parent": "detail_choice_root",
+    "props": {
+      "width": 264,
+      "height": 84,
+      "radius": 32,
+      "bg_opa": "COVER",
+      "scrollable": false,
+      "hidden": true,
+      "x": 406,
+      "y": 320
+    }
+  },
+  {
+    "id": "detail_choice_option_label_3",
+    "type": "label",
+    "parent": "detail_choice_option_3",
+    "props": {
+      "width": 240,
+      "clickable": false,
+      "align": "CENTER",
+      "height": "SIZE_CONTENT"
+    }
+  },
+  {
+    "id": "detail_choice_option_4",
+    "type": "button",
+    "parent": "detail_choice_root",
+    "props": {
+      "width": 264,
+      "height": 84,
+      "radius": 32,
+      "bg_opa": "COVER",
+      "scrollable": false,
+      "hidden": true,
+      "x": 130,
+      "y": 420
+    }
+  },
+  {
+    "id": "detail_choice_option_label_4",
+    "type": "label",
+    "parent": "detail_choice_option_4",
+    "props": {
+      "width": 240,
+      "clickable": false,
+      "align": "CENTER",
+      "height": "SIZE_CONTENT"
+    }
+  },
+  {
+    "id": "detail_choice_option_5",
+    "type": "button",
+    "parent": "detail_choice_root",
+    "props": {
+      "width": 264,
+      "height": 84,
+      "radius": 32,
+      "bg_opa": "COVER",
+      "scrollable": false,
+      "hidden": true,
+      "x": 406,
+      "y": 420
+    }
+  },
+  {
+    "id": "detail_choice_option_label_5",
+    "type": "label",
+    "parent": "detail_choice_option_5",
+    "props": {
+      "width": 240,
+      "clickable": false,
+      "align": "CENTER",
+      "height": "SIZE_CONTENT"
+    }
+  },
+  {
+    "id": "detail_choice_option_6",
+    "type": "button",
+    "parent": "detail_choice_root",
+    "props": {
+      "width": 264,
+      "height": 84,
+      "radius": 32,
+      "bg_opa": "COVER",
+      "scrollable": false,
+      "hidden": true,
+      "x": 130,
+      "y": 520
+    }
+  },
+  {
+    "id": "detail_choice_option_label_6",
+    "type": "label",
+    "parent": "detail_choice_option_6",
+    "props": {
+      "width": 240,
+      "clickable": false,
+      "align": "CENTER",
+      "height": "SIZE_CONTENT"
+    }
+  },
+  {
+    "id": "detail_choice_option_7",
+    "type": "button",
+    "parent": "detail_choice_root",
+    "props": {
+      "width": 264,
+      "height": 84,
+      "radius": 32,
+      "bg_opa": "COVER",
+      "scrollable": false,
+      "hidden": true,
+      "x": 406,
+      "y": 520
+    }
+  },
+  {
+    "id": "detail_choice_option_label_7",
+    "type": "label",
+    "parent": "detail_choice_option_7",
+    "props": {
+      "width": 240,
+      "clickable": false,
+      "align": "CENTER",
+      "height": "SIZE_CONTENT"
+    }
+  },
+  {
+    "id": "detail_choice_status",
+    "type": "label",
+    "parent": "detail_choice_root",
+    "props": {
+      "x": 146,
+      "y": 608,
+      "width": 508,
+      "height": 36,
+      "clickable": false
+    }
+  },
+  {
+    "id": "detail_choice_back",
+    "type": "button",
+    "parent": "detail_choice_root",
+    "props": {
+      "width": 190,
+      "height": 64,
+      "radius": 32,
+      "bg_opa": "COVER",
+      "scrollable": false,
+      "hidden": false,
+      "x": 200,
+      "y": 654
+    }
+  },
+  {
+    "id": "detail_choice_back_label",
+    "type": "label",
+    "parent": "detail_choice_back",
+    "props": {
+      "width": 166,
+      "clickable": false,
+      "align": "CENTER"
+    }
+  },
+  {
+    "id": "detail_choice_apply",
+    "type": "button",
+    "parent": "detail_choice_root",
+    "props": {
+      "width": 190,
+      "height": 64,
+      "radius": 32,
+      "bg_opa": "COVER",
+      "scrollable": false,
+      "hidden": false,
+      "x": 410,
+      "y": 654
+    }
+  },
+  {
+    "id": "detail_choice_apply_label",
+    "type": "label",
+    "parent": "detail_choice_apply",
+    "props": {
+      "width": 166,
+      "clickable": false,
+      "align": "CENTER"
+    }
+  }
+]

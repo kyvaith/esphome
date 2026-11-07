@@ -1,5 +1,7 @@
 #pragma once
 
+#include "start_retry.h"
+
 #include "esphome/core/defines.h"
 
 #ifdef USE_ESP_IDF
@@ -169,6 +171,7 @@ class SendspinHub final : public Component,
     this->pairing_failed_callbacks_.add(std::forward<F>(callback));
   }
 
+  void set_startup_retries(uint8_t retries) { this->start_retry_.set_limit(retries); }
   void set_task_stack_in_psram(bool task_stack_in_psram) { this->task_stack_in_psram_ = task_stack_in_psram; }
   bool get_task_stack_in_psram() const { return this->task_stack_in_psram_; }
 
@@ -415,6 +418,7 @@ class SendspinHub final : public Component,
 #endif
 
   // Requested client state, applied from loop(). The client does not start until both are set.
+  SendspinStartRetry start_retry_;
   std::optional<bool> enabled_;
   std::optional<bool> unpaired_access_;
 

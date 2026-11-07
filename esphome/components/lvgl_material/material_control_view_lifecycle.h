@@ -32,7 +32,7 @@ class ControlViewLifecycle {
 #ifdef USE_LVGL_MATERIAL_NUMBER_STEPPER
   // The owner has already suspended/drained the previous backend and hidden its
   // alias. This switches presentation only; it never copies pixels or tokens.
-  bool handoff_backend(ControlViewBackend *previous, ControlViewBackend *next);
+  bool handoff_backend(ControlViewBackend *previous, ControlViewBackend *next, bool retain_generation = false);
 #endif
   bool suspend_for_snapshot(uint32_t timeout_ms = 250);
   bool resume(uint32_t captured_generation);

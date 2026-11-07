@@ -13,8 +13,9 @@
 #include "esphome/core/optional.h"
 
 // Forward declarations for friend access from codegen-generated setup()
-void setup();           // NOLINT(readability-redundant-declaration) - may be declared in Arduino.h
-void original_setup();  // NOLINT(readability-redundant-declaration)
+void setup();            // NOLINT(readability-redundant-declaration) - may be declared in Arduino.h
+void setup_generated();  // NOLINT(readability-redundant-declaration) - codegen configuration helper
+void original_setup();   // NOLINT(readability-redundant-declaration)
 
 namespace esphome {
 
@@ -338,6 +339,7 @@ class Component {
  protected:
   friend class Application;
   friend void ::setup();
+  friend void ::setup_generated();
   friend void ::original_setup();
 
   /** Set where this component was loaded from for some debug messages.

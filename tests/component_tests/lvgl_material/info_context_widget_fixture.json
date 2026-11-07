@@ -1,0 +1,177 @@
+{
+  "contract_sha256": "82b42d29f2ee11ace11f18e5792d16561e408eae368694afcd1760d807b8c6dc",
+  "schema": {
+    "extra_controller": {
+      "info_context": "bool, default false; requires info=true and both person/sun groups",
+      "person": {
+        "widget_fields": [
+          "root",
+          "icon",
+          "surface",
+          "state_label",
+          "changed_label",
+          "zone_label"
+        ],
+        "compact_state_font": "optional font"
+      },
+      "sun": {
+        "widget_fields": [
+          "root",
+          "icon",
+          "phase_label",
+          "rising_caption",
+          "rising_value",
+          "setting_caption",
+          "setting_value",
+          "elevation_caption",
+          "elevation_value",
+          "azimuth_caption",
+          "azimuth_value",
+          "zone_label"
+        ]
+      }
+    }
+  },
+  "geometry": {
+    "units": "product pixels at800x800; coordinates never in reusable C++",
+    "common": {
+      "kind": [
+        200,
+        72,
+        400,
+        26
+      ],
+      "title": [
+        132,
+        104,
+        536,
+        42
+      ],
+      "updated": [
+        160,
+        650,
+        480,
+        48
+      ],
+      "status": [
+        200,
+        700,
+        400,
+        42
+      ]
+    },
+    "person": {
+      "root": [
+        0,
+        0,
+        800,
+        800
+      ],
+      "surface": [
+        314,
+        170,
+        172,
+        172
+      ],
+      "icon": [
+        344,
+        200,
+        112,
+        112
+      ],
+      "state_label": [
+        130,
+        360,
+        540,
+        84
+      ],
+      "changed_label": [
+        140,
+        462,
+        520,
+        92
+      ],
+      "zone_label": [
+        150,
+        578,
+        500,
+        48
+      ]
+    },
+    "sun": {
+      "root": [
+        0,
+        0,
+        800,
+        800
+      ],
+      "icon": [
+        352,
+        164,
+        96,
+        96
+      ],
+      "phase_label": [
+        150,
+        276,
+        500,
+        42
+      ],
+      "rising_caption": [
+        140,
+        334,
+        520,
+        26
+      ],
+      "rising_value": [
+        140,
+        366,
+        520,
+        58
+      ],
+      "setting_caption": [
+        140,
+        442,
+        520,
+        26
+      ],
+      "setting_value": [
+        140,
+        474,
+        520,
+        58
+      ],
+      "elevation_caption": [
+        110,
+        550,
+        280,
+        24
+      ],
+      "elevation_value": [
+        110,
+        580,
+        280,
+        32
+      ],
+      "azimuth_caption": [
+        410,
+        550,
+        280,
+        24
+      ],
+      "azimuth_value": [
+        410,
+        580,
+        280,
+        32
+      ],
+      "zone_label": [
+        150,
+        620,
+        500,
+        24
+      ]
+    },
+    "font": "Reuse roboto16 captions/footer, roboto20 values, roboto30 primary state; Person compact roboto20. Actual glyph/fit probe follows product source, not asserted here."
+  }
+}

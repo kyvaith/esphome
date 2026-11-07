@@ -1,0 +1,127 @@
+{
+  "integration": 125,
+  "source": "Actual ColorDomain/DetailDomain and entity_control_codec",
+  "contract": "color1-contract.json",
+  "rows": [
+    {
+      "name": "main-grant",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"light\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Device\",\"on\":true,\"brightness_pct\":71,\"caps\":{\"brightness\":true,\"turn_off\":true,\"turn_on\":true},\"light_detail\":{\"version\":1,\"facets\":7,\"state_generation\":1,\"facet\":\"main\",\"view_seq\":0}}"
+    },
+    {
+      "name": "main-state",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"light\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Device\",\"on\":true,\"brightness_pct\":71,\"caps\":{\"brightness\":true,\"turn_off\":true,\"turn_on\":true},\"light_detail\":{\"version\":1,\"facets\":7,\"state_generation\":1,\"facet\":\"main\",\"view_seq\":0}}"
+    },
+    {
+      "name": "source-invalid_brightness",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"light\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Device\",\"on\":true,\"brightness_pct\":null,\"caps\":{\"brightness\":true,\"turn_off\":true,\"turn_on\":true},\"light_detail\":{\"version\":1,\"facets\":7,\"state_generation\":1,\"facet\":\"color\",\"view_seq\":1},\"light_color\":{\"version\":1,\"write_mode\":\"hs\",\"source_mode\":\"hs\",\"rgb\":[255,128,0],\"hue_milli\":30000,\"saturation_milli\":100000,\"editable\":false,\"reason\":\"invalid_brightness\"}}"
+    },
+    {
+      "name": "source-invalid_color",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"light\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Device\",\"on\":true,\"brightness_pct\":71,\"caps\":{\"brightness\":true,\"turn_off\":true,\"turn_on\":true},\"light_detail\":{\"version\":1,\"facets\":7,\"state_generation\":1,\"facet\":\"color\",\"view_seq\":1},\"light_color\":{\"version\":1,\"write_mode\":\"hs\",\"source_mode\":\"hs\",\"rgb\":null,\"hue_milli\":null,\"saturation_milli\":null,\"editable\":false,\"reason\":\"invalid_color\"}}"
+    },
+    {
+      "name": "source-none",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"light\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Device\",\"on\":true,\"brightness_pct\":71,\"caps\":{\"brightness\":true,\"turn_off\":true,\"turn_on\":true},\"light_detail\":{\"version\":1,\"facets\":7,\"state_generation\":1,\"facet\":\"color\",\"view_seq\":1},\"light_color\":{\"version\":1,\"write_mode\":\"hs\",\"source_mode\":\"hs\",\"rgb\":[255,128,0],\"hue_milli\":30000,\"saturation_milli\":100000,\"editable\":true,\"reason\":\"none\"}}"
+    },
+    {
+      "name": "source-off",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"light\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Device\",\"on\":false,\"brightness_pct\":0,\"caps\":{\"brightness\":true,\"turn_off\":true,\"turn_on\":true},\"light_detail\":{\"version\":1,\"facets\":7,\"state_generation\":1,\"facet\":\"color\",\"view_seq\":1},\"light_color\":{\"version\":1,\"write_mode\":\"hs\",\"source_mode\":\"unknown\",\"rgb\":null,\"hue_milli\":null,\"saturation_milli\":null,\"editable\":false,\"reason\":\"off\"}}"
+    },
+    {
+      "name": "source-source_unavailable",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"light\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Device\",\"on\":false,\"brightness_pct\":71,\"caps\":{\"brightness\":true,\"turn_off\":true,\"turn_on\":true},\"light_detail\":{\"version\":1,\"facets\":7,\"state_generation\":1,\"facet\":\"color\",\"view_seq\":1},\"light_color\":{\"version\":1,\"write_mode\":\"hs\",\"source_mode\":\"unknown\",\"rgb\":null,\"hue_milli\":null,\"saturation_milli\":null,\"editable\":false,\"reason\":\"source_unavailable\"}}"
+    },
+    {
+      "name": "source-unsupported_mode",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"light\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Device\",\"on\":true,\"brightness_pct\":71,\"caps\":{\"brightness\":true,\"turn_off\":true,\"turn_on\":true},\"light_detail\":{\"version\":1,\"facets\":7,\"state_generation\":1,\"facet\":\"color\",\"view_seq\":1},\"light_color\":{\"version\":1,\"write_mode\":\"hs\",\"source_mode\":\"other\",\"rgb\":null,\"hue_milli\":null,\"saturation_milli\":null,\"editable\":false,\"reason\":\"unsupported_mode\"}}"
+    },
+    {
+      "name": "mode-rgb",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"light\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Device\",\"on\":true,\"brightness_pct\":71,\"caps\":{\"brightness\":true,\"turn_off\":true,\"turn_on\":true},\"light_detail\":{\"version\":1,\"facets\":6,\"state_generation\":1,\"facet\":\"color\",\"view_seq\":1},\"light_color\":{\"version\":1,\"write_mode\":\"rgb\",\"source_mode\":\"rgb\",\"rgb\":[255,128,0],\"hue_milli\":30000,\"saturation_milli\":100000,\"editable\":true,\"reason\":\"none\"}}"
+    },
+    {
+      "name": "mode-hs",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"light\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Device\",\"on\":true,\"brightness_pct\":71,\"caps\":{\"brightness\":true,\"turn_off\":true,\"turn_on\":true},\"light_detail\":{\"version\":1,\"facets\":6,\"state_generation\":1,\"facet\":\"color\",\"view_seq\":1},\"light_color\":{\"version\":1,\"write_mode\":\"hs\",\"source_mode\":\"hs\",\"rgb\":[255,128,0],\"hue_milli\":30000,\"saturation_milli\":100000,\"editable\":true,\"reason\":\"none\"}}"
+    },
+    {
+      "name": "mode-xy",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"light\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Device\",\"on\":true,\"brightness_pct\":71,\"caps\":{\"brightness\":true,\"turn_off\":true,\"turn_on\":true},\"light_detail\":{\"version\":1,\"facets\":6,\"state_generation\":1,\"facet\":\"color\",\"view_seq\":1},\"light_color\":{\"version\":1,\"write_mode\":\"xy\",\"source_mode\":\"xy\",\"rgb\":[255,128,0],\"hue_milli\":30000,\"saturation_milli\":100000,\"editable\":true,\"reason\":\"none\"}}"
+    },
+    {
+      "name": "mode-color_temp",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":1,\"slot\":2,\"card_id\":\"card-2\",\"revision\":4,\"control_kind\":\"light\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Device\",\"on\":true,\"brightness_pct\":71,\"caps\":{\"brightness\":true,\"turn_off\":true,\"turn_on\":true},\"light_detail\":{\"version\":1,\"facets\":7,\"state_generation\":1,\"facet\":\"color\",\"view_seq\":1},\"light_color\":{\"version\":1,\"write_mode\":\"hs\",\"source_mode\":\"color_temp\",\"rgb\":[255,164,82],\"hue_milli\":28550,\"saturation_milli\":67974,\"editable\":true,\"reason\":\"none\"}}"
+    },
+    {
+      "name": "enter-color",
+      "direction": "device_to_ha",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"facet\",\"open_seq\":1,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"control_kind\":\"light\",\"facet\":\"color\",\"view_seq\":1}"
+    },
+    {
+      "name": "color-ready",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"facet_result\",\"open_seq\":1,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"control_kind\":\"light\",\"facet\":\"color\",\"view_seq\":1,\"state_seq\":2,\"status\":\"ready\",\"reason\":\"none\"}"
+    },
+    {
+      "name": "command-minimum",
+      "direction": "device_to_ha",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"open_seq\":1,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"control_kind\":\"light\",\"command_seq\":1,\"op\":\"facet_color\",\"facet\":\"color\",\"view_seq\":1,\"expected_state_generation\":1,\"target_hue_milli\":0,\"target_saturation_milli\":0}"
+    },
+    {
+      "name": "command-maximum",
+      "direction": "device_to_ha",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"open_seq\":1,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"control_kind\":\"light\",\"command_seq\":1,\"op\":\"facet_color\",\"facet\":\"color\",\"view_seq\":1,\"expected_state_generation\":1,\"target_hue_milli\":359999,\"target_saturation_milli\":100000}"
+    },
+    {
+      "name": "command-precise",
+      "direction": "device_to_ha",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"open_seq\":1,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"control_kind\":\"light\",\"command_seq\":1,\"op\":\"facet_color\",\"facet\":\"color\",\"view_seq\":1,\"expected_state_generation\":1,\"target_hue_milli\":123456,\"target_saturation_milli\":98765}"
+    },
+    {
+      "name": "command-ct-seed-switch",
+      "direction": "device_to_ha",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"open_seq\":1,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"control_kind\":\"light\",\"command_seq\":1,\"op\":\"facet_color\",\"facet\":\"color\",\"view_seq\":1,\"expected_state_generation\":1,\"target_hue_milli\":28550,\"target_saturation_milli\":67974}"
+    },
+    {
+      "name": "result-pending",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"result\",\"open_seq\":1,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"control_kind\":\"light\",\"command_seq\":1,\"state_seq\":3,\"status\":\"pending\",\"reason\":\"none\"}"
+    },
+    {
+      "name": "result-ha_accepted",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"result\",\"open_seq\":1,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"control_kind\":\"light\",\"command_seq\":1,\"state_seq\":3,\"status\":\"ha_accepted\",\"reason\":\"none\"}"
+    },
+    {
+      "name": "result-state_matches",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"result\",\"open_seq\":1,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"control_kind\":\"light\",\"command_seq\":1,\"state_seq\":3,\"status\":\"state_matches\",\"reason\":\"none\"}"
+    },
+    {
+      "name": "result-already_matched",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"result\",\"open_seq\":1,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"control_kind\":\"light\",\"command_seq\":1,\"state_seq\":3,\"status\":\"already_matched\",\"reason\":\"none\"}"
+    },
+    {
+      "name": "result-not_confirmed",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"result\",\"open_seq\":1,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"control_kind\":\"light\",\"command_seq\":1,\"state_seq\":3,\"status\":\"not_confirmed\",\"reason\":\"state_timeout\"}"
+    },
+    {
+      "name": "result-rejected",
+      "direction": "ha_to_device",
+      "wire": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"result\",\"open_seq\":1,\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"revision\":4,\"card_id\":\"card-2\",\"slot\":2,\"control_kind\":\"light\",\"command_seq\":1,\"state_seq\":3,\"status\":\"rejected\",\"reason\":\"stale_state\"}"
+    }
+  ]
+}

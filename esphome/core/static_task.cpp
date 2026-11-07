@@ -3,11 +3,13 @@
 #ifdef USE_ESP32
 
 #include "esphome/core/helpers.h"
+#include "esphome/core/log.h"
 
 namespace esphome {
 
-bool StaticTask::create(TaskFunction_t fn, const char *name, uint32_t stack_size, void *param, UBaseType_t priority,
-                        bool use_psram, BaseType_t core_id) {
+ESPHOME_LOG_TAG(TAG, "static_task");
+
+bool StaticTask::reserve(uint32_t stack_size, bool use_psram) {
   if (this->handle_ != nullptr) {
     // Task is already created; must call destroy() first
     return false;
@@ -26,6 +28,10 @@ bool StaticTask::create(TaskFunction_t fn, const char *name, uint32_t stack_size
     this->stack_buffer_ = allocator.make_unique_array_for_overwrite(stack_size);
   }
   if (this->stack_buffer_ == nullptr) {
+    const uint32_t caps = (use_psram ? MALLOC_CAP_SPIRAM : MALLOC_CAP_INTERNAL) | MALLOC_CAP_8BIT;
+    ESP_LOGE(TAG, "Failed to allocate %u-byte %s task stack: free=%u largest=%u", static_cast<unsigned>(stack_size),
+             use_psram ? "external" : "internal", static_cast<unsigned>(heap_caps_get_free_size(caps)),
+             static_cast<unsigned>(heap_caps_get_largest_free_block(caps)));
     return false;
   }
 
@@ -34,14 +40,28 @@ bool StaticTask::create(TaskFunction_t fn, const char *name, uint32_t stack_size
     this->tcb_ = allocator.make_unique();
   }
   if (this->tcb_ == nullptr) {
+    ESP_LOGE(TAG, "Failed to allocate %u-byte internal task control block",
+             static_cast<unsigned>(sizeof(StaticTask_t)));
     this->deallocate();
+    return false;
+  }
+
+  return true;
+}
+
+bool StaticTask::create(TaskFunction_t fn, const char *name, uint32_t stack_size, void *param, UBaseType_t priority,
+                        bool use_psram, BaseType_t core_id, bool retain_resources_on_create_failure) {
+  if (!this->reserve(stack_size, use_psram)) {
     return false;
   }
 
   this->handle_ = xTaskCreateStaticPinnedToCore(fn, name, this->stack_size_, param, priority, this->stack_buffer_.get(),
                                                 this->tcb_.get(), core_id);
   if (this->handle_ == nullptr) {
-    this->deallocate();
+    ESP_LOGE(TAG, "Failed to create task '%s' with reserved resources", name);
+    if (!retain_resources_on_create_failure) {
+      this->deallocate();
+    }
     return false;
   }
   return true;

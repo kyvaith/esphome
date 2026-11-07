@@ -49,7 +49,8 @@ struct Fixture {
     assert(grant.identity.token.assign("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
     grant.state.state_seq = 1;
     grant.state.title.assign("Number");
-    auto &number = grant.state.number;
+    grant.state.emplace_family<ControlNumberSnapshot>();
+    auto &number = (*grant.state.family_if<ControlNumberSnapshot>());
     number.domain.minimum = -1000000;
     number.domain.maximum = 1000000;
     number.domain.step = 250000;
@@ -80,7 +81,7 @@ struct Fixture {
     message.state.state_seq++;
     if (title_only)
       message.state.title.assign("Number renewed title");
-    auto &number = message.state.number;
+    auto &number = (*message.state.family_if<ControlNumberSnapshot>());
     number.index = available ? index : 0;
     number.available = available;
     number.state_generation = generation;
@@ -98,7 +99,7 @@ struct Fixture {
     message.identity = this->control.owner().identity();
     message.state = this->control.owner().state();
     message.state.state_seq++;
-    auto &number = message.state.number;
+    auto &number = (*message.state.family_if<ControlNumberSnapshot>());
     if (domain) {
       number.domain.step = 500000;
       number.domain.max_index = 4;
@@ -147,10 +148,59 @@ struct Fixture {
   }
 };
 
+static void test_unavailable_caption(const std::string &name) {
+  Fixture f;
+  f.control.set_text_provider([&](uint8_t id) -> const char * {
+    if (id != 16)
+      return nullptr;
+    return name == "caption_localized"      ? "Current localized value unavailable"
+           : name == "caption_legacy_empty" ? ""
+                                            : nullptr;
+  });
+  f.tap(true);
+  assert(f.commands() == 1 && f.control.owner().is_command_pending());
+  if (name != "caption_pending") {
+    f.state(5, 2);
+    ControlMessage terminal;
+    terminal.generic = true;
+    terminal.kind = ControlKind::CONTROL_KIND_RESULT;
+    terminal.identity = f.control.owner().identity();
+    terminal.command_seq = 1;
+    terminal.state.state_seq = f.control.owner().state().state_seq;
+    terminal.result = name == "caption_rejected" ? ControlResult::CONTROL_RESULT_REJECTED
+                                                 : ControlResult::CONTROL_RESULT_STATE_MATCHES;
+    terminal.reason =
+        name == "caption_rejected" ? ControlReason::CONTROL_REASON_SERVICE_ERROR : ControlReason::CONTROL_REASON_NONE;
+    f.receive(terminal);
+  }
+  const auto result = f.control.owner().last_result();
+  f.state(0, 3, false);
+  assert(f.control.owner().last_result() == result && f.commands() == 1);
+  assert(!lv_obj_has_flag(f.widgets.unknown, LV_OBJ_FLAG_HIDDEN));
+  assert(lv_obj_has_state(f.widgets.on, LV_STATE_DISABLED) && lv_obj_has_state(f.widgets.off, LV_STATE_DISABLED));
+  const char *expected = name == "caption_pending"     ? "pending"
+                         : name == "caption_rejected"  ? "rejected"
+                         : name == "caption_localized" ? "Current localized value unavailable"
+                                                       : "Current value unavailable";
+  assert(std::string(lv_label_get_text(f.widgets.status)) == expected);
+  assert(f.control.refresh_texts());
+  assert(std::string(lv_label_get_text(f.widgets.status)) == expected);
+  f.state(5, 4);
+  assert(f.commands() == 1 && f.control.owner().last_result() == result);
+  if (name != "caption_pending" && name != "caption_rejected")
+    assert(std::string(lv_label_get_text(f.widgets.status)) == "state_matches");
+  std::cout << "RESULT " << name << " pass=1" << std::endl;
+}
+
 int main(int argc, char **argv) {
   assert(argc == 2);
   const std::string name = argv[1];
   lv_init();
+  if (name.starts_with("caption_")) {
+    test_unavailable_caption(name);
+    lv_deinit();
+    return 0;
+  }
   bool passed = false;
   {
     Fixture f;
@@ -202,8 +252,9 @@ int main(int argc, char **argv) {
       const auto &command = f.messages.back();
       assert(command.kind == ControlKind::CONTROL_KIND_COMMAND &&
              command.operation == ControlOperation::CONTROL_OPERATION_STEP);
-      assert(command.expected_index == f.control.owner().state().number.index);
-      assert(command.expected_state_generation == f.control.owner().state().number.state_generation);
+      assert(command.expected_index == (*f.control.owner().state().family_if<ControlNumberSnapshot>()).index);
+      assert(command.expected_state_generation ==
+             (*f.control.owner().state().family_if<ControlNumberSnapshot>()).state_generation);
     }
     std::cout << "RESULT " << name << " commands=" << f.commands() << " captured=" << f.control.captured()
               << " pass=" << passed << std::endl;

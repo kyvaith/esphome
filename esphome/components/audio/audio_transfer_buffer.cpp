@@ -1,5 +1,7 @@
 #include "audio_transfer_buffer.h"
 
+#include <new>
+
 #ifdef USE_ESP32
 
 #include <cstring>
@@ -217,7 +219,17 @@ std::unique_ptr<RingBufferAudioSource> RingBufferAudioSource::create(
     return nullptr;
   }
   return std::unique_ptr<RingBufferAudioSource>(
-      new RingBufferAudioSource(std::move(ring_buffer), max_fill_bytes, alignment_bytes));
+      new (std::nothrow) RingBufferAudioSource(std::move(ring_buffer), max_fill_bytes, alignment_bytes));
+}
+
+std::unique_ptr<RingBufferAudioSource> RingBufferAudioSource::create_borrowed(ring_buffer::RingBuffer *ring_buffer,
+                                                                              size_t max_fill_bytes,
+                                                                              uint8_t alignment_bytes) {
+  if (ring_buffer == nullptr || max_fill_bytes == 0 || alignment_bytes == 0 || alignment_bytes > MAX_ALIGNMENT_BYTES) {
+    return nullptr;
+  }
+  return std::unique_ptr<RingBufferAudioSource>(
+      new (std::nothrow) RingBufferAudioSource(ring_buffer, max_fill_bytes, alignment_bytes));
 }
 
 RingBufferAudioSource::~RingBufferAudioSource() {

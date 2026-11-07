@@ -20,9 +20,9 @@
 
 // Threading model for static analysis. Match what the real codegen picks per
 // platform (see esphome/components/<platform>/__init__.py ThreadModel.*):
-//   USE_ESP8266 / USE_RP2 / USE_NRF52 → SINGLE
-//   USE_BK72XX (ARMv5TE, no LDREX/STREX) → MULTI_NO_ATOMICS
-//   everything else (ESP32, host, RTL87XX, LN882X) → MULTI_ATOMICS
+//   USE_ESP8266 / USE_RP2 / USE_NRF52 â†’ SINGLE
+//   USE_BK72XX (ARMv5TE, no LDREX/STREX) â†’ MULTI_NO_ATOMICS
+//   everything else (ESP32, host, RTL87XX, LN882X) â†’ MULTI_ATOMICS
 // Without this the clang-tidy envs end up with USE_<single-threaded platform>
 // + MULTI_ATOMICS simultaneously, a combination that can never occur in a
 // real build.
@@ -39,6 +39,10 @@
 #define ESPHOME_LOGGER_TX_BUFFER_SIZE 512
 #define USE_LOG_LISTENERS
 #define ESPHOME_LOG_MAX_LISTENERS 8
+
+// i18n (the generated runtime value is the configured translation count)
+#define I18N_TRANSLATION_CAPACITY 512
+#define USE_I18N_FLASH_TABLE
 
 // Feature flags
 #define USE_ALARM_CONTROL_PANEL
@@ -127,6 +131,7 @@
 #define USE_LOGGER_LEVEL_LISTENERS
 #define USE_LOGGER_RUNTIME_TAG_LEVELS
 #define USE_LVGL
+#define USE_MIPI_DSI_MEMORY_FAULT_DIAGNOSTICS
 #define USE_LVGL_ANIMATION
 #define USE_LVGL_ANIMIMG
 #define USE_LVGL_ARC
@@ -166,6 +171,7 @@
 #define USE_LVGL_TEXTAREA
 #define USE_LVGL_TILEVIEW
 #define USE_LVGL_TOUCHSCREEN
+#define USE_LVGL_DEFERRED_PRESS_CONTEXT
 #define USE_MDNS
 #define USE_MDNS_STORE_SERVICES
 #define GPS_LISTENER_COUNT 1
@@ -410,9 +416,9 @@
 #endif
 
 // bluetooth_proxy runs on any platform with a BLE hub (advertisement-only off
-// esp32). Declared here per analysis ENVIRONMENT, not per hub platform —
+// esp32). Declared here per analysis ENVIRONMENT, not per hub platform â€”
 // USE_LIBRETINY also covers chips with no hub, e.g. rtl87xx (the authoritative
-// gate is _HUB_PLATFORMS in bluetooth_proxy/__init__.py) — so the neutral
+// gate is _HUB_PLATFORMS in bluetooth_proxy/__init__.py) â€” so the neutral
 // declarations in bluetooth_proxy.h are parsed under LibreTiny static analysis
 // (the header is included by api_connection.cpp, which the tidy filter selects;
 // the proxy's own .cpp is not a selected translation unit). Not declared for
@@ -421,7 +427,7 @@
 #define USE_BLUETOOTH_PROXY
 // Mirror the codegen values per platform: _to_code_esp32() emits the connection
 // count (default 3) and the scanner-state push slot, _to_code_ble_hub() emits
-// the slot count (3 on rp2, 0 on advertisement-only hubs) — so static analysis
+// the slot count (3 on rp2, 0 on advertisement-only hubs) â€” so static analysis
 // checks the same instantiations a real build produces.
 #ifdef USE_ESP32
 #define USE_BLE_SCANNER_STATE_CALLBACK
@@ -847,6 +853,43 @@
 
 // Opt-in regional scalar and navigation admission (static analysis only).
 #define USE_LVGL_MATERIAL_DIRECT_SCALAR_CONTROL
+#define USE_LVGL_MATERIAL_NUMBER_STEPPER
+#define USE_LVGL_MATERIAL_THERMOSTAT
+#define USE_LVGL_MATERIAL_COVER_CONTROLS
+#define USE_LVGL_MATERIAL_HUMIDIFIER_CONTROLS
+#define USE_LVGL_MATERIAL_HUMIDIFIER_TILE_ROUTING
+#define USE_LVGL_MATERIAL_FAN_CONTROLS
+#define USE_LVGL_MATERIAL_FAN_TILE_ROUTING
+#define USE_LVGL_MATERIAL_COVER_PRIORITY_STOP
+#define USE_LVGL_MATERIAL_COVER_PANEL
+#define USE_LVGL_MATERIAL_ROBOT_CONTROLS
+#define USE_LVGL_MATERIAL_DETAIL_CONTROLS
+#define USE_LVGL_MATERIAL_CLIMATE_RANGE
+#define USE_LVGL_MATERIAL_LIGHT_COLOR
+#define USE_LVGL_MATERIAL_EXTRA_CONTROLS
+#define USE_LVGL_MATERIAL_MEDIA_CONTROLS
+#define USE_LVGL_MATERIAL_ACTION_CONTROLS
+#define USE_LVGL_MATERIAL_ACTION_PARAMETERS
+#define USE_LVGL_MATERIAL_TILE_EVENT_CONTROLS
+#define USE_LVGL_MATERIAL_INFO_CONTEXT
+#define USE_LVGL_MATERIAL_TEXT_CONTROLS
+#define USE_LVGL_MATERIAL_DATETIME_CONTROLS
+#define USE_LVGL_MATERIAL_DETAIL_TILE_ROUTING
+#define USE_LVGL_MATERIAL_PANEL_CONTROLS
+#define USE_LVGL_MATERIAL_TIMER_PANEL
+#define USE_LVGL_MATERIAL_PANEL_TILE_ROUTING
+#define USE_LVGL_MATERIAL_ROBOT_TILE_ROUTING
+#define USE_LVGL_MATERIAL_COVER_TILE_ROUTING
+#define USE_LVGL_MATERIAL_CHOICE_SELECTOR
+#define USE_LVGL_MATERIAL_ENTITY_CONTROL_TILE_ROUTING
+#define USE_LVGL_MATERIAL_CHOICE_TILE_ROUTING
 #define USE_LVGL_DIRECT_REGION_EXPECTED_GENERATION
 #define USE_LVGL_NAVIGATION_ADMISSION_GUARD
 #define ESPHOME_LVGL_NAVIGATION_ADMISSION_GUARD_COUNT 1
+
+#define USE_LVGL_MATERIAL_NOTIFICATION_CENTER
+#define USE_LVGL_MATERIAL_NOTIFICATION_ACTION
+#define USE_LVGL_MATERIAL_NOTIFICATION_ROW_CACHE
+
+#define USE_LVGL_MATERIAL_INFO_AGENDA
+#define USE_LVGL_MATERIAL_INFO_STATISTICS

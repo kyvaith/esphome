@@ -1,0 +1,288 @@
+[
+  {
+    "id": "light_color_root",
+    "type": "obj",
+    "parent": "BASE",
+    "props": {
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 800,
+      "bg_color": 0,
+      "bg_opa": "COVER",
+      "styles": "m3_text_control_inset",
+      "radius": 0,
+      "clickable": true,
+      "scrollable": false,
+      "hidden": true
+    }
+  },
+  {
+    "id": "light_color_kind",
+    "type": "label",
+    "parent": "light_color_root",
+    "props": {
+      "x": 200,
+      "y": 68,
+      "width": 400,
+      "height": 28,
+      "text_font": "roboto_20",
+      "text_color": 12896197,
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_title",
+    "type": "label",
+    "parent": "light_color_root",
+    "props": {
+      "x": 130,
+      "y": 104,
+      "width": 540,
+      "height": 42,
+      "text_font": "roboto_30",
+      "text_color": 15921906,
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_preview",
+    "type": "label",
+    "parent": "light_color_root",
+    "props": {
+      "text_font": "roboto_24",
+      "text_color": 15921906,
+      "text_align": "CENTER",
+      "long_mode": "CLIP",
+      "x": 310,
+      "y": 164,
+      "width": 180,
+      "height": 104,
+      "radius": 32,
+      "bg_color": 2437433,
+      "bg_opa": "COVER",
+      "border_width": 2,
+      "border_color": 6779258,
+      "pad_all": 0,
+      "pad_top": 36,
+      "pad_bottom": 36,
+      "pad_left": 12,
+      "pad_right": 12,
+      "scrollable": false,
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_status",
+    "type": "label",
+    "parent": "light_color_root",
+    "props": {
+      "x": 170,
+      "y": 284,
+      "width": 460,
+      "height": 56,
+      "text_font": "roboto_20",
+      "text_color": 12896197,
+      "text_align": "CENTER",
+      "long_mode": "WRAP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_hue_label",
+    "type": "label",
+    "parent": "light_color_root",
+    "props": {
+      "x": 130,
+      "y": 354,
+      "width": 540,
+      "height": 28,
+      "text_font": "roboto_20",
+      "text_color": 15921906,
+      "long_mode": "CLIP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_hue_slider",
+    "type": "slider",
+    "parent": "light_color_root",
+    "props": {
+      "x": 130,
+      "y": 400,
+      "width": 540,
+      "height": 28,
+      "min_value": 0,
+      "max_value": 359999,
+      "value": 0,
+      "animated": false,
+      "styles": "m3_text_control_inset",
+      "radius": 14,
+      "bg_color": 2437433,
+      "bg_opa": "COVER",
+      "clickable": false,
+      "scrollable": false,
+      "indicator": {
+        "radius": 14,
+        "bg_color": 11461375,
+        "bg_opa": "COVER"
+      },
+      "knob": {
+        "bg_color": 15921906,
+        "bg_opa": "COVER",
+        "border_color": 1053720,
+        "border_width": 3,
+        "radius": 20,
+        "pad_all": 6
+      }
+    }
+  },
+  {
+    "id": "light_color_saturation_label",
+    "type": "label",
+    "parent": "light_color_root",
+    "props": {
+      "x": 130,
+      "y": 478,
+      "width": 540,
+      "height": 28,
+      "text_font": "roboto_20",
+      "text_color": 15921906,
+      "long_mode": "CLIP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_saturation_slider",
+    "type": "slider",
+    "parent": "light_color_root",
+    "props": {
+      "x": 130,
+      "y": 524,
+      "width": 540,
+      "height": 28,
+      "min_value": 0,
+      "max_value": 100000,
+      "value": 0,
+      "animated": false,
+      "styles": "m3_text_control_inset",
+      "radius": 14,
+      "bg_color": 2437433,
+      "bg_opa": "COVER",
+      "clickable": false,
+      "scrollable": false,
+      "indicator": {
+        "radius": 14,
+        "bg_color": 11461375,
+        "bg_opa": "COVER"
+      },
+      "knob": {
+        "bg_color": 15921906,
+        "bg_opa": "COVER",
+        "border_color": 1053720,
+        "border_width": 3,
+        "radius": 20,
+        "pad_all": 6
+      }
+    }
+  },
+  {
+    "id": "light_color_cancel",
+    "type": "button",
+    "parent": "light_color_root",
+    "props": {
+      "x": 174,
+      "y": 646,
+      "width": 208,
+      "height": 72,
+      "radius": 36,
+      "styles": "m3_text_control_inset",
+      "bg_color": 1910835,
+      "bg_opa": "COVER",
+      "shadow_width": 0,
+      "scrollable": false
+    }
+  },
+  {
+    "id": "light_color_cancel_label",
+    "type": "label",
+    "parent": "light_color_cancel",
+    "props": {
+      "width": 188,
+      "height": 44,
+      "align": "CENTER",
+      "text_font": "roboto_24",
+      "text_color": 15921906,
+      "text_align": "CENTER",
+      "long_mode": "CLIP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_color_apply",
+    "type": "button",
+    "parent": "light_color_root",
+    "props": {
+      "x": 418,
+      "y": 646,
+      "width": 208,
+      "height": 72,
+      "radius": 36,
+      "styles": "m3_text_control_inset",
+      "bg_color": 1910835,
+      "bg_opa": "COVER",
+      "shadow_width": 0,
+      "scrollable": false
+    }
+  },
+  {
+    "id": "light_color_apply_label",
+    "type": "label",
+    "parent": "light_color_apply",
+    "props": {
+      "width": 188,
+      "height": 44,
+      "align": "CENTER",
+      "text_font": "roboto_20",
+      "text_color": 15921906,
+      "text_align": "CENTER",
+      "long_mode": "CLIP",
+      "clickable": false
+    }
+  },
+  {
+    "id": "light_detail_color",
+    "type": "button",
+    "parent": "light_detail_actions",
+    "props": {
+      "width": 244,
+      "flex_grow": 1,
+      "height": 56,
+      "radius": 28,
+      "styles": "m3_text_control_inset",
+      "bg_color": "0x1D2833",
+      "bg_opa": "COVER",
+      "shadow_width": 0,
+      "scrollable": false,
+      "hidden": true
+    }
+  },
+  {
+    "id": "light_detail_color_label",
+    "type": "label",
+    "parent": "light_detail_color",
+    "props": {
+      "width": "85%",
+      "text_font": "roboto_20",
+      "text_color": "0xF2F2F2",
+      "text_align": "CENTER",
+      "long_mode": "DOT",
+      "clickable": false,
+      "align": "CENTER"
+    }
+  }
+]

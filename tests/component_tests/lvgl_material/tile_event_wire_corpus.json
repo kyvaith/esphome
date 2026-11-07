@@ -1,0 +1,374 @@
+{
+  "status": "GENERATED_FROM_HOST_ACTUAL_OWNER_AND_REGISTERED_INGRESS_NOT_LIVE",
+  "integration_version": "0.4.0.dev123",
+  "profiles": [
+    {
+      "name": "action",
+      "version": 2
+    },
+    {
+      "name": "datetime",
+      "version": 1
+    },
+    {
+      "name": "info",
+      "version": 1
+    },
+    {
+      "name": "info_context",
+      "version": 1
+    },
+    {
+      "name": "lock",
+      "version": 1
+    },
+    {
+      "name": "media",
+      "version": 1
+    },
+    {
+      "name": "text",
+      "version": 1
+    },
+    {
+      "name": "tile_event",
+      "version": 1
+    }
+  ],
+  "rows": [
+    {
+      "name": "open",
+      "value": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "kind": "open",
+        "slot": 2,
+        "revision": 4,
+        "open_seq": 1,
+        "card_id": "card-2",
+        "control_kind": "panel",
+        "channel": "00000000000000000000000000000001"
+      },
+      "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"open\",\"slot\":2,\"revision\":4,\"open_seq\":1,\"card_id\":\"card-2\",\"control_kind\":\"panel\",\"channel\":\"00000000000000000000000000000001\"}",
+      "size_utf8": 170
+    },
+    {
+      "name": "first-use",
+      "value": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "kind": "grant",
+        "slot": 2,
+        "revision": 4,
+        "open_seq": 1,
+        "card_id": "card-2",
+        "control_kind": "panel",
+        "channel": "00000000000000000000000000000001",
+        "token": "00000000000000000000000000000002",
+        "state_seq": 1,
+        "ttl_ms": 30000,
+        "title": "Kitchen",
+        "panel_type": "action",
+        "panel_caps": {
+          "action_type": "tile_event",
+          "run_blocked": "none",
+          "skip_condition": null,
+          "operations": 1,
+          "stop_actions": null
+        },
+        "panel_state": {
+          "phase": "stateless",
+          "last_used_status": "unknown",
+          "last_used_text": "",
+          "current": null,
+          "source": "known"
+        },
+        "available": true,
+        "eligible_actions": 1,
+        "state_generation": 1
+      },
+      "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"slot\":2,\"revision\":4,\"open_seq\":1,\"card_id\":\"card-2\",\"control_kind\":\"panel\",\"channel\":\"00000000000000000000000000000001\",\"token\":\"00000000000000000000000000000002\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Kitchen\",\"panel_type\":\"action\",\"panel_caps\":{\"action_type\":\"tile_event\",\"run_blocked\":\"none\",\"skip_condition\":null,\"operations\":1,\"stop_actions\":null},\"panel_state\":{\"phase\":\"stateless\",\"last_used_status\":\"unknown\",\"last_used_text\":\"\",\"current\":null,\"source\":\"known\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}",
+      "size_utf8": 579
+    },
+    {
+      "name": "press-command",
+      "value": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "kind": "command",
+        "slot": 2,
+        "revision": 4,
+        "open_seq": 1,
+        "card_id": "card-2",
+        "control_kind": "panel",
+        "channel": "00000000000000000000000000000001",
+        "token": "00000000000000000000000000000002",
+        "action_version": 1,
+        "command_seq": 1,
+        "op": "press",
+        "expected_state_generation": 1
+      },
+      "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"slot\":2,\"revision\":4,\"open_seq\":1,\"card_id\":\"card-2\",\"control_kind\":\"panel\",\"channel\":\"00000000000000000000000000000001\",\"token\":\"00000000000000000000000000000002\",\"action_version\":1,\"command_seq\":1,\"op\":\"press\",\"expected_state_generation\":1}",
+      "size_utf8": 294
+    },
+    {
+      "name": "result-0",
+      "value": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "kind": "result",
+        "slot": 2,
+        "revision": 4,
+        "open_seq": 1,
+        "card_id": "card-2",
+        "control_kind": "panel",
+        "channel": "00000000000000000000000000000001",
+        "token": "00000000000000000000000000000002",
+        "command_seq": 1,
+        "state_seq": 1,
+        "status": "pending",
+        "reason": "none"
+      },
+      "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"result\",\"slot\":2,\"revision\":4,\"open_seq\":1,\"card_id\":\"card-2\",\"control_kind\":\"panel\",\"channel\":\"00000000000000000000000000000001\",\"token\":\"00000000000000000000000000000002\",\"command_seq\":1,\"state_seq\":1,\"status\":\"pending\",\"reason\":\"none\"}",
+      "size_utf8": 280
+    },
+    {
+      "name": "used-state-1",
+      "value": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "kind": "state",
+        "slot": 2,
+        "revision": 4,
+        "open_seq": 1,
+        "card_id": "card-2",
+        "control_kind": "panel",
+        "channel": "00000000000000000000000000000001",
+        "token": "00000000000000000000000000000002",
+        "state_seq": 2,
+        "ttl_ms": 30000,
+        "title": "Kitchen",
+        "panel_type": "action",
+        "panel_caps": {
+          "action_type": "tile_event",
+          "run_blocked": "none",
+          "skip_condition": null,
+          "operations": 1,
+          "stop_actions": null
+        },
+        "panel_state": {
+          "phase": "stateless",
+          "last_used_status": "value",
+          "last_used_text": "2026-11-06T13:00:00+00:00",
+          "current": null,
+          "source": "known"
+        },
+        "available": true,
+        "eligible_actions": 1,
+        "state_generation": 1
+      },
+      "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"state\",\"slot\":2,\"revision\":4,\"open_seq\":1,\"card_id\":\"card-2\",\"control_kind\":\"panel\",\"channel\":\"00000000000000000000000000000001\",\"token\":\"00000000000000000000000000000002\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Kitchen\",\"panel_type\":\"action\",\"panel_caps\":{\"action_type\":\"tile_event\",\"run_blocked\":\"none\",\"skip_condition\":null,\"operations\":1,\"stop_actions\":null},\"panel_state\":{\"phase\":\"stateless\",\"last_used_status\":\"value\",\"last_used_text\":\"2026-11-06T13:00:00+00:00\",\"current\":null,\"source\":\"known\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}",
+      "size_utf8": 602
+    },
+    {
+      "name": "result-2",
+      "value": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "kind": "result",
+        "slot": 2,
+        "revision": 4,
+        "open_seq": 1,
+        "card_id": "card-2",
+        "control_kind": "panel",
+        "channel": "00000000000000000000000000000001",
+        "token": "00000000000000000000000000000002",
+        "command_seq": 1,
+        "state_seq": 2,
+        "status": "service_dispatched",
+        "reason": "none"
+      },
+      "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"result\",\"slot\":2,\"revision\":4,\"open_seq\":1,\"card_id\":\"card-2\",\"control_kind\":\"panel\",\"channel\":\"00000000000000000000000000000001\",\"token\":\"00000000000000000000000000000002\",\"command_seq\":1,\"state_seq\":2,\"status\":\"service_dispatched\",\"reason\":\"none\"}",
+      "size_utf8": 291
+    },
+    {
+      "name": "close",
+      "value": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "kind": "close",
+        "slot": 2,
+        "revision": 4,
+        "open_seq": 1,
+        "card_id": "card-2",
+        "control_kind": "panel",
+        "channel": "00000000000000000000000000000001",
+        "token": "00000000000000000000000000000002",
+        "reason": "user"
+      },
+      "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"close\",\"slot\":2,\"revision\":4,\"open_seq\":1,\"card_id\":\"card-2\",\"control_kind\":\"panel\",\"channel\":\"00000000000000000000000000000001\",\"token\":\"00000000000000000000000000000002\",\"reason\":\"user\"}",
+      "size_utf8": 230
+    },
+    {
+      "name": "timestamp",
+      "value": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "kind": "grant",
+        "slot": 2,
+        "revision": 4,
+        "open_seq": 1,
+        "card_id": "card-2",
+        "control_kind": "panel",
+        "channel": "00000000000000000000000000000001",
+        "token": "00000000000000000000000000000002",
+        "state_seq": 1,
+        "ttl_ms": 30000,
+        "title": "Kitchen",
+        "panel_type": "action",
+        "panel_caps": {
+          "action_type": "tile_event",
+          "run_blocked": "none",
+          "skip_condition": null,
+          "operations": 1,
+          "stop_actions": null
+        },
+        "panel_state": {
+          "phase": "stateless",
+          "last_used_status": "value",
+          "last_used_text": "2026-11-06T13:59:59.999999+01:00",
+          "current": null,
+          "source": "known"
+        },
+        "available": true,
+        "eligible_actions": 1,
+        "state_generation": 1
+      },
+      "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"slot\":2,\"revision\":4,\"open_seq\":1,\"card_id\":\"card-2\",\"control_kind\":\"panel\",\"channel\":\"00000000000000000000000000000001\",\"token\":\"00000000000000000000000000000002\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Kitchen\",\"panel_type\":\"action\",\"panel_caps\":{\"action_type\":\"tile_event\",\"run_blocked\":\"none\",\"skip_condition\":null,\"operations\":1,\"stop_actions\":null},\"panel_state\":{\"phase\":\"stateless\",\"last_used_status\":\"value\",\"last_used_text\":\"2026-11-06T13:59:59.999999+01:00\",\"current\":null,\"source\":\"known\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}",
+      "size_utf8": 609
+    },
+    {
+      "name": "unknown",
+      "value": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "kind": "grant",
+        "slot": 2,
+        "revision": 4,
+        "open_seq": 1,
+        "card_id": "card-2",
+        "control_kind": "panel",
+        "channel": "00000000000000000000000000000001",
+        "token": "00000000000000000000000000000002",
+        "state_seq": 1,
+        "ttl_ms": 30000,
+        "title": "Kitchen",
+        "panel_type": "action",
+        "panel_caps": {
+          "action_type": "tile_event",
+          "run_blocked": "none",
+          "skip_condition": null,
+          "operations": 1,
+          "stop_actions": null
+        },
+        "panel_state": {
+          "source": "unknown",
+          "phase": "unknown",
+          "last_used_status": "unknown",
+          "last_used_text": "",
+          "current": null
+        },
+        "available": false,
+        "eligible_actions": 0,
+        "state_generation": 1
+      },
+      "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"slot\":2,\"revision\":4,\"open_seq\":1,\"card_id\":\"card-2\",\"control_kind\":\"panel\",\"channel\":\"00000000000000000000000000000001\",\"token\":\"00000000000000000000000000000002\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Kitchen\",\"panel_type\":\"action\",\"panel_caps\":{\"action_type\":\"tile_event\",\"run_blocked\":\"none\",\"skip_condition\":null,\"operations\":1,\"stop_actions\":null},\"panel_state\":{\"source\":\"unknown\",\"phase\":\"unknown\",\"last_used_status\":\"unknown\",\"last_used_text\":\"\",\"current\":null},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+      "size_utf8": 580
+    },
+    {
+      "name": "unavailable",
+      "value": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "kind": "grant",
+        "slot": 2,
+        "revision": 4,
+        "open_seq": 1,
+        "card_id": "card-2",
+        "control_kind": "panel",
+        "channel": "00000000000000000000000000000001",
+        "token": "00000000000000000000000000000002",
+        "state_seq": 1,
+        "ttl_ms": 30000,
+        "title": "Kitchen",
+        "panel_type": "action",
+        "panel_caps": {
+          "action_type": "tile_event",
+          "run_blocked": "none",
+          "skip_condition": null,
+          "operations": 1,
+          "stop_actions": null
+        },
+        "panel_state": {
+          "source": "unavailable",
+          "phase": "unknown",
+          "last_used_status": "unknown",
+          "last_used_text": "",
+          "current": null
+        },
+        "available": false,
+        "eligible_actions": 0,
+        "state_generation": 1
+      },
+      "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"slot\":2,\"revision\":4,\"open_seq\":1,\"card_id\":\"card-2\",\"control_kind\":\"panel\",\"channel\":\"00000000000000000000000000000001\",\"token\":\"00000000000000000000000000000002\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Kitchen\",\"panel_type\":\"action\",\"panel_caps\":{\"action_type\":\"tile_event\",\"run_blocked\":\"none\",\"skip_condition\":null,\"operations\":1,\"stop_actions\":null},\"panel_state\":{\"source\":\"unavailable\",\"phase\":\"unknown\",\"last_used_status\":\"unknown\",\"last_used_text\":\"\",\"current\":null},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+      "size_utf8": 584
+    },
+    {
+      "name": "read-only",
+      "value": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "kind": "grant",
+        "slot": 2,
+        "revision": 4,
+        "open_seq": 1,
+        "card_id": "card-2",
+        "control_kind": "panel",
+        "channel": "00000000000000000000000000000001",
+        "token": "00000000000000000000000000000002",
+        "state_seq": 1,
+        "ttl_ms": 30000,
+        "title": "Kitchen",
+        "panel_type": "action",
+        "panel_caps": {
+          "action_type": "tile_event",
+          "run_blocked": "none",
+          "skip_condition": null,
+          "operations": 0,
+          "stop_actions": null
+        },
+        "panel_state": {
+          "phase": "stateless",
+          "last_used_status": "unknown",
+          "last_used_text": "",
+          "current": null,
+          "source": "known"
+        },
+        "available": true,
+        "eligible_actions": 0,
+        "state_generation": 1
+      },
+      "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"slot\":2,\"revision\":4,\"open_seq\":1,\"card_id\":\"card-2\",\"control_kind\":\"panel\",\"channel\":\"00000000000000000000000000000001\",\"token\":\"00000000000000000000000000000002\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Kitchen\",\"panel_type\":\"action\",\"panel_caps\":{\"action_type\":\"tile_event\",\"run_blocked\":\"none\",\"skip_condition\":null,\"operations\":0,\"stop_actions\":null},\"panel_state\":{\"phase\":\"stateless\",\"last_used_status\":\"unknown\",\"last_used_text\":\"\",\"current\":null,\"source\":\"known\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+      "size_utf8": 579
+    }
+  ],
+  "source_sha256": {
+    "action_panel_domain.py": "24e767876ff6243068c04703af75fdf42c71ae8dfa1b9931fd2708c20bd2dc20",
+    "action_panel_control.py": "659cc730a891cc40904b36591ecf897d81c2900c549eb3a1f4cd1b4f98fdfa1b",
+    "action_panel_codec.py": "4e8f5204f1747c73b9bad9652cf958ea0afbd23e97ad33ad2cd146dea803b934",
+    "entity_control_codec.py": "c137f3f2e86cf3a93cd9ca2c9e47199cdf4f9b5c9ac17fdbd532d6e517bcaf3e",
+    "control_session.py": "5d5ec2b225185f93aaebc9a28950806aeeff2b2736d27746a32e57dc9fdf1dfe",
+    "tile_events.py": "9426c7146840311c83dc884dfa9a1b2969cf23e7ab2e8203594e57256e714603",
+    "controller.py": "82b9a187cfeae92f619ed79ea9b248267f792bb6ae84af8150ac50cd1782668d"
+  }
+}

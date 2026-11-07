@@ -1,0 +1,87 @@
+"""A complete fan view is opt-in and reuses the existing application owner."""
+
+import asyncio
+import unittest
+from unittest.mock import patch
+
+import test_entity_control_number_codegen as number
+
+from esphome import codegen as cg, config_validation as cv
+from esphome.components.lvgl.lvcode import LvglComponent
+from esphome.components.lvgl.types import LvglApplication, LvglNavigation
+from esphome.config import iter_ids
+from esphome.core import CORE, ID
+
+entity = number.entity
+
+
+class FanCodegenTests(unittest.TestCase):
+    def profile(self):
+        return {
+            **{name: f"fan_{name}" for name in entity.FAN_WIDGET_FIELDS},
+            "speed_caption": "fan_speed_caption",
+            **{
+                group: [
+                    {
+                        "button": f"fan_{group}_{index}",
+                        "label": f"fan_{group}_{index}_label",
+                    }
+                    for index in range(8)
+                ]
+                for group in ("speed_buttons", "preset_options")
+            },
+        }
+
+    def test_default_and_incomplete_bindings(self):
+        fixture = number.NumberCodegenTests()
+        CORE.reset()
+        self.assertNotIn(
+            "fan_controller", entity.ENTITY_CONTROL_SCHEMA(fixture.enabled())
+        )
+        for profile in (
+            {},
+            self.profile() | {"speed_buttons": self.profile()["speed_buttons"][:7]},
+            self.profile() | {"status_label": "fan_state_label"},
+            self.profile() | {"speed_caption": "fan_value_label"},
+        ):
+            with self.subTest(profile=profile), self.assertRaises(cv.Invalid):
+                entity.ENTITY_CONTROL_SCHEMA(fixture.enabled(fan_controller=profile))
+        with self.assertRaises(cv.Invalid):
+            entity.ENTITY_CONTROL_SCHEMA(fixture.config(fan_controller=self.profile()))
+
+    def test_one_owner_and_fixed_widget_pools(self):
+        fixture = number.NumberCodegenTests()
+        CORE.reset()
+        for name, type_ in (
+            ("ui", LvglComponent),
+            ("nav", LvglNavigation),
+            ("app", LvglApplication),
+        ):
+            cg.new_Pvariable(ID(name, type=type_, is_declaration=True))
+        CORE.component_ids.add("control")
+        config = entity.ENTITY_CONTROL_SCHEMA(
+            fixture.enabled(fan_controller=self.profile())
+        )
+        declared = {str(id_) for id_, _ in iter_ids(config) if id_.id is not None}
+        for id_, _ in iter_ids(config):
+            if id_.id is None:
+                id_.resolve(declared)
+                declared.add(str(id_))
+
+        async def widgets(conf, name):
+            return [type("Widget", (), {"obj": cg.MockObj(str(conf[name]))})()]
+
+        with patch.object(entity, "get_widgets", widgets):
+            asyncio.run(entity.entity_controls_to_code([config]))
+        CORE.flush_tasks()
+        generated = str(CORE.cpp_main_section)
+        self.assertEqual(
+            generated.count("MaterialGenericEntityControlComponent(ui)"), 1
+        )
+        self.assertEqual(generated.count("set_fan_profile("), 1)
+        self.assertEqual(generated.count("set_fan_speed_caption("), 1)
+        self.assertEqual(generated.count("set_fan_speed_button("), 8)
+        self.assertEqual(generated.count("set_fan_preset_option("), 8)
+        self.assertIn(
+            "USE_LVGL_MATERIAL_FAN_CONTROLS", {define.name for define in CORE.defines}
+        )

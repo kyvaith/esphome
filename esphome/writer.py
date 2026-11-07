@@ -41,9 +41,14 @@ CPP_BASE_FORMAT = (
 """,
     """"
 
-void setup() {
+// Release configuration temporaries before component setup runs on the same task.
+__attribute__((noinline)) void setup_generated() {
   """,
     """
+}
+
+void setup() {
+  setup_generated();
   App.setup();
 }
 
@@ -542,6 +547,25 @@ def write_cpp(code_s):
             code_format[0], CPP_INCLUDE_BEGIN, CPP_INCLUDE_END
         )
         code_format = (code_format_[0], code_format_[1], code_format[1])
+        # Upgrade only our stock legacy scaffold. User-maintained code around
+        # the markers can rely on local scope, so leave custom scaffolds intact.
+        legacy_setup = re.fullmatch(
+            r'"?\s*(?P<attribute>__attribute__\(\(optimize\("O[0123sg]"\)\)\)\s*)?'
+            r"void setup\(\)\s*\{\s*",
+            code_format[1],
+        )
+        legacy_tail = re.fullmatch(
+            r"\s*App\.setup\(\);\s*\}\s*void loop\(\)\s*\{\s*App\.loop\(\);\s*\}\s*",
+            code_format[2],
+        )
+        if legacy_setup and legacy_tail:
+            prefix = CPP_BASE_FORMAT[1]
+            if attribute := legacy_setup.group("attribute"):
+                prefix = prefix.replace(
+                    "__attribute__((noinline))",
+                    f"{attribute.strip()} __attribute__((noinline))",
+                )
+            code_format = (code_format[0], prefix, CPP_BASE_FORMAT[2])
     else:
         code_format = CPP_BASE_FORMAT
 

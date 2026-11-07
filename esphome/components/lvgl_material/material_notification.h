@@ -3,6 +3,9 @@
 #include "esphome/components/lvgl/lvgl_esphome.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
+#ifdef USE_LVGL_MATERIAL_NOTIFICATION_CENTER
+#include "material_modal_scene.h"
+#endif
 
 #include <array>
 #include <cstdint>
@@ -21,6 +24,14 @@ class MaterialNotificationOverlay : public Component {
   void set_message(lv_obj_t *message) { this->message_ = message; }
   void set_scrim_opacity(lv_opa_t opacity) { this->scrim_opacity_ = opacity; }
   void set_default_duration(uint32_t duration) { this->default_duration_ = duration; }
+  void set_from_top(bool from_top) { this->from_top_ = from_top; }
+  bool is_active() const { return this->active_ || this->closing_; }
+#ifdef USE_LVGL_MATERIAL_NOTIFICATION_CENTER
+  uint32_t dismissible_generation() const { return this->active_ && !this->closing_ ? this->generation_ : 0; }
+  void set_scene(MaterialModalScene *scene) { this->scene_ = scene; }
+  void set_system_layer(lv_obj_t *layer) { lv_obj_set_parent(this->root_, layer); }
+  void hold_for_center(bool hold);
+#endif
 
   void setup() override;
   void loop() override;
@@ -67,11 +78,18 @@ class MaterialNotificationOverlay : public Component {
   uint32_t default_duration_{6000};
   uint32_t deadline_{0};
   uint32_t close_deadline_{0};
+  uint32_t retry_at_{0};
   int32_t panel_hidden_translate_y_{0};
   bool active_{false};
   bool closing_{false};
   bool close_animation_ready_{false};
   bool direct_regions_paused_{false};
+  bool from_top_{false};
+#ifdef USE_LVGL_MATERIAL_NOTIFICATION_CENTER
+  MaterialModalScene *scene_{};
+  uint32_t generation_{};
+  bool center_open_{};
+#endif
 };
 
 template<typename... Ts> class MaterialNotificationShowAction : public Action<Ts...> {
@@ -95,7 +113,7 @@ template<typename... Ts> class MaterialNotificationDismissAction : public Action
   explicit MaterialNotificationDismissAction(MaterialNotificationOverlay *parent) : parent_(parent) {}
 
  protected:
-  void play(const Ts &...x) override { this->parent_->dismiss(); }
+  void play(const Ts &...) override { this->parent_->dismiss(); }
   MaterialNotificationOverlay *parent_;
 };
 

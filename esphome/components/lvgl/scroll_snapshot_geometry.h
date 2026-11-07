@@ -37,14 +37,24 @@ void scroll_snapshot_release_segments(Segments &segments, Destroy &&destroy) {
 // Publish only a complete partition. A failure at any piece returns every new
 // allocation, while borrowed external storage is never passed to destroy().
 template<typename Segments, typename Take, typename Destroy>
-bool scroll_snapshot_capture_partition(Segments &segments, int height, size_t stride, Take &&take, Destroy &&destroy) {
+bool scroll_snapshot_capture_partition(Segments &segments, int height, size_t stride, Take &&take, Destroy &&destroy,
+                                       size_t target_bytes = SCROLL_SNAPSHOT_SEGMENT_TARGET_BYTES) {
   if (height <= 0 || stride == 0 || !segments.empty())
     return false;
-  const size_t rows_per_segment = scroll_snapshot_rows_per_segment(stride);
+  const size_t minimum_rows = scroll_snapshot_rows_per_segment(stride);
+  size_t rows_per_segment = std::max(minimum_rows, target_bytes / stride);
   segments.reserve(scroll_snapshot_segment_count(static_cast<size_t>(height), stride));
   for (int y = 0; y < height;) {
-    const int rows = static_cast<int>(std::min<size_t>(height - y, rows_per_segment));
+    int rows = static_cast<int>(std::min<size_t>(height - y, rows_per_segment));
     auto *buffer = take(y, rows);
+    // A larger opt-in target reduces hardware submissions per viewport. Keep
+    // successful pieces, and bound failed attempts by halving down to the
+    // existing target. The old default still makes exactly one attempt/piece.
+    while (buffer == nullptr && static_cast<size_t>(rows) > minimum_rows) {
+      rows_per_segment = std::max(minimum_rows, static_cast<size_t>(rows) / 2);
+      rows = static_cast<int>(std::min<size_t>(height - y, rows_per_segment));
+      buffer = take(y, rows);
+    }
     if (buffer == nullptr) {
       scroll_snapshot_release_segments(segments, destroy);
       return false;

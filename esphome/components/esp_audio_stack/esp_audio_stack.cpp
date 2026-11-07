@@ -456,8 +456,12 @@ void ESPAudioStack::sync_processor_background_consumer_() {
 }
 
 void ESPAudioStack::request_audio_preallocation_() {
-  if (this->prealloc_attempted_.load(std::memory_order_acquire) ||
-      this->prealloc_requested_.load(std::memory_order_acquire) || this->audio_task_handle_ == nullptr) {
+  if (this->prealloc_state_.load(std::memory_order_acquire) != PreallocState::PREALLOC_IDLE ||
+      this->audio_task_handle_ == nullptr) {
+    return;
+  }
+  const auto retry_at = this->prealloc_retry_at_.load(std::memory_order_relaxed);
+  if (retry_at != 0 && static_cast<int32_t>(millis() - retry_at) < 0) {
     return;
   }
   bool frame_shape_known = true;
@@ -470,15 +474,16 @@ void ESPAudioStack::request_audio_preallocation_() {
   if (!frame_shape_known) {
     return;
   }
-  this->prealloc_requested_.store(true, std::memory_order_release);
-  xTaskNotifyGive(this->audio_task_handle_);
+  auto idle = PreallocState::PREALLOC_IDLE;
+  if (this->prealloc_state_.compare_exchange_strong(idle, PreallocState::PREALLOC_REQUESTED, std::memory_order_acq_rel)) {
+    xTaskNotifyGive(this->audio_task_handle_);
+  }
 }
 
 void ESPAudioStack::loop() {
   this->sync_processor_background_consumer_();
 
-  if (!this->audio_stack_running_.load(std::memory_order_relaxed) &&
-      this->audio_task_idle_.load(std::memory_order_relaxed)) {
+  if (this->audio_task_idle_.load(std::memory_order_relaxed)) {
     this->request_audio_preallocation_();
   }
 

@@ -1,0 +1,730 @@
+{
+  "source": "Actual HA119 encode/decode corpus",
+  "messages": [
+    {
+      "id": "date-grant",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 11,
+        "slot": 29,
+        "card_id": "review-datetime-date",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000b",
+        "kind": "grant",
+        "state_seq": 1,
+        "ttl_ms": 30000,
+        "title": "Date helper",
+        "panel_type": "datetime",
+        "available": true,
+        "panel_caps": {
+          "mode": "date",
+          "can_set": true,
+          "zone_text": ""
+        },
+        "panel_state": {
+          "source": "known",
+          "year": 2028,
+          "month": 2,
+          "day": 28,
+          "hour": null,
+          "minute": null,
+          "second": null,
+          "updated_text": "2026-11-05T21:00:00+01:00"
+        },
+        "eligible_actions": 1,
+        "state_generation": 1
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":11,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000b\",\"kind\":\"grant\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Date helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"date\",\"can_set\":true,\"zone_text\":\"\"},\"panel_state\":{\"source\":\"known\",\"year\":2028,\"month\":2,\"day\":28,\"hour\":null,\"minute\":null,\"second\":null,\"updated_text\":\"2026-11-05T21:00:00+01:00\"},\"eligible_actions\":1,\"state_generation\":1}"
+    },
+    {
+      "id": "date-command",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 11,
+        "slot": 29,
+        "card_id": "review-datetime-date",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000b",
+        "kind": "command",
+        "datetime_version": 1,
+        "command_seq": 1,
+        "expected_state_generation": 1,
+        "op": "set_datetime",
+        "target": {
+          "year": 2028,
+          "month": 2,
+          "day": 29,
+          "hour": null,
+          "minute": null,
+          "second": null
+        }
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":11,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000b\",\"kind\":\"command\",\"datetime_version\":1,\"command_seq\":1,\"expected_state_generation\":1,\"op\":\"set_datetime\",\"target\":{\"year\":2028,\"month\":2,\"day\":29,\"hour\":null,\"minute\":null,\"second\":null}}"
+    },
+    {
+      "id": "date-pending",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 11,
+        "slot": 29,
+        "card_id": "review-datetime-date",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000b",
+        "kind": "result",
+        "command_seq": 1,
+        "state_seq": 1,
+        "status": "pending",
+        "reason": "none"
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":11,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000b\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"pending\",\"reason\":\"none\"}"
+    },
+    {
+      "id": "date-ha_accepted",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 11,
+        "slot": 29,
+        "card_id": "review-datetime-date",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000b",
+        "kind": "result",
+        "command_seq": 1,
+        "state_seq": 1,
+        "status": "ha_accepted",
+        "reason": "none"
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":11,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000b\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"ha_accepted\",\"reason\":\"none\"}"
+    },
+    {
+      "id": "date-state",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 11,
+        "slot": 29,
+        "card_id": "review-datetime-date",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000b",
+        "kind": "state",
+        "state_seq": 2,
+        "ttl_ms": 30000,
+        "title": "Date helper",
+        "panel_type": "datetime",
+        "available": true,
+        "panel_caps": {
+          "mode": "date",
+          "can_set": true,
+          "zone_text": ""
+        },
+        "panel_state": {
+          "source": "known",
+          "year": 2028,
+          "month": 2,
+          "day": 29,
+          "hour": null,
+          "minute": null,
+          "second": null,
+          "updated_text": "2026-11-05T21:00:01+01:00"
+        },
+        "eligible_actions": 1,
+        "state_generation": 2
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":11,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000b\",\"kind\":\"state\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Date helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"date\",\"can_set\":true,\"zone_text\":\"\"},\"panel_state\":{\"source\":\"known\",\"year\":2028,\"month\":2,\"day\":29,\"hour\":null,\"minute\":null,\"second\":null,\"updated_text\":\"2026-11-05T21:00:01+01:00\"},\"eligible_actions\":1,\"state_generation\":2}"
+    },
+    {
+      "id": "date-state_matches",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 11,
+        "slot": 29,
+        "card_id": "review-datetime-date",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000b",
+        "kind": "result",
+        "command_seq": 1,
+        "state_seq": 2,
+        "status": "state_matches",
+        "reason": "none"
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":11,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000b\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":2,\"status\":\"state_matches\",\"reason\":\"none\"}"
+    },
+    {
+      "id": "time-grant",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 12,
+        "slot": 29,
+        "card_id": "review-datetime-time",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000c",
+        "kind": "grant",
+        "state_seq": 1,
+        "ttl_ms": 30000,
+        "title": "Time helper",
+        "panel_type": "datetime",
+        "available": true,
+        "panel_caps": {
+          "mode": "time",
+          "can_set": true,
+          "zone_text": ""
+        },
+        "panel_state": {
+          "source": "known",
+          "year": null,
+          "month": null,
+          "day": null,
+          "hour": 12,
+          "minute": 34,
+          "second": 56,
+          "updated_text": "2026-11-05T21:00:00+01:00"
+        },
+        "eligible_actions": 1,
+        "state_generation": 1
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"grant\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Time helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"time\",\"can_set\":true,\"zone_text\":\"\"},\"panel_state\":{\"source\":\"known\",\"year\":null,\"month\":null,\"day\":null,\"hour\":12,\"minute\":34,\"second\":56,\"updated_text\":\"2026-11-05T21:00:00+01:00\"},\"eligible_actions\":1,\"state_generation\":1}"
+    },
+    {
+      "id": "time-command",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 12,
+        "slot": 29,
+        "card_id": "review-datetime-time",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000c",
+        "kind": "command",
+        "datetime_version": 1,
+        "command_seq": 1,
+        "expected_state_generation": 1,
+        "op": "set_datetime",
+        "target": {
+          "year": null,
+          "month": null,
+          "day": null,
+          "hour": 12,
+          "minute": 35,
+          "second": 7
+        }
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"command\",\"datetime_version\":1,\"command_seq\":1,\"expected_state_generation\":1,\"op\":\"set_datetime\",\"target\":{\"year\":null,\"month\":null,\"day\":null,\"hour\":12,\"minute\":35,\"second\":7}}"
+    },
+    {
+      "id": "time-pending",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 12,
+        "slot": 29,
+        "card_id": "review-datetime-time",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000c",
+        "kind": "result",
+        "command_seq": 1,
+        "state_seq": 1,
+        "status": "pending",
+        "reason": "none"
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"pending\",\"reason\":\"none\"}"
+    },
+    {
+      "id": "time-ha_accepted",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 12,
+        "slot": 29,
+        "card_id": "review-datetime-time",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000c",
+        "kind": "result",
+        "command_seq": 1,
+        "state_seq": 1,
+        "status": "ha_accepted",
+        "reason": "none"
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"ha_accepted\",\"reason\":\"none\"}"
+    },
+    {
+      "id": "time-state",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 12,
+        "slot": 29,
+        "card_id": "review-datetime-time",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000c",
+        "kind": "state",
+        "state_seq": 2,
+        "ttl_ms": 30000,
+        "title": "Time helper",
+        "panel_type": "datetime",
+        "available": true,
+        "panel_caps": {
+          "mode": "time",
+          "can_set": true,
+          "zone_text": ""
+        },
+        "panel_state": {
+          "source": "known",
+          "year": null,
+          "month": null,
+          "day": null,
+          "hour": 12,
+          "minute": 35,
+          "second": 7,
+          "updated_text": "2026-11-05T21:00:01+01:00"
+        },
+        "eligible_actions": 1,
+        "state_generation": 2
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"state\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Time helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"time\",\"can_set\":true,\"zone_text\":\"\"},\"panel_state\":{\"source\":\"known\",\"year\":null,\"month\":null,\"day\":null,\"hour\":12,\"minute\":35,\"second\":7,\"updated_text\":\"2026-11-05T21:00:01+01:00\"},\"eligible_actions\":1,\"state_generation\":2}"
+    },
+    {
+      "id": "time-state_matches",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 12,
+        "slot": 29,
+        "card_id": "review-datetime-time",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000c",
+        "kind": "result",
+        "command_seq": 1,
+        "state_seq": 2,
+        "status": "state_matches",
+        "reason": "none"
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":2,\"status\":\"state_matches\",\"reason\":\"none\"}"
+    },
+    {
+      "id": "datetime-grant",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 13,
+        "slot": 29,
+        "card_id": "review-datetime-datetime",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000d",
+        "kind": "grant",
+        "state_seq": 1,
+        "ttl_ms": 30000,
+        "title": "Date and time helper",
+        "panel_type": "datetime",
+        "available": true,
+        "panel_caps": {
+          "mode": "datetime",
+          "can_set": true,
+          "zone_text": "Europe/Warsaw"
+        },
+        "panel_state": {
+          "source": "known",
+          "year": 2026,
+          "month": 11,
+          "day": 5,
+          "hour": 20,
+          "minute": 15,
+          "second": 37,
+          "updated_text": "2026-11-05T21:00:00+01:00"
+        },
+        "eligible_actions": 1,
+        "state_generation": 1
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"grant\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Date and time helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"datetime\",\"can_set\":true,\"zone_text\":\"Europe/Warsaw\"},\"panel_state\":{\"source\":\"known\",\"year\":2026,\"month\":11,\"day\":5,\"hour\":20,\"minute\":15,\"second\":37,\"updated_text\":\"2026-11-05T21:00:00+01:00\"},\"eligible_actions\":1,\"state_generation\":1}"
+    },
+    {
+      "id": "datetime-command",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 13,
+        "slot": 29,
+        "card_id": "review-datetime-datetime",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000d",
+        "kind": "command",
+        "datetime_version": 1,
+        "command_seq": 1,
+        "expected_state_generation": 1,
+        "op": "set_datetime",
+        "target": {
+          "year": 2026,
+          "month": 11,
+          "day": 6,
+          "hour": 7,
+          "minute": 30,
+          "second": 9
+        }
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"command\",\"datetime_version\":1,\"command_seq\":1,\"expected_state_generation\":1,\"op\":\"set_datetime\",\"target\":{\"year\":2026,\"month\":11,\"day\":6,\"hour\":7,\"minute\":30,\"second\":9}}"
+    },
+    {
+      "id": "datetime-pending",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 13,
+        "slot": 29,
+        "card_id": "review-datetime-datetime",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000d",
+        "kind": "result",
+        "command_seq": 1,
+        "state_seq": 1,
+        "status": "pending",
+        "reason": "none"
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"pending\",\"reason\":\"none\"}"
+    },
+    {
+      "id": "datetime-ha_accepted",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 13,
+        "slot": 29,
+        "card_id": "review-datetime-datetime",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000d",
+        "kind": "result",
+        "command_seq": 1,
+        "state_seq": 1,
+        "status": "ha_accepted",
+        "reason": "none"
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"ha_accepted\",\"reason\":\"none\"}"
+    },
+    {
+      "id": "datetime-state",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 13,
+        "slot": 29,
+        "card_id": "review-datetime-datetime",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000d",
+        "kind": "state",
+        "state_seq": 2,
+        "ttl_ms": 30000,
+        "title": "Date and time helper",
+        "panel_type": "datetime",
+        "available": true,
+        "panel_caps": {
+          "mode": "datetime",
+          "can_set": true,
+          "zone_text": "Europe/Warsaw"
+        },
+        "panel_state": {
+          "source": "known",
+          "year": 2026,
+          "month": 11,
+          "day": 6,
+          "hour": 7,
+          "minute": 30,
+          "second": 9,
+          "updated_text": "2026-11-05T21:00:01+01:00"
+        },
+        "eligible_actions": 1,
+        "state_generation": 2
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"state\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Date and time helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"datetime\",\"can_set\":true,\"zone_text\":\"Europe/Warsaw\"},\"panel_state\":{\"source\":\"known\",\"year\":2026,\"month\":11,\"day\":6,\"hour\":7,\"minute\":30,\"second\":9,\"updated_text\":\"2026-11-05T21:00:01+01:00\"},\"eligible_actions\":1,\"state_generation\":2}"
+    },
+    {
+      "id": "datetime-state_matches",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 13,
+        "slot": 29,
+        "card_id": "review-datetime-datetime",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000d",
+        "kind": "result",
+        "command_seq": 1,
+        "state_seq": 2,
+        "status": "state_matches",
+        "reason": "none"
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":2,\"status\":\"state_matches\",\"reason\":\"none\"}"
+    },
+    {
+      "id": "metadata-only same-generation update preserves draft",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 13,
+        "slot": 29,
+        "card_id": "review-datetime-datetime",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000d",
+        "kind": "state",
+        "state_seq": 2,
+        "ttl_ms": 30000,
+        "title": "Date and time helper",
+        "panel_type": "datetime",
+        "available": true,
+        "panel_caps": {
+          "mode": "datetime",
+          "can_set": true,
+          "zone_text": "Europe/Warsaw"
+        },
+        "panel_state": {
+          "source": "known",
+          "year": 2026,
+          "month": 11,
+          "day": 5,
+          "hour": 20,
+          "minute": 15,
+          "second": 37,
+          "updated_text": "2026-11-05T21:00:02+01:00"
+        },
+        "eligible_actions": 1,
+        "state_generation": 1
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"state\",\"state_seq\":2,\"ttl_ms\":30000,\"title\":\"Date and time helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"datetime\",\"can_set\":true,\"zone_text\":\"Europe/Warsaw\"},\"panel_state\":{\"source\":\"known\",\"year\":2026,\"month\":11,\"day\":5,\"hour\":20,\"minute\":15,\"second\":37,\"updated_text\":\"2026-11-05T21:00:02+01:00\"},\"eligible_actions\":1,\"state_generation\":1}"
+    },
+    {
+      "id": "source unknown clears all fields and draft",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 13,
+        "slot": 29,
+        "card_id": "review-datetime-datetime",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000d",
+        "kind": "state",
+        "state_seq": 3,
+        "ttl_ms": 30000,
+        "title": "Date and time helper",
+        "panel_type": "datetime",
+        "available": false,
+        "panel_caps": {
+          "mode": "datetime",
+          "can_set": true,
+          "zone_text": "Europe/Warsaw"
+        },
+        "panel_state": {
+          "source": "unknown",
+          "year": null,
+          "month": null,
+          "day": null,
+          "hour": null,
+          "minute": null,
+          "second": null,
+          "updated_text": "2026-11-05T21:00:00+01:00"
+        },
+        "eligible_actions": 0,
+        "state_generation": 2
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"state\",\"state_seq\":3,\"ttl_ms\":30000,\"title\":\"Date and time helper\",\"panel_type\":\"datetime\",\"available\":false,\"panel_caps\":{\"mode\":\"datetime\",\"can_set\":true,\"zone_text\":\"Europe/Warsaw\"},\"panel_state\":{\"source\":\"unknown\",\"year\":null,\"month\":null,\"day\":null,\"hour\":null,\"minute\":null,\"second\":null,\"updated_text\":\"2026-11-05T21:00:00+01:00\"},\"eligible_actions\":0,\"state_generation\":2}"
+    },
+    {
+      "id": "source unavailable clears all fields and draft",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 12,
+        "slot": 29,
+        "card_id": "review-datetime-time",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000c",
+        "kind": "state",
+        "state_seq": 3,
+        "ttl_ms": 30000,
+        "title": "Time helper",
+        "panel_type": "datetime",
+        "available": false,
+        "panel_caps": {
+          "mode": "time",
+          "can_set": true,
+          "zone_text": ""
+        },
+        "panel_state": {
+          "source": "unavailable",
+          "year": null,
+          "month": null,
+          "day": null,
+          "hour": null,
+          "minute": null,
+          "second": null,
+          "updated_text": "2026-11-05T21:00:00+01:00"
+        },
+        "eligible_actions": 0,
+        "state_generation": 2
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"state\",\"state_seq\":3,\"ttl_ms\":30000,\"title\":\"Time helper\",\"panel_type\":\"datetime\",\"available\":false,\"panel_caps\":{\"mode\":\"time\",\"can_set\":true,\"zone_text\":\"\"},\"panel_state\":{\"source\":\"unavailable\",\"year\":null,\"month\":null,\"day\":null,\"hour\":null,\"minute\":null,\"second\":null,\"updated_text\":\"2026-11-05T21:00:00+01:00\"},\"eligible_actions\":0,\"state_generation\":2}"
+    },
+    {
+      "id": "new read-only grant when service is absent",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 14,
+        "slot": 29,
+        "card_id": "review-datetime-date",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000e",
+        "kind": "grant",
+        "state_seq": 1,
+        "ttl_ms": 30000,
+        "title": "Date helper",
+        "panel_type": "datetime",
+        "available": true,
+        "panel_caps": {
+          "mode": "date",
+          "can_set": false,
+          "zone_text": ""
+        },
+        "panel_state": {
+          "source": "known",
+          "year": 2028,
+          "month": 2,
+          "day": 28,
+          "hour": null,
+          "minute": null,
+          "second": null,
+          "updated_text": "2026-11-05T21:00:00+01:00"
+        },
+        "eligible_actions": 0,
+        "state_generation": 1
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":14,\"slot\":29,\"card_id\":\"review-datetime-date\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000e\",\"kind\":\"grant\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Date helper\",\"panel_type\":\"datetime\",\"available\":true,\"panel_caps\":{\"mode\":\"date\",\"can_set\":false,\"zone_text\":\"\"},\"panel_state\":{\"source\":\"known\",\"year\":2028,\"month\":2,\"day\":28,\"hour\":null,\"minute\":null,\"second\":null,\"updated_text\":\"2026-11-05T21:00:00+01:00\"},\"eligible_actions\":0,\"state_generation\":1}"
+    },
+    {
+      "id": "equal target before dispatch, no service",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 12,
+        "slot": 29,
+        "card_id": "review-datetime-time",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000c",
+        "kind": "result",
+        "command_seq": 1,
+        "state_seq": 1,
+        "status": "already_matched",
+        "reason": "none"
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":12,\"slot\":29,\"card_id\":\"review-datetime-time\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000c\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"already_matched\",\"reason\":\"none\"}"
+    },
+    {
+      "id": "stale expected generation, no service",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 13,
+        "slot": 29,
+        "card_id": "review-datetime-datetime",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000d",
+        "kind": "result",
+        "command_seq": 1,
+        "state_seq": 2,
+        "status": "rejected",
+        "reason": "stale_state"
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":2,\"status\":\"rejected\",\"reason\":\"stale_state\"}"
+    },
+    {
+      "id": "service raised before confirmation",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 13,
+        "slot": 29,
+        "card_id": "review-datetime-datetime",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000d",
+        "kind": "result",
+        "command_seq": 1,
+        "state_seq": 1,
+        "status": "rejected",
+        "reason": "service_error"
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"rejected\",\"reason\":\"service_error\"}"
+    },
+    {
+      "id": "service completed but no matching authoritative state",
+      "message": {
+        "v": 1,
+        "type": "entity_control_v1",
+        "channel": "0123456789abcdef0123456789abcdef",
+        "open_seq": 13,
+        "slot": 29,
+        "card_id": "review-datetime-datetime",
+        "revision": 400,
+        "control_kind": "panel",
+        "token": "0000000000000000000000000000000d",
+        "kind": "result",
+        "command_seq": 1,
+        "state_seq": 1,
+        "status": "not_confirmed",
+        "reason": "state_timeout"
+      },
+      "raw": "{\"v\":1,\"type\":\"entity_control_v1\",\"channel\":\"0123456789abcdef0123456789abcdef\",\"open_seq\":13,\"slot\":29,\"card_id\":\"review-datetime-datetime\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"0000000000000000000000000000000d\",\"kind\":\"result\",\"command_seq\":1,\"state_seq\":1,\"status\":\"not_confirmed\",\"reason\":\"state_timeout\"}"
+    }
+  ],
+  "source_sha256": "2ad480c4a063d00c0cc0bdb46e180da9c043a7d0f9d608f1cebe94d2159a466d"
+}

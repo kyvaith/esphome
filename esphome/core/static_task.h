@@ -30,6 +30,10 @@ class StaticTask {
   /// @brief Get the FreeRTOS task handle.
   TaskHandle_t get_handle() const { return this->handle_; }
 
+  /// Allocate the stack and internal TCB without starting a task. Refuses an active task.
+  /// Reuses an existing compatible reservation; destroy() retains it and deallocate() releases it.
+  bool reserve(uint32_t stack_size, bool use_psram);
+
   /// @brief Allocate the TCB (always internal RAM) and the stack, then create the task.
   /// @param fn         Task function
   /// @param name       Task name (for debug)
@@ -38,9 +42,11 @@ class StaticTask {
   /// @param priority   FreeRTOS task priority
   /// @param use_psram  If true, allocate stack in PSRAM; otherwise internal RAM
   /// @param core_id    CPU core, or tskNO_AFFINITY to leave scheduling unrestricted
+  /// @param retain_resources_on_create_failure Keep an existing reservation if the RTOS rejects task creation.
+  ///                  Allocation failures retain the normal cleanup policy; no task is started by reserve().
   /// @return true on success; false if either allocation fails or the task cannot be created
   bool create(TaskFunction_t fn, const char *name, uint32_t stack_size, void *param, UBaseType_t priority,
-              bool use_psram, BaseType_t core_id = tskNO_AFFINITY);
+              bool use_psram, BaseType_t core_id = tskNO_AFFINITY, bool retain_resources_on_create_failure = false);
 
   /// @brief Delete the task, keeping the TCB and stack buffer allocated for reuse by a subsequent create() call.
   /// The task must have finished its work and parked itself, either suspended or blocked indefinitely: it is

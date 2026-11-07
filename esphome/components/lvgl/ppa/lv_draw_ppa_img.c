@@ -157,6 +157,7 @@ static void lv_draw_img_ppa_core(lv_draw_task_t *t, const lv_draw_image_dsc_t *d
                                  const lv_area_t *img_coords, const lv_area_t *clipped_img_area);
 
 static uint32_t s_ppa_img_srm_tasks;
+static uint32_t s_rgb888_dma_copy_tasks;
 static uint32_t s_ppa_img_srm_large_tasks;
 static uint32_t s_ppa_img_srm_unaligned_tasks;
 static uint64_t s_ppa_img_srm_unaligned_bytes;
@@ -362,6 +363,7 @@ void lv_draw_ppa_direct_animation_qos_restore(void) {
 }
 
 uint32_t lv_draw_ppa_get_img_srm_task_count(void) { return s_ppa_img_srm_tasks; }
+uint32_t lv_draw_ppa_get_rgb888_dma_copy_task_count(void) { return s_rgb888_dma_copy_tasks; }
 
 uint32_t lv_draw_ppa_get_img_srm_large_task_count(void) { return s_ppa_img_srm_large_tasks; }
 
@@ -821,6 +823,38 @@ void lv_draw_ppa_img_srm(lv_draw_task_t *t, const lv_draw_image_dsc_t *dsc, cons
                (unsigned) src_sync_size, (unsigned) elapsed);
     }
   }
+
+#ifdef USE_LVGL_RGB888_DMA2D_IMAGE_COPY
+  const uintptr_t copy_source = (uintptr_t) src_buf;
+  const uintptr_t copy_target = (uintptr_t) dest_buf->data;
+  const uint64_t copy_source_size = (uint64_t) src_stride * src_h;
+  const uint64_t copy_target_size = (uint64_t) dest_stride * dest_buf->header.h;
+  const bool disjoint_buffers = copy_source <= copy_target ? (uint64_t) (copy_target - copy_source) >= copy_source_size
+                                                           : (uint64_t) (copy_source - copy_target) >= copy_target_size;
+  // RGB888 identity copies need no SRM conversion or compact staging image.
+  // Limit this opt-in path to the same small rectangles previously copied
+  // from the compact buffer by DMA2D; large/alpha/transformed images retain
+  // their existing pipeline. Clean adjacent cache lines before the DMA and
+  // invalidate afterwards so partial rows cannot discard a neighbour's pixel.
+  if (pixel_count < 100000U && esp_ptr_external_ram(src_buf) && disjoint_buffers && src_cf == LV_COLOR_FORMAT_RGB888 &&
+      dest_cf == LV_COLOR_FORMAT_RGB888 && dsc->opa == LV_OPA_COVER && dsc->blend_mode == LV_BLEND_MODE_NORMAL &&
+      dsc->recolor_opa == LV_OPA_TRANSP && dsc->rotation == 0 && dsc->skew_x == 0 && dsc->skew_y == 0 &&
+      (dsc->scale_x == LV_SCALE_NONE || dsc->scale_x == 256) &&
+      (dsc->scale_y == LV_SCALE_NONE || dsc->scale_y == 256) && dsc->clip_radius == 0 && !dsc->tile &&
+      dsc->bitmap_mask_src == NULL && dsc->colorkey == NULL && src_bw == (uint32_t) clip_w &&
+      src_bh == (uint32_t) clip_h && lvgl_dma2d_m2m_copy_rgb888_2d != NULL) {
+    lv_draw_ppa_cache_sync_area_to_memory(dest_buf, &layer->buf_area, &visible_area);
+    const bool copied = lvgl_dma2d_m2m_copy_rgb888_2d(src_buf, (int) src_stride_px, (int) src_h, src_bx, src_by,
+                                                      dest_buf->data, (int) dest_stride_px, (int) dest_buf->header.h,
+                                                      (int) dest_area.x1, (int) dest_area.y1, clip_w, clip_h);
+    lv_draw_ppa_cache_sync_area_from_memory(dest_buf, &layer->buf_area, &visible_area);
+    if (copied) {
+      s_rgb888_dma_copy_tasks++;
+      lv_image_decoder_close(&decoder_dsc);
+      return;
+    }
+  }
+#endif
 
   ppa_srm_oper_config_t cfg;
   lv_memzero(&cfg, sizeof(cfg));

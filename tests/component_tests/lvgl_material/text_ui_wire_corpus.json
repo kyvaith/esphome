@@ -1,0 +1,634 @@
+[
+  {
+    "name": "public",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 100,
+        "can_set": true
+      },
+      "panel_state": {
+        "source": "known",
+        "value": "Hello Ąą Żż",
+        "reason": "none"
+      },
+      "available": true,
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"known\",\"value\":\"Hello Ąą Żż\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}",
+    "bytes": 470
+  },
+  {
+    "name": "empty",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 100,
+        "can_set": true
+      },
+      "panel_state": {
+        "source": "known",
+        "value": "",
+        "reason": "none"
+      },
+      "available": true,
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"known\",\"value\":\"\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}",
+    "bytes": 455
+  },
+  {
+    "name": "spaces",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 100,
+        "can_set": true
+      },
+      "panel_state": {
+        "source": "known",
+        "value": "  a  b  ",
+        "reason": "none"
+      },
+      "available": true,
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"known\",\"value\":\"  a  b  \",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}",
+    "bytes": 463
+  },
+  {
+    "name": "readonly",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 100,
+        "can_set": false
+      },
+      "panel_state": {
+        "source": "known",
+        "value": "Public",
+        "reason": "none"
+      },
+      "available": true,
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":false},\"panel_state\":{\"source\":\"known\",\"value\":\"Public\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":0,\"state_generation\":1}",
+    "bytes": 462
+  },
+  {
+    "name": "unknown",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 100,
+        "can_set": true
+      },
+      "panel_state": {
+        "source": "unknown",
+        "value": null,
+        "reason": "none"
+      },
+      "available": false,
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"unknown\",\"value\":null,\"reason\":\"none\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "bytes": 460
+  },
+  {
+    "name": "unavailable",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 100,
+        "can_set": true
+      },
+      "panel_state": {
+        "source": "unavailable",
+        "value": null,
+        "reason": "none"
+      },
+      "available": false,
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"unavailable\",\"value\":null,\"reason\":\"none\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "bytes": 464
+  },
+  {
+    "name": "password",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 100,
+        "can_set": false
+      },
+      "panel_state": {
+        "source": "unsupported",
+        "value": null,
+        "reason": "password"
+      },
+      "available": false,
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":false},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"password\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "bytes": 469
+  },
+  {
+    "name": "mode",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 100,
+        "can_set": false
+      },
+      "panel_state": {
+        "source": "unsupported",
+        "value": null,
+        "reason": "mode"
+      },
+      "available": false,
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":false},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"mode\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "bytes": 465
+  },
+  {
+    "name": "pattern",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 100,
+        "can_set": false
+      },
+      "panel_state": {
+        "source": "unsupported",
+        "value": null,
+        "reason": "pattern"
+      },
+      "available": false,
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":false},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"pattern\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "bytes": 468
+  },
+  {
+    "name": "pattern-regex",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 100,
+        "can_set": false
+      },
+      "panel_state": {
+        "source": "unsupported",
+        "value": null,
+        "reason": "pattern"
+      },
+      "available": false,
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":false},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"pattern\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "bytes": 468
+  },
+  {
+    "name": "bounds",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": null,
+        "max": null,
+        "can_set": false
+      },
+      "panel_state": {
+        "source": "unsupported",
+        "value": null,
+        "reason": "bounds"
+      },
+      "available": false,
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":null,\"max\":null,\"can_set\":false},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"bounds\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "bytes": 471
+  },
+  {
+    "name": "length",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 2,
+        "can_set": true
+      },
+      "panel_state": {
+        "source": "unsupported",
+        "value": null,
+        "reason": "length"
+      },
+      "available": false,
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":2,\"can_set\":true},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"length\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "bytes": 464
+  },
+  {
+    "name": "characters",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 100,
+        "can_set": true
+      },
+      "panel_state": {
+        "source": "unsupported",
+        "value": null,
+        "reason": "characters"
+      },
+      "available": false,
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"characters\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "bytes": 470
+  },
+  {
+    "name": "encoding",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 100,
+        "can_set": true
+      },
+      "panel_state": {
+        "source": "unsupported",
+        "value": null,
+        "reason": "encoding"
+      },
+      "available": false,
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":100,\"can_set\":true},\"panel_state\":{\"source\":\"unsupported\",\"value\":null,\"reason\":\"encoding\"},\"available\":false,\"eligible_actions\":0,\"state_generation\":1}",
+    "bytes": 468
+  },
+  {
+    "name": "max-pl",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 255,
+        "can_set": true
+      },
+      "panel_state": {
+        "source": "known",
+        "value": "ŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻ",
+        "reason": "none"
+      },
+      "available": true,
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":255,\"can_set\":true},\"panel_state\":{\"source\":\"known\",\"value\":\"ŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻ\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}",
+    "bytes": 965
+  },
+  {
+    "name": "max-escaped",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "grant",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Tekst",
+      "panel_type": "text",
+      "panel_caps": {
+        "min": 0,
+        "max": 255,
+        "can_set": true
+      },
+      "panel_state": {
+        "source": "known",
+        "value": "\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"",
+        "reason": "none"
+      },
+      "available": true,
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"grant\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"state_seq\":1,\"ttl_ms\":30000,\"title\":\"Tekst\",\"panel_type\":\"text\",\"panel_caps\":{\"min\":0,\"max\":255,\"can_set\":true},\"panel_state\":{\"source\":\"known\",\"value\":\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\",\"reason\":\"none\"},\"available\":true,\"eligible_actions\":1,\"state_generation\":1}",
+    "bytes": 965
+  },
+  {
+    "name": "save",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "command",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "text_version": 1,
+      "command_seq": 1,
+      "op": "set_value",
+      "value": "Witaj świecie",
+      "expected_state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text_version\":1,\"command_seq\":1,\"op\":\"set_value\",\"value\":\"Witaj świecie\",\"expected_state_generation\":1}",
+    "bytes": 330
+  },
+  {
+    "name": "save-empty",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "command",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "text_version": 1,
+      "command_seq": 1,
+      "op": "set_value",
+      "value": "",
+      "expected_state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text_version\":1,\"command_seq\":1,\"op\":\"set_value\",\"value\":\"\",\"expected_state_generation\":1}",
+    "bytes": 316
+  },
+  {
+    "name": "save-max",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "command",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "text_version": 1,
+      "command_seq": 1,
+      "op": "set_value",
+      "value": "ŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻ",
+      "expected_state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text_version\":1,\"command_seq\":1,\"op\":\"set_value\",\"value\":\"ŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻŻ\",\"expected_state_generation\":1}",
+    "bytes": 826
+  },
+  {
+    "name": "save-escaped",
+    "value": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "kind": "command",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 11,
+      "slot": 29,
+      "card_id": "text-corpus",
+      "revision": 400,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "text_version": 1,
+      "command_seq": 1,
+      "op": "set_value",
+      "value": "\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"\"",
+      "expected_state_generation": 1
+    },
+    "json": "{\"v\":1,\"type\":\"entity_control_v1\",\"kind\":\"command\",\"channel\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"open_seq\":11,\"slot\":29,\"card_id\":\"text-corpus\",\"revision\":400,\"control_kind\":\"panel\",\"token\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"text_version\":1,\"command_seq\":1,\"op\":\"set_value\",\"value\":\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\",\"expected_state_generation\":1}",
+    "bytes": 826
+  }
+]

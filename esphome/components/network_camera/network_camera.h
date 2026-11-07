@@ -36,6 +36,7 @@ struct StreamSource {
   std::string name;
   std::string url;
   std::vector<std::pair<std::string, std::string>> headers;
+  std::string key;
 };
 
 class NetworkCamera : public Component, public image::Image {
@@ -74,10 +75,16 @@ class NetworkCamera : public Component, public image::Image {
   void previous_source();
   void select_source(size_t index);
   bool replace_sources(const std::vector<std::string> &names, const std::vector<std::string> &urls);
+  bool replace_keyed_sources(const std::vector<std::string> &keys, const std::vector<std::string> &names,
+                             const std::vector<std::string> &urls);
+  bool begin_preview(const std::string &key);
+  void end_preview();
+  bool preview_available() const;
 
   bool is_running() const { return this->running_requested_.load(std::memory_order_acquire); }
   bool has_frame() const { return this->generation_.load(std::memory_order_acquire) != 0; }
   size_t source_count() const;
+  size_t max_runtime_sources() const { return this->max_runtime_sources_; }
   size_t active_source_index() const { return this->active_source_.load(std::memory_order_acquire); }
   std::string source_name(size_t index) const;
   std::vector<std::string> source_names() const;
@@ -119,7 +126,7 @@ class NetworkCamera : public Component, public image::Image {
   void disconnect_stream_();
   bool ensure_input_buffers_();
   void release_input_buffers_();
-  bool read_stream_();
+  bool read_stream_(uint32_t revision);
   bool consume_stream_bytes_(const uint8_t *data, size_t size);
   bool finish_jpeg_frame_();
   bool decode_jpeg_frame_(const uint8_t *data, size_t size);
@@ -130,10 +137,16 @@ class NetworkCamera : public Component, public image::Image {
   void set_state_(StreamState state);
   void queue_source_event_();
   void reset_parser_();
-  bool get_source_(size_t index, StreamSource *source) const;
+  bool replace_sources_(const std::vector<std::string> *keys, const std::vector<std::string> &names,
+                        const std::vector<std::string> &urls);
+  size_t find_source_key_(const std::string &key) const;
+  size_t stream_source_index_() const;
+  bool get_stream_source_(uint32_t &revision, StreamSource *source) const;
+  void notify_source_changed_();
 
   mutable Mutex source_mutex_{};
   std::vector<StreamSource> sources_{};
+  std::string preview_key_;  // Protected by source_mutex_; never persisted.
   size_t max_runtime_sources_{16};
   size_t max_frame_size_{512 * 1024};
   uint16_t max_width_{1920};

@@ -64,7 +64,9 @@ class LvglSnapshotCompositor {
   bool application_active{false}, opening{false}, closing{false}, home_active{false};
   bool begin_result{true}, prepare_result{true};
   size_t prepares{0}, begins{0}, takeovers{0}, primes{0}, cancels{0};
+  std::vector<LvglApplication *> captured_applications;
   void set_navigation(LvglNavigation *) {}
+  void replace_home_views(lv_obj_t **, size_t) {}
   bool is_application_active() const { return application_active; }
   bool is_application_opening() const { return opening; }
   bool is_application_closing() const { return closing; }
@@ -109,8 +111,9 @@ class LvglSnapshotCompositor {
   void update_application_close(int32_t) {}
   bool settle_application_close(bool) { return true; }
   void prepare_home(int) { prepares++; }
-  bool prepare_applications(const std::vector<LvglApplication *> &) {
+  bool prepare_applications(const std::vector<LvglApplication *> &applications) {
     prepares++;
+    captured_applications = applications;
     return prepare_result;
   }
   void loop() {}

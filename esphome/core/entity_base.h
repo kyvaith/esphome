@@ -13,8 +13,9 @@
 #endif
 
 // Forward declarations for friend access from codegen-generated setup()
-void setup();           // NOLINT(readability-redundant-declaration) - may be declared in Arduino.h
-void original_setup();  // NOLINT(readability-redundant-declaration) - used by cpp unit tests
+void setup();            // NOLINT(readability-redundant-declaration) - may be declared in Arduino.h
+void setup_generated();  // NOLINT(readability-redundant-declaration) - codegen configuration helper
+void original_setup();   // NOLINT(readability-redundant-declaration) - used by cpp unit tests
 
 namespace esphome {
 
@@ -231,6 +232,7 @@ class EntityBase {
 
  protected:
   friend void ::setup();
+  friend void ::setup_generated();
   friend void ::original_setup();
   // Application's register_<entity>(obj, name, hash, fields) overloads call configure_entity_
   // before push_back, so codegen can emit a single combined call per entity.

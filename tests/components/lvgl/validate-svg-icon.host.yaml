@@ -1,0 +1,27 @@
+esphome:
+  name: lvgl-svg-icon-validate
+
+host:
+
+display:
+  - platform: snapshot
+    id: test_display
+    dimensions:
+      width: 320
+      height: 240
+    auto_clear_enabled: false
+
+lvgl:
+  displays: test_display
+  widgets:
+    - svg_icon:
+        id: test_icon
+        file: svg-icon.svg
+        x: 112
+        y: 72
+        width: 96
+        height: 96
+        bg_opa: TRANSP
+        border_width: 0
+        pad_all: 0
+        text_color: 0xB5D4FF

@@ -171,6 +171,7 @@ CODEOWNERS = [
 HELLO_WORLD_FILE = "hello_world.yaml"
 CONF_USE_PPA = "use_ppa"
 CONF_USE_PPA_IMG = "use_ppa_img"
+CONF_RGB888_DMA2D_IMAGE_COPY = "rgb888_dma2d_image_copy"
 CONF_USE_PPA_DRAW = "use_ppa_draw"
 CONF_USE_PPA_BLEND = "use_ppa_blend"
 CONF_PPA_BURST_LENGTH = "ppa_burst_length"
@@ -277,6 +278,7 @@ def multi_conf_validate(configs: list[dict]):
             CONF_LOG_LEVEL,
             CONF_COLOR_DEPTH,
             CONF_BYTE_ORDER,
+            CONF_RGB888_DMA2D_IMAGE_COPY,
             df.CONF_TRANSPARENCY_KEY,
             df.CONF_DEBUG_OUTLINE,
         ):
@@ -290,6 +292,10 @@ def final_validation(config_list):
     global_config = full_config.get()
     # Resolve byte_order from display metadata before multi-config validation
     for config in config_list:
+        if config.get(CONF_RGB888_DMA2D_IMAGE_COPY, False) and not config.get(
+            CONF_USE_PPA_IMG, False
+        ):
+            raise cv.Invalid("rgb888_dma2d_image_copy requires use_ppa_img: true")
         metas = [get_display_metadata(disp) for disp in config[df.CONF_DISPLAYS]]
         if any(m.has_writer for m in metas):
             raise cv.Invalid(
@@ -551,6 +557,8 @@ async def to_code(configs):
     if use_ppa_img:
         # Enable PPA SRM hardware rotation for images (0/90/180/270 degrees)
         cg.add_define("USE_LVGL_PPA_IMG")
+    if config_0.get(CONF_RGB888_DMA2D_IMAGE_COPY, False):
+        cg.add_define("USE_LVGL_RGB888_DMA2D_IMAGE_COPY")
     use_fps_benchmark = _config_bool(config_0.get(CONF_FPS_BENCHMARK, False))
     use_perf_monitor = _config_bool(config_0.get(CONF_PERF_MONITOR, False))
     use_profiler = _config_bool(config_0.get(CONF_PROFILER, False))
@@ -1179,6 +1187,7 @@ LVGL_TOP_LEVEL_SCHEMA = (
             cv.Optional(CONF_SNAPSHOT_COMPOSITOR): SNAPSHOT_SCHEMA,
             cv.Optional(CONF_USE_PPA, default=False): cv.boolean,
             cv.Optional(CONF_USE_PPA_IMG, default=False): cv.boolean,
+            cv.Optional(CONF_RGB888_DMA2D_IMAGE_COPY, default=False): cv.boolean,
             cv.Optional(CONF_USE_PPA_DRAW, default=False): cv.boolean,
             cv.Optional(CONF_USE_PPA_BLEND, default=False): cv.boolean,
             cv.Optional(CONF_PPA_BURST_LENGTH, default=128): cv.one_of(

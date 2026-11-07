@@ -113,6 +113,7 @@ IS_TARGET_PLATFORM = True
 CONF_ASSERTION_LEVEL = "assertion_level"
 CONF_COMPILER_OPTIMIZATION = "compiler_optimization"
 CONF_ENABLE_IDF_EXPERIMENTAL_FEATURES = "enable_idf_experimental_features"
+CONF_ENABLE_FAST_HEAP_QUERY = "enable_fast_heap_query"
 CONF_ENABLE_CACHE_SAFE_RESTART = "enable_cache_safe_restart"
 REVIEWED_CACHE_RESTART_IDF_VERSIONS = ("5.5.5", "5.5.6")
 CONF_ENABLE_PIE_CONTEXT_FIX = "enable_pie_context_fix"
@@ -1419,6 +1420,24 @@ def _check_versions(config: ConfigType) -> ConfigType:
     return _check_pio_versions(config)
 
 
+def _validate_fast_heap_query(config: ConfigType) -> ConfigType:
+    """Restrict the bounded heap query to the reviewed native ESP-IDF source."""
+    framework = config[CONF_FRAMEWORK]
+    if not framework[CONF_ADVANCED][CONF_ENABLE_FAST_HEAP_QUERY]:
+        return config
+    if (
+        config[CONF_VARIANT] != VARIANT_ESP32P4
+        or framework[CONF_TYPE] != FRAMEWORK_ESP_IDF
+        or framework[CONF_VERSION] != "5.5.6"
+        or not CORE.using_toolchain_esp_idf
+    ):
+        raise cv.Invalid(
+            "enable_fast_heap_query requires ESP32-P4 with native ESP-IDF 5.5.6",
+            path=[CONF_FRAMEWORK, CONF_ADVANCED, CONF_ENABLE_FAST_HEAP_QUERY],
+        )
+    return config
+
+
 def _validate_cache_safe_restart(config: ConfigType) -> ConfigType:
     """Restrict the restart backport to reviewed native ESP-IDF versions on P4."""
     framework = config[CONF_FRAMEWORK]
@@ -2326,6 +2345,7 @@ FRAMEWORK_SCHEMA = cv.Schema(
                 cv.Optional(
                     CONF_ENABLE_IDF_EXPERIMENTAL_FEATURES, default=False
                 ): cv.boolean,
+                cv.Optional(CONF_ENABLE_FAST_HEAP_QUERY, default=False): cv.boolean,
                 cv.Optional(CONF_ENABLE_CACHE_SAFE_RESTART, default=False): cv.boolean,
                 cv.Optional(CONF_ENABLE_PIE_CONTEXT_FIX, default=False): cv.boolean,
                 cv.Optional(CONF_ENABLE_LWIP_ASSERT, default=True): cv.boolean,
@@ -2544,6 +2564,7 @@ CONFIG_SCHEMA = cv.All(
     _detect_variant,
     _set_default_framework,
     _check_versions,
+    _validate_fast_heap_query,
     _validate_cache_safe_restart,
     _validate_pie_context_fix,
     set_core_data,
@@ -3318,6 +3339,13 @@ async def to_code(config):
 
     # Apply LWIP optimization settings
     advanced = conf[CONF_ADVANCED]
+
+    if advanced[CONF_ENABLE_FAST_HEAP_QUERY]:
+        add_idf_component(
+            name="fast_heap_query_framework_patch",
+            path=Path(__file__).with_name("fast_heap_query_framework_patch").as_posix(),
+        )
+        add_idf_sdkconfig_option("CONFIG_ESPHOME_HEAP_FAST_LARGEST_BLOCK", True)
 
     if advanced[CONF_ENABLE_CACHE_SAFE_RESTART]:
         add_idf_component(

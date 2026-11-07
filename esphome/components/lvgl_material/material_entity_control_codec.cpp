@@ -66,6 +66,124 @@ void *MaterialEntityControlCodec::reallocate(void *pointer, size_t size) {
   return replacement;
 }
 
+#ifdef USE_LVGL_MATERIAL_PANEL_CONTROLS
+bool MaterialEntityControlCodec::parse_panel_bind(std::string_view payload, ControlText<32> &channel, uint8_t &types) {
+  if (this->busy_)
+    return false;
+  this->busy_ = true;
+  this->used_ = 0;
+  this->generic_transaction_ = true;
+  const bool result = control_parse_panel_bind_allocated(payload, channel, types, this);
+  this->used_ = 0;
+  this->generic_transaction_ = false;
+  this->busy_ = false;
+  return result;
+}
+#endif
+
+#ifdef USE_LVGL_MATERIAL_INFO_AGENDA
+bool MaterialEntityControlCodec::parse_info_agenda_bind(std::string_view payload, ControlText<32> &channel) {
+  if (this->busy_)
+    return false;
+  this->busy_ = true;
+  this->used_ = 0;
+  this->generic_transaction_ = true;
+  const bool result = control_parse_info_agenda_bind_allocated(payload, channel, this);
+  this->used_ = 0;
+  this->generic_transaction_ = false;
+  this->busy_ = false;
+  return result;
+}
+#endif
+#ifdef USE_LVGL_MATERIAL_INFO_STATISTICS
+bool MaterialEntityControlCodec::parse_info_statistics_bind(std::string_view payload, ControlText<32> &channel) {
+  if (this->busy_)
+    return false;
+  this->busy_ = true;
+  this->used_ = 0;
+  this->generic_transaction_ = true;
+  const bool result = control_parse_info_statistics_bind_allocated(payload, channel, this);
+  this->used_ = 0;
+  this->generic_transaction_ = false;
+  this->busy_ = false;
+  return result;
+}
+#endif
+#ifdef USE_LVGL_MATERIAL_ACTION_PARAMETERS
+bool MaterialEntityControlCodec::parse_action_parameters_bind(std::string_view payload, ControlText<32> &channel) {
+  if (this->busy_)
+    return false;
+  this->busy_ = true;
+  this->used_ = 0;
+  this->generic_transaction_ = true;
+  const bool result = control_parse_action_parameters_bind_allocated(payload, channel, this);
+  this->used_ = 0;
+  this->generic_transaction_ = false;
+  this->busy_ = false;
+  return result;
+}
+#endif
+
+#ifdef USE_LVGL_MATERIAL_DETAIL_CONTROLS
+#ifdef USE_LVGL_MATERIAL_CLIMATE_RANGE
+bool MaterialEntityControlCodec::parse_detail_range_bind(std::string_view payload, ControlText<32> &channel) {
+  if (this->busy_)
+    return false;
+  this->busy_ = true;
+  this->used_ = 0;
+  this->generic_transaction_ = true;
+  const bool result = control_parse_detail_range_bind_allocated(payload, channel, this);
+  this->used_ = 0;
+  this->generic_transaction_ = false;
+  this->busy_ = false;
+  return result;
+}
+#endif
+#ifdef USE_LVGL_MATERIAL_LIGHT_COLOR
+bool MaterialEntityControlCodec::parse_detail_color_bind(std::string_view payload, ControlText<32> &channel) {
+  if (this->busy_)
+    return false;
+  this->busy_ = true;
+  this->used_ = 0;
+  this->generic_transaction_ = true;
+  const bool result = control_parse_detail_color_bind_allocated(payload, channel, this);
+  this->used_ = 0;
+  this->generic_transaction_ = false;
+  this->busy_ = false;
+  return result;
+}
+#endif
+bool MaterialEntityControlCodec::parse_detail_bind(std::string_view payload, ControlText<32> &channel,
+                                                   uint8_t &profiles) {
+  if (this->busy_)
+    return false;
+  this->busy_ = true;
+  this->used_ = 0;
+  this->generic_transaction_ = true;
+  const bool result = control_parse_detail_bind_allocated(payload, channel, profiles, this);
+  this->used_ = 0;
+  this->generic_transaction_ = false;
+  this->busy_ = false;
+  return result;
+}
+#endif
+
+#ifdef USE_LVGL_MATERIAL_EXTRA_CONTROLS
+bool MaterialEntityControlCodec::parse_extra_features(std::string_view payload, ControlText<32> &channel,
+                                                      uint16_t &profiles, uint16_t configured, bool bind) {
+  if (this->busy_)
+    return false;
+  this->busy_ = true;
+  this->used_ = 0;
+  this->generic_transaction_ = true;
+  const bool result = control_parse_extra_features_allocated(payload, channel, profiles, configured, bind, this);
+  this->used_ = 0;
+  this->generic_transaction_ = false;
+  this->busy_ = false;
+  return result;
+}
+#endif
+
 bool MaterialEntityControlCodec::parse(std::string_view payload, ControlMessage &output) {
   if (this->busy_)
     return false;
@@ -90,13 +208,28 @@ bool MaterialEntityControlCodec::serialize(const ControlMessage &message, char *
 }
 
 #ifdef USE_LVGL_MATERIAL_NUMBER_STEPPER
-bool MaterialEntityControlCodec::parse_entity(std::string_view payload, ControlMessage &output) {
+bool MaterialEntityControlCodec::parse_entity(std::string_view payload, ControlMessage &output, bool allow_empty_choice,
+                                              bool allow_cover_panel
+#ifdef USE_LVGL_MATERIAL_TEXT_CONTROLS
+                                              ,
+                                              ControlTextRx *text_rx
+#endif
+) {
   if (this->busy_)
     return false;
   this->busy_ = true;
   this->used_ = 0;
   this->generic_transaction_ = true;
-  const bool accepted = control_parse_entity_json_allocated(payload, output, this);
+#ifdef USE_LVGL_MATERIAL_TEXT_CONTROLS
+  if (text_rx != nullptr)
+    text_rx->clear();
+#endif
+  const bool accepted = control_parse_entity_json_allocated(payload, output, this, allow_empty_choice, allow_cover_panel
+#ifdef USE_LVGL_MATERIAL_TEXT_CONTROLS
+                                                            ,
+                                                            text_rx
+#endif
+  );
   this->generic_transaction_ = false;
   this->used_ = 0;
   this->busy_ = false;
@@ -104,13 +237,24 @@ bool MaterialEntityControlCodec::parse_entity(std::string_view payload, ControlM
 }
 
 bool MaterialEntityControlCodec::serialize_entity(const ControlMessage &message, char *output, size_t capacity,
-                                                  size_t &length) {
+                                                  size_t &length, bool allow_empty_choice, bool allow_cover_panel
+#ifdef USE_LVGL_MATERIAL_TEXT_CONTROLS
+                                                  ,
+                                                  ControlTextValueView text_value
+#endif
+) {
   if (this->busy_)
     return false;
   this->busy_ = true;
   this->used_ = 0;
   this->generic_transaction_ = true;
-  const bool accepted = control_serialize_entity_json_allocated(message, output, capacity, length, this);
+  const bool accepted = control_serialize_entity_json_allocated(message, output, capacity, length, this,
+                                                                allow_empty_choice, allow_cover_panel
+#ifdef USE_LVGL_MATERIAL_TEXT_CONTROLS
+                                                                ,
+                                                                text_value
+#endif
+  );
   this->generic_transaction_ = false;
   this->used_ = 0;
   this->busy_ = false;

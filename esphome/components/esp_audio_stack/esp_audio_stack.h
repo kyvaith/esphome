@@ -345,6 +345,9 @@ class ESPAudioStack : public Component {
   void restore_ota_watchdog();
 
   bool is_running() const { return this->audio_stack_running_.load(std::memory_order_relaxed); }
+  bool is_audio_prepared() const {
+    return this->prealloc_state_.load(std::memory_order_acquire) == PreallocState::PREALLOC_READY;
+  }
   bool is_idle() const {
     return !this->audio_stack_running_.load(std::memory_order_relaxed) &&
            this->audio_task_idle_.load(std::memory_order_relaxed) &&
@@ -575,6 +578,7 @@ class ESPAudioStack : public Component {
   bool allocate_audio_buffers_(AudioTaskCtx &ctx);
   void request_audio_preallocation_();
   void preallocate_audio_buffers_from_task_();
+  void retry_audio_preallocation_();
 
   // Pin configuration
   int lrclk_pin_{-1};
@@ -665,8 +669,9 @@ class ESPAudioStack : public Component {
 
   // Cross-thread buffer operation request (main thread -> audio task, avoids concurrent ring buffer access)
   std::atomic<bool> request_speaker_reset_{false};
-  std::atomic<bool> prealloc_requested_{false};
-  std::atomic<bool> prealloc_attempted_{false};
+  enum class PreallocState : uint8_t { PREALLOC_IDLE, PREALLOC_REQUESTED, PREALLOC_PREPARING, PREALLOC_READY };
+  std::atomic<PreallocState> prealloc_state_{PreallocState::PREALLOC_IDLE};
+  std::atomic<uint32_t> prealloc_retry_at_{0};
 
   // Deferred I2S release: stop() sets this and returns; loop() deletes the
   // esp_driver_i2s channels after audio_task_idle_ flips.

@@ -249,6 +249,11 @@ class RingBufferAudioSource : public AudioReadableBuffer {
   static std::unique_ptr<RingBufferAudioSource> create(std::shared_ptr<ring_buffer::RingBuffer> ring_buffer,
                                                        size_t max_fill_bytes, uint8_t alignment_bytes = 1);
 
+  /// Creates a non-owning reader. The caller must keep the ring alive until this reader is destroyed,
+  /// including every acquired item and in-flight consumer operation. No shared ownership block is allocated.
+  static std::unique_ptr<RingBufferAudioSource> create_borrowed(ring_buffer::RingBuffer *ring_buffer,
+                                                                size_t max_fill_bytes, uint8_t alignment_bytes = 1);
+
   ~RingBufferAudioSource() override;
 
   // AudioReadableBuffer interface
@@ -283,13 +288,19 @@ class RingBufferAudioSource : public AudioReadableBuffer {
   /// arguments before construction.
   explicit RingBufferAudioSource(std::shared_ptr<ring_buffer::RingBuffer> ring_buffer, size_t max_fill_bytes,
                                  uint8_t alignment_bytes)
-      : ring_buffer_(std::move(ring_buffer)), max_fill_bytes_(max_fill_bytes), alignment_bytes_(alignment_bytes) {}
+      : ring_buffer_owner_(std::move(ring_buffer)),
+        ring_buffer_(this->ring_buffer_owner_.get()),
+        max_fill_bytes_(max_fill_bytes),
+        alignment_bytes_(alignment_bytes) {}
+  explicit RingBufferAudioSource(ring_buffer::RingBuffer *ring_buffer, size_t max_fill_bytes, uint8_t alignment_bytes)
+      : ring_buffer_(ring_buffer), max_fill_bytes_(max_fill_bytes), alignment_bytes_(alignment_bytes) {}
 
   /// @brief Releases the currently held ring buffer item, first copying any trailing sub-frame bytes
   /// into the splice buffer so they can be stitched with the next chunk.
   void release_item_();
 
-  std::shared_ptr<ring_buffer::RingBuffer> ring_buffer_;
+  std::shared_ptr<ring_buffer::RingBuffer> ring_buffer_owner_;
+  ring_buffer::RingBuffer *ring_buffer_;
   size_t max_fill_bytes_;
 
   void *acquired_item_{nullptr};

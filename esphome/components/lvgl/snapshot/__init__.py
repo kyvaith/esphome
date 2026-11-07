@@ -55,6 +55,7 @@ CONF_SCROLL_REGIONS = "scroll_regions"
 CONF_START_SIZE = "start_size"
 CONF_WIDGET = "widget"
 CONF_MAX_CONTENT_SIZE = "max_content_size"
+CONF_SEGMENT_TARGET_SIZE = "segment_target_size"
 CONF_OVERSCROLL = "overscroll"
 CONF_MOMENTUM_DURATION = "momentum_duration"
 CONF_BOUNCE_DURATION = "bounce_duration"
@@ -99,6 +100,10 @@ SCROLL_REGION_SCHEMA = cv.Schema(
             cv.validate_bytes,
             cv.int_range(min=65536, max=64 * 1024 * 1024),
         ),
+        cv.Optional(CONF_SEGMENT_TARGET_SIZE): cv.All(
+            cv.validate_bytes,
+            cv.int_range(min=256 * 1024, max=8 * 1024 * 1024),
+        ),
         cv.Optional(CONF_OVERSCROLL, default="15%"): cv.percentage,
         cv.Optional(
             CONF_MOMENTUM_DURATION, default="560ms"
@@ -120,11 +125,19 @@ SCROLL_REGION_SCHEMA = cv.Schema(
 def _validate_scroll_regions(config):
     for region in config[CONF_SCROLL_REGIONS]:
         if (
+            CONF_SEGMENT_TARGET_SIZE in region
+            and region[CONF_BACKEND] != BACKEND_DIRECT
+        ):
+            raise cv.Invalid("segment_target_size requires backend: direct")
+        if (
             region[CONF_BACKEND] != BACKEND_DIRECT
             and region[CONF_COLOR_FORMAT] != "RGB565"
         ):
             raise cv.Invalid("RGB888 scroll snapshots require backend: direct")
-    if config[CONF_USE_DISPLAY_BUFFERS_FOR_PREPARATION] and config[CONF_BACKEND] != BACKEND_DIRECT:
+    if (
+        config[CONF_USE_DISPLAY_BUFFERS_FOR_PREPARATION]
+        and config[CONF_BACKEND] != BACKEND_DIRECT
+    ):
         raise cv.Invalid(
             "Display-buffer preparation requires snapshot_compositor.backend: direct"
         )
@@ -178,7 +191,9 @@ SNAPSHOT_SCHEMA = cv.All(
             cv.Optional(CONF_MAX_ENTRIES, default=16): cv.int_range(min=1, max=64),
             cv.Optional(CONF_DECODED_SLOTS, default=3): cv.int_range(min=1, max=8),
             cv.Optional(CONF_PRELOAD, default=False): cv.boolean,
-            cv.Optional(CONF_USE_DISPLAY_BUFFERS_FOR_PREPARATION, default=False): cv.boolean,
+            cv.Optional(
+                CONF_USE_DISPLAY_BUFFERS_FOR_PREPARATION, default=False
+            ): cv.boolean,
             cv.Optional(
                 CONF_SETTLE_DURATION, default="220ms"
             ): cv.positive_time_period_milliseconds,
@@ -312,7 +327,9 @@ async def snapshot_to_code(lv_component, config, navigation_config):
         )
         constructor = (
             compositor_type.new(
-                lv_component, store, snapshot_config[CONF_USE_DISPLAY_BUFFERS_FOR_PREPARATION]
+                lv_component,
+                store,
+                snapshot_config[CONF_USE_DISPLAY_BUFFERS_FOR_PREPARATION],
             )
             if direct_backend
             else compositor_type.new(lv_component, store)
@@ -389,6 +406,10 @@ async def snapshot_to_code(lv_component, config, navigation_config):
             cg.add(controller.set_preload(region_config[CONF_PRELOAD]))
             cg.add(
                 controller.set_max_content_bytes(region_config[CONF_MAX_CONTENT_SIZE])
+            )
+            cg.add_optional(
+                controller.set_segment_target_bytes,
+                region_config.get(CONF_SEGMENT_TARGET_SIZE),
             )
             cg.add(controller.set_overscroll_ratio(region_config[CONF_OVERSCROLL]))
             cg.add(

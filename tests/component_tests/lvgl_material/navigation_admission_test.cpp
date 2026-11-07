@@ -6,8 +6,11 @@ using namespace esphome::lvgl;
 struct Guard : NavigationAdmissionGuard {
   bool allow{true};
   size_t calls{0};
+  std::function<void()> during;
   bool prepare_navigation(NavigationAdmissionKind, LvglApplication *) override {
     calls++;
+    if (during)
+      during();
     return allow;
   }
 };
@@ -57,6 +60,9 @@ int main(int argc, char **argv) {
     assert(f.prepared == 0);
     assert(f.nav.try_show_home());
     assert(f.prepared == 1 && f.closed == 1);
+    const std::vector<LvglApplication *> subset{&f.app};
+    assert(f.nav.try_prepare_application_snapshots(subset));
+    assert(f.compositor.captured_applications == subset);
     std::cout << "navigation sizeof=" << sizeof(Navigation) << "\n";
 #ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
   } else if (scenario == 1) {
@@ -144,6 +150,104 @@ int main(int argc, char **argv) {
     Fixture f;
     f.guard.allow = false;
     assert(!f.nav.try_refresh_home() && f.compositor.prepares == 0);
+  } else if (scenario == 11) {
+    Fixture f;
+    LvglApplication other;
+    lv_obj_t other_root;
+    other.set_page(&f.host);
+    other.set_widget(&other_root);
+    f.nav.add_application(&other);
+    const std::vector<LvglApplication *> subset{&f.app};
+    assert(f.nav.try_prepare_application_snapshots(subset));
+    assert(f.compositor.captured_applications == subset && f.compositor.prepares == 1);
+    assert(f.guard.calls == 1 && f.nav.last_application_snapshot_preparation_succeeded());
+    f.compositor.prepare_result = false;
+    assert(!f.nav.try_prepare_application_snapshots(subset));
+    assert(!f.nav.last_application_snapshot_preparation_succeeded() && f.compositor.prepares == 2);
+  } else if (scenario == 12) {
+    Fixture f;
+    const std::vector<LvglApplication *> subset{&f.app};
+    f.guard.allow = false;
+    assert(!f.nav.try_prepare_application_snapshots(subset));
+    assert(f.guard.calls == 1 && f.compositor.prepares == 0);
+    f.guard.allow = true;
+    f.compositor.home_active = true;
+    assert(!f.nav.try_prepare_application_snapshots(subset));
+    f.compositor.home_active = false;
+    f.compositor.application_active = true;
+    assert(!f.nav.try_prepare_application_snapshots(subset));
+    f.compositor.application_active = false;
+    f.nav.touch_begin(300, 300);
+    assert(!f.nav.try_prepare_application_snapshots(subset));
+    f.nav.touch_cancel();
+    f.nav.set_external_touch_capture(true);
+    assert(!f.nav.try_prepare_application_snapshots(subset));
+    assert(f.compositor.prepares == 0);
+  } else if (scenario == 13) {
+    Fixture f;
+    LvglApplication unknown, incomplete;
+    lv_obj_t other_root;
+    unknown.set_page(&f.host);
+    unknown.set_widget(&other_root);
+    f.nav.add_application(&incomplete);
+    for (const auto &subset : std::vector<std::vector<LvglApplication *>>{
+             {}, {nullptr}, {&unknown}, {&incomplete}, {&f.app, &f.app}})
+      assert(!f.nav.try_prepare_application_snapshots(subset));
+    assert(f.guard.calls == 0 && f.compositor.prepares == 0);
+  } else if (scenario == 14) {
+    Fixture f;
+    LvglApplication other;
+    lv_obj_t other_root;
+    other.set_page(&f.host);
+    other.set_widget(&other_root);
+    f.nav.add_application(&other);
+    f.open();
+    const auto calls = f.guard.calls;
+    assert(!f.nav.try_prepare_application_snapshots({&other}));
+    assert(f.guard.calls == calls && f.compositor.prepares == 0);
+    assert(f.nav.try_prepare_application_snapshots({&f.app}));
+    assert(f.nav.is_application_open(&f.app) && f.prepared == 0 && f.closed == 0);
+    assert(f.compositor.captured_applications == std::vector<LvglApplication *>{&f.app});
+  } else if (scenario == 15) {
+    Fixture f(false);
+    assert(!f.nav.try_prepare_application_snapshots({&f.app}));
+    assert(f.guard.calls == 0 && !f.nav.last_application_snapshot_preparation_succeeded());
+  } else if (scenario == 16) {
+    Fixture f;
+    f.guard.during = [&f]() { f.compositor.home_active = true; };
+    assert(!f.nav.try_prepare_application_snapshots({&f.app}));
+    assert(f.guard.calls == 1 && f.compositor.prepares == 0);
+  } else if (scenario == 17) {
+    Fixture f;
+    f.guard.during = [&f]() { f.app.set_widget(nullptr); };
+    assert(!f.nav.try_prepare_application_snapshots({&f.app}));
+    assert(f.guard.calls == 1 && f.compositor.prepares == 0);
+    assert(!f.nav.last_application_snapshot_preparation_succeeded());
+  } else if (scenario == 18) {
+    Fixture f;
+    f.guard.during = [&f]() { f.app.set_page(nullptr); };
+    assert(!f.nav.try_prepare_application_snapshots({&f.app}));
+    assert(f.guard.calls == 1 && f.compositor.prepares == 0);
+  } else if (scenario == 19) {
+    Fixture f;
+    std::vector<LvglApplication *> subset{&f.app};
+    f.guard.during = [&]() { subset.push_back(&f.app); };
+    assert(!f.nav.try_prepare_application_snapshots(subset));
+    assert(f.guard.calls == 1 && f.compositor.prepares == 0);
+  } else if (scenario == 20) {
+    Fixture f;
+    LvglApplication other;
+    lv_obj_t other_root;
+    other.set_page(&f.host);
+    other.set_widget(&other_root);
+    f.nav.add_application(&other);
+    f.open();
+    const auto calls = f.guard.calls;
+    std::vector<LvglApplication *> subset{&f.app};
+    f.guard.during = [&]() { subset.front() = &other; };
+    assert(!f.nav.try_prepare_application_snapshots(subset));
+    assert(f.guard.calls == calls + 1 && f.compositor.prepares == 0);
+    assert(f.nav.is_application_open(&f.app) && !f.nav.last_application_snapshot_preparation_succeeded());
 #endif
   } else
     return 2;

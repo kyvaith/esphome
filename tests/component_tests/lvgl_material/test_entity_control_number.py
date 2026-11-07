@@ -98,7 +98,10 @@ class NumberHostTests(unittest.TestCase):
         for include in (cls.root, HERE, SOURCE, LVGL_SOURCE, arduino_json()):
             cls.common += ["-I", str(include)]
         cls.portable = cls.build(
-            "portable", PORTABLE, HERE / "number_portable_test.cpp"
+            "portable",
+            PORTABLE,
+            HERE / "number_portable_test.cpp",
+            ["-DUSE_LVGL_MATERIAL_THERMOSTAT"],
         )
         cls.native = cls.build("native", NATIVE, HERE / "number_component_test.cpp")
         cls.accelerated = [
@@ -290,6 +293,44 @@ class NumberHostTests(unittest.TestCase):
                 self.assertIn(
                     f"case {case} PASS", self.checked([self.native, case]).stdout
                 )
+
+    def test_thermostat_round_trips_both_writable_and_read_only_grants(self):
+        grant = json.loads(
+            (HERE / "fixtures/entity_control/grant.json").read_text(encoding="utf-8")
+        )
+        view = {
+            "unit": "°C",
+            "target": "21.5",
+            "current": "19.2",
+            "min": "16",
+            "max": "30",
+            "level": 39,
+            "activity": "heating",
+        }
+        writable = grant | {"thermostat": view}
+        read_only = writable | {
+            "domain": None,
+            "index": None,
+            "available": False,
+            "value_text": "--",
+        }
+        for snapshot in (writable, read_only):
+            self.assertEqual(snapshot, json.loads(self.codec(snapshot).stdout))
+            dial = snapshot | {"thermostat": view | {"dial": True}}
+            self.assertEqual(dial, json.loads(self.codec(dial).stdout))
+        self.codec(writable | {"domain": None}, 1)
+        self.codec(writable | {"thermostat": view | {"level": 101}}, 1)
+        self.codec(writable | {"thermostat": view | {"target": "21.50"}}, 1)
+        self.codec(
+            json.dumps(writable).replace('"level": 39', '"level": 39, "level": 39'), 1
+        )
+        step = json.loads(
+            (HERE / "fixtures/entity_control/command.json").read_text(encoding="utf-8")
+        )
+        step.pop("direction")
+        target = step | {"op": "set_target", "target_index": 6}
+        self.assertEqual(target, json.loads(self.codec(target).stdout))
+        self.codec(target | {"target_index": 1000001}, 1)
 
     def test_localized_number_text_is_never_admitted_on_wire(self):
         grant = json.loads(

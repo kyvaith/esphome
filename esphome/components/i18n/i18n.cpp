@@ -14,10 +14,30 @@ void I18nComponent::copy_locale_(char *destination, const char *source) {
 }
 
 void I18nComponent::add_translation(const char *locale, const char *key, const char *value) {
-  if (this->translation_count_ >= MAX_TRANSLATIONS || locale == nullptr || key == nullptr || value == nullptr)
+  if (locale == nullptr || key == nullptr || value == nullptr)
     return;
+#ifdef USE_I18N_FLASH_TABLE
+  ESP_LOGE(TAG, "Flash translation table is immutable; cannot register %s/%s", locale, key);
+#else
+  if (this->translation_count_ >= MAX_TRANSLATIONS) {
+    ESP_LOGE(TAG, "Translation capacity exhausted (%u); cannot register %s/%s", static_cast<unsigned>(MAX_TRANSLATIONS),
+             locale, key);
+    return;
+  }
   this->translations_[this->translation_count_++] = {locale, key, value};
+#endif
 }
+
+#ifdef USE_I18N_FLASH_TABLE
+void I18nComponent::set_translation_table(const Translation *table, size_t count) {
+  if ((table == nullptr && count != 0) || count > MAX_TRANSLATIONS) {
+    ESP_LOGE(TAG, "Invalid flash translation table binding (%u entries)", static_cast<unsigned>(count));
+    return;
+  }
+  this->translations_ = table;
+  this->translation_count_ = static_cast<uint16_t>(count);
+}
+#endif
 
 bool I18nComponent::set_locale(const std::string &locale) {
   if (locale.empty() || locale.size() >= sizeof(this->locale_))
@@ -31,6 +51,11 @@ bool I18nComponent::set_locale(const std::string &locale) {
 const char *I18nComponent::find_(const char *locale, const char *key) const {
   for (uint16_t index = 0; index < this->translation_count_; index++) {
     const auto &entry = this->translations_[index];
+#ifdef USE_I18N_FLASH_TABLE
+    // Match add_translation's rejection of incomplete manual entries.
+    if (entry.locale == nullptr || entry.key == nullptr || entry.value == nullptr)
+      continue;
+#endif
     if (std::strcmp(entry.locale, locale) == 0 && std::strcmp(entry.key, key) == 0)
       return entry.value;
   }
@@ -52,8 +77,11 @@ const char *I18nComponent::translate_existing(const char *text) const {
     return text == nullptr ? "" : text;
   for (uint16_t index = 0; index < this->translation_count_; index++) {
     const auto &entry = this->translations_[index];
-    if (std::strcmp(entry.locale, this->default_locale_) == 0 &&
-        std::strcmp(entry.value, text) == 0)
+#ifdef USE_I18N_FLASH_TABLE
+    if (entry.locale == nullptr || entry.key == nullptr || entry.value == nullptr)
+      continue;
+#endif
+    if (std::strcmp(entry.locale, this->default_locale_) == 0 && std::strcmp(entry.value, text) == 0)
       return this->translate(entry.key);
   }
   return text;

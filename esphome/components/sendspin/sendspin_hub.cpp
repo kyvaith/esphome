@@ -17,6 +17,7 @@
 
 #include <esp_log.h>
 
+#include <cinttypes>
 #include <cstring>
 #include <memory>
 
@@ -169,8 +170,33 @@ void SendspinHub::loop() {
       this->enabled_.value() != this->client_->is_started() && !this->status_has_error()) {
     if (!this->enabled_.value()) {
       this->client_->stop();
-    } else if (!this->client_->start()) {
-      this->status_set_error(LOG_STR("Failed to start Sendspin client"));
+    } else if (this->start_retry_.ready(App.get_loop_component_start_time())) {
+      if (this->client_->start()) {
+        const uint8_t retries = this->start_retry_.attempts();
+        this->start_retry_.reset();
+        this->status_clear_warning();
+        if (this->start_retry_.enabled()) {
+          // Retry-enabled deployments need one visible health result even with WARN logging.
+          ESP_LOGW(TAG, "Sendspin startup running; retries=%u", retries);
+        } else {
+          ESP_LOGI(TAG, "Sendspin startup running; retries=%u", retries);
+        }
+      } else {
+        bool retryable = false;
+#if CONFIG_ESPHOME_SENDSPIN_CHECKED_THREADS
+        retryable = this->client_->start_failure_retryable();
+#endif
+        if (this->start_retry_.failed(App.get_loop_component_start_time(), retryable)) {
+          this->status_set_warning(LOG_STR("Sendspin startup resources unavailable; retry pending"));
+          ESP_LOGW(TAG, "Sendspin startup resource failure; retry %u in %" PRIu32 " ms",
+                   this->start_retry_.attempts(), this->start_retry_.retry_delay());
+        } else {
+          this->status_clear_warning();
+          ESP_LOGE(TAG, "Sendspin startup stopped; retryable=%u retries=%u", retryable,
+                   this->start_retry_.attempts());
+          this->status_set_error(LOG_STR("Failed to start Sendspin client"));
+        }
+      }
     }
   }
   this->client_->loop();
@@ -185,6 +211,7 @@ void SendspinHub::loop() {
 void SendspinHub::on_shutdown() {
   // Keeps loop() from starting the client again.
   this->enabled_ = false;
+  this->start_retry_.reset();
   if (this->is_client_running()) {
     this->client_->stop();
   }
@@ -227,9 +254,15 @@ void SendspinHub::dump_config() {
 
 // THREAD CONTEXT: Main loop (invoked from codegen before setup(), or from Sendspin components)
 void SendspinHub::set_enabled(bool enabled) {
-  if (this->status_has_error()) {
-    ESP_LOGE(TAG, "Cannot %s: Sendspin failed to start, reboot to retry",
-             enabled ? LOG_STR_LITERAL("enable") : LOG_STR_LITERAL("disable"));
+  // Disable cancels a pending series. An explicit disable/enable may begin a new
+  // bounded series; repeated enable does not replenish a failed retry budget.
+  if (!enabled && this->start_retry_.enabled()) {
+    if (this->start_retry_.terminal())
+      this->status_clear_error();
+    this->start_retry_.reset();
+    this->status_clear_warning();
+  } else if (this->status_has_error()) {
+    ESP_LOGE(TAG, "Cannot change enabled state: Sendspin failed to start");
     return;
   }
   this->enabled_ = enabled;

@@ -454,11 +454,12 @@ void ESPAudioStack::audio_task_() {
   // to park/wake the inner session loop.
   while (true) {
     this->audio_task_idle_.store(true, std::memory_order_relaxed);
-    if (this->prealloc_requested_.exchange(false, std::memory_order_acq_rel)) {
+    if (this->prealloc_state_.load(std::memory_order_acquire) == PreallocState::PREALLOC_REQUESTED) {
+      this->prealloc_state_.store(PreallocState::PREALLOC_PREPARING, std::memory_order_release);
       this->preallocate_audio_buffers_from_task_();
     }
     this->service_speaker_reset_();
-    if (!this->audio_stack_running_.load(std::memory_order_relaxed)) {
+    if (!this->audio_stack_running_.load(std::memory_order_relaxed) || !this->is_audio_prepared()) {
       ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
       continue;
     }
@@ -549,16 +550,13 @@ bool ESPAudioStack::prepare_audio_context_(AudioTaskCtx &ctx, bool require_proce
 
 void ESPAudioStack::preallocate_audio_buffers_from_task_() {
   if (this->audio_buffers_allocated_) {
-    this->prealloc_attempted_.store(true, std::memory_order_release);
-    return;
-  }
-  if (this->prealloc_attempted_.exchange(true, std::memory_order_acq_rel)) {
+    this->prealloc_state_.store(PreallocState::PREALLOC_READY, std::memory_order_release);
     return;
   }
 
   AudioTaskCtx ctx{};
   if (!this->prepare_audio_context_(ctx, true, false)) {
-    this->prealloc_attempted_.store(false, std::memory_order_release);
+    this->retry_audio_preallocation_();
     return;
   }
   if (this->allocate_audio_buffers_(ctx)) {
@@ -566,10 +564,16 @@ void ESPAudioStack::preallocate_audio_buffers_from_task_() {
              (unsigned) this->prealloc_rx_buffer_bytes_, (unsigned) this->prealloc_spk_buffer_bytes_,
              ctx.processor_spec_loaded ? "yes" : "no");
     this->log_memory_snapshot_("after_audio_buffer_prealloc");
+    this->prealloc_state_.store(PreallocState::PREALLOC_READY, std::memory_order_release);
   } else {
-    ESP_LOGE(TAG, "Audio buffer preallocation failed; refusing cold-path allocation");
-    this->has_i2s_error_.store(true, std::memory_order_relaxed);
+    ESP_LOGW(TAG, "Audio buffer preallocation failed; retrying while idle");
+    this->retry_audio_preallocation_();
   }
+}
+
+void ESPAudioStack::retry_audio_preallocation_() {
+  this->prealloc_retry_at_.store(millis() + 1000, std::memory_order_relaxed);
+  this->prealloc_state_.store(PreallocState::PREALLOC_IDLE, std::memory_order_release);
 }
 
 void ESPAudioStack::audio_session_() {
@@ -621,10 +625,12 @@ void ESPAudioStack::audio_session_() {
   }
 
   if (!this->audio_buffers_allocated_) {
+    this->retry_audio_preallocation_();
     alloc_fail("audio buffers (not preallocated)");
     goto cleanup;
   }
   if (!this->allocate_audio_buffers_(ctx)) {
+    this->retry_audio_preallocation_();
     alloc_fail("audio buffers (prepared shape invalid)");
     goto cleanup;
   }

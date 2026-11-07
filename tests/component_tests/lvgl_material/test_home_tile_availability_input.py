@@ -50,6 +50,7 @@ class HomeTileAvailabilityInputTests(unittest.TestCase):
             cls.product / "modules/common/core.yaml",
             SOURCE / "material_tile_surface.h",
             SOURCE / "material_tile_surface.cpp",
+            LVGL_SOURCE / "deferred_press_context.h",
         ):
             cls.pins[path] = hashlib.sha256(path.read_bytes()).hexdigest()
         material = (cls.product / "modules/lvgl/material.yaml").read_text(
@@ -165,6 +166,8 @@ class HomeTileAvailabilityInputTests(unittest.TestCase):
         )
         target = cls.root / (name + "-home.o")
         thread_flags = ["-pthread"] if os.name != "nt" else []
+        if acceleration:
+            thread_flags += ["-DUSE_LVGL_DEFERRED_PRESS_CONTEXT"]
         cls.checked(
             [
                 *compiler_command(),
@@ -204,6 +207,9 @@ class HomeTileAvailabilityInputTests(unittest.TestCase):
             "held_delivered_availability_aba",
             "disabled_home_contact",
             "unrelated_availability_update",
+            "held_caption_aba",
+            "held_rebind_acknowledged",
+            "unrelated_caption_update",
         ):
             with self.subTest(case=case):
                 self.assertIn(
@@ -212,7 +218,7 @@ class HomeTileAvailabilityInputTests(unittest.TestCase):
 
     def test_missing_snapshot_gate_is_a_meaningful_negative_control(self):
         result = subprocess.run(
-            [str(self.full), "without_snapshot_gate"],
+            [str(self.no_acceleration), "without_snapshot_gate"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -223,6 +229,14 @@ class HomeTileAvailabilityInputTests(unittest.TestCase):
             "Held delivered availability must not replay a command",
             result.stdout + result.stderr,
         )
+
+    def test_missing_raw_context_guard_reproduces_delayed_caption_aba_click(self):
+        result = subprocess.run(
+            [str(self.no_acceleration), "held_caption_aba"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Raw held context must not replay a command", result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

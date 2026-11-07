@@ -364,7 +364,7 @@ def test_root_page_and_sidebar_page_set_at_boot(main_cpp: str) -> None:
 def test_header_style_applied_via_main_header_accessor(main_cpp: str) -> None:
     assert (
         "lv_obj_t *menu_header_VAR_ = lv_menu_get_main_header(test_menu);\n"
-        "lv_obj_set_style_bg_color(menu_header_VAR_, lv_color_make(255, 0, 0), LV_PART_MAIN);"
+        "lv_obj_set_style_bg_color(menu_header_VAR_, lv_color_t{0, 0, 255}, LV_PART_MAIN);"
     ) in main_cpp
 
 
@@ -373,7 +373,7 @@ def test_sidebar_header_style_applied_via_sidebar_header_accessor(
 ) -> None:
     assert (
         "lv_obj_t *menu_sidebar_header_VAR_ = lv_menu_get_sidebar_header(test_menu);\n"
-        "lv_obj_set_style_bg_color(menu_sidebar_header_VAR_, lv_color_make(0, 255, 0), LV_PART_MAIN);"
+        "lv_obj_set_style_bg_color(menu_sidebar_header_VAR_, lv_color_t{0, 255, 0}, LV_PART_MAIN);"
     ) in main_cpp
 
 

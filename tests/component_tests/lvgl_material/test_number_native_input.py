@@ -85,12 +85,20 @@ class NumberNativeInputTests(unittest.TestCase):
             config = re.sub(
                 r"#define " + option + r" .*", "#define " + option + " 0", config
             )
+        for option, value in getattr(cls, "lvgl_options", {}).items():
+            config, count = re.subn(
+                r"#define " + option + r" .*",
+                "#define " + option + " " + str(value),
+                config,
+            )
+            if count != 1:
+                raise AssertionError(f"Missing or duplicated LVGL option: {option}")
         for directory in (cls.library / "src/widgets").iterdir():
             if directory.is_dir() and directory.name not in {
                 "button",
                 "label",
                 "image",
-            }:
+            } | getattr(cls, "extra_widgets", set()):
                 config = re.sub(
                     r"(#define LV_USE_" + directory.name.upper() + r" )1\b",
                     r"\g<1>0",
@@ -246,3 +254,17 @@ class NumberNativeInputTests(unittest.TestCase):
 
     def test_rejected_domain_and_generation_changes_retire_native_press(self):
         self.cases(("domain_revoked", "same_generation_revoked"))
+
+    def test_unknown_current_value_replaces_only_idle_success_caption(self):
+        for name in (
+            "caption_default",
+            "caption_localized",
+            "caption_legacy_empty",
+            "caption_pending",
+            "caption_rejected",
+        ):
+            with self.subTest(case=name):
+                self.assertIn(
+                    f"RESULT {name} pass=1",
+                    self.checked([self.executable, name]).stdout,
+                )

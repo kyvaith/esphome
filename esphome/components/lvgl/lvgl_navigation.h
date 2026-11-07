@@ -2,6 +2,7 @@
 
 #include "lvgl_gesture_router.h"
 #include "lvgl_esphome.h"
+#include "navigation_touch_delegate.h"
 #ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
 #include "navigation_admission.h"
 #endif
@@ -151,6 +152,7 @@ class LvglNavigation {
   }
 
   void touch_begin(int32_t x, int32_t y);
+  void set_touch_delegate(NavigationTouchDelegate *delegate) { this->touch_delegate_ = delegate; }
   bool touch_update(int32_t x, int32_t y);
   bool touch_end();
   bool should_defer_press(lv_obj_t *target) const;
@@ -164,6 +166,9 @@ class LvglNavigation {
   bool try_show_home();
   bool try_refresh_home();
   bool try_prepare_application_snapshots();
+  // Refresh a registered subset through the same compositor ownership path.
+  // Callers prepare/reuse the list during setup; no per-capture allocation is needed.
+  bool try_prepare_application_snapshots(const std::vector<LvglApplication *> &applications);
 #ifdef USE_LVGL_NAVIGATION_ADMISSION_GUARD
   bool add_admission_guard(NavigationAdmissionGuard *guard);
 #endif
@@ -180,7 +185,16 @@ class LvglNavigation {
 
   bool is_application_open(const LvglApplication *application) const;
   bool is_transition_active() const;
+  bool is_touch_active() const { return this->touch_context_ != TouchContext::NONE; }
+  bool is_idle_home() const;
+  bool replace_home_route(const uint8_t *ids, size_t count);
+  int home_route_index(uint8_t id) const;
+  uint16_t home_view_id(size_t index) const;
+  lv_obj_t **home_route() { return this->home_widgets_.data(); }
+  size_t home_route_size() const { return this->home_widgets_.size(); }
+  void refresh_home_indicators() { this->update_home_indicators_(this->last_home_page_index_); }
   LvglApplication *get_active_application() const;
+  bool is_home_view(lv_obj_t *object) const;
   void activate_home_view(int index, bool preserve_scanout = false);
   void notify_home_presented(int index);
   void prepare_application_transition(LvglApplication *application, bool opening, bool close_committed);
@@ -199,6 +213,7 @@ class LvglNavigation {
 #endif
   enum class TouchContext : uint8_t {
     NONE,
+    DELEGATE,
     BLOCKED,
     HOME,
     APPLICATION_CLOSE,
@@ -230,6 +245,7 @@ class LvglNavigation {
   std::vector<LvPageType *> home_pages_{};
   LvPageType *home_widget_page_{};
   std::vector<lv_obj_t *> home_widgets_{};
+  std::vector<lv_obj_t *> registered_home_widgets_{};
   std::vector<lv_obj_t *> home_indicators_{};
   std::vector<lv_obj_t *> blockers_{};
   std::vector<LvglApplication *> applications_{};
@@ -237,6 +253,7 @@ class LvglNavigation {
   GestureRouter gesture_router_{};
   LvglApplication *gesture_application_{};
   TouchContext touch_context_{TouchContext::NONE};
+  NavigationTouchDelegate *touch_delegate_{};
   int last_home_page_index_{};
   int gesture_home_page_index_{-1};
   int32_t home_touch_base_offset_{};

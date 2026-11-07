@@ -17,6 +17,9 @@ class LvglSnapshotCompositor {
 
   virtual void add_home_page(LvPageType *page);
   virtual void add_home_view(lv_obj_t *view);
+  void replace_home_views(lv_obj_t *const *views, size_t count) {
+    this->home_views_.assign(views, views + count);
+  }
   virtual bool prepare_home(int page_index) { return false; }
   virtual bool prepare_applications(const std::vector<LvglApplication *> &applications);
   virtual bool is_home_prepared() const { return false; }

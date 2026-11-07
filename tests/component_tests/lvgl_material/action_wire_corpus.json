@@ -1,0 +1,2776 @@
+[
+  {
+    "name": "automation-disabled-running.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": true,
+        "stop_actions": false,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 2
+      },
+      "eligible_actions": 80,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "automation-disabled-stop-request.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": true,
+        "stop_actions": true,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 2
+      },
+      "eligible_actions": 112,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "automation-disabled-stop-unknown-count.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": false,
+        "stop_actions": true,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 112,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "automation-enabled.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": false,
+        "stop_actions": false,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "enabled",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 2
+      },
+      "eligible_actions": 96,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "button-first-use.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "button-unavailable.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": false,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "unavailable",
+        "phase": "unknown",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "command-activate.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "activate"
+    },
+    "accepted": true
+  },
+  {
+    "name": "command-disable.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "disable"
+    },
+    "accepted": true
+  },
+  {
+    "name": "command-enable.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "enable"
+    },
+    "accepted": true
+  },
+  {
+    "name": "command-press.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "press"
+    },
+    "accepted": true
+  },
+  {
+    "name": "command-run.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "run"
+    },
+    "accepted": true
+  },
+  {
+    "name": "command-stop.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "stop"
+    },
+    "accepted": true
+  },
+  {
+    "name": "command-trigger.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "trigger"
+    },
+    "accepted": true
+  },
+  {
+    "name": "grant-automation-disabled-stop-request.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "grant",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": true,
+        "stop_actions": true,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 2
+      },
+      "eligible_actions": 112,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "grant-button-first-use.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "grant",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "grant-script-running.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "grant",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "running",
+        "last_used_status": "value",
+        "last_used_text": "2026-11-05T14:00:00+01:00",
+        "current": 3
+      },
+      "eligible_actions": 8,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "input-button-used.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "input_button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "value",
+        "last_used_text": "2026-11-05T14:00:00+01:00",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "maximum-automation-disabled-stop-request.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 2147483647,
+      "slot": 15,
+      "card_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "revision": 2147483647,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 2147483647,
+      "ttl_ms": 30000,
+      "title": "ŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁ",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": true,
+        "stop_actions": true,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "value",
+        "last_used_text": "9999-12-31T23:59:59.999999+14:00",
+        "current": 65535
+      },
+      "eligible_actions": 112,
+      "state_generation": 2147483647
+    },
+    "accepted": true
+  },
+  {
+    "name": "maximum-script-running.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 2147483647,
+      "slot": 15,
+      "card_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "revision": 2147483647,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 2147483647,
+      "ttl_ms": 30000,
+      "title": "ŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁŁ",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "running",
+        "last_used_status": "value",
+        "last_used_text": "9999-12-31T23:59:59.999999+14:00",
+        "current": 65535
+      },
+      "eligible_actions": 8,
+      "state_generation": 2147483647
+    },
+    "accepted": true
+  },
+  {
+    "name": "result-not_confirmed.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "result",
+      "command_seq": 1,
+      "state_seq": 2,
+      "status": "not_confirmed",
+      "reason": "state_timeout"
+    },
+    "accepted": true
+  },
+  {
+    "name": "result-service_completed.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "result",
+      "command_seq": 1,
+      "state_seq": 2,
+      "status": "service_completed",
+      "reason": "none"
+    },
+    "accepted": true
+  },
+  {
+    "name": "result-state_matches.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "result",
+      "command_seq": 1,
+      "state_seq": 2,
+      "status": "state_matches",
+      "reason": "none"
+    },
+    "accepted": true
+  },
+  {
+    "name": "scene-invalid-timestamp.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "scene",
+        "operations": 2,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "invalid",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 2,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "script-idle.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "idle",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 0
+      },
+      "eligible_actions": 4,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "script-metadata-unknown.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "metadata_unavailable"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "idle",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 0
+      },
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "script-no-run-service.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 8,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "service_unavailable"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "idle",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "script-required.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "needs_parameters"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "idle",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 0
+      },
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "script-running.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "running",
+        "last_used_status": "value",
+        "last_used_text": "2026-11-05T14:00:00+01:00",
+        "current": 3
+      },
+      "eligible_actions": 8,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "script-unknown.json",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": false,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "unknown",
+        "phase": "unknown",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "accepted": true
+  },
+  {
+    "name": "bad-29-button-first-use.json-available",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": false,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-30-button-first-use.json-state_generation",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 0
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-31-button-first-use.json-state_generation",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": true
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-32-button-first-use.json-eligible_actions",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-33-button-first-use.json-panel_caps-action_type",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "other",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-34-button-first-use.json-panel_caps-operations",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 128,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-35-button-first-use.json-panel_caps-operations",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": true,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-36-button-first-use.json-panel_caps-operations",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 2,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-37-button-first-use.json-panel_caps-skip_condition",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": false,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-38-button-first-use.json-panel_caps-stop_actions",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": false,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-39-button-first-use.json-panel_caps-run_blocked",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "needs_parameters"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-40-button-first-use.json-panel_state-phase",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "idle",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-41-button-first-use.json-panel_state-current",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 0
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-42-button-first-use.json-panel_state-last_used_status",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "value",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-43-button-first-use.json-panel_state-last_used_status",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "other",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-44-button-first-use.json-panel_state-last_used_text",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "unexpected",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-45-button-first-use.json-panel_state-source",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "unavailable",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-46-button-first-use.json-panel_state-source",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "other",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-47-button-first-use.json-unexpected",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1,
+      "unexpected": 0
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-48-button-first-use.json-action_version",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 1,
+      "state_generation": 1,
+      "action_version": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-49-automation-disabled-running.json-panel_caps-skip_condition",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": 0,
+        "stop_actions": false,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 2
+      },
+      "eligible_actions": 80,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-50-automation-disabled-running.json-panel_caps-stop_actions",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": true,
+        "stop_actions": 1,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 2
+      },
+      "eligible_actions": 80,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-51-automation-disabled-running.json-panel_caps-stop_actions",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": true,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 2
+      },
+      "eligible_actions": 80,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-52-automation-disabled-running.json-panel_caps-operations",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 127,
+        "skip_condition": true,
+        "stop_actions": false,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 2
+      },
+      "eligible_actions": 80,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-53-automation-disabled-running.json-panel_state-current",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": true,
+        "stop_actions": false,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 65536
+      },
+      "eligible_actions": 80,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-54-automation-disabled-running.json-panel_state-current",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": true,
+        "stop_actions": false,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": true
+      },
+      "eligible_actions": 80,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-55-automation-disabled-running.json-panel_state-current",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": true,
+        "stop_actions": false,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": -1
+      },
+      "eligible_actions": 80,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-56-automation-disabled-running.json-panel_state-phase",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": true,
+        "stop_actions": false,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 2
+      },
+      "eligible_actions": 80,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-57-automation-disabled-running.json-panel_state-last_used_status",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": true,
+        "stop_actions": false,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "value",
+        "last_used_text": "",
+        "current": 2
+      },
+      "eligible_actions": 80,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-58-automation-disabled-running.json-panel_state-last_used_text",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": true,
+        "stop_actions": false,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "unknown",
+        "last_used_text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "current": 2
+      },
+      "eligible_actions": 80,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-59-automation-disabled-running.json-panel_state-last_used_text",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "automation",
+        "operations": 112,
+        "skip_condition": true,
+        "stop_actions": false,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "disabled",
+        "last_used_status": "unknown",
+        "last_used_text": "2026-01-01\ntext",
+        "current": 2
+      },
+      "eligible_actions": 80,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-60-script-idle.json-panel_caps-run_blocked",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "service_unavailable"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "idle",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 0
+      },
+      "eligible_actions": 4,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-61-script-idle.json-panel_caps-operations",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 8,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "idle",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 0
+      },
+      "eligible_actions": 4,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-62-script-idle.json-panel_caps-run_blocked",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "other"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "idle",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 0
+      },
+      "eligible_actions": 4,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-63-script-idle.json-panel_state-phase",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "enabled",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 0
+      },
+      "eligible_actions": 4,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-64-script-no-run-service.json-panel_caps-run_blocked",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 8,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "idle",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-65-script-no-run-service.json-eligible_actions",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 8,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "service_unavailable"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "idle",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 4,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-66-script-unknown.json-panel_state-last_used_status",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": false,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "unknown",
+        "phase": "unknown",
+        "last_used_status": "invalid",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-67-script-unknown.json-panel_state-current",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": false,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "unknown",
+        "phase": "unknown",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 0
+      },
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-68-script-unknown.json-panel_state-last_used_text",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": false,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "unknown",
+        "phase": "unknown",
+        "last_used_status": "unknown",
+        "last_used_text": "stale",
+        "current": null
+      },
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-69-script-unknown.json-panel_state-phase",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": false,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "unknown",
+        "phase": "idle",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 0,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-70-script-unknown.json-eligible_actions",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": false,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "unknown",
+        "phase": "unknown",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": null
+      },
+      "eligible_actions": 4,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-71-command-press.json-action_version",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": true,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "press"
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-72-command-press.json-action_version",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 2,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "press"
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-73-command-press.json-action_version",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": null,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "press"
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-74-command-press.json-control_kind",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "light",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "press"
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-75-command-press.json-op",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "turn_on"
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-76-command-press.json-expected_state_generation",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 0,
+      "op": "press"
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-77-command-press.json-expected_state_generation",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": true,
+      "op": "press"
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-78-command-press.json-target",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "press",
+      "target": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-79-command-press.json-facet",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "press",
+      "facet": "main"
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-80-command-press.json-view_seq",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "press",
+      "view_seq": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "bad-81-command-press.json-media_version",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "action_version": 1,
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "press",
+      "media_version": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "missing-82-command-press.json-action_version",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "command",
+      "command_seq": 1,
+      "expected_state_generation": 1,
+      "op": "press"
+    },
+    "accepted": false
+  },
+  {
+    "name": "missing-83-button-first-use.json-current",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "button",
+        "operations": 1,
+        "skip_condition": null,
+        "stop_actions": null,
+        "run_blocked": "none"
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "stateless",
+        "last_used_status": "unknown",
+        "last_used_text": ""
+      },
+      "eligible_actions": 1,
+      "state_generation": 1
+    },
+    "accepted": false
+  },
+  {
+    "name": "missing-84-script-idle.json-run_blocked",
+    "message": {
+      "v": 1,
+      "type": "entity_control_v1",
+      "channel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "open_seq": 1,
+      "slot": 15,
+      "card_id": "aeh-demo-15",
+      "revision": 1,
+      "control_kind": "panel",
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "state",
+      "state_seq": 1,
+      "ttl_ms": 30000,
+      "title": "Action draft",
+      "panel_type": "action",
+      "available": true,
+      "panel_caps": {
+        "action_type": "script",
+        "operations": 12,
+        "skip_condition": null,
+        "stop_actions": null
+      },
+      "panel_state": {
+        "source": "known",
+        "phase": "idle",
+        "last_used_status": "unknown",
+        "last_used_text": "",
+        "current": 0
+      },
+      "eligible_actions": 4,
+      "state_generation": 1
+    },
+    "accepted": false
+  }
+]
